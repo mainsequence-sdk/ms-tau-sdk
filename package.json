@@ -1,0 +1,47 @@
+{
+  "name": "astro",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Astro orchestrator for Main Sequence project assistants with specialist delegation, generated docs context, and standard Pi web access.",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "astro",
+    "main-sequence",
+    "coding-agent",
+    "extensions"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "docs:index": "tsx scripts/refresh_docs_index.ts",
+    "check": "tsc --noEmit -p tsconfig.json",
+    "pi": "node scripts/start_pi.mjs"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-agent-core": "*",
+    "@mariozechner/pi-ai": "*",
+    "@mariozechner/pi-coding-agent": "*",
+    "@mariozechner/pi-tui": "*",
+    "@sinclair/typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ],
+    "prompts": [
+      "./prompts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "devDependencies": {
+    "@mariozechner/pi-coding-agent": "^0.58.1",
+    "@sinclair/typebox": "^0.34.48",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+.pi/npm/
+
+# Python cache and virtualenvs
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Environment files and local secrets
+.env
+.env.*
+!.env.example
+
+# OS files
+.DS_Store
+
+# Package manager debug logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*

@@ -1,0 +1,197 @@
+{
+  "generated_at": "2026-03-18T15:50:58.869Z",
+  "documents": [
+    {
+      "path": "docs/architecture.md",
+      "kind": "docs",
+      "title": "Architecture",
+      "description": "This repository is a Pi package that gives you a **Main Sequence project orchestration architecture** without modifying Pi core."
+    },
+    {
+      "path": "docs/decisions.md",
+      "kind": "docs",
+      "title": "Decisions",
+      "description": "Implementation: - `extensions/docs-context/index.ts` - generated files in `knowledge/`"
+    },
+    {
+      "path": "docs/folder-structure.md",
+      "kind": "docs",
+      "title": "Folder structure",
+      "description": ""
+    },
+    {
+      "path": "docs/main-sequence-orchestration.md",
+      "kind": "docs",
+      "title": "Main Sequence orchestration",
+      "description": "Astro is a parent orchestrator for Main Sequence project assistants."
+    },
+    {
+      "path": "docs/quickstart.md",
+      "kind": "docs",
+      "title": "Quick start",
+      "description": "This launcher:"
+    },
+    {
+      "path": "docs/scope.md",
+      "kind": "docs",
+      "title": "Scope",
+      "description": "- Main Sequence project orchestration flow - actual specialist delegation wiring - generated documentation context - static parent prompt plus child-specialist policy injection..."
+    },
+    {
+      "path": "docs/typescript-runtime.md",
+      "kind": "docs",
+      "title": "TypeScript runtime",
+      "description": "Astro's repo-local runtime is now TypeScript-only."
+    },
+    {
+      "path": "docs/wiring-flow.md",
+      "kind": "docs",
+      "title": "Wiring flow",
+      "description": "This is the concrete flow implemented in Astro."
+    },
+    {
+      "path": "tutorial/00-start-here.md",
+      "kind": "tutorial",
+      "title": "Start here",
+      "description": "This repository is both:"
+    },
+    {
+      "path": "tutorial/01-what-loads-when.md",
+      "kind": "tutorial",
+      "title": "What loads when",
+      "description": "Pi discovers `.pi/settings.json` in the repo and uses it to load the repo root package."
+    },
+    {
+      "path": "tutorial/02-before-agent-start.md",
+      "kind": "tutorial",
+      "title": "`before_agent_start`",
+      "description": "This starter uses `before_agent_start` for two things:"
+    },
+    {
+      "path": "tutorial/03-specialists-and-routing.md",
+      "kind": "tutorial",
+      "title": "Specialists and routing",
+      "description": "A specialist is a markdown file in `.pi/agents/` with frontmatter and a prompt body."
+    },
+    {
+      "path": "tutorial/04-agent-files-and-frontmatter.md",
+      "kind": "tutorial",
+      "title": "Agent files and frontmatter",
+      "description": "Each specialist is a markdown file."
+    },
+    {
+      "path": "tutorial/05-typescript-runtime.md",
+      "kind": "tutorial",
+      "title": "TypeScript runtime",
+      "description": "Pi extensions are TypeScript entry points, and Astro's remaining repo-local logic is simple enough that a second runtime would just add friction."
+    },
+    {
+      "path": "prompts/design-and-audit.md",
+      "kind": "prompt",
+      "title": "review-main-sequence-project",
+      "description": "Review a checked-out Main Sequence project and report whether work is finished, blocked, or failing."
+    },
+    {
+      "path": "prompts/implement-additive.md",
+      "kind": "prompt",
+      "title": "orchestrate-main-sequence-project",
+      "description": "Create or update a Main Sequence project, prepare Astro handoff files, and launch the coding subagent."
+    },
+    {
+      "path": "skills/extension-builder/SKILL.md",
+      "kind": "skill",
+      "title": "extension-builder",
+      "description": "How to add a new extension, specialist, prompt, or shared TypeScript helper in this starter repository."
+    },
+    {
+      "path": "skills/repo-docs/SKILL.md",
+      "kind": "skill",
+      "title": "repo-docs",
+      "description": "Deep instructions for navigating and updating this repository's docs, tutorial, and generated knowledge files."
+    },
+    {
+      "path": ".pi/agents/doc-bug-auditor.md",
+      "kind": "specialist",
+      "title": "doc-bug-auditor",
+      "description": "Reviews a Main Sequence project for status, blockers, failures, and completion"
+    },
+    {
+      "path": ".pi/agents/mainsequence-project-coder.md",
+      "kind": "specialist",
+      "title": "mainsequence-project-coder",
+      "description": "Implements tasks inside a checked-out Main Sequence project"
+    },
+    {
+      "path": "README.md",
+      "kind": "root",
+      "title": "Astro",
+      "description": "Astro is a parent orchestrator for Main Sequence project assistants. It turns user intent into a concrete Main Sequence project, prepares handoff files in the checked-out projec..."
+    },
+    {
+      "path": "AGENTS.md",
+      "kind": "root",
+      "title": "Astro orchestrator instructions",
+      "description": "This repository defines **Astro**, a parent orchestrator for Main Sequence project assistants."
+    }
+  ],
+  "specialists": [
+    {
+      "name": "doc-bug-auditor",
+      "description": "Reviews a Main Sequence project for status, blockers, failures, and completion",
+      "tools": "read, grep, find, ls, bash",
+      "model": "claude-sonnet-4-20250514",
+      "path": ".pi/agents/doc-bug-auditor.md"
+    },
+    {
+      "name": "mainsequence-project-coder",
+      "description": "Implements tasks inside a checked-out Main Sequence project",
+      "tools": "read, grep, find, ls, bash, edit, write",
+      "model": "claude-sonnet-4-20250514",
+      "path": ".pi/agents/mainsequence-project-coder.md"
+    }
+  ],
+  "extensions": [
+    {
+      "name": "docs-context",
+      "path": "extensions/docs-context/index.ts",
+      "tools": [
+        "refresh_docs_index"
+      ]
+    },
+    {
+      "name": "project-policy",
+      "path": "extensions/project-policy/index.ts",
+      "tools": []
+    },
+    {
+      "name": "recent-changes",
+      "path": "extensions/recent-changes/index.ts",
+      "tools": [
+        "audit_recent_changes",
+        "list_recent_changes"
+      ]
+    },
+    {
+      "name": "specialist-delegate",
+      "path": "extensions/specialist-delegate/index.ts",
+      "tools": [
+        "delegate_specialist"
+      ]
+    }
+  ],
+  "external_packages": [
+    {
+      "name": "pi-web-access",
+      "ref": "npm:pi-web-access",
+      "path": ".pi/npm/node_modules/pi-web-access",
+      "description": "Web search, URL fetching, GitHub repo cloning, PDF extraction, YouTube video understanding, and local video analysis for Pi coding agent",
+      "version": "0.10.3",
+      "installed": true,
+      "tools": [
+        "fetch_content",
+        "get_search_content",
+        "web_search"
+      ]
+    }
+  ]
+}
