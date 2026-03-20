@@ -42,6 +42,9 @@ Astro uses its own handoff contract inside the checked-out project's `astro/` fo
 - `astro/tasks.md` for the prioritized actionable task list, ideally with statuses or checkboxes
 - `astro/record.md` for project metadata such as project id, local checkout path, and orchestration notes
 - `astro/status.md` for the latest state, evidence checked, blockers or failures, and next actions
+  - when blocked or failed, include the exact command or action attempted, the working directory or target path when relevant, the exit code if known, and a traceback, stderr excerpt, or log snippet
+  - include concrete identifiers such as a failing file, script, job id, run id, or URL when available
+  - include what was already tried and the next recovery step
 
 When Astro delegates implementation inside the checked-out project:
 
@@ -59,6 +62,44 @@ npm run pi
 Pi loads this repository through `.pi/settings.json`, which points to the repo root package and the standard `npm:pi-web-access` community package.
 
 `npm run pi` is the one-command launcher. It installs local npm dependencies if needed, ensures `pi-web-access` is available for this repo, refreshes generated docs context, runs the TypeScript check, and then starts `pi`.
+
+## Required secrets
+
+Astro expects machine-local secrets for the external systems it drives. Do not store these in the repo, `.env` files committed to Git, or the Dockerfile.
+
+Main Sequence login secrets:
+
+- `astro-mainsequence-email`
+  - the email passed to `mainsequence login <email>`
+- `astro-mainsequence-password`
+  - the password used for Main Sequence CLI login
+
+GitHub issue-escalation secrets:
+
+- `astro-github-token`
+  - required for duplicate-issue search and opening new issues in `mainsequence-sdk/mainsequence-sdk`
+- `astro-github-user`
+  - optional metadata for reporting which dedicated GitHub account Astro is expected to use
+
+Notes:
+
+- For the public `mainsequence-sdk` repository, Astro can usually inspect or clone source without GitHub auth.
+- The GitHub token is mainly needed for issue search and issue creation.
+- Astro should use GitHub REST API as the primary path for duplicate-issue search and issue creation.
+- On macOS, store these in Keychain and read them with `security`.
+- Use the retrieved PAT directly in the REST request or place it only in a short-lived local shell variable such as `ASTRO_GITHUB_TOKEN`.
+- Astro should not look for or use any GitHub credentials outside `astro-github-token` and optional `astro-github-user`.
+- Astro should not use generic GitHub environment variables like `GH_TOKEN` or `GITHUB_TOKEN` as an auth source for issue escalation.
+- When `doc-bug-auditor` has enough evidence for an upstream SDK issue and no close duplicate exists, it does not need a second user confirmation to open the issue.
+
+Example Keychain setup:
+
+```bash
+security add-generic-password -a "$USER" -s astro-mainsequence-email -w 'you@example.com'
+security add-generic-password -a "$USER" -s astro-mainsequence-password -w 'your-password'
+security add-generic-password -a "$USER" -s astro-github-user -w 'astro-bot'
+security add-generic-password -a "$USER" -s astro-github-token -w 'github_pat_...'
+```
 
 ## What is wired right now
 
@@ -92,6 +133,13 @@ For a normal Main Sequence project request:
 6. Main agent returns project metadata, current status, and next steps.
 
 This keeps Astro focused on orchestration while the coding work happens in the target project checkout.
+
+When the review path finds a likely upstream `mainsequence-sdk` execution bug, `doc-bug-auditor` should:
+
+1. inspect the failure evidence and classify whether the SDK is likely involved
+2. inspect local package evidence first, then inspect or clone the public `mainsequence-sdk` repository if needed
+3. search for duplicate upstream issues
+4. open a new issue through GitHub REST API only when the evidence is strong and no close duplicate exists
 
 ## Python runtime
 

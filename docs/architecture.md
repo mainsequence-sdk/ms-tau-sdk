@@ -52,11 +52,13 @@ Purpose:
 - expose `delegate_specialist`
 - discover `.pi/agents/*.md`
 - spawn a child `pi` process
-- stream child output back into the parent session
+- stream child output back into the parent session, including partial assistant text, command snippets, and tool activity
 
 Why:
 - this gives you a real subagent pattern without touching Pi core
 - each specialist gets an isolated context window
+- the parent can surface what the child is doing live instead of only showing a generic running state
+- the live stream now keeps a short rolling trail of recent child activity so you can see investigation phases and commands, not only the latest spinner label
 
 ### 5. `recent-changes` extension
 
@@ -102,6 +104,7 @@ So the default is:
 - parent orchestrates
 - child implements in the target project folder
 - parent reviews status directly or through `doc-bug-auditor`
+- `doc-bug-auditor` can also investigate likely upstream `mainsequence-sdk` execution bugs and escalate them through GitHub REST when the task asks for it
 
 ## Runtime summary
 

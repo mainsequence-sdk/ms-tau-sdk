@@ -36,6 +36,28 @@ When login needs credentials, Astro should retrieve them from system secrets nam
 
 On macOS, those can be read through the `security` CLI. Astro should prefer those system secrets over asking the user again, and should never write the credentials into the repo, prompts, or tracked files.
 
+For GitHub issue escalation, Astro should use system secret:
+
+- `astro-github-token`
+
+Optional GitHub metadata secret:
+
+- `astro-github-user`
+
+Guidance:
+
+- treat those as machine-local secrets, not repo files
+- for the public `mainsequence-sdk` repo, cloning or reading source may not need GitHub auth
+- the GitHub token is mainly for duplicate-issue search and issue creation
+- on macOS, retrieve the PAT with `security find-generic-password -a "$USER" -s astro-github-token -w`
+- optionally retrieve GitHub user metadata with `security find-generic-password -a "$USER" -s astro-github-user -w`
+- use the retrieved PAT directly in the REST request or place it only in a short-lived local shell variable such as `ASTRO_GITHUB_TOKEN`
+- do not rely on unrelated GitHub auth state when Astro-specific secrets are missing
+- do not look for or use any GitHub credentials outside `astro-github-token` and optional `astro-github-user`
+- do not use generic GitHub environment variables like `GH_TOKEN` or `GITHUB_TOKEN` as an auth source for issue escalation
+- when the issue-escalation criteria are met, `doc-bug-auditor` does not need a second user confirmation to open the upstream issue
+- prefer GitHub REST API over `gh` for issue search and issue creation
+
 ## Astro-specific conventions
 
 The following parts are Astro conventions layered on top of Main Sequence, not claims about the official Main Sequence project layout:
@@ -44,6 +66,7 @@ The following parts are Astro conventions layered on top of Main Sequence, not c
 - the `mainsequence-project-coder` coding subagent
 - the `doc-bug-auditor` status-review subagent
 - the specific project record and status file structure below
+- the machine-local secret names used for Main Sequence login and GitHub issue escalation
 
 ## Web access
 
@@ -61,6 +84,9 @@ Astro should treat these files inside the checked-out project's `astro/` folder 
 - `astro/tasks.md` for the prioritized actionable task list, ideally with statuses or checkboxes
 - `astro/record.md` for project metadata such as project id, local checkout path, and orchestration notes
 - `astro/status.md` for the latest state, evidence checked, blockers or failures, and next actions
+  - when blocked or failed, include the exact command or action attempted, the working directory or target path when relevant, the exit code if known, and a traceback, stderr excerpt, or log snippet
+  - include concrete identifiers such as a failing file, job id, run id, or URL when available
+  - include what was already tried and the next recovery step
 
 For implementation behavior inside the target project:
 
@@ -80,7 +106,7 @@ If Astro uses that image, the whole host `~/mainsequence` root should be bind-mo
 
 - The parent Astro agent should orchestrate, not do most implementation work itself.
 - The coding subagent should do the main project implementation inside the target project folder.
-- `doc-bug-auditor` should be used for structured status review and failure analysis.
+- `doc-bug-auditor` should be used for structured status review, failure analysis, upstream `mainsequence-sdk` investigation, and issue escalation when warranted.
 - `audit_recent_changes` is mainly for changes made to Astro itself, not the external project workflow.
 
 ## Preferred change surface

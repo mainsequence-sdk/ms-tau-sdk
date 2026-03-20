@@ -1,6 +1,6 @@
 # Documentation index
 
-Generated at: 2026-03-18T15:50:58.869Z
+Generated at: 2026-03-19T12:03:40.086Z
 
 ## Documents
 - `docs/architecture.md` — **Architecture**: This repository is a Pi package that gives you a **Main Sequence project orchestration architecture** without modifying Pi core.
@@ -27,8 +27,8 @@ Generated at: 2026-03-18T15:50:58.869Z
 - `AGENTS.md` — **Astro orchestrator instructions**: This repository defines **Astro**, a parent orchestrator for Main Sequence project assistants.
 
 ## Specialists
-- `doc-bug-auditor` — Reviews a Main Sequence project for status, blockers, failures, and completion | tools: read, grep, find, ls, bash | model: claude-sonnet-4-20250514
-- `mainsequence-project-coder` — Implements tasks inside a checked-out Main Sequence project | tools: read, grep, find, ls, bash, edit, write | model: claude-sonnet-4-20250514
+- `doc-bug-auditor` — Reviews a Main Sequence project for status, blockers, failures, and completion | tools: read, grep, find, ls, bash | model: (default)
+- `mainsequence-project-coder` — Implements tasks inside a checked-out Main Sequence project | tools: read, grep, find, ls, bash, edit, write | model: (default)
 
 ## Extensions and tools
 - `docs-context` — tools: refresh_docs_index

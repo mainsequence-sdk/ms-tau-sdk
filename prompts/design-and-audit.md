@@ -14,4 +14,6 @@ Follow this workflow:
    - completed tasks
    - open tasks
    - blockers or failure causes
+   - upstream `mainsequence-sdk` assessment
+   - GitHub issue status
    - next actions

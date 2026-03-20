@@ -32,6 +32,8 @@ The parent agent is instructed to use:
 - passes the specialist prompt through `--append-system-prompt`
 - spawns a child `pi --mode json -p --no-session ...`
 - streams JSON events back into the parent tool result
+- forwards partial assistant text, tool-call setup, and tool execution updates so delegation stays visible while running
+- keeps a short rolling activity trail so the parent can see recent investigation phases and command snippets instead of only a generic running message
 
 ### 4. Child process behavior
 The child process can run in the same repository or in a checked-out Main Sequence project via `cwd`, and it still gets:
@@ -65,6 +67,8 @@ After setup, the parent can:
 
 - run `mainsequence-project-coder` in the checked-out project folder for implementation
 - run `doc-bug-auditor` in the checked-out project folder for status review
+- ask `doc-bug-auditor` to inspect likely `mainsequence-sdk` failures, inspect the public upstream repo, search for duplicate issues, and open a new issue through GitHub REST when warranted
+- when issue escalation is enabled, `doc-bug-auditor` should use only `astro-github-token` and optional `astro-github-user`, and it does not need a second user confirmation once the issue-opening rules are satisfied
 
 ### 7. Astro-side audit when needed
 `extensions/recent-changes/index.ts` tracks parent-session `write` and `edit` tool results in Astro itself.

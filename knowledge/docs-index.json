@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-03-18T15:50:58.869Z",
+  "generated_at": "2026-03-19T12:03:40.086Z",
   "documents": [
     {
       "path": "docs/architecture.md",
@@ -139,14 +139,14 @@
       "name": "doc-bug-auditor",
       "description": "Reviews a Main Sequence project for status, blockers, failures, and completion",
       "tools": "read, grep, find, ls, bash",
-      "model": "claude-sonnet-4-20250514",
+      "model": "",
       "path": ".pi/agents/doc-bug-auditor.md"
     },
     {
       "name": "mainsequence-project-coder",
       "description": "Implements tasks inside a checked-out Main Sequence project",
       "tools": "read, grep, find, ls, bash, edit, write",
-      "model": "claude-sonnet-4-20250514",
+      "model": "",
       "path": ".pi/agents/mainsequence-project-coder.md"
     }
   ],

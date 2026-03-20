@@ -28,6 +28,38 @@ Core commands Astro should know:
 
 The official docs also include GUI-first flows in some places. Astro prefers the CLI path above when those commands are available.
 
+## Required machine-local secrets
+
+Astro should rely on machine-local secrets for credentials instead of tracked files.
+
+Main Sequence secrets:
+
+- `astro-mainsequence-email`
+- `astro-mainsequence-password`
+
+GitHub issue-escalation secrets:
+
+- `astro-github-token`
+- `astro-github-user` (optional metadata)
+
+Usage notes:
+
+- `astro-mainsequence-*` is for `mainsequence login`
+- `astro-github-token` is for searching existing issues and opening new issues in `mainsequence-sdk/mainsequence-sdk`
+- `astro-github-user` is optional reporting metadata
+- for the public `mainsequence-sdk` repo, source inspection or cloning often does not require GitHub auth
+- on macOS, these secrets can be read with the `security` CLI
+- use `security find-generic-password -a "$USER" -s astro-github-token -w` for the PAT
+- use `security find-generic-password -a "$USER" -s astro-github-user -w` only if user metadata is needed
+- use the retrieved PAT directly in the REST request or place it only in a short-lived local shell variable such as `ASTRO_GITHUB_TOKEN`
+- do not rely on unrelated GitHub auth state when the Astro GitHub secrets are missing
+- do not look for or use any GitHub credentials outside `astro-github-token` and optional `astro-github-user`
+- do not use generic GitHub environment variables like `GH_TOKEN` or `GITHUB_TOKEN` as an auth source for issue escalation
+- prefer GitHub REST API over `gh` for duplicate-issue search and issue creation
+- typical REST path:
+  - `GET https://api.github.com/search/issues` for duplicate search
+  - `POST https://api.github.com/repos/mainsequence-sdk/mainsequence-sdk/issues` for issue creation
+
 ## Astro-specific handoff layer
 
 The `astro/` folder and its files are Astro conventions layered on top of Main Sequence. They are not presented in the official Main Sequence docs as a required project layout.
@@ -52,6 +84,12 @@ Astro should maintain these files in the checked-out project's `astro/` folder:
   - latest review state
   - evidence
   - blockers or failures
+    - exact command or action attempted
+    - working directory or target path when relevant
+    - exit code if known
+    - traceback, stderr excerpt, or log snippet
+    - concrete identifiers such as failing file, job id, run id, or URL when available
+    - what was already tried and the next recovery step
   - next actions
 
 ## Status review structure
@@ -61,9 +99,11 @@ When Astro or `doc-bug-auditor` reviews project progress, the output should use 
 1. Overall state: `finished`, `in_progress`, `blocked`, or `failed`
 2. Completed work
 3. Open tasks
-4. Blockers or failure causes
-5. Evidence checked
-6. Recommended next actions
+4. Blockers or failure causes, including command and traceback-style evidence when available
+5. Upstream `mainsequence-sdk` assessment: `not_involved`, `possible`, `likely`, or `confirmed`
+6. Evidence checked
+7. GitHub issue status: `not_needed`, `existing_issue_found`, `issue_opened`, or `drafted`
+8. Recommended next actions
 
 ## Parent and child responsibilities
 
@@ -77,6 +117,10 @@ When Astro or `doc-bug-auditor` reviews project progress, the output should use 
   - treats the target project's `AGENTS.md` and `.agents/skills/mainsequence-project/SKILL.md` as canonical implementation guidance when they exist
 - `doc-bug-auditor` child:
   - reviews task completion, blockers, and failure causes
+  - determines whether a failure looks like an upstream `mainsequence-sdk` execution issue
+  - inspects the public `mainsequence-sdk` repository when needed
+  - does not need a second user confirmation before opening an upstream issue once the escalation rules are satisfied
+  - searches for duplicates and opens a GitHub issue through REST API when warranted
 
 ## Python runtime note
 
