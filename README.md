@@ -1,4 +1,4 @@
-![Main Sequence logo](https://main-sequence.app/static/media/logos/MS_logo_long_black.png)
+![Main Sequence logo](https://api.main-sequence.app/static/media/logos/MS_logo_long_black.png)
 
 # Astro
 
