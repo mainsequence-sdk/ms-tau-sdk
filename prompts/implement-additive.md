@@ -7,12 +7,13 @@ Task: $ARGUMENTS
 
 Follow this workflow:
 
-1. Read Astro repo context and `docs/main-sequence-orchestration.md`.
+1. Read Astro repo context and `docs/workflows/main-sequence-project-flow.md`.
 2. Translate the user request into a project brief, task list, and acceptance criteria.
 3. Verify authentication with `mainsequence user`, and if needed use `mainsequence login`.
    - When login needs credentials, retrieve them from system secrets named `astro-mainsequence-email` and `astro-mainsequence-password`.
    - On macOS, prefer reading them through the `security` CLI instead of asking the user again.
    - If GitHub issue escalation is part of the task, retrieve GitHub credentials only from system secrets named `astro-github-token` and, optionally, `astro-github-user`.
+   - `astro-github-token` must be the classic GitHub personal access token Astro uses for this workflow, not a fine-grained PAT.
    - Do not look for or use any other GitHub credentials, and do not require a second user confirmation before opening an upstream issue once the escalation rules are met.
    - Use the retrieved PAT directly in the REST request or place it only in a short-lived local shell variable such as `ASTRO_GITHUB_TOKEN`.
 4. Create the project with `mainsequence project create`.

@@ -18,7 +18,7 @@ For a normal user request:
    - When login needs credentials, retrieve them from system secrets named `astro-mainsequence-email` and `astro-mainsequence-password`.
    - On macOS, prefer reading them through the `security` CLI instead of asking the user again.
    - If a review or escalation task needs GitHub issue access, retrieve credentials from system secrets named `astro-github-token` and, optionally, `astro-github-user`.
-   - Prefer passing the GitHub token through `GH_TOKEN` or `GITHUB_TOKEN` only for the process that needs it.
+   - Use the retrieved PAT directly in the REST request or place it only in a short-lived local shell variable such as `ASTRO_GITHUB_TOKEN`.
 4. Create the platform project with `mainsequence project create`.
 5. Check it out locally with `mainsequence project set-up-locally`.
    - When Python or `mainsequence` commands need an isolated runtime, prefer the repo root `Dockerfile` instead of the host system Python.
@@ -34,6 +34,7 @@ For a normal user request:
 7. Call `delegate_specialist` with `mainsequence-project-coder` and set `cwd` to the target project folder so the child agent implements there.
    - The child should read the target project's `AGENTS.md` and `.agents/skills/mainsequence-project/SKILL.md` when they exist.
    - Treat those target-project files as canonical for implementation and build conventions.
+   - For disposable tutorial-review runs, use `delegate_specialist` with `rpro-builder` instead and follow the dedicated `verify-mainsequence-tutorial` workflow.
 8. When progress, blockers, or failures need review, call `delegate_specialist` with `doc-bug-auditor` and the same `cwd`.
    - Ask it to determine whether a failure is actually related to `mainsequence-sdk` execution.
    - If the evidence points to an upstream SDK bug, it should inspect the public `mainsequence-sdk` repository, search for duplicate issues, and open a new issue through GitHub REST API when warranted.
@@ -55,6 +56,7 @@ Notes:
 - do not write these values into tracked files
 - for the public `mainsequence-sdk` repo, GitHub auth is usually not needed to inspect or clone source
 - the GitHub token is mainly for duplicate-issue search and issue creation
+- `astro-github-token` must be the classic GitHub personal access token Astro should use for this workflow, not a fine-grained PAT
 - on macOS, retrieve the GitHub PAT with `security find-generic-password -a "$USER" -s astro-github-token -w`
 - if needed for reporting metadata, retrieve the optional GitHub username with `security find-generic-password -a "$USER" -s astro-github-user -w`
 - use the retrieved PAT directly in the REST request or place it only in a short-lived local shell variable such as `ASTRO_GITHUB_TOKEN`
@@ -65,11 +67,13 @@ Notes:
 ## When to use which capability
 
 - Use `delegate_specialist` with `mainsequence-project-coder` as the coding subagent inside the checked-out project.
+- Use `delegate_specialist` with `rpro-builder` for fixed-guideline or disposable tutorial-review builds.
 - Use `delegate_specialist` with `doc-bug-auditor` for structured project status review.
 - Use `web_search` for fresh Main Sequence information or external research that is not already present locally.
 - Use `fetch_content` when you need the contents of a specific external page, repo, PDF, or URL.
 - Use `refresh_docs_index` after structural or documentation changes so generated Astro context stays in sync.
 - Use `audit_recent_changes` mainly when Astro itself changed and you want to review those Astro-side edits.
+- Use the `verify-mainsequence-tutorial` prompt template or `npm run tutorial:verify` for the disposable tutorial-regression workflow that uses Playwright, tutorial-only GitHub issues, and mandatory backend cleanup.
 
 ## Boundaries
 

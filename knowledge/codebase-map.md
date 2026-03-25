@@ -4,8 +4,7 @@
 astro/
 ├── .pi/                      Project-local Pi settings and specialist definitions
 ├── config/                   Child-specialist policy and other runtime config
-├── docs/                     Project documentation
-├── tutorial/                 Teaching-oriented extension guide
+├── docs/                     Canonical Astro documentation
 ├── extensions/               Pi hooks and tools
 │   ├── docs-context/
 │   ├── project-policy/

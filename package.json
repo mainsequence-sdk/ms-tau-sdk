@@ -18,7 +18,9 @@
   "scripts": {
     "docs:index": "tsx scripts/refresh_docs_index.ts",
     "check": "tsc --noEmit -p tsconfig.json",
-    "pi": "node scripts/start_pi.mjs"
+    "pi": "node scripts/start_pi.mjs",
+    "specialist": "tsx scripts/run_specialist.ts",
+    "tutorial:verify": "tsx scripts/run_tutorial_verifier.ts"
   },
   "peerDependencies": {
     "@mariozechner/pi-agent-core": "*",

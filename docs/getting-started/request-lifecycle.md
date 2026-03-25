@@ -1,0 +1,96 @@
+# Request lifecycle
+
+This is the easiest way to understand Astro end to end.
+
+## 1. Startup
+
+Pi discovers `.pi/settings.json` and loads:
+
+- local extensions
+- local prompts
+- local skills
+- external packages such as `npm:pi-web-access`
+
+For the normal parent session, Pi also loads `.pi/APPEND_SYSTEM.md`.
+
+## 2. Before the agent starts
+
+Astro uses `before_agent_start` for runtime context shaping.
+
+Two things matter:
+
+- `docs-context` appends generated repository context
+- `project-policy` appends child-only policy when the process is a delegated specialist
+
+That means the parent prompt is mostly static, while the child behavior still gets runtime guardrails.
+
+## 3. Parent session decides what to do
+
+The parent agent reads:
+
+- the user request
+- Astro docs context
+- relevant Main Sequence docs
+
+Then it decides whether the task is:
+
+- a normal Main Sequence project workflow
+- a tutorial-verification workflow
+- an Astro-internal review task
+
+## 4. Parent session prepares the project handoff
+
+For a normal Main Sequence project, the parent:
+
+1. authenticates with `mainsequence`
+2. creates or opens the project
+3. checks it out locally
+4. writes the target project's `astro/` files:
+   - `astro/brief.md`
+   - `astro/tasks.md`
+   - `astro/record.md`
+   - `astro/status.md`
+
+## 5. Parent delegates to a specialist
+
+The parent calls `delegate_specialist`.
+
+That tool:
+
+1. discovers `.pi/agents/*.md`
+2. reads frontmatter
+3. appends shared guideline files if the specialist declares them
+4. spawns a child `pi` process
+5. streams live child progress back to the parent
+
+## 6. Child specialist runs
+
+The child process gets:
+
+- the repo context
+- the specialist prompt
+- the child-only policy
+- an optional different `cwd`, often the checked-out target project
+
+That is how Astro can run a specialist inside another project folder while keeping the parent in the Astro repo.
+
+## 7. Parent reviews and responds
+
+The parent may:
+
+- continue orchestrating
+- delegate review to `doc-bug-auditor`
+- use `audit_recent_changes` if Astro itself changed
+
+Then it returns:
+
+- project or workflow status
+- the local path
+- blockers or next actions
+
+## Read next
+
+- [`../components/extensions.md`](../components/extensions.md)
+- [`../components/agents.md`](../components/agents.md)
+- [`../workflows/main-sequence-project-flow.md`](../workflows/main-sequence-project-flow.md)
+

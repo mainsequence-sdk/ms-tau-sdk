@@ -11,6 +11,7 @@ export interface AgentConfig {
 	model?: string;
 	systemPrompt: string;
 	outputFormat?: string;
+	appendPromptFiles?: string[];
 	source: "user" | "project";
 	filePath: string;
 }
@@ -26,6 +27,39 @@ function isDirectory(candidate: string): boolean {
 	} catch {
 		return false;
 	}
+}
+
+function loadAppendedPromptFiles(filePath: string, appendPromptFiles: string | undefined): {
+	paths: string[];
+	content: string;
+} {
+	if (!appendPromptFiles?.trim()) {
+		return { paths: [], content: "" };
+	}
+
+	const baseDir = path.dirname(filePath);
+	const paths = appendPromptFiles
+		.split(",")
+		.map((value) => value.trim())
+		.filter(Boolean)
+		.map((relativePath) => path.resolve(baseDir, relativePath));
+
+	const sections: string[] = [];
+
+	for (const resolvedPath of paths) {
+		try {
+			const content = fs.readFileSync(resolvedPath, "utf8").trim();
+			if (!content) continue;
+			sections.push(`# Shared guidelines: ${path.basename(resolvedPath)}\n${content}`);
+		} catch {
+			// Ignore unreadable shared prompt files so the specialist can still load.
+		}
+	}
+
+	return {
+		paths,
+		content: sections.join("\n\n"),
+	};
 }
 
 function loadAgentsFromDir(directory: string, source: "user" | "project"): AgentConfig[] {
@@ -59,7 +93,8 @@ function loadAgentsFromDir(directory: string, source: "user" | "project"): Agent
 			.filter(Boolean);
 
 		const outputFormat = frontmatter.outputFormat?.trim();
-		let systemPrompt = body.trim();
+		const appendedPromptFiles = loadAppendedPromptFiles(filePath, frontmatter.appendPromptFiles?.trim());
+		let systemPrompt = [body.trim(), appendedPromptFiles.content].filter(Boolean).join("\n\n");
 
 		if (outputFormat) {
 			systemPrompt = `${systemPrompt}
@@ -75,6 +110,7 @@ ${outputFormat}`;
 			model: frontmatter.model?.trim() || undefined,
 			systemPrompt,
 			outputFormat,
+			appendPromptFiles: appendedPromptFiles.paths.length ? appendedPromptFiles.paths : undefined,
 			source,
 			filePath,
 		});

@@ -41,14 +41,13 @@ Rules:
   - you may clone or refresh `https://github.com/mainsequence-sdk/mainsequence-sdk` in a temporary or scratch path for source inspection
   - use that source inspection to decide whether the failure looks like upstream SDK behavior or local misuse
 - If the task includes GitHub issue escalation:
-  - retrieve GitHub credentials from the exact machine-local secrets `astro-github-token` and, optionally, `astro-github-user`
+  - retrieve GitHub credentials only from the exact machine-local secrets `astro-github-token` and, optionally, `astro-github-user`
   - on macOS, prefer reading them with `security find-generic-password -a "$USER" -s astro-github-token -w` and `security find-generic-password -a "$USER" -s astro-github-user -w`
-  - use `astro-github-token` as the required PAT for GitHub REST calls
-  - treat `astro-github-user` as optional metadata only
+  - use `astro-github-token` as the required classic PAT for GitHub REST calls
   - use the retrieved PAT directly in the REST request or place it only in a short-lived local shell variable such as `ASTRO_GITHUB_TOKEN`
   - do not ask the user for an extra confirmation before opening the issue once the escalation criteria are met
-  - do not look for, inspect, infer, or use any GitHub credentials outside those exact Astro secrets
-  - do not fall back to unrelated GitHub credentials, generic environment variables such as `GH_TOKEN` or `GITHUB_TOKEN`, local git remotes, netrc files, ssh keys, credential helpers, keychain entries with other names, or `gh auth` state when these Astro secrets are missing
+  - do not look for, inspect, infer, or use any GitHub credentials outside `astro-github-token` and optional `astro-github-user`
+  - do not fall back to unrelated GitHub credentials, generic environment variables such as `GH_TOKEN` or `GITHUB_TOKEN`, local git remotes, netrc files, ssh keys, credential helpers, keychain entries with other names, or `gh auth` state when Astro's GitHub secrets are missing
   - prefer GitHub REST API over `gh`
   - prefer `GET https://api.github.com/search/issues` for duplicate search and `POST https://api.github.com/repos/mainsequence-sdk/mainsequence-sdk/issues` for issue creation
   - search for likely duplicate issues before opening a new issue

@@ -15,6 +15,17 @@ When a user describes a project, Astro should normally:
 7. Launch `mainsequence-project-coder` in that project folder.
 8. Record the project state and review whether the requested work is finished, blocked, or failing, usually with `doc-bug-auditor`.
 
+For the dedicated tutorial-regression flow, Astro should instead:
+
+1. read the canonical upstream tutorial docs
+2. derive the SDK version from the upstream repository
+3. create a disposable project named `tutorial_review_[sdk_version]`
+4. delegate the build step to `rpro-builder`
+5. validate CLI tutorial steps first
+6. validate GUI-validatable steps second with Playwright
+7. raise only tutorial-documentation issues when the docs are stale or missing
+8. always attempt backend cleanup before finishing
+
 ## Main Sequence documented baseline
 
 Use the official `mainsequence` CLI flow where possible:
@@ -39,6 +50,7 @@ On macOS, those can be read through the `security` CLI. Astro should prefer thos
 For GitHub issue escalation, Astro should use system secret:
 
 - `astro-github-token`
+  - must be the classic GitHub personal access token Astro should use for issue creation in `mainsequence-sdk/mainsequence-sdk`
 
 Optional GitHub metadata secret:
 
@@ -49,6 +61,7 @@ Guidance:
 - treat those as machine-local secrets, not repo files
 - for the public `mainsequence-sdk` repo, cloning or reading source may not need GitHub auth
 - the GitHub token is mainly for duplicate-issue search and issue creation
+- `astro-github-token` must be a classic PAT, not a fine-grained PAT
 - on macOS, retrieve the PAT with `security find-generic-password -a "$USER" -s astro-github-token -w`
 - optionally retrieve GitHub user metadata with `security find-generic-password -a "$USER" -s astro-github-user -w`
 - use the retrieved PAT directly in the REST request or place it only in a short-lived local shell variable such as `ASTRO_GITHUB_TOKEN`
@@ -64,6 +77,7 @@ The following parts are Astro conventions layered on top of Main Sequence, not c
 
 - the `astro/` handoff folder inside the checked-out project
 - the `mainsequence-project-coder` coding subagent
+- the `rpro-builder` fixed-guideline build subagent
 - the `doc-bug-auditor` status-review subagent
 - the specific project record and status file structure below
 - the machine-local secret names used for Main Sequence login and GitHub issue escalation
@@ -106,6 +120,7 @@ If Astro uses that image, the whole host `~/mainsequence` root should be bind-mo
 
 - The parent Astro agent should orchestrate, not do most implementation work itself.
 - The coding subagent should do the main project implementation inside the target project folder.
+- `rpro-builder` should be used when a project build must always follow stable shared guidelines, especially for disposable tutorial-review runs.
 - `doc-bug-auditor` should be used for structured status review, failure analysis, upstream `mainsequence-sdk` investigation, and issue escalation when warranted.
 - `audit_recent_changes` is mainly for changes made to Astro itself, not the external project workflow.
 
@@ -119,7 +134,6 @@ When changing Astro itself, prefer editing these areas first:
 - `skills/`
 - `scripts/`
 - `docs/`
-- `tutorial/`
 
 Avoid redesigning Pi core behavior unless the extension path is genuinely blocked.
 
@@ -128,9 +142,9 @@ Avoid redesigning Pi core behavior unless the extension path is genuinely blocke
 - Default to additive changes.
 - Keep Astro's repo-local runtime in TypeScript unless a standard external Pi package already solves the problem.
 - If you change runtime wiring, also update:
-  - `docs/architecture.md`
-  - `docs/wiring-flow.md`
-  - the relevant file in `tutorial/`
+  - `docs/getting-started/request-lifecycle.md`
+  - `docs/components/extensions.md`
+  - the relevant workflow or component page under `docs/`
 - After structural changes, run:
 
 ```bash
@@ -144,7 +158,6 @@ If you are working outside the agent runtime, use `npm run docs:index` instead.
 This repo treats documentation as part of the runtime:
 
 - `knowledge/` is generated context for the agent
-- `docs/` explains the orchestration model
-- `tutorial/` explains how to extend Astro
+- `docs/` is the canonical human-readable documentation set for Astro
 
-If one changes, consider whether the other two should change too.
+If one changes, consider whether `knowledge/` should change too.

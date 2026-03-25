@@ -181,7 +181,6 @@ function scanMarkdown(repoRoot: string): MarkdownItem[] {
 
 	for (const [relativeDir, kind] of [
 		["docs", "docs"],
-		["tutorial", "tutorial"],
 		["prompts", "prompt"],
 	] as const) {
 		const baseDir = path.join(repoRoot, relativeDir);
@@ -374,8 +373,7 @@ function writeCodebaseMap(repoRoot: string, extensions: ExtensionItem[], externa
 	lines.push("# Codebase map", "", "```text", `${path.basename(repoRoot)}/`);
 	lines.push("├── .pi/                      Project-local Pi settings and specialist definitions");
 	lines.push("├── config/                   Child-specialist policy and other runtime config");
-	lines.push("├── docs/                     Project documentation");
-	lines.push("├── tutorial/                 Teaching-oriented extension guide");
+	lines.push("├── docs/                     Canonical Astro documentation");
 	lines.push("├── extensions/               Pi hooks and tools");
 	for (const item of extensions) {
 		lines.push(`│   ├── ${item.name}/`);
@@ -464,15 +462,15 @@ function writeAgentContext(
 	lines.push("", "## House rules");
 	lines.push("- Prefer additive changes over core rewrites.");
 	lines.push("- Prefer extensions, specialists, prompts, skills, and shared TypeScript helpers before invasive redesign.");
-	lines.push("- Update docs/tutorial/knowledge together when architecture changes.");
+	lines.push("- Update docs and knowledge together when architecture changes.");
 	lines.push("- Run `refresh_docs_index` or `npm run docs:index` after structural changes.");
 
-		const importantDocs = new Set([
+	const importantDocs = new Set([
 			"README.md",
-			"docs/architecture.md",
-			"docs/wiring-flow.md",
-			"docs/scope.md",
-			"tutorial/00-start-here.md",
+			"docs/README.md",
+			"docs/getting-started/pi-primer.md",
+			"docs/getting-started/request-lifecycle.md",
+			"docs/workflows/main-sequence-project-flow.md",
 	]);
 
 	lines.push("", "## Important reading");

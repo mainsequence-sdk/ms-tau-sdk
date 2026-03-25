@@ -1,89 +1,107 @@
 {
-  "generated_at": "2026-03-19T12:03:40.086Z",
+  "generated_at": "2026-03-25T20:24:08.444Z",
   "documents": [
     {
-      "path": "docs/architecture.md",
+      "path": "docs/README.md",
       "kind": "docs",
-      "title": "Architecture",
-      "description": "This repository is a Pi package that gives you a **Main Sequence project orchestration architecture** without modifying Pi core."
+      "title": "Astro docs",
+      "description": "Astro is a Pi package that acts as a parent orchestrator for Main Sequence project assistants."
     },
     {
-      "path": "docs/decisions.md",
+      "path": "docs/components/agents.md",
       "kind": "docs",
-      "title": "Decisions",
-      "description": "Implementation: - `extensions/docs-context/index.ts` - generated files in `knowledge/`"
+      "title": "Agents",
+      "description": "Astro uses project-local specialist agents defined in `.pi/agents/`."
     },
     {
-      "path": "docs/folder-structure.md",
+      "path": "docs/components/extensions.md",
       "kind": "docs",
-      "title": "Folder structure",
-      "description": ""
+      "title": "Extensions",
+      "description": "Extensions are the runtime core of Astro."
     },
     {
-      "path": "docs/main-sequence-orchestration.md",
+      "path": "docs/components/knowledge.md",
       "kind": "docs",
-      "title": "Main Sequence orchestration",
-      "description": "Astro is a parent orchestrator for Main Sequence project assistants."
+      "title": "Knowledge",
+      "description": "`knowledge/` contains generated context files used by Astro."
     },
     {
-      "path": "docs/quickstart.md",
+      "path": "docs/components/prompts.md",
       "kind": "docs",
-      "title": "Quick start",
+      "title": "Prompts",
+      "description": "Prompts in `prompts/` are reusable workflow templates."
+    },
+    {
+      "path": "docs/components/scripts-and-runtime.md",
+      "kind": "docs",
+      "title": "Scripts and runtime",
+      "description": "Astro keeps its repo-local runtime in TypeScript."
+    },
+    {
+      "path": "docs/components/settings-and-system-prompt.md",
+      "kind": "docs",
+      "title": "Settings and system prompt",
+      "description": "This page covers the Pi files that define Astro before any tool is called."
+    },
+    {
+      "path": "docs/components/skills.md",
+      "kind": "docs",
+      "title": "Skills",
+      "description": "Skills are local instruction bundles the agent can load when a task clearly matches them."
+    },
+    {
+      "path": "docs/getting-started/pi-primer.md",
+      "kind": "docs",
+      "title": "Pi primer for Astro",
+      "description": "This page explains the Pi concepts Astro uses, mapped directly to this repository."
+    },
+    {
+      "path": "docs/getting-started/quickstart.md",
+      "kind": "docs",
+      "title": "Quickstart",
       "description": "This launcher:"
     },
     {
-      "path": "docs/scope.md",
+      "path": "docs/getting-started/request-lifecycle.md",
+      "kind": "docs",
+      "title": "Request lifecycle",
+      "description": "This is the easiest way to understand Astro end to end."
+    },
+    {
+      "path": "docs/reference/decisions.md",
+      "kind": "docs",
+      "title": "Decisions",
+      "description": "Implementation:"
+    },
+    {
+      "path": "docs/reference/folder-structure.md",
+      "kind": "docs",
+      "title": "Folder structure",
+      "description": "Project-local Pi settings, parent prompt, and specialist prompts."
+    },
+    {
+      "path": "docs/reference/scope.md",
       "kind": "docs",
       "title": "Scope",
-      "description": "- Main Sequence project orchestration flow - actual specialist delegation wiring - generated documentation context - static parent prompt plus child-specialist policy injection..."
+      "description": "- Main Sequence project orchestration - project-local specialist delegation - generated repo context - static parent prompt plus child-only policy - reusable workflow prompts -..."
     },
     {
-      "path": "docs/typescript-runtime.md",
+      "path": "docs/reserach_guide/research_guide.md",
       "kind": "docs",
-      "title": "TypeScript runtime",
-      "description": "Astro's repo-local runtime is now TypeScript-only."
+      "title": "research_guide",
+      "description": ""
     },
     {
-      "path": "docs/wiring-flow.md",
+      "path": "docs/workflows/main-sequence-project-flow.md",
       "kind": "docs",
-      "title": "Wiring flow",
-      "description": "This is the concrete flow implemented in Astro."
+      "title": "Main Sequence project flow",
+      "description": "This is Astro's default workflow."
     },
     {
-      "path": "tutorial/00-start-here.md",
-      "kind": "tutorial",
-      "title": "Start here",
-      "description": "This repository is both:"
-    },
-    {
-      "path": "tutorial/01-what-loads-when.md",
-      "kind": "tutorial",
-      "title": "What loads when",
-      "description": "Pi discovers `.pi/settings.json` in the repo and uses it to load the repo root package."
-    },
-    {
-      "path": "tutorial/02-before-agent-start.md",
-      "kind": "tutorial",
-      "title": "`before_agent_start`",
-      "description": "This starter uses `before_agent_start` for two things:"
-    },
-    {
-      "path": "tutorial/03-specialists-and-routing.md",
-      "kind": "tutorial",
-      "title": "Specialists and routing",
-      "description": "A specialist is a markdown file in `.pi/agents/` with frontmatter and a prompt body."
-    },
-    {
-      "path": "tutorial/04-agent-files-and-frontmatter.md",
-      "kind": "tutorial",
-      "title": "Agent files and frontmatter",
-      "description": "Each specialist is a markdown file."
-    },
-    {
-      "path": "tutorial/05-typescript-runtime.md",
-      "kind": "tutorial",
-      "title": "TypeScript runtime",
-      "description": "Pi extensions are TypeScript entry points, and Astro's remaining repo-local logic is simple enough that a second runtime would just add friction."
+      "path": "docs/workflows/tutorial-verification.md",
+      "kind": "docs",
+      "title": "Tutorial verification",
+      "description": "This is Astro's fixed regression workflow for the official Main Sequence tutorials."
     },
     {
       "path": "prompts/design-and-audit.md",
@@ -98,6 +116,12 @@
       "description": "Create or update a Main Sequence project, prepare Astro handoff files, and launch the coding subagent."
     },
     {
+      "path": "prompts/verify-mainsequence-tutorial.md",
+      "kind": "prompt",
+      "title": "verify-mainsequence-tutorial",
+      "description": "Verify the official Main Sequence CLI and GUI tutorials against a disposable tutorial review project."
+    },
+    {
       "path": "skills/extension-builder/SKILL.md",
       "kind": "skill",
       "title": "extension-builder",
@@ -107,7 +131,7 @@
       "path": "skills/repo-docs/SKILL.md",
       "kind": "skill",
       "title": "repo-docs",
-      "description": "Deep instructions for navigating and updating this repository's docs, tutorial, and generated knowledge files."
+      "description": "Deep instructions for navigating and updating this repository's docs and generated knowledge files."
     },
     {
       "path": ".pi/agents/doc-bug-auditor.md",
@@ -122,10 +146,16 @@
       "description": "Implements tasks inside a checked-out Main Sequence project"
     },
     {
+      "path": ".pi/agents/rpro-builder.md",
+      "kind": "specialist",
+      "title": "rpro-builder",
+      "description": "Builds disposable Main Sequence projects from fixed Astro guidelines"
+    },
+    {
       "path": "README.md",
       "kind": "root",
       "title": "Astro",
-      "description": "Astro is a parent orchestrator for Main Sequence project assistants. It turns user intent into a concrete Main Sequence project, prepares handoff files in the checked-out projec..."
+      "description": "Astro is a Pi package that acts as a parent orchestrator for Main Sequence project assistants."
     },
     {
       "path": "AGENTS.md",
@@ -148,6 +178,13 @@
       "tools": "read, grep, find, ls, bash, edit, write",
       "model": "",
       "path": ".pi/agents/mainsequence-project-coder.md"
+    },
+    {
+      "name": "rpro-builder",
+      "description": "Builds disposable Main Sequence projects from fixed Astro guidelines",
+      "tools": "read, grep, find, ls, bash, edit, write",
+      "model": "",
+      "path": ".pi/agents/rpro-builder.md"
     }
   ],
   "extensions": [

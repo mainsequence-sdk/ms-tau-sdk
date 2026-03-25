@@ -15,6 +15,7 @@ This repository is a Pi package that teaches and implements a Main Sequence proj
 ## Specialists
 - doc-bug-auditor: Reviews a Main Sequence project for status, blockers, failures, and completion | tools: read, grep, find, ls, bash
 - mainsequence-project-coder: Implements tasks inside a checked-out Main Sequence project | tools: read, grep, find, ls, bash, edit, write
+- rpro-builder: Builds disposable Main Sequence projects from fixed Astro guidelines | tools: read, grep, find, ls, bash, edit, write
 
 ## Registered extension tools
 - docs-context: refresh_docs_index
@@ -28,12 +29,12 @@ This repository is a Pi package that teaches and implements a Main Sequence proj
 ## House rules
 - Prefer additive changes over core rewrites.
 - Prefer extensions, specialists, prompts, skills, and shared TypeScript helpers before invasive redesign.
-- Update docs/tutorial/knowledge together when architecture changes.
+- Update docs and knowledge together when architecture changes.
 - Run `refresh_docs_index` or `npm run docs:index` after structural changes.
 
 ## Important reading
-- `docs/architecture.md` — Architecture
-- `docs/scope.md` — Scope
-- `docs/wiring-flow.md` — Wiring flow
-- `tutorial/00-start-here.md` — Start here
+- `docs/README.md` — Astro docs
+- `docs/getting-started/pi-primer.md` — Pi primer for Astro
+- `docs/getting-started/request-lifecycle.md` — Request lifecycle
+- `docs/workflows/main-sequence-project-flow.md` — Main Sequence project flow
 - `README.md` — Astro

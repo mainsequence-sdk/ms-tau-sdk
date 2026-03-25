@@ -13,8 +13,9 @@ const KNOWLEDGE_CANDIDATES = [
 
 const FALLBACK_DOCS = [
 	"README.md",
-	"docs/architecture.md",
-	"docs/wiring-flow.md",
+	"docs/README.md",
+	"docs/getting-started/request-lifecycle.md",
+	"docs/workflows/main-sequence-project-flow.md",
 	"AGENTS.md",
 ];
 
