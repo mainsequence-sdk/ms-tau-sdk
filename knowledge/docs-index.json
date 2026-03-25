@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-03-25T20:24:08.444Z",
+  "generated_at": "2026-03-25T20:28:34.029Z",
   "documents": [
     {
       "path": "docs/README.md",
@@ -88,8 +88,8 @@
     {
       "path": "docs/reserach_guide/research_guide.md",
       "kind": "docs",
-      "title": "research_guide",
-      "description": ""
+      "title": "Research guide",
+      "description": "We want a repeatable way to identify the cheapest coding agent that can complete a code-generation task at an acceptable quality level."
     },
     {
       "path": "docs/workflows/main-sequence-project-flow.md",

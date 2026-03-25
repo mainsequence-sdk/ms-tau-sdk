@@ -1,6 +1,6 @@
 # Documentation index
 
-Generated at: 2026-03-25T20:24:08.444Z
+Generated at: 2026-03-25T20:28:34.029Z
 
 ## Documents
 - `docs/README.md` — **Astro docs**: Astro is a Pi package that acts as a parent orchestrator for Main Sequence project assistants.
@@ -17,7 +17,7 @@ Generated at: 2026-03-25T20:24:08.444Z
 - `docs/reference/decisions.md` — **Decisions**: Implementation:
 - `docs/reference/folder-structure.md` — **Folder structure**: Project-local Pi settings, parent prompt, and specialist prompts.
 - `docs/reference/scope.md` — **Scope**: - Main Sequence project orchestration - project-local specialist delegation - generated repo context - static parent prompt plus child-only policy - reusable workflow prompts -...
-- `docs/reserach_guide/research_guide.md` — **research_guide**: 
+- `docs/reserach_guide/research_guide.md` — **Research guide**: We want a repeatable way to identify the cheapest coding agent that can complete a code-generation task at an acceptable quality level.
 - `docs/workflows/main-sequence-project-flow.md` — **Main Sequence project flow**: This is Astro's default workflow.
 - `docs/workflows/tutorial-verification.md` — **Tutorial verification**: This is Astro's fixed regression workflow for the official Main Sequence tutorials.
 - `prompts/design-and-audit.md` — **review-main-sequence-project**: Review a checked-out Main Sequence project and report whether work is finished, blocked, or failing.

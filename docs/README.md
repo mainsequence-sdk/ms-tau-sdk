@@ -100,6 +100,7 @@ flowchart LR
 - [`reference/folder-structure.md`](./reference/folder-structure.md)
 - [`reference/decisions.md`](./reference/decisions.md)
 - [`reference/scope.md`](./reference/scope.md)
+- [`reserach_guide/research_guide.md`](./reserach_guide/research_guide.md)
 
 ## Generated context
 
