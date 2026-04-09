@@ -1,6 +1,6 @@
 # Documentation index
 
-Generated at: 2026-03-25T20:28:34.029Z
+Generated at: 2026-03-31T09:34:47.075Z
 
 ## Documents
 - `docs/README.md` — **Astro docs**: Astro is a Pi package that acts as a parent orchestrator for Main Sequence project assistants.
@@ -43,4 +43,4 @@ Generated at: 2026-03-25T20:28:34.029Z
 - `specialist-delegate` — tools: delegate_specialist
 
 ## External runtime packages
-- `pi-web-access` — Web search, URL fetching, GitHub repo cloning, PDF extraction, YouTube video understanding, and local video analysis for Pi coding agent | tools: fetch_content, get_search_content, web_search | installed (0.10.3)
+- `pi-web-access` — Web search, URL fetching, GitHub repo cloning, PDF extraction, YouTube video understanding, and local video analysis for Pi coding agent | tools: code_search, fetch_content, get_search_content, web_search | installed (0.10.4)

@@ -24,7 +24,7 @@ This repository is a Pi package that teaches and implements a Main Sequence proj
 - specialist-delegate: delegate_specialist
 
 ## External runtime packages
-- pi-web-access: fetch_content, get_search_content, web_search | installed (0.10.3)
+- pi-web-access: code_search, fetch_content, get_search_content, web_search | installed (0.10.4)
 
 ## House rules
 - Prefer additive changes over core rewrites.

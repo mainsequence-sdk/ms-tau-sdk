@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-03-25T20:28:34.029Z",
+  "generated_at": "2026-03-31T09:34:47.075Z",
   "documents": [
     {
       "path": "docs/README.md",
@@ -222,9 +222,10 @@
       "ref": "npm:pi-web-access",
       "path": ".pi/npm/node_modules/pi-web-access",
       "description": "Web search, URL fetching, GitHub repo cloning, PDF extraction, YouTube video understanding, and local video analysis for Pi coding agent",
-      "version": "0.10.3",
+      "version": "0.10.4",
       "installed": true,
       "tools": [
+        "code_search",
         "fetch_content",
         "get_search_content",
         "web_search"

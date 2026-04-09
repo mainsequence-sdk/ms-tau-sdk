@@ -18,7 +18,7 @@ astro/
 ```
 
 ## External Pi packages
-- `pi-web-access` — tools: fetch_content, get_search_content, web_search
+- `pi-web-access` — tools: code_search, fetch_content, get_search_content, web_search
 
 ## Runtime flow
 
