@@ -8,7 +8,6 @@ Astro's runtime lives in:
 
 - `extensions/*/index.ts`
 - `extensions/shared/*`
-- `scripts/refresh_docs_index.ts`
 - `scripts/run_tutorial_verifier.ts`
 - `scripts/start_pi.mjs`
 
@@ -23,10 +22,6 @@ Astro's runtime lives in:
 ### `scripts/start_pi.mjs`
 
 Starts Astro through the local package setup.
-
-### `scripts/refresh_docs_index.ts`
-
-Refreshes the generated `knowledge/` files.
 
 ### `scripts/run_tutorial_verifier.ts`
 
@@ -48,4 +43,3 @@ That lets Astro avoid depending on the host system Python for Main Sequence oper
 
 - [`knowledge.md`](./knowledge.md)
 - [`../workflows/tutorial-verification.md`](../workflows/tutorial-verification.md)
-

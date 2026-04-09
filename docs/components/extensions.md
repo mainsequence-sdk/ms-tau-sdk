@@ -6,18 +6,6 @@ They live under `extensions/` and are where Astro registers hooks and tools.
 
 ## Current extensions
 
-### `docs-context`
-
-Purpose:
-
-- append generated repository context at `before_agent_start`
-- register `refresh_docs_index`
-
-Why it exists:
-
-- keeps fast repo context available to both parent and child processes
-- avoids copying repo explanations into every specialist prompt
-
 ### `project-policy`
 
 Purpose:
@@ -69,4 +57,3 @@ Astro uses it to:
 - [`settings-and-system-prompt.md`](./settings-and-system-prompt.md)
 - [`agents.md`](./agents.md)
 - [`../getting-started/request-lifecycle.md`](../getting-started/request-lifecycle.md)
-

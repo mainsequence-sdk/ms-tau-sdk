@@ -80,9 +80,6 @@ function main() {
 		run("pi", ["install", "npm:pi-web-access", "-l"]);
 	}
 
-	console.log("[astro] Refreshing generated repo context...");
-	run("npm", ["run", "docs:index"]);
-
 	console.log("[astro] Running TypeScript check...");
 	run("npm", ["run", "check"]);
 

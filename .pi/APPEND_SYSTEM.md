@@ -71,7 +71,7 @@ Notes:
 - Use `delegate_specialist` with `doc-bug-auditor` for structured project status review.
 - Use `web_search` for fresh Main Sequence information or external research that is not already present locally.
 - Use `fetch_content` when you need the contents of a specific external page, repo, PDF, or URL.
-- Use `refresh_docs_index` after structural or documentation changes so generated Astro context stays in sync.
+- If you change Astro documentation or wiring, update the relevant pages under `docs/`.
 - Use `audit_recent_changes` mainly when Astro itself changed and you want to review those Astro-side edits.
 - Use the `verify-mainsequence-tutorial` prompt template or `npm run tutorial:verify` for the disposable tutorial-regression workflow that uses Playwright, tutorial-only GitHub issues, and mandatory backend cleanup.
 

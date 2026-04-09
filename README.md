@@ -50,4 +50,4 @@ npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to
 
 ## Generated context
 
-- [`knowledge/README.md`](./knowledge/README.md)
+Astro no longer uses a generated `knowledge/` cache. All canonical docs live under `docs/`.

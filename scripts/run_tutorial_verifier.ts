@@ -101,9 +101,6 @@ function main() {
 	const template = readFileSync(promptTemplatePath, "utf8");
 	const prompt = expandTemplate(stripFrontmatter(template), extraArgs);
 
-	console.log("[astro] Refreshing generated repo context...");
-	run("npm", ["run", "docs:index"]);
-
 	console.log("[astro] Running TypeScript check...");
 	run("npm", ["run", "check"]);
 

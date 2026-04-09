@@ -60,20 +60,7 @@ Why:
 
 - Astro should not duplicate generic web capabilities locally when a maintained package already exists
 
-## 6. Use generated knowledge instead of repeating repo explanations
-
-Implementation:
-
-- `knowledge/`
-- `extensions/docs-context/index.ts`
-- `extensions/shared/docsIndex.ts`
-
-Why:
-
-- the parent and child both need fast repo context
-- generated summaries are cheaper than stuffing long explanations into every prompt
-
-## 7. Keep tutorial verification as a parent workflow
+## 6. Keep tutorial verification as a parent workflow
 
 Implementation:
 
@@ -85,3 +72,13 @@ Why:
 - it is a fixed CI-shaped workflow
 - the build step belongs in a specialist, but the overall verification logic belongs to the parent
 
+## 7. Do not auto-inject docs into agent context
+
+Implementation:
+
+- `docs-context` extension removed
+
+Why:
+
+- the agent already has role instructions in `.pi/APPEND_SYSTEM.md` and `.pi/agents/*.md`
+- user-facing docs should not be mixed into the agent prompt by default

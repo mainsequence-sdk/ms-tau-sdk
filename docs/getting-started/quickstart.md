@@ -42,17 +42,9 @@ npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to
 
 ```bash
 pi install npm:pi-web-access -l
-npm run docs:index
 npm run check
 pi
 ```
-
-`npm run docs:index` refreshes:
-
-- `knowledge/docs-index.json`
-- `knowledge/docs-index.md`
-- `knowledge/codebase-map.md`
-- `knowledge/agent-context.md`
 
 ## Python and Main Sequence runtime
 

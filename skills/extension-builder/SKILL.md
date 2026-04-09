@@ -11,7 +11,7 @@ Use this skill when adding new capabilities to the starter.
 2. Register a tool with `pi.registerTool(...)`
 3. Put reusable helper logic in `extensions/shared/` if the tool needs shared TypeScript utilities
 4. Update the relevant pages under `docs/`
-5. Run `refresh_docs_index` or `npm run docs:index`
+5. Run `npm run check`
 
 ## Add a new specialist
 
@@ -23,7 +23,7 @@ Use this skill when adding new capabilities to the starter.
    - optional `model`
 3. Update `.pi/APPEND_SYSTEM.md` if the parent agent should route to it
 4. Update the relevant component or workflow docs under `docs/`
-5. Run `refresh_docs_index` or `npm run docs:index`
+5. Run `npm run check`
 
 ## Add a reusable workflow
 

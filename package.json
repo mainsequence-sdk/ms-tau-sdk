@@ -16,7 +16,6 @@
     "node": ">=20"
   },
   "scripts": {
-    "docs:index": "tsx scripts/refresh_docs_index.ts",
     "check": "tsc --noEmit -p tsconfig.json",
     "pi": "node scripts/start_pi.mjs",
     "specialist": "tsx scripts/run_specialist.ts",

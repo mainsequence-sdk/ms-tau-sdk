@@ -16,14 +16,13 @@ astro/
 │   ├── getting-started/
 │   ├── components/
 │   ├── workflows/
-│   └── reference/
+│   ├── reference/
+│   └── reserach_guide/
 ├── extensions/
-│   ├── docs-context/
 │   ├── project-policy/
 │   ├── specialist-delegate/
 │   ├── recent-changes/
 │   └── shared/
-├── knowledge/
 ├── prompts/
 ├── scripts/
 ├── skills/
@@ -53,10 +52,6 @@ Canonical human-readable documentation for Astro.
 
 Astro's custom Pi hooks, tools, and shared TypeScript helpers.
 
-### `knowledge/`
-
-Generated context files used by the agent.
-
 ### `prompts/`
 
 Reusable workflow prompts for the parent agent.
@@ -72,4 +67,3 @@ Optional deep instruction bundles the agent can load when needed.
 ### `Dockerfile`
 
 Optional Python 3.11 runtime for `mainsequence` and related Python tasks.
-

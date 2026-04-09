@@ -1,45 +1,18 @@
 # Knowledge
 
-`knowledge/` contains generated context files used by Astro.
+Astro no longer uses a generated `knowledge/` cache.
 
-These files are outputs, not the primary source of truth.
+The canonical source of truth is the human-written `docs/` tree.
 
-## Generated files
+## Why this change
 
-- `knowledge/docs-index.json`
-- `knowledge/docs-index.md`
-- `knowledge/codebase-map.md`
-- `knowledge/agent-context.md`
+The extra generated context layer did not add enough value and often pulled in user-facing onboarding docs that should not be fed into the agent at runtime.
 
-## Why this exists
+## What to use instead
 
-Generated knowledge lets Astro load:
+If you need context, use:
 
-- a fast map of the repo
-- a summary of important documentation
-- a compact list of specialists and extension tools
-
-without rereading every source file manually each time.
-
-## How to refresh it
-
-Use either:
-
-- `refresh_docs_index` from inside Astro
-- `npm run docs:index` from the command line
-
-Both paths use the same TypeScript implementation in `extensions/shared/docsIndex.ts`.
-
-## Editorial rule
-
-Human-readable docs live in `docs/`.
-
-Generated summaries live in `knowledge/`.
-
-Do not edit generated files as if they were canonical documentation.
-
-## Related pages
-
-- [`scripts-and-runtime.md`](./scripts-and-runtime.md)
-- [`../reference/folder-structure.md`](../reference/folder-structure.md)
-
+- `docs/README.md`
+- the relevant component or workflow pages under `docs/`
+- `.pi/APPEND_SYSTEM.md` for the parent prompt
+- `.pi/agents/*.md` for specialist behavior

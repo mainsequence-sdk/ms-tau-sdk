@@ -39,12 +39,10 @@ flowchart LR
     SET --> EXT["Extensions"]
     SET --> PKG["External packages"]
 
-    EXT --> DC["docs-context"]
     EXT --> PP["project-policy"]
     EXT --> SD["specialist-delegate"]
     EXT --> RC["recent-changes"]
 
-    P --> KNOW["knowledge/"]
     P --> PROMPTS["prompts/"]
     P --> AGENTS[".pi/agents/"]
     P --> CLI["mainsequence CLI"]
@@ -86,7 +84,7 @@ flowchart LR
 - [`components/skills.md`](./components/skills.md)
   - repo-local skills in `skills/`
 - [`components/knowledge.md`](./components/knowledge.md)
-  - generated context files in `knowledge/`
+  - why `knowledge/` was removed and what replaces it
 - [`components/scripts-and-runtime.md`](./components/scripts-and-runtime.md)
   - scripts, TypeScript runtime, and Docker-backed Python path
 
@@ -104,4 +102,4 @@ flowchart LR
 
 ## Generated context
 
-- [`../knowledge/README.md`](../knowledge/README.md)
+Astro no longer uses a generated `knowledge/` cache. All canonical documentation lives under `docs/`.

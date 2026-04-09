@@ -15,14 +15,11 @@ For the normal parent session, Pi also loads `.pi/APPEND_SYSTEM.md`.
 
 ## 2. Before the agent starts
 
-Astro uses `before_agent_start` for runtime context shaping.
+Astro keeps the parent prompt static and avoids auto-injecting repo docs into the agent context.
 
-Two things matter:
+The only runtime policy injection that remains is for child specialists:
 
-- `docs-context` appends generated repository context
 - `project-policy` appends child-only policy when the process is a delegated specialist
-
-That means the parent prompt is mostly static, while the child behavior still gets runtime guardrails.
 
 ## 3. Parent session decides what to do
 
@@ -93,4 +90,3 @@ Then it returns:
 - [`../components/extensions.md`](../components/extensions.md)
 - [`../components/agents.md`](../components/agents.md)
 - [`../workflows/main-sequence-project-flow.md`](../workflows/main-sequence-project-flow.md)
-

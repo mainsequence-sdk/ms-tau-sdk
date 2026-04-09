@@ -59,10 +59,6 @@ They are useful when a task is repeatable but does not need a new extension.
 
 Skills in `skills/` are deeper instruction bundles the agent can load when relevant.
 
-### Knowledge
-
-`knowledge/` contains generated summaries of the repo so Astro does not have to rediscover the whole repository each time.
-
 ### External packages
 
 Astro uses `npm:pi-web-access` instead of maintaining a local web wrapper.
@@ -92,4 +88,3 @@ The child specialists handle:
 - [`request-lifecycle.md`](./request-lifecycle.md)
 - [`../components/settings-and-system-prompt.md`](../components/settings-and-system-prompt.md)
 - [`../components/extensions.md`](../components/extensions.md)
-

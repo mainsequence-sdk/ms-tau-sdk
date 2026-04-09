@@ -148,16 +148,13 @@ Avoid redesigning Pi core behavior unless the extension path is genuinely blocke
 - After structural changes, run:
 
 ```bash
-refresh_docs_index
+npm run check
 ```
-
-If you are working outside the agent runtime, use `npm run docs:index` instead.
 
 ## Documentation discipline
 
 This repo treats documentation as part of the runtime:
 
-- `knowledge/` is generated context for the agent
 - `docs/` is the canonical human-readable documentation set for Astro
 
-If one changes, consider whether `knowledge/` should change too.
+If one changes, consider whether related docs should be updated too.
