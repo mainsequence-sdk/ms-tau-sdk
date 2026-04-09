@@ -30,13 +30,13 @@
   },
   "pi": {
     "extensions": [
-      "./extensions"
+      "./pi/extensions"
     ],
     "prompts": [
-      "./prompts"
+      "./pi/prompts"
     ],
     "skills": [
-      "./skills"
+      "./pi/skills"
     ]
   },
   "devDependencies": {

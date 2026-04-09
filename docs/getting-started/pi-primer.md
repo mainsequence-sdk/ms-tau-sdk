@@ -12,7 +12,6 @@ Astro does not modify Pi core. It shapes Pi from the outside using:
 - specialist prompt files
 - reusable prompt templates
 - skills
-- generated context
 - external Pi packages
 
 ## The main Pi pieces in this repo
@@ -34,7 +33,7 @@ It tells the default Pi session to behave as the Main Sequence orchestrator.
 
 ### Extensions
 
-Extensions live under `extensions/` and do two jobs:
+Extensions live under `pi/extensions/` and do two jobs:
 
 - register custom tools
 - hook into agent lifecycle events such as `before_agent_start`
@@ -51,13 +50,13 @@ Astro currently uses:
 
 ### Prompt templates
 
-Prompt templates in `prompts/` are reusable workflows the parent can follow.
+Prompt templates in `pi/prompts/` are reusable workflows the parent can follow.
 
 They are useful when a task is repeatable but does not need a new extension.
 
 ### Skills
 
-Skills in `skills/` are deeper instruction bundles the agent can load when relevant.
+Skills in `pi/skills/` are deeper instruction bundles the agent can load when relevant.
 
 ### External packages
 

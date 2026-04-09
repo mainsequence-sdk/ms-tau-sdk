@@ -81,11 +81,11 @@ Notes:
 - Prefer the checked-out project's `astro/` files as the handoff contract before relying on free-form prompts alone.
 - Prefer these places for new Astro behavior:
 
-- `extensions/` for hooks, tools, and orchestration
+- `pi/extensions/` for hooks, tools, and orchestration
 - `.pi/agents/` for specialist prompts
-- `extensions/shared/` for shared TypeScript helpers
-- `prompts/` for reusable workflows
-- `skills/` for deep optional instructions
+- `pi/extensions/shared/` for shared TypeScript helpers
+- `pi/prompts/` for reusable workflows
+- `pi/skills/` for deep optional instructions
 
 Avoid Pi core changes unless the extension route is truly blocked.
 

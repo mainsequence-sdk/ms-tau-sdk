@@ -9,7 +9,7 @@
     "noEmit": true
   },
   "include": [
-    "extensions/**/*.ts",
+    "pi/extensions/**/*.ts",
     "scripts/**/*.ts",
     "types/**/*.d.ts"
   ]

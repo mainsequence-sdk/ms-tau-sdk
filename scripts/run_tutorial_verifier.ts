@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
-const promptTemplatePath = path.join(repoRoot, "prompts", "verify-mainsequence-tutorial.md");
+const promptTemplatePath = path.join(repoRoot, "pi", "prompts", "verify-mainsequence-tutorial.md");
 
 function fail(message: string): never {
 	console.error(`\n[astro] ${message}`);

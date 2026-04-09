@@ -128,10 +128,10 @@ If Astro uses that image, the whole host `~/mainsequence` root should be bind-mo
 
 When changing Astro itself, prefer editing these areas first:
 
-- `extensions/`
+- `pi/extensions/`
 - `.pi/agents/`
-- `prompts/`
-- `skills/`
+- `pi/prompts/`
+- `pi/skills/`
 - `scripts/`
 - `docs/`
 

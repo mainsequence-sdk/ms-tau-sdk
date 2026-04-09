@@ -6,8 +6,8 @@ Astro keeps its repo-local runtime in TypeScript.
 
 Astro's runtime lives in:
 
-- `extensions/*/index.ts`
-- `extensions/shared/*`
+- `pi/extensions/*/index.ts`
+- `pi/extensions/shared/*`
 - `scripts/run_tutorial_verifier.ts`
 - `scripts/start_pi.mjs`
 

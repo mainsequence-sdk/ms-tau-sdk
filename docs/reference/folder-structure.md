@@ -18,14 +18,11 @@ astro/
 │   ├── workflows/
 │   ├── reference/
 │   └── reserach_guide/
-├── extensions/
-│   ├── project-policy/
-│   ├── specialist-delegate/
-│   ├── recent-changes/
-│   └── shared/
-├── prompts/
+├── pi/
+│   ├── extensions/
+│   ├── prompts/
+│   └── skills/
 ├── scripts/
-├── skills/
 ├── AGENTS.md
 ├── Dockerfile
 ├── README.md
@@ -48,21 +45,13 @@ Human-readable runtime configuration and shared specialist guideline files.
 
 Canonical human-readable documentation for Astro.
 
-### `extensions/`
+### `pi/`
 
-Astro's custom Pi hooks, tools, and shared TypeScript helpers.
-
-### `prompts/`
-
-Reusable workflow prompts for the parent agent.
+Pi package content registered in `package.json`, including extensions, prompts, and skills. Shared helpers live under `pi/extensions/shared/`.
 
 ### `scripts/`
 
-Command-line helpers for launching Astro and refreshing generated context.
-
-### `skills/`
-
-Optional deep instruction bundles the agent can load when needed.
+Command-line helpers for launching Astro and running dedicated workflows.
 
 ### `Dockerfile`
 

@@ -1,12 +1,12 @@
 # Prompts
 
-Prompts in `prompts/` are reusable workflow templates.
+Prompts in `pi/prompts/` are reusable workflow templates.
 
 They are for repeatable parent-agent behavior that does not need a new extension.
 
 ## Current prompt templates
 
-### `implement-additive.md`
+### `pi/prompts/implement-additive.md`
 
 Purpose:
 
@@ -19,7 +19,7 @@ This is the parent workflow for:
 - `astro/` handoff files
 - delegation to `mainsequence-project-coder`
 
-### `design-and-audit.md`
+### `pi/prompts/design-and-audit.md`
 
 Purpose:
 
@@ -27,7 +27,7 @@ Purpose:
 
 This is the structured review path for status, blockers, and completion.
 
-### `verify-mainsequence-tutorial.md`
+### `pi/prompts/verify-mainsequence-tutorial.md`
 
 Purpose:
 
@@ -54,4 +54,3 @@ Prompts and specialists solve different problems:
 
 - [`agents.md`](./agents.md)
 - [`../workflows/tutorial-verification.md`](../workflows/tutorial-verification.md)
-

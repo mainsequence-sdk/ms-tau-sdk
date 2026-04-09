@@ -43,7 +43,7 @@ flowchart LR
     EXT --> SD["specialist-delegate"]
     EXT --> RC["recent-changes"]
 
-    P --> PROMPTS["prompts/"]
+    P --> PROMPTS["pi/prompts/"]
     P --> AGENTS[".pi/agents/"]
     P --> CLI["mainsequence CLI"]
 
@@ -76,13 +76,13 @@ flowchart LR
 - [`components/settings-and-system-prompt.md`](./components/settings-and-system-prompt.md)
   - `.pi/settings.json`, `.pi/APPEND_SYSTEM.md`, and child policy
 - [`components/extensions.md`](./components/extensions.md)
-  - custom hooks and tools
+  - custom hooks and tools in `pi/extensions/`
 - [`components/agents.md`](./components/agents.md)
   - specialist files in `.pi/agents/`
 - [`components/prompts.md`](./components/prompts.md)
-  - reusable workflow prompts in `prompts/`
+  - reusable workflow prompts in `pi/prompts/`
 - [`components/skills.md`](./components/skills.md)
-  - repo-local skills in `skills/`
+  - repo-local skills in `pi/skills/`
 - [`components/knowledge.md`](./components/knowledge.md)
   - why `knowledge/` was removed and what replaces it
 - [`components/scripts-and-runtime.md`](./components/scripts-and-runtime.md)

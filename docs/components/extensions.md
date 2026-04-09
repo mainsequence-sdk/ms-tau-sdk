@@ -2,7 +2,7 @@
 
 Extensions are the runtime core of Astro.
 
-They live under `extensions/` and are where Astro registers hooks and tools.
+They live under `pi/extensions/` and are where Astro registers hooks and tools.
 
 ## Current extensions
 
@@ -49,7 +49,6 @@ The most important hook in this repo is `before_agent_start`.
 
 Astro uses it to:
 
-- append generated docs context
 - append child-only policy for delegated specialists
 
 ## Related pages

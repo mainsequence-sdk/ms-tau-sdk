@@ -7,9 +7,9 @@ Use this skill when adding new capabilities to the starter.
 
 ## Add a new tool
 
-1. Create `extensions/<tool-name>/index.ts`
+1. Create `pi/extensions/<tool-name>/index.ts`
 2. Register a tool with `pi.registerTool(...)`
-3. Put reusable helper logic in `extensions/shared/` if the tool needs shared TypeScript utilities
+3. Put reusable helper logic in `pi/extensions/shared/` if the tool needs shared TypeScript utilities
 4. Update the relevant pages under `docs/`
 5. Run `npm run check`
 
@@ -27,4 +27,4 @@ Use this skill when adding new capabilities to the starter.
 
 ## Add a reusable workflow
 
-Use `prompts/` when the main agent should follow a repeatable multi-step pattern but you do not need a new runtime hook.
+Use `pi/prompts/` when the main agent should follow a repeatable multi-step pattern but you do not need a new runtime hook.

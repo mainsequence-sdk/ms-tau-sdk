@@ -6,7 +6,7 @@ In this repo, skills are not the main runtime mechanism. They are optional deepe
 
 ## Repo-local skills
 
-### `skills/extension-builder/SKILL.md`
+### `pi/skills/extension-builder/SKILL.md`
 
 Use when:
 
@@ -14,13 +14,13 @@ Use when:
 - adding a new specialist
 - adding a new reusable prompt
 
-### `skills/repo-docs/SKILL.md`
+### `pi/skills/repo-docs/SKILL.md`
 
 Use when:
 
 - updating the documentation system
-- changing generated knowledge inputs
-- keeping docs and generated context in sync
+- changing the documentation layout or navigation
+- keeping docs and runtime wiring in sync
 
 ## How skills fit into Astro
 
@@ -29,7 +29,7 @@ Astro primarily depends on:
 - system prompts
 - extensions
 - specialists
-- generated context
+- prompt templates
 
 Skills are there for deeper task-specific guidance, not for the always-on architecture.
 
@@ -37,4 +37,3 @@ Skills are there for deeper task-specific guidance, not for the always-on archit
 
 - [`knowledge.md`](./knowledge.md)
 - [`prompts.md`](./prompts.md)
-

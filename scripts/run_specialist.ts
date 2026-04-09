@@ -2,8 +2,8 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
-import { discoverAgents, type AgentConfig } from "../extensions/specialist-delegate/agents.js";
-import { findRepoRoot } from "../extensions/shared/repo.js";
+import { discoverAgents, type AgentConfig } from "../pi/extensions/specialist-delegate/agents.js";
+import { findRepoRoot } from "../pi/extensions/shared/repo.js";
 
 interface ParsedArgs {
 	agentName: string;

@@ -1,6 +1,6 @@
 ---
 name: repo-docs
-description: Deep instructions for navigating and updating this repository's docs and generated knowledge files.
+description: Deep instructions for navigating and updating this repository's docs and runtime wiring.
 ---
 
 Use this skill when the task depends on understanding how the repository documents itself.
@@ -8,7 +8,7 @@ Use this skill when the task depends on understanding how the repository documen
 ## Documentation layers
 
 - `docs/` is the canonical documentation set for architecture, components, workflows, and reference material.
- - `AGENTS.md` gives project rules for contributors and coding agents.
+- `AGENTS.md` gives project rules for contributors and coding agents.
 
 ## Update rule
 

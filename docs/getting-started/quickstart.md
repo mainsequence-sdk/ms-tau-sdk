@@ -12,7 +12,6 @@ This launcher:
 - checks for Node 20+
 - verifies the `pi` CLI is available
 - installs repo-local `pi-web-access` if needed
-- refreshes generated docs context
 - runs the TypeScript check
 - starts `pi`
 
@@ -22,7 +21,7 @@ This launcher:
 npm run tutorial:verify
 ```
 
-That runs the dedicated tutorial-regression workflow in non-interactive mode through `prompts/verify-mainsequence-tutorial.md`.
+That runs the dedicated tutorial-regression workflow in non-interactive mode through `pi/prompts/verify-mainsequence-tutorial.md`.
 
 ## Run only `mainsequence-project-coder`
 

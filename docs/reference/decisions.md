@@ -16,7 +16,7 @@ Why:
 Implementation:
 
 - `config/project-policy-specialist.md`
-- `extensions/project-policy/index.ts`
+- `pi/extensions/project-policy/index.ts`
 
 Why:
 
@@ -40,8 +40,8 @@ Why:
 
 Implementation:
 
-- `extensions/`
-- `extensions/shared/`
+- `pi/extensions/`
+- `pi/extensions/shared/`
 - `scripts/*.ts`
 
 Why:
@@ -64,7 +64,7 @@ Why:
 
 Implementation:
 
-- `prompts/verify-mainsequence-tutorial.md`
+- `pi/prompts/verify-mainsequence-tutorial.md`
 - `scripts/run_tutorial_verifier.ts`
 
 Why:
