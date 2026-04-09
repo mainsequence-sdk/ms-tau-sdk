@@ -2,7 +2,12 @@
 
 Extensions are the runtime core of Astro.
 
-They live under `pi/extensions/` and are where Astro registers hooks and tools.
+They live under `pi/extensions/hooks/` and `pi/extensions/tools/` and are where Astro registers hooks and tools.
+
+The split is organizational:
+
+- `hooks/` extensions focus on lifecycle hooks like `before_agent_start`
+- `tools/` extensions focus on tool registration and delegation
 
 ## Current extensions
 

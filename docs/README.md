@@ -76,7 +76,7 @@ flowchart LR
 - [`components/settings-and-system-prompt.md`](./components/settings-and-system-prompt.md)
   - `.pi/settings.json`, `.pi/APPEND_SYSTEM.md`, and child policy
 - [`components/extensions.md`](./components/extensions.md)
-  - custom hooks and tools in `pi/extensions/`
+  - custom hooks and tools in `pi/extensions/hooks/` and `pi/extensions/tools/`
 - [`components/agents.md`](./components/agents.md)
   - specialist files in `.pi/agents/`
 - [`components/prompts.md`](./components/prompts.md)

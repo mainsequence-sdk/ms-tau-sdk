@@ -17,11 +17,7 @@ This launcher:
 
 ## Run the tutorial verifier
 
-```bash
-npm run tutorial:verify
-```
-
-That runs the dedicated tutorial-regression workflow in non-interactive mode through `pi/prompts/verify-mainsequence-tutorial.md`.
+Run Pi and use the `verify-mainsequence-tutorial` prompt template when you want the fixed tutorial-regression workflow.
 
 ## Run only `mainsequence-project-coder`
 

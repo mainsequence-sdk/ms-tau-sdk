@@ -18,8 +18,7 @@
   "scripts": {
     "check": "tsc --noEmit -p tsconfig.json",
     "pi": "node scripts/start_pi.mjs",
-    "specialist": "tsx scripts/run_specialist.ts",
-    "tutorial:verify": "tsx scripts/run_tutorial_verifier.ts"
+    "specialist": "tsx scripts/run_specialist.ts"
   },
   "peerDependencies": {
     "@mariozechner/pi-agent-core": "*",
@@ -30,7 +29,8 @@
   },
   "pi": {
     "extensions": [
-      "./pi/extensions"
+      "./pi/extensions/hooks",
+      "./pi/extensions/tools"
     ],
     "prompts": [
       "./pi/prompts"

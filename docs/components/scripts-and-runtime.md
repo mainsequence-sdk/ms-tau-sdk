@@ -6,9 +6,9 @@ Astro keeps its repo-local runtime in TypeScript.
 
 Astro's runtime lives in:
 
-- `pi/extensions/*/index.ts`
+- `pi/extensions/hooks/*/index.ts`
+- `pi/extensions/tools/*/index.ts`
 - `pi/extensions/shared/*`
-- `scripts/run_tutorial_verifier.ts`
 - `scripts/start_pi.mjs`
 
 ## Why TypeScript is the default
@@ -22,10 +22,6 @@ Astro's runtime lives in:
 ### `scripts/start_pi.mjs`
 
 Starts Astro through the local package setup.
-
-### `scripts/run_tutorial_verifier.ts`
-
-Runs the fixed tutorial-verification workflow in headless mode.
 
 ## Python runtime note
 

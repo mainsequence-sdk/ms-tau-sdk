@@ -33,7 +33,7 @@ It tells the default Pi session to behave as the Main Sequence orchestrator.
 
 ### Extensions
 
-Extensions live under `pi/extensions/` and do two jobs:
+Extensions live under `pi/extensions/hooks/` and `pi/extensions/tools/` and do two jobs:
 
 - register custom tools
 - hook into agent lifecycle events such as `before_agent_start`

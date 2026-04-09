@@ -13,7 +13,6 @@ Example shape:
 name: rpro-builder
 description: Builds a disposable tutorial review project from fixed Astro guidelines
 tools: read, grep, find, ls, bash, edit, write
-appendPromptFiles: ../../config/rpro-builder-guidelines.md
 ---
 
 Specialist instructions here.
@@ -25,11 +24,8 @@ Specialist instructions here.
 - `description`
 - `tools`
 - `model`
-- `appendPromptFiles`
 
 The body becomes the specialist's appended system prompt.
-
-If `appendPromptFiles` is present, Astro resolves those markdown files relative to the specialist file and appends them as shared guidelines.
 
 ## Current specialists
 
@@ -52,7 +48,7 @@ Use when:
 
 Important rule:
 
-- it always loads `config/rpro-builder-guidelines.md`
+- it keeps its fixed guidelines embedded inside the specialist prompt
 
 ### `doc-bug-auditor`
 
@@ -79,4 +75,3 @@ That keeps the parent focused on Main Sequence operations and keeps specialists 
 
 - [`prompts.md`](./prompts.md)
 - [`../workflows/main-sequence-project-flow.md`](../workflows/main-sequence-project-flow.md)
-

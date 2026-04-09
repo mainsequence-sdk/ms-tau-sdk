@@ -1,13 +1,19 @@
 import * as path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { findRepoRoot, safeReadFile } from "../shared/repo.js";
+import { findRepoRoot, safeReadFile } from "../../shared/repo.js";
 
 export default function (pi: ExtensionAPI) {
 	if (process.env.ASTRO_SUBAGENT_CHILD !== "1") return;
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		const repoRoot = findRepoRoot(ctx.cwd);
-		const policyPath = path.join(repoRoot, "config", "project-policy-specialist.md");
+		const policyPath = path.join(
+			repoRoot,
+			"pi",
+			"extensions",
+			"project-policy",
+			"child-policy.md",
+		);
 		const policy = safeReadFile(policyPath);
 		if (!policy?.trim()) return;
 

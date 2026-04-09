@@ -8,7 +8,8 @@ This is the package entry point for Pi.
 
 It tells Pi to load:
 
-- `pi/extensions/`
+- `pi/extensions/hooks/`
+- `pi/extensions/tools/`
 - `pi/prompts/`
 - `pi/skills/`
 - external packages referenced from the repo, currently `npm:pi-web-access`
@@ -34,8 +35,7 @@ Child specialists should not behave like the parent.
 
 Astro handles that with:
 
-- `config/project-policy-specialist.md`
-- `pi/extensions/project-policy/index.ts`
+- `pi/extensions/hooks/project-policy/index.ts`
 
 The `project-policy` extension appends this child-only policy at `before_agent_start` only when Astro spawns a child process.
 

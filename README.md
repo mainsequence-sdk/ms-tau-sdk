@@ -15,7 +15,7 @@ npm run pi
 For the tutorial-regression workflow:
 
 ```bash
-npm run tutorial:verify
+pi
 ```
 
 To launch only the coding specialist instead of the full orchestrator:

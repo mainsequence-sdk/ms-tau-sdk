@@ -9,19 +9,19 @@ astro/
 │       ├── mainsequence-project-coder.md
 │       ├── rpro-builder.md
 │       └── doc-bug-auditor.md
-├── config/
-│   ├── project-policy-specialist.md
-│   └── rpro-builder-guidelines.md
+├── pi/
+│   ├── extensions/
+│   │   ├── hooks/
+│   │   ├── tools/
+│   │   └── shared/
+│   ├── prompts/
+│   └── skills/
 ├── docs/
 │   ├── getting-started/
 │   ├── components/
 │   ├── workflows/
 │   ├── reference/
 │   └── reserach_guide/
-├── pi/
-│   ├── extensions/
-│   ├── prompts/
-│   └── skills/
 ├── scripts/
 ├── AGENTS.md
 ├── Dockerfile
@@ -37,17 +37,13 @@ astro/
 
 Project-local Pi settings, parent prompt, and specialist prompts.
 
-### `config/`
+### `pi/`
 
-Human-readable runtime configuration and shared specialist guideline files.
+Pi package content registered in `package.json`, including extensions, prompts, and skills. Shared helpers live under `pi/extensions/shared/`.
 
 ### `docs/`
 
 Canonical human-readable documentation for Astro.
-
-### `pi/`
-
-Pi package content registered in `package.json`, including extensions, prompts, and skills. Shared helpers live under `pi/extensions/shared/`.
 
 ### `scripts/`
 

@@ -2,7 +2,7 @@ import { Type } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { type AgentScope, discoverAgents } from "../specialist-delegate/agents.js";
 import { getFinalOutput, isResultFailure, runSingleAgent } from "../specialist-delegate/runtime.js";
-import { findRepoRoot, normalizeFilePath } from "../shared/repo.js";
+import { findRepoRoot, normalizeFilePath } from "../../shared/repo.js";
 
 const MAX_TRACKED_FILES = 50;
 const trackedFiles: string[] = [];
