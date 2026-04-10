@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 
 type AgentRole = "orchestrator" | "specialist";
 
@@ -21,6 +23,21 @@ const UNKNOWN_OPTION = /unknown option|no such option|unrecognized option/i;
 
 function sanitizeId(value: string): string {
 	return value.trim().replace(/\s+/g, "_");
+}
+
+function resolveProjectIdFromRecord(cwd: string, log?: (message: string) => void): string | null {
+	const recordPath = path.join(cwd, "astro", "record.md");
+	try {
+		const content = readFileSync(recordPath, "utf8");
+		const match =
+			content.match(/project\s*id\s*[:=]\s*([A-Za-z0-9_-]+)/i) ??
+			content.match(/project[_-]id\s*[:=]\s*([A-Za-z0-9_-]+)/i);
+		if (match?.[1]) return match[1];
+	} catch {
+		log?.("No astro/record.md available for project id resolution.");
+	}
+
+	return null;
 }
 
 function runMainsequence(
@@ -100,7 +117,28 @@ export async function registerMainsequenceAgent(options: RegistrationOptions): P
 	const { agentName, agentRole, cwd, env, log } = options;
 	const safeAgentName = sanitizeId(agentName);
 	const userId = await resolveMainsequenceUserId({ cwd, env: env ?? process.env, log });
-	const uniqueId = userId ? `${safeAgentName}_${userId}` : null;
+	const isProjectCoder = agentName === "mainsequence-project-coder";
+	const projectId = isProjectCoder ? resolveProjectIdFromRecord(cwd, log) : null;
+
+	if (isProjectCoder && (!userId || !projectId)) {
+		log?.(
+			`Skipping agent registration for "${safeAgentName}": missing ${
+				!userId ? "user id" : "project id"
+			}.`,
+		);
+		return {
+			ok: false,
+			exitCode: null,
+			stdout: "",
+			stderr: "Missing required user id or project id for deterministic registration.",
+		};
+	}
+
+	const uniqueId = isProjectCoder
+		? `${safeAgentName}_${userId}_${projectId}`
+		: userId
+			? `${safeAgentName}_${userId}`
+			: null;
 
 	log?.(
 		`Registering agent "${safeAgentName}" (${agentRole})${uniqueId ? ` with unique id "${uniqueId}"` : ""}.`,

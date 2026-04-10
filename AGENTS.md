@@ -52,26 +52,12 @@ Astro should never request or store usernames or passwords. If authentication fa
 
 When `MAINSEQUENCE_TOKEN_REFRESH_INTERVAL_SECONDS` is set, Astro refreshes tokens by re-running the `mainsequence login` command on that interval while the session is active.
 
-For GitHub issue escalation, Astro should use system secret:
+For GitHub issue escalation:
 
-- `astro-github-token`
-  - must be the classic GitHub personal access token Astro should use for issue creation in `mainsequence-sdk/mainsequence-sdk`
-
-Optional GitHub metadata secret:
-
-- `astro-github-user`
-
-Guidance:
-
-- treat those as machine-local secrets, not repo files
+- use a classic GitHub personal access token supplied via machine-local secrets
+- treat credentials as machine-local, never repo files
 - for the public `mainsequence-sdk` repo, cloning or reading source may not need GitHub auth
-- the GitHub token is mainly for duplicate-issue search and issue creation
-- `astro-github-token` must be a classic PAT, not a fine-grained PAT
-- on macOS, retrieve the PAT with `security find-generic-password -a "$USER" -s astro-github-token -w`
-- optionally retrieve GitHub user metadata with `security find-generic-password -a "$USER" -s astro-github-user -w`
-- use the retrieved PAT directly in the REST request or place it only in a short-lived local shell variable such as `ASTRO_GITHUB_TOKEN`
-- do not rely on unrelated GitHub auth state when Astro-specific secrets are missing
-- do not look for or use any GitHub credentials outside `astro-github-token` and optional `astro-github-user`
+- do not rely on unrelated GitHub auth state when issue-escalation credentials are missing
 - do not use generic GitHub environment variables like `GH_TOKEN` or `GITHUB_TOKEN` as an auth source for issue escalation
 - when the issue-escalation criteria are met, Astro does not need a second user confirmation to open the upstream issue
 - prefer GitHub REST API over `gh` for issue search and issue creation
@@ -84,7 +70,7 @@ The following parts are Astro conventions layered on top of Main Sequence, not c
 - the `mainsequence-project-coder` coding subagent
 - the `rpro-builder` fixed-guideline build subagent
 - the specific project record and status file structure below
-- the auth environment variable names and the machine-local secret names used for GitHub issue escalation
+- the auth environment variable names and the GitHub issue escalation behavior
 
 ## Web access
 

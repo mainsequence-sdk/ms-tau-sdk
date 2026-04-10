@@ -9,27 +9,27 @@ Follow this workflow:
 
 1. Read relevant Main Sequence docs or CLI guidance, plus the target project's own context when available.
 2. Translate the user request into a project brief, task list, and acceptance criteria.
-3. Verify authentication with `mainsequence user`.
-   - This workflow requires `MAINSEQUENCE_ACCESS_TOKEN`, `MAINSEQUENCE_REFRESH_TOKEN`, `MAINSEQUENCE_BACKEND`, and `MAINSEQUENCE_PROJECTS_BASE` in the environment.
-   - If auth is missing or expired, run:
-     `mainsequence login --access-token "$MAINSEQUENCE_ACCESS_TOKEN" --refresh-token "$MAINSEQUENCE_REFRESH_TOKEN" --backend "$MAINSEQUENCE_BACKEND" --projects-base "$MAINSEQUENCE_PROJECTS_BASE"`.
-   - If `MAINSEQUENCE_TOKEN_REFRESH_INTERVAL_SECONDS` is set, keep refreshing tokens on that interval while the session is active.
-   - Do not request username/password credentials.
-   - If authentication fails or any env vars are missing, stop and ask the user to refresh them.
-   - If GitHub issue escalation is part of the task, retrieve GitHub credentials only from system secrets named `astro-github-token` and, optionally, `astro-github-user`.
-   - `astro-github-token` must be the classic GitHub personal access token for this workflow, not a fine-grained PAT.
-   - Do not look for or use any other GitHub credentials, and do not require a second user confirmation before opening an upstream issue once the escalation rules are met.
-   - Use the retrieved PAT directly in the REST request or place it only in a short-lived local shell variable such as `ASTRO_GITHUB_TOKEN`.
-4. Create the project with `mainsequence project create`.
-5. Set it up locally with `mainsequence project set-up-locally`.
-   - When running in containers, use the repo root `Dockerfile` which includes Python and Node in the same app container.
-   - Run Python commands inside this same app container (do not use a separate Python-only container).
-   - The container image installs `mainsequence` from `MAINSEQUENCE_PIP_SPEC` in the final Docker layer.
-   - If you use that image, mount only the exact host directories needed:
-     - `~/.pi/agent` to `/root/.pi/agent`
-     - `~/mainsequence` to `/root/mainsequence`
-     - `~/mainsequence-dev` to `/root/mainsequence-dev`
-6. Update `astro/brief.md`, `astro/tasks.md`, `astro/record.md`, and `astro/status.md` in the checked-out project.
+3. Decide whether the user wants to work on an existing project or create a new one.
+   - If the user wants to work on an existing project:
+     - Treat that as an existing-project flow, not a creation flow.
+     - Use the Main Sequence CLI to search for matching projects and ask the user to confirm the exact project when needed.
+     - Once confirmed, the orchestrator owns the selected project id, selected project name, and local setup flow.
+   - If the user wants to create a new project:
+     - Before `mainsequence project validate-name` or `mainsequence project create`, make sure the minimum project intake is known.
+     - The minimum intake is:
+       - the project goal
+       - the key requirements or initial task list
+       - the acceptance criteria
+       - the project name, either provided by the user or explicitly confirmed after you propose one
+     - If any required intake is missing, ask only for the missing pieces before continuing.
+     - Propose a sensible project name when the user has not provided one.
+     - Validate the name with `mainsequence project validate-name "<name>"`.
+     - Create the project with `mainsequence project create "<name>"`.
+4. Set up the selected or created project locally with `mainsequence project set-up-locally <id>`.
+   - The orchestrator always owns this step.
+   - Resolve and keep the checked-out local path before any delegation.
+   - If the exact local checkout path is not known, stop instead of delegating.
+5. Update `astro/brief.md`, `astro/tasks.md`, `astro/record.md`, and `astro/status.md` in the checked-out project.
    - `astro/brief.md`: translated user intent, project goal, and acceptance criteria
    - `astro/tasks.md`: prioritized actionable tasks with checkboxes or statuses
    - `astro/record.md`: project id or name, local checkout path, and orchestration notes
@@ -37,10 +37,13 @@ Follow this workflow:
      - for failures or blockers, include the exact command or action attempted, the working directory or target path when relevant, the exit code if known, and a traceback, stderr excerpt, or log snippet
      - include concrete identifiers such as the failing file, script, job id, run id, or URL when available
      - include what was already tried and the best next action
-7. Call `delegate_specialist` with `mainsequence-project-coder` and set `cwd` to the checked-out project folder.
+6. Call `delegate_specialist` with `mainsequence-project-coder` and set `cwd` to the checked-out project folder.
+   - Delegate only after the checked-out local path is known.
+   - Pass the checked-out target project folder as `cwd`.
+   - Never delegate using only a project id or an unresolved project reference.
    - The child should read the target project's `AGENTS.md` and `.agents/skills/mainsequence-project/SKILL.md` when they exist.
    - Treat those target-project files as canonical for implementation and build conventions.
-8. Return:
+7. Return:
    - project id or project name
    - local checkout path
    - current task status

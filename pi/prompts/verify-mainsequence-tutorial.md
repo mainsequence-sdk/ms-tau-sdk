@@ -38,8 +38,7 @@ Follow this workflow:
 9. GitHub issue rules for this workflow:
    - open GitHub issues only for tutorial documentation changes, missing instructions, or outdated guidance in `docs/tutorial` or `docs/tutorial_gui`
    - do not open issues for unrelated product bugs, auth problems, infrastructure failures, or generic SDK defects unless the problem is specifically that the tutorial docs are wrong or missing
-   - use only `astro-github-token` and optional `astro-github-user`
-   - `astro-github-token` must be the classic GitHub personal access token for this workflow, not a fine-grained PAT
+   - use a classic GitHub personal access token supplied via machine-local secrets (not repo files)
    - prefer GitHub REST API over `gh`
    - do not require an extra user confirmation before opening a tutorial-only issue once the evidence and duplicate-check rules are satisfied
 10. Cleanup is mandatory for this workflow.

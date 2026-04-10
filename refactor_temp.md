@@ -93,18 +93,18 @@ The default main agent should not:
 
 ### A. Orchestrator ownership and flow control
 
-- [ ] Update [`.pi/APPEND_SYSTEM.md`](/Users/jose/code/MainSequenceServerSide/astro/.pi/APPEND_SYSTEM.md) so the orchestrator is the only owner of project selection, creation, and `mainsequence project set-up-locally`.
-- [ ] Remove the instruction that implies the coder may receive only a project id and perform local setup itself.
-- [ ] Keep the parent policy focused on `platform help`, `existing project`, and `new project`.
-- [ ] Require the orchestrator to confirm the exact existing project before any delegation.
-- [ ] Require the orchestrator to know the checked-out local path before starting the child session.
+- [x] Update [`.pi/APPEND_SYSTEM.md`](/Users/jose/code/MainSequenceServerSide/astro/.pi/APPEND_SYSTEM.md) so the orchestrator is the only owner of project selection, creation, and `mainsequence project set-up-locally`.
+- [x] Remove the instruction that implies the coder may receive only a project id and perform local setup itself.
+- [x] Keep the parent policy focused on `platform help`, `existing project`, and `new project`.
+- [x] Require the orchestrator to confirm the exact existing project before any delegation.
+- [x] Require the orchestrator to know the checked-out local path before starting the child session.
 
 ### B. New-project intake requirements
 
-- [ ] Define the minimum required intake for creating a new project.
-- [ ] Update [`.pi/APPEND_SYSTEM.md`](/Users/jose/code/MainSequenceServerSide/astro/.pi/APPEND_SYSTEM.md) so the agent must ask for missing required inputs before `validate-name` or `project create`.
-- [ ] Update [`pi/prompts/implement-additive.md`](/Users/jose/code/MainSequenceServerSide/astro/pi/prompts/implement-additive.md) so it supports both `create new` and `work on existing` flows.
-- [ ] Add strict wording that "working on a project" means selecting an existing project, setting it up locally, and then delegating implementation.
+- [x] Define the minimum required intake for creating a new project.
+- [x] Update [`.pi/APPEND_SYSTEM.md`](/Users/jose/code/MainSequenceServerSide/astro/.pi/APPEND_SYSTEM.md) so the agent must ask for missing required inputs before `validate-name` or `project create`.
+- [x] Update [`pi/prompts/implement-additive.md`](/Users/jose/code/MainSequenceServerSide/astro/pi/prompts/implement-additive.md) so it supports both `create new` and `work on existing` flows.
+- [x] Add strict wording that "working on a project" means selecting an existing project, setting it up locally, and then delegating implementation.
 
 ### C. Coder specialist contract
 
@@ -177,3 +177,12 @@ The default main agent should not:
 - [x] The default main agent no longer advertises or routes tutorial verification as a built-in capability.
 - [ ] The runtime and docs no longer require Astro-owned `astro/` files in target projects by default.
 - [ ] Containerized runs no longer fail because of incompatible cached helper binaries such as `rg`.
+
+
+
+## LKast Task 
+
+hando analyze
+
+
+* Project creation questionarie skill

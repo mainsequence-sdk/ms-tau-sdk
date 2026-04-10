@@ -41,6 +41,13 @@ Why it exists:
 - ensures every parent or child session has a deterministic backend agent record
 - gated by `BUILD_AGENTS_IN_BACKEND=1`
 
+Notes:
+
+- when the active specialist is `mainsequence-project-coder`, the registration uses
+  the project id in `astro/record.md` to build a unique id in the form
+  `{agent_name}_{user_id}_{project_id}`.
+- if the user id or project id is missing, registration is skipped for that session.
+
 ### `specialist-delegate`
 
 Purpose:
