@@ -18,6 +18,30 @@ To run Astro over HTTP stream:
 npm run pi:stream
 ```
 
+To build the deployable container targets:
+
+```bash
+docker build --target astro-pi -t astro:pi .
+docker build --target astro-pi-stream -t astro:pi-stream .
+```
+
+Set `MAINSEQUENCE_PIP_SPEC` in `.env` to control which `mainsequence` package spec the image installs in
+its final Docker layer, for example `mainsequence==0.1.2`.
+
+To use Docker Compose with only the exact host directories Astro needs mounted:
+
+- `${HOME}/.pi/agent` -> `/root/.pi/agent`
+- `${HOME}/mainsequence` -> `/root/mainsequence`
+- `${HOME}/mainsequence-dev` -> `/root/mainsequence-dev`
+
+```bash
+docker compose run --rm astro-pi
+docker compose up astro-pi-stream
+```
+
+The compose file also sets `PI_CODING_AGENT_DIR=/root/.pi/agent`, so existing Pi auth and old
+session history from `${HOME}/.pi/agent/sessions` are reused inside the container.
+
 To launch only the coding specialist instead of the full orchestrator:
 
 ```bash
@@ -32,11 +56,6 @@ npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to
   - shortest path to running Astro
 - [`docs/getting-started/pi-primer.md`](./docs/getting-started/pi-primer.md)
   - Pi concepts used by Astro, explained for readers who are new to Pi
-
-## Main workflows
-
-- [`docs/workflows/main-sequence-project-flow.md`](./docs/workflows/main-sequence-project-flow.md)
-- [`docs/workflows/tutorial-verification.md`](./docs/workflows/tutorial-verification.md)
 
 ## Pi components in this repo
 

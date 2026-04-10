@@ -9,9 +9,32 @@ Pi discovers `.pi/settings.json` and loads:
 - local extensions
 - local prompts
 - local skills
-- external packages such as `npm:pi-web-access`
+- the repository package itself
+- repo-installed packages such as `pi-web-access`
+
+The Astro launch scripts also load `.env` from the repo root and start a Main Sequence token
+refresh loop when `MAINSEQUENCE_TOKEN_REFRESH_INTERVAL_SECONDS` is set.
+
+The deployable Docker targets boot the same runtime by copying only:
+
+- `.pi/`
+- `pi/`
+- `interface/`
+- `scripts/`
+- `package.json`
+- `package-lock.json`
+- `tsconfig.json`
+
+`docker-compose.yml` starts those same targets while bind-mounting only:
+
+- `${HOME}/.pi/agent` to `/root/.pi/agent`
+- `${HOME}/mainsequence` to `/root/mainsequence`
+- `${HOME}/mainsequence-dev` to `/root/mainsequence-dev`
 
 For the normal parent session, Pi also loads `.pi/APPEND_SYSTEM.md`.
+
+When `BUILD_AGENTS_IN_BACKEND=1`, every session start (parent or child) runs a deterministic
+Main Sequence CLI registration step to `get-or-create` the agent record.
 
 ## 2. Before the agent starts
 
@@ -88,4 +111,4 @@ Then it returns:
 
 - [`../components/extensions.md`](../components/extensions.md)
 - [`../components/agents.md`](../components/agents.md)
-- [`../workflows/main-sequence-project-flow.md`](../workflows/main-sequence-project-flow.md)
+- [`../components/prompts.md`](../components/prompts.md)

@@ -24,23 +24,56 @@ Astro's runtime lives in:
 
 Starts Astro through the local package setup.
 
+It also loads `.env` from the repo root and starts the Main Sequence token refresh loop when
+`MAINSEQUENCE_TOKEN_REFRESH_INTERVAL_SECONDS` is set.
+
 ### `scripts/start_pi_stream.ts`
 
 Starts the HTTP streaming interface wrapper around the Pi process.
 
-## Python runtime note
+The stream server loads `.env` on startup and uses the same token refresh interval if configured.
 
-The repo root `Dockerfile` is not Astro's local runtime.
+## Container runtime note
 
-It is an infrastructure helper for tasks that need:
+The repo root `Dockerfile` is the deployable app image definition.
+
+The shared `astro-base` stage includes:
 
 - Python 3.11
-- `uv`
-- `mainsequence`
+- Node 20 (for Pi)
+- local npm dependencies
+- the runtime folders Astro actually needs:
+  - `.pi/`
+  - `pi/`
+  - `interface/`
+  - `scripts/`
 
-That lets Astro avoid depending on the host system Python for Main Sequence operations.
+The final `astro-mainsequence` stage installs `mainsequence` from `MAINSEQUENCE_PIP_SPEC`, so SDK/version
+changes only invalidate the tail end of the Docker build.
+
+The Dockerfile exposes two runnable targets:
+
+- `astro-pi`
+  - starts normal Pi with `node scripts/start_pi.mjs`
+- `astro-pi-stream`
+  - starts the HTTP stream server with `tsx scripts/start_pi_stream.ts`
+  - listens on port `8787`
+
+The repo root `docker-compose.yml` wraps those targets as two services:
+
+- `astro-pi`
+  - interactive normal Pi
+- `astro-pi-stream`
+  - HTTP stream service
+  - mounts `${HOME}/.pi/agent` to `/root/.pi/agent`
+  - mounts `${HOME}/mainsequence` to `/root/mainsequence`
+  - mounts `${HOME}/mainsequence-dev` to `/root/mainsequence-dev`
+  - sets `PI_CODING_AGENT_DIR=/root/.pi/agent` so existing Pi auth and sessions are reused directly
+
+When using containers, run Python commands inside this same app container (do not use a separate Python-only container).
+The image intentionally does not copy `docs/`, `tutorial/`, or `.env`; provide env vars at container start.
 
 ## Related pages
 
 - [`knowledge.md`](./knowledge.md)
-- [`../workflows/tutorial-verification.md`](../workflows/tutorial-verification.md)
+- [`../getting-started/quickstart.md`](../getting-started/quickstart.md)

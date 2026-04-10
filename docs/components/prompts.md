@@ -38,7 +38,7 @@ This is the source of truth for:
 - reading the upstream CLI and GUI tutorials
 - deriving the SDK version
 - creating `tutorial_review_[sdk_version]`
-- delegating the build to `rpro-builder`
+- delegating checked-out project work to `mainsequence-project-coder`
 - validating GUI steps with Playwright
 - opening tutorial-only issues
 - mandatory cleanup
@@ -53,4 +53,4 @@ Prompts and specialists solve different problems:
 ## Related pages
 
 - [`agents.md`](./agents.md)
-- [`../workflows/tutorial-verification.md`](../workflows/tutorial-verification.md)
+- [`settings-and-system-prompt.md`](./settings-and-system-prompt.md)

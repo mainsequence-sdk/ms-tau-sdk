@@ -12,7 +12,8 @@ It tells Pi to load:
 - `pi/extensions/tools/`
 - `pi/prompts/`
 - `pi/skills/`
-- external packages referenced from the repo, currently `npm:pi-web-access`
+- the repository package itself
+- the repo-installed `pi-web-access` package
 
 This file is what makes Astro a project-local Pi package rather than just a folder of markdown.
 

@@ -67,9 +67,6 @@ function loadAgentsFromDir(directory: string, source: "user" | "project"): Agent
 
 	const agents: AgentConfig[] = [];
 	const entries = fs.readdirSync(directory, { withFileTypes: true });
-	const tutorialEnabled = ["1", "true", "yes"].includes(
-		(process.env.ADD_TUTORIAL_AGENT ?? "").toLowerCase(),
-	);
 
 	for (const entry of entries) {
 		if (!entry.name.endsWith(".md")) continue;
@@ -89,7 +86,6 @@ function loadAgentsFromDir(directory: string, source: "user" | "project"): Agent
 		const description = frontmatter.description?.trim();
 
 		if (!name || !description) continue;
-		if (name === "rpro-builder" && !tutorialEnabled) continue;
 
 		const tools = frontmatter.tools
 			?.split(",")

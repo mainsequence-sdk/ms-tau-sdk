@@ -4,6 +4,14 @@ Extensions are the runtime core of Astro.
 
 They live under `pi/extensions/hooks/` and `pi/extensions/tools/` and are where Astro registers hooks and tools.
 
+Launch scripts load `.env` and start the Main Sequence token refresh loop (when configured) before extensions run.
+
+The Docker targets keep the same extension surface by copying `.pi/`, `pi/`, `interface/`, and
+`scripts/` into the image and then starting either the normal Pi launcher or the HTTP stream launcher.
+
+`docker-compose.yml` runs those same images and mounts only the host Pi agent directory and Main Sequence
+workspace directory without changing the extension loading model.
+
 The split is organizational:
 
 - `hooks/` extensions focus on lifecycle hooks like `before_agent_start`
@@ -21,6 +29,17 @@ Why it exists:
 
 - the parent already has a static prompt
 - the child still needs runtime-only guardrails
+
+### `agent-registration`
+
+Purpose:
+
+- register each agent session with the Main Sequence CLI (`agent get-or-create`) when enabled
+
+Why it exists:
+
+- ensures every parent or child session has a deterministic backend agent record
+- gated by `BUILD_AGENTS_IN_BACKEND=1`
 
 ### `specialist-delegate`
 

@@ -1,6 +1,6 @@
 {
   "packages": [
     "..",
-    "npm:pi-web-access"
+    "../node_modules/pi-web-access"
   ]
 }

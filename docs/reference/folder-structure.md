@@ -6,19 +6,18 @@ astro/
 │   ├── APPEND_SYSTEM.md
 │   ├── settings.json
 │   └── agents/
-│       ├── mainsequence-project-coder.md
-│       └── rpro-builder.md
+│       └── mainsequence-project-coder.md
 ├── pi/
 │   ├── extensions/
 │   │   ├── hooks/
 │   │   ├── tools/
 │   │   └── shared/
 │   ├── prompts/
-│   └── skills/
+│   ├── skills/
+│   └── types/
 ├── docs/
 │   ├── getting-started/
 │   ├── components/
-│   ├── workflows/
 │   ├── reference/
 │   └── reserach_guide/
 ├── interface/
@@ -28,8 +27,7 @@ astro/
 ├── Dockerfile
 ├── README.md
 ├── package.json
-├── tsconfig.json
-└── types/
+└── tsconfig.json
 ```
 
 ## What each top-level area is for
@@ -56,4 +54,4 @@ Command-line helpers for launching Astro and running dedicated workflows.
 
 ### `Dockerfile`
 
-Optional Python 3.11 runtime for `mainsequence` and related Python tasks.
+Optional app container base with Python 3.11 and Node 20 for running Pi and related tasks.

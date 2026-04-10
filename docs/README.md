@@ -6,7 +6,7 @@ This documentation set is organized for readers who may not know Pi yet. It expl
 
 1. what Pi components Astro uses
 2. how those components are wired together
-3. which workflows Astro runs
+3. how the prompt and specialist layers drive project behavior
 
 ## Launch one specialist directly
 
@@ -37,7 +37,6 @@ flowchart LR
     P --> SYS[".pi/APPEND_SYSTEM.md"]
     P --> SET[".pi/settings.json"]
     SET --> EXT["Extensions"]
-    SET --> PKG["External packages"]
 
     EXT --> PP["project-policy"]
     EXT --> SD["specialist-delegate"]
@@ -48,12 +47,9 @@ flowchart LR
     P --> CLI["mainsequence CLI"]
 
 AGENTS --> CODER["mainsequence-project-coder"]
-AGENTS --> BUILDER["rpro-builder (ADD_TUTORIAL_AGENT=1)"]
     CODER --> TARGET["Checked-out Main Sequence project"]
-    BUILDER --> TARGET
 
-    PKG --> WEB["pi-web-access"]
-    P --> DOCKER["Dockerfile runtime for Python/mainsequence tasks"]
+    P --> DOCKER["Dockerfile runtime for Python/Node tasks"]
 ```
 
 ## Read first
@@ -63,10 +59,8 @@ AGENTS --> BUILDER["rpro-builder (ADD_TUTORIAL_AGENT=1)"]
   - [`getting-started/request-lifecycle.md`](./getting-started/request-lifecycle.md)
 - Just want to run Astro:
   - [`getting-started/quickstart.md`](./getting-started/quickstart.md)
-- Want the Main Sequence workflow:
-  - [`workflows/main-sequence-project-flow.md`](./workflows/main-sequence-project-flow.md)
-- Want the tutorial regression workflow:
-  - [`workflows/tutorial-verification.md`](./workflows/tutorial-verification.md)
+- Want the project and tutorial flow definitions:
+  - [`components/prompts.md`](./components/prompts.md)
 
 ## Pi components in Astro
 
@@ -84,11 +78,6 @@ AGENTS --> BUILDER["rpro-builder (ADD_TUTORIAL_AGENT=1)"]
   - why `knowledge/` was removed and what replaces it
 - [`components/scripts-and-runtime.md`](./components/scripts-and-runtime.md)
   - scripts, TypeScript runtime, and Docker-backed Python path
-
-## Workflows
-
-- [`workflows/main-sequence-project-flow.md`](./workflows/main-sequence-project-flow.md)
-- [`workflows/tutorial-verification.md`](./workflows/tutorial-verification.md)
 
 ## Reference
 

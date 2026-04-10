@@ -3,12 +3,115 @@ import { spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { serializeSse, type StreamChunk } from "./protocol.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..", "..");
+const MAINSEQUENCE_REFRESH_INTERVAL_ENV = "MAINSEQUENCE_TOKEN_REFRESH_INTERVAL_SECONDS";
+const MAINSEQUENCE_REQUIRED_ENV = [
+	"MAINSEQUENCE_ACCESS_TOKEN",
+	"MAINSEQUENCE_REFRESH_TOKEN",
+	"MAINSEQUENCE_BACKEND",
+	"MAINSEQUENCE_PROJECTS_BASE",
+];
+
+function loadEnvFile(root: string) {
+	const envPath = path.join(root, ".env");
+	if (!existsSync(envPath)) return;
+	const contents = readFileSync(envPath, "utf8");
+	for (const rawLine of contents.split(/\r?\n/)) {
+		const line = rawLine.trim();
+		if (!line || line.startsWith("#")) continue;
+		const equalsIndex = line.indexOf("=");
+		if (equalsIndex === -1) continue;
+		const key = line.slice(0, equalsIndex).trim();
+		if (!key) continue;
+		let value = line.slice(equalsIndex + 1).trim();
+		if (
+			(value.startsWith("\"") && value.endsWith("\"")) ||
+			(value.startsWith("'") && value.endsWith("'"))
+		) {
+			value = value.slice(1, -1);
+		}
+		if (process.env[key] === undefined) {
+			process.env[key] = value;
+		}
+	}
+}
+
+function getRefreshIntervalMs(): number | null {
+	const raw = process.env[MAINSEQUENCE_REFRESH_INTERVAL_ENV];
+	if (!raw) return null;
+	const seconds = Number.parseInt(raw, 10);
+	if (!Number.isFinite(seconds) || seconds <= 0) {
+		console.error(`[astro] ${MAINSEQUENCE_REFRESH_INTERVAL_ENV} must be a positive integer (seconds).`);
+		process.exit(1);
+	}
+	return seconds * 1000;
+}
+
+function ensureMainsequenceEnv() {
+	const missing = MAINSEQUENCE_REQUIRED_ENV.filter((key) => !process.env[key]);
+	if (missing.length) {
+		console.error(`[astro] Missing required env for token refresh: ${missing.join(", ")}`);
+		process.exit(1);
+	}
+}
+
+function startMainsequenceRefreshLoop() {
+	const intervalMs = getRefreshIntervalMs();
+	if (!intervalMs) return;
+	ensureMainsequenceEnv();
+
+	let refreshInFlight = false;
+	const runLogin = (reason: string) => {
+		if (refreshInFlight) return;
+		refreshInFlight = true;
+		const args = [
+			"login",
+			"--access-token",
+			process.env.MAINSEQUENCE_ACCESS_TOKEN,
+			"--refresh-token",
+			process.env.MAINSEQUENCE_REFRESH_TOKEN,
+			"--backend",
+			process.env.MAINSEQUENCE_BACKEND,
+			"--projects-base",
+			process.env.MAINSEQUENCE_PROJECTS_BASE,
+		];
+		const child = spawn("mainsequence", args, {
+			stdio: "inherit",
+			shell: false,
+			env: process.env,
+		});
+
+		child.on("exit", (code) => {
+			refreshInFlight = false;
+			if (typeof code === "number" && code !== 0) {
+				console.error(`[astro] mainsequence login failed (${reason}) with code ${code}.`);
+			}
+		});
+
+		child.on("error", (error: NodeJS.ErrnoException) => {
+			refreshInFlight = false;
+			if (error.code === "ENOENT") {
+				console.error("[astro] Missing required command: mainsequence");
+				return;
+			}
+			console.error(`[astro] mainsequence login error (${reason}): ${error.message}`);
+		});
+	};
+
+	console.log(
+		`[astro] Starting Main Sequence token refresh loop every ${Math.floor(intervalMs / 1000)}s...`,
+	);
+	runLogin("startup");
+	setInterval(() => runLogin("interval"), intervalMs);
+}
+
+loadEnvFile(repoRoot);
+startMainsequenceRefreshLoop();
 
 const host = process.env.ASTRO_STREAM_HOST ?? "0.0.0.0";
 const port = Number(process.env.ASTRO_STREAM_PORT ?? "8787");
@@ -253,11 +356,17 @@ function runPiPrompt(prompt: string, ctx: RequestContext) {
 		}
 	});
 
-	child.on("exit", (code) => {
-		if (!ctx.finished) {
-			writeChunk(ctx, { type: "error", error: `Process exited with code ${code ?? 1}.` });
+	child.on("exit", (code, signal) => {
+		if (ctx.finished) return;
+		if (signal || (typeof code === "number" && code !== 0)) {
+			const reason = signal ? `Process exited with signal ${signal}.` : `Process exited with code ${code}.`;
+			writeChunk(ctx, { type: "error", error: reason });
 			writeDone(ctx);
+			return;
 		}
+
+		writeChunk(ctx, { type: "finish", finishReason: "stop" });
+		writeDone(ctx);
 	});
 }
 

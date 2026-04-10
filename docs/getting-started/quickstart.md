@@ -6,6 +6,9 @@
 npm run pi
 ```
 
+The launch script loads `.env` from the repo root (if present) and starts the Main Sequence token
+refresh loop when `MAINSEQUENCE_TOKEN_REFRESH_INTERVAL_SECONDS` is set.
+
 ## Run Astro over HTTP stream
 
 ```bash
@@ -18,14 +21,76 @@ The stream endpoint accepts assistant-ui compatible `ui-message-stream` requests
 
 Sessions are persisted per `threadId` under `.astro/stream-sessions` by default.
 
-Tutorial review via `rpro-builder` is only enabled when `ADD_TUTORIAL_AGENT=1`.
+## Build Docker images
+
+Normal Pi image:
+
+```bash
+docker build --target astro-pi -t astro:pi .
+```
+
+If you omit `--target`, the default final image is the normal `astro-pi` launcher.
+
+Set `MAINSEQUENCE_PIP_SPEC` in `.env` before building if you want a specific library version, for example:
+
+```dotenv
+MAINSEQUENCE_PIP_SPEC=mainsequence==0.1.2
+```
+
+HTTP stream image:
+
+```bash
+docker build --target astro-pi-stream -t astro:pi-stream .
+```
+
+Run normal Pi:
+
+```bash
+docker run --rm -it --env-file .env astro:pi
+```
+
+Run the stream server:
+
+```bash
+docker run --rm -it -p 8787:8787 --env-file .env astro:pi-stream
+```
+
+## Run with Docker Compose
+
+Normal Pi:
+
+```bash
+docker compose run --rm astro-pi
+```
+
+HTTP stream:
+
+```bash
+docker compose up astro-pi-stream
+```
+
+Both available:
+
+```bash
+docker compose up astro-pi-stream
+docker compose run --rm astro-pi
+```
+
+The compose file mounts:
+
+- `${HOME}/.pi/agent` -> `/root/.pi/agent`
+- `${HOME}/mainsequence` -> `/root/mainsequence`
+- `${HOME}/mainsequence-dev` -> `/root/mainsequence-dev`
+
+It also sets `PI_CODING_AGENT_DIR=/root/.pi/agent`, so old Pi sessions from
+`${HOME}/.pi/agent/sessions` are available in the container.
 
 This launcher:
 
 - installs local npm dependencies when needed
 - checks for Node 20+
 - verifies the `pi` CLI is available
-- installs repo-local `pi-web-access` if needed
+- verifies the repo-installed `pi-web-access` package is present
 - runs the TypeScript check
 - starts `pi`
 
@@ -50,19 +115,19 @@ npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to
 ## Manual commands
 
 ```bash
-pi install npm:pi-web-access -l
 npm run check
 pi
 ```
 
-## Python and Main Sequence runtime
+## Container runtime
 
-When Astro needs an isolated Python environment for `mainsequence`, use the repo-root `Dockerfile`.
+When running Astro in containers, use the repo-root `Dockerfile` targets `astro-pi` and `astro-pi-stream`.
 
-Mount the whole host `~/mainsequence` root to `/Users/$USER/mainsequence` inside the container so Main Sequence keeps the expected workspace layout.
+Run Python commands inside this same app container (do not use a separate Python-only container).
+The container image installs `mainsequence` from `MAINSEQUENCE_PIP_SPEC` in the final Docker layer. `.env` is not copied into the image, so pass env vars at runtime with `--env-file` or `-e`.
 
 ## Read next
 
 - [`pi-primer.md`](./pi-primer.md)
 - [`request-lifecycle.md`](./request-lifecycle.md)
-- [`../workflows/main-sequence-project-flow.md`](../workflows/main-sequence-project-flow.md)
+- [`../components/prompts.md`](../components/prompts.md)

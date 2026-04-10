@@ -9,7 +9,7 @@
 - reusable workflow prompts
 - tutorial regression verification
 - Playwright-backed GUI validation for the tutorial workflow
-- standard external web access through `pi-web-access`
+- repo-installed web access through `pi-web-access`
 - TypeScript-only repo-local runtime
 
 ## Out of scope

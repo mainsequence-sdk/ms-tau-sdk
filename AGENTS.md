@@ -6,7 +6,7 @@ This repository defines **Astro**, a parent orchestrator for Main Sequence proje
 
 When a user describes a project, Astro should normally:
 
-1. Read Astro docs plus relevant Main Sequence documentation as context.
+1. Read relevant Main Sequence documentation plus the target project's own context as needed.
 2. Translate the user intent into a concrete project brief, task list, and acceptance criteria.
 3. Verify Main Sequence CLI authentication.
 4. Create the platform project with the Main Sequence CLI.
@@ -31,7 +31,7 @@ For the dedicated tutorial-regression flow, Astro should instead:
 Use the official `mainsequence` CLI flow where possible:
 
 - `mainsequence user` to check whether the session is already authenticated
-- `mainsequence login <email>` when authentication is needed
+- `mainsequence login --access-token "$MAINSEQUENCE_ACCESS_TOKEN" --refresh-token "$MAINSEQUENCE_REFRESH_TOKEN" --backend "$MAINSEQUENCE_BACKEND" --projects-base "$MAINSEQUENCE_PROJECTS_BASE"` when authentication is needed
 - `mainsequence project create <name>` to create the project
 - `mainsequence project set-up-locally <id>` to clone and provision the local checkout
 - `mainsequence project open <id>` or `mainsequence project current` to inspect local context
@@ -40,12 +40,17 @@ Use the official `mainsequence` CLI flow where possible:
 
 The official docs also describe GUI-first workflows in some places. Astro prefers the CLI path above when those commands are available.
 
-When login needs credentials, Astro should retrieve them from system secrets named:
+Authentication must use JWTs provided in environment variables:
 
-- `astro-mainsequence-email`
-- `astro-mainsequence-password`
+- `MAINSEQUENCE_ACCESS_TOKEN`
+- `MAINSEQUENCE_REFRESH_TOKEN`
+- `MAINSEQUENCE_BACKEND`
+- `MAINSEQUENCE_PROJECTS_BASE`
+- `MAINSEQUENCE_TOKEN_REFRESH_INTERVAL_SECONDS`
 
-On macOS, those can be read through the `security` CLI. Astro should prefer those system secrets over asking the user again, and should never write the credentials into the repo, prompts, or tracked files.
+Astro should never request or store usernames or passwords. If authentication fails, stop and ask the user to refresh the environment variables. Do not write tokens into the repo, prompts, or tracked files.
+
+When `MAINSEQUENCE_TOKEN_REFRESH_INTERVAL_SECONDS` is set, Astro refreshes tokens by re-running the `mainsequence login` command on that interval while the session is active.
 
 For GitHub issue escalation, Astro should use system secret:
 
@@ -79,15 +84,13 @@ The following parts are Astro conventions layered on top of Main Sequence, not c
 - the `mainsequence-project-coder` coding subagent
 - the `rpro-builder` fixed-guideline build subagent
 - the specific project record and status file structure below
-- the machine-local secret names used for Main Sequence login and GitHub issue escalation
+- the auth environment variable names and the machine-local secret names used for GitHub issue escalation
 
 ## Web access
 
-Astro should prefer the standard external Pi package `pi-web-access` for live web and documentation lookups.
+The repository includes `pi-web-access` as a normal npm dependency.
 
-- use `web_search` for current external research
-- use `fetch_content` when a specific page, repo, PDF, or URL needs to be read
-- only add a repo-local browsing wrapper if the external package is genuinely blocked
+Use `web_search` for current external research and `fetch_content` when a specific page, repo, PDF, or URL needs to be read.
 
 ## Astro handoff files
 
@@ -107,13 +110,19 @@ For implementation behavior inside the target project:
 - the target project's `.agents/skills/mainsequence-project/SKILL.md` should also be treated as canonical when it exists
 - the `astro/` files define task intent and priorities, while those target-project files define how to build inside that project
 
-## Python runtime note
+## Python/runtime note
 
-The repo root `Dockerfile` provides a small Python 3.11 image with `uv` and `mainsequence` installed.
+The repo root `Dockerfile` provides the full app runtime with Python 3.11 plus Node 20.
 
-Astro should prefer that Dockerfile-backed runtime for isolated Python or `mainsequence` command execution instead of relying on the host system Python.
+When using containers, run Python commands inside this same app container (do not use a separate Python-only container).
+The container image installs `mainsequence` from `MAINSEQUENCE_PIP_SPEC` in the final Docker layer so
+changing the library spec does not invalidate the earlier Docker layers.
 
-If Astro uses that image, the whole host `~/mainsequence` root should be bind-mounted to `/Users/<user>/mainsequence` inside the container so the Main Sequence workspace layout stays consistent.
+If Astro uses that image, bind-mount only the exact host directories needed:
+
+- `~/.pi/agent` to `/root/.pi/agent`
+- `~/mainsequence` to `/root/mainsequence`
+- `~/mainsequence-dev` to `/root/mainsequence-dev`
 
 ## Orchestrator boundaries
 

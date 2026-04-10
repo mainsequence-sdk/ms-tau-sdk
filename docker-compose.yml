@@ -1,0 +1,42 @@
+services:
+  astro-pi:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: astro-pi
+      args:
+        MAINSEQUENCE_PIP_SPEC: ${MAINSEQUENCE_PIP_SPEC:-mainsequence}
+    image: astro:pi
+    env_file:
+      - .env
+    environment:
+      HOME: /root
+      PI_CODING_AGENT_DIR: /root/.pi/agent
+    volumes:
+      - ${HOME}/.pi/agent:/root/.pi/agent
+      - ${HOME}/mainsequence:/root/mainsequence
+      - ${HOME}/mainsequence-dev:/root/mainsequence-dev
+    stdin_open: true
+    tty: true
+
+  astro-pi-stream:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: astro-pi-stream
+      args:
+        MAINSEQUENCE_PIP_SPEC: ${MAINSEQUENCE_PIP_SPEC:-mainsequence}
+    image: astro:pi-stream
+    env_file:
+      - .env
+    environment:
+      HOME: /root
+      PI_CODING_AGENT_DIR: /root/.pi/agent
+      ASTRO_STREAM_HOST: 0.0.0.0
+      ASTRO_STREAM_PORT: ${ASTRO_STREAM_PORT:-8787}
+    volumes:
+      - ${HOME}/.pi/agent:/root/.pi/agent
+      - ${HOME}/mainsequence:/root/mainsequence
+      - ${HOME}/mainsequence-dev:/root/mainsequence-dev
+    ports:
+      - "${ASTRO_STREAM_PORT:-8787}:8787"

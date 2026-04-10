@@ -12,7 +12,7 @@ Astro does not modify Pi core. It shapes Pi from the outside using:
 - specialist prompt files
 - reusable prompt templates
 - skills
-- external Pi packages
+- repo-installed Pi packages
 
 ## The main Pi pieces in this repo
 
@@ -23,7 +23,8 @@ This tells Pi what to load from the repository:
 - local extensions
 - local prompt templates
 - local skills
-- external packages such as `npm:pi-web-access`
+- the repository package itself
+- the repo-installed `pi-web-access` package
 
 ### `.pi/APPEND_SYSTEM.md`
 
@@ -45,7 +46,6 @@ Specialists live in `.pi/agents/` as markdown files with frontmatter and a promp
 Astro currently uses:
 
 - `mainsequence-project-coder`
-- `rpro-builder`
 
 ### Prompt templates
 
@@ -59,7 +59,7 @@ Skills in `pi/skills/` are deeper instruction bundles the agent can load when re
 
 ### External packages
 
-Astro uses `npm:pi-web-access` instead of maintaining a local web wrapper.
+This repository keeps `pi-web-access` in normal `node_modules` and loads it from there.
 
 ## The key mental model
 
@@ -78,8 +78,7 @@ The parent handles:
 The child specialists handle:
 
 - implementation inside the checked-out project
-- fixed-guideline builds
-- status review and upstream bug investigation
+- tutorial verification work inside a disposable checked-out project when the parent delegates that step
 
 ## Read next
 

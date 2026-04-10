@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-.pi/npm/
 
 # Python cache and virtualenvs
 __pycache__/
@@ -12,6 +11,7 @@ venv/
 .env
 .env.*
 !.env.example
+.astro/
 
 # OS files
 .DS_Store

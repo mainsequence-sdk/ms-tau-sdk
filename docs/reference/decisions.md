@@ -28,12 +28,11 @@ Why:
 Implementation:
 
 - `.pi/agents/mainsequence-project-coder.md`
-- `.pi/agents/rpro-builder.md`
 
 Why:
 
-- implementation and fixed-guideline builds are different roles
-- child sessions get narrower context windows and clearer responsibilities
+- implementation belongs in a checked-out project specialist instead of the parent session
+- tutorial verification can still delegate checked-out project work without introducing a second builder role
 
 ## 4. Keep repo-local runtime in TypeScript
 
@@ -49,16 +48,18 @@ Why:
 - the local runtime logic is mostly orchestration and file shaping
 - avoiding a local language bridge keeps Astro easier to debug
 
-## 5. Prefer external packages for generic capabilities
+## 5. Keep dependency installation out of `.pi`
 
 Implementation:
 
 - `.pi/settings.json`
-- `npm:pi-web-access`
+- `package.json`
+- `node_modules/pi-web-access`
 
 Why:
 
-- Astro should not duplicate generic web capabilities locally when a maintained package already exists
+- the runtime should stay inspectable and avoid generating extra package state inside `.pi`
+- external Pi packages should live in normal npm dependency locations
 
 ## 6. Keep tutorial verification as a parent workflow
 
@@ -69,7 +70,7 @@ Implementation:
 Why:
 
 - it is a fixed CI-shaped workflow
-- the build step belongs in a specialist, but the overall verification logic belongs to the parent
+- the overall verification logic belongs to the parent, while checked-out project work can still be delegated to `mainsequence-project-coder`
 
 ## 7. Do not auto-inject docs into agent context
 
