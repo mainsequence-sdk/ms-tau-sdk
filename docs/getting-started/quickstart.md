@@ -21,6 +21,13 @@ The stream endpoint accepts assistant-ui compatible `ui-message-stream` requests
 
 Sessions are persisted per `threadId` under `.astro/stream-sessions` by default.
 
+The request contract is latest-turn oriented:
+
+- `messages` should contain only the exact user message just typed
+- `threadId` carries conversation continuity
+- `context` carries the current UI/app/surface metadata
+- `tools` carries optional UI tool metadata
+
 ## Build Docker images
 
 Normal Pi image:
@@ -78,12 +85,18 @@ docker compose run --rm astro-pi
 
 The compose file mounts:
 
-- `${HOME}/.pi/agent` -> `/root/.pi/agent`
+- `${HOME}/.pi/agent` -> `/root/.pi/host-agent`
 - `${HOME}/mainsequence` -> `/root/mainsequence`
 - `${HOME}/mainsequence-dev` -> `/root/mainsequence-dev`
 
-It also sets `PI_CODING_AGENT_DIR=/root/.pi/agent`, so old Pi sessions from
-`${HOME}/.pi/agent/sessions` are available in the container.
+It also sets `PI_CODING_AGENT_DIR=/root/.pi/agent-runtime` and imports reusable host Pi state from
+`/root/.pi/host-agent`.
+
+That means:
+
+- host `auth.json`, `settings.json`, and `sessions/` are reused in the container
+- helper binaries such as `rg` stay container-local under `/root/.pi/agent-runtime/bin`
+- Linux no longer reuses host-downloaded helper binaries from another OS or architecture
 
 This launcher:
 
@@ -94,22 +107,24 @@ This launcher:
 - runs the TypeScript check
 - starts `pi`
 
-## Run the tutorial verifier
+## Optional standalone tutorial verifier
 
-Run Pi and use the `verify-mainsequence-tutorial` prompt template when you want the fixed tutorial-regression workflow.
+Run Pi and use the `verify-mainsequence-tutorial` prompt template only when you explicitly want the fixed tutorial-regression workflow.
 
 ## Run only `mainsequence-project-coder`
+
+Use this only when the project has already been selected and checked out locally, and you already know the checked-out path plus the Main Sequence project id.
 
 Interactive single-specialist mode:
 
 ```bash
-npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project
+npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project --project-id <project-id>
 ```
 
 Single task mode:
 
 ```bash
-npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project "Read astro/tasks.md and implement the next task"
+npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project --project-id <project-id> "Read the project's task and status context, then implement the next task"
 ```
 
 ## Manual commands

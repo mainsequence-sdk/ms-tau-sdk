@@ -32,6 +32,8 @@ It also loads `.env` from the repo root and starts the Main Sequence token refre
 Starts the HTTP streaming interface wrapper around the Pi process.
 
 The stream server loads `.env` on startup and uses the same token refresh interval if configured.
+It accepts latest-turn UI requests, injects the optional UI `system`, `context`, and `tools`
+metadata into the prompt, and relies on `threadId`-keyed session files for continuity.
 
 ## Container runtime note
 
@@ -65,10 +67,12 @@ The repo root `docker-compose.yml` wraps those targets as two services:
   - interactive normal Pi
 - `astro-pi-stream`
   - HTTP stream service
-  - mounts `${HOME}/.pi/agent` to `/root/.pi/agent`
+  - mounts `${HOME}/.pi/agent` to `/root/.pi/host-agent`
   - mounts `${HOME}/mainsequence` to `/root/mainsequence`
   - mounts `${HOME}/mainsequence-dev` to `/root/mainsequence-dev`
-  - sets `PI_CODING_AGENT_DIR=/root/.pi/agent` so existing Pi auth and sessions are reused directly
+  - sets `PI_CODING_AGENT_DIR=/root/.pi/agent-runtime`
+  - imports `auth.json`, `settings.json`, and `sessions/` from the mounted host Pi state
+  - keeps helper binaries container-local under `/root/.pi/agent-runtime/bin`
 
 When using containers, run Python commands inside this same app container (do not use a separate Python-only container).
 The image intentionally does not copy `docs/`, `tutorial/`, or `.env`; provide env vars at container start.

@@ -1,3 +1,5 @@
+import * as fs from "node:fs";
+import * as path from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
@@ -16,6 +18,9 @@ const SingleTaskSchema = Type.Object({
 	agent: Type.String({ description: "Specialist name from .pi/agents or ~/.pi/agent/agents" }),
 	task: Type.String({ description: "Delegated task text" }),
 	cwd: Type.Optional(Type.String({ description: "Optional working directory for the child pi process" })),
+	projectId: Type.Optional(
+		Type.String({ description: "Selected Main Sequence project id. Required for checked-out project coding." }),
+	),
 });
 
 const ChainTaskSchema = Type.Object({
@@ -24,6 +29,9 @@ const ChainTaskSchema = Type.Object({
 		description: "Delegated task text. Use {previous} to insert the previous step output.",
 	}),
 	cwd: Type.Optional(Type.String({ description: "Optional working directory for the child pi process" })),
+	projectId: Type.Optional(
+		Type.String({ description: "Selected Main Sequence project id for this step when needed." }),
+	),
 });
 
 const DelegateParams = Type.Object({
@@ -42,11 +50,45 @@ const DelegateParams = Type.Object({
 		}),
 	),
 	cwd: Type.Optional(Type.String({ description: "Working directory for single-step mode" })),
+	projectId: Type.Optional(
+		Type.String({ description: "Selected Main Sequence project id for single-step mode." }),
+	),
 });
 
 function availableAgentsText(agents: AgentConfig[]): string {
 	if (!agents.length) return "none";
 	return agents.map((agent) => `${agent.name} (${agent.source})`).join(", ");
+}
+
+function isDirectory(candidate: string): boolean {
+	try {
+		return fs.statSync(candidate).isDirectory();
+	} catch {
+		return false;
+	}
+}
+
+function validateCoderTarget(options: {
+	agentName: string;
+	cwd?: string;
+	projectId?: string;
+}): string | null {
+	if (options.agentName !== "mainsequence-project-coder") return null;
+
+	if (!options.projectId?.trim()) {
+		return "mainsequence-project-coder requires `projectId`. Do not delegate coding work without the selected Main Sequence project id.";
+	}
+
+	if (!options.cwd?.trim()) {
+		return "mainsequence-project-coder requires `cwd`. Do not delegate coding work without the checked-out target project path.";
+	}
+
+	const resolvedCwd = path.resolve(options.cwd);
+	if (!isDirectory(resolvedCwd)) {
+		return `mainsequence-project-coder requires a valid checked-out project directory. Invalid cwd: ${resolvedCwd}`;
+	}
+
+	return null;
 }
 
 function makeDetails(
@@ -91,7 +133,7 @@ export default function (pi: ExtensionAPI) {
 		promptSnippet:
 			"delegate_specialist: delegate coding work to a project-local specialist in .pi/agents",
 		promptGuidelines: [
-			"Use mainsequence-project-coder with cwd set to the checked-out Main Sequence project when implementation should happen there.",
+			"Use mainsequence-project-coder only with both cwd and projectId set to the checked-out Main Sequence project.",
 			"Prefer project-local specialists for this repo unless there is a clear reason to use user-level specialists.",
 		],
 		parameters: DelegateParams,
@@ -121,6 +163,30 @@ export default function (pi: ExtensionAPI) {
 				? params.chain!.map((step) => step.agent)
 				: [params.agent as string];
 
+			const validationError = hasChain
+				? params.chain!
+						.map((step) =>
+							validateCoderTarget({
+								agentName: step.agent,
+								cwd: step.cwd,
+								projectId: step.projectId,
+							}),
+						)
+						.find(Boolean) || null
+				: validateCoderTarget({
+						agentName: params.agent as string,
+						cwd: params.cwd,
+						projectId: params.projectId,
+				  });
+
+			if (validationError) {
+				return {
+					content: [{ type: "text", text: validationError }],
+					details: makeDetails(hasChain ? "chain" : "single", agentScope, discovery.projectAgentsDir, []),
+					isError: true,
+				};
+			}
+
 			const approved = await maybeConfirmProjectSpecialists(
 				ctx,
 				agents,
@@ -142,6 +208,7 @@ export default function (pi: ExtensionAPI) {
 				agents: requestedNames,
 				chainLength: hasChain ? params.chain!.length : 1,
 				cwd: params.cwd ?? null,
+				projectId: params.projectId ?? null,
 			};
 			emitTelemetryEvent("delegate_start", delegateContext);
 
@@ -162,6 +229,7 @@ export default function (pi: ExtensionAPI) {
 						mode: "chain",
 						agentScope,
 						cwd: step.cwd,
+						projectId: step.projectId,
 						step: index + 1,
 						signal,
 						onUpdate: onUpdate
@@ -228,6 +296,7 @@ export default function (pi: ExtensionAPI) {
 				mode: "single",
 				agentScope,
 				cwd: params.cwd,
+				projectId: params.projectId,
 				signal,
 				onUpdate,
 			});

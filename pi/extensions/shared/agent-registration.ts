@@ -1,7 +1,6 @@
 import { spawn } from "node:child_process";
 import { readFileSync } from "node:fs";
 import path from "node:path";
-
 type AgentRole = "orchestrator" | "specialist";
 
 type RegistrationResult = {
@@ -20,6 +19,10 @@ type RegistrationOptions = {
 };
 
 const UNKNOWN_OPTION = /unknown option|no such option|unrecognized option/i;
+
+export function shouldRegisterAgents(env: NodeJS.ProcessEnv = process.env): boolean {
+	return /^(1|true|yes|on)$/i.test(env.BUILD_AGENTS_IN_BACKEND ?? "");
+}
 
 function sanitizeId(value: string): string {
 	return value.trim().replace(/\s+/g, "_");
@@ -117,28 +120,35 @@ export async function registerMainsequenceAgent(options: RegistrationOptions): P
 	const { agentName, agentRole, cwd, env, log } = options;
 	const safeAgentName = sanitizeId(agentName);
 	const userId = await resolveMainsequenceUserId({ cwd, env: env ?? process.env, log });
-	const isProjectCoder = agentName === "mainsequence-project-coder";
-	const projectId = isProjectCoder ? resolveProjectIdFromRecord(cwd, log) : null;
 
-	if (isProjectCoder && (!userId || !projectId)) {
+	if (!userId) {
 		log?.(
-			`Skipping agent registration for "${safeAgentName}": missing ${
-				!userId ? "user id" : "project id"
-			}.`,
+			`Skipping agent registration for "${safeAgentName}": missing user id.`,
 		);
 		return {
 			ok: false,
 			exitCode: null,
 			stdout: "",
-			stderr: "Missing required user id or project id for deterministic registration.",
+			stderr: "Missing required user id for deterministic registration.",
+		};
+	}
+
+	const isProjectCoder = agentName === "mainsequence-project-coder";
+	const projectId = isProjectCoder ? resolveProjectIdFromRecord(cwd, log) : null;
+
+	if (isProjectCoder && !projectId) {
+		log?.(`Skipping agent registration for "${safeAgentName}": missing project id.`);
+		return {
+			ok: false,
+			exitCode: null,
+			stdout: "",
+			stderr: "Missing required project id for deterministic registration.",
 		};
 	}
 
 	const uniqueId = isProjectCoder
 		? `${safeAgentName}_${userId}_${projectId}`
-		: userId
-			? `${safeAgentName}_${userId}`
-			: null;
+		: `${safeAgentName}_${userId}`;
 
 	log?.(
 		`Registering agent "${safeAgentName}" (${agentRole})${uniqueId ? ` with unique id "${uniqueId}"` : ""}.`,

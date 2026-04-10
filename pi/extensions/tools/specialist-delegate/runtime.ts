@@ -286,6 +286,7 @@ export async function runSingleAgent(options: {
 	mode: DelegateMode;
 	agentScope: AgentScope;
 	cwd?: string;
+	projectId?: string;
 	step?: number;
 	signal?: AbortSignal;
 	onUpdate?: AgentToolUpdateCallback;
@@ -299,6 +300,7 @@ export async function runSingleAgent(options: {
 		mode,
 		agentScope,
 		cwd,
+		projectId,
 		step,
 		signal,
 		onUpdate,
@@ -380,6 +382,7 @@ export async function runSingleAgent(options: {
 					...process.env,
 					ASTRO_SUBAGENT_CHILD: "1",
 					ASTRO_ACTIVE_SPECIALIST: agent.name,
+					...(projectId ? { ASTRO_TARGET_PROJECT_ID: projectId } : {}),
 				},
 			});
 

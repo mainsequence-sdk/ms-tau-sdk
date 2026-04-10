@@ -68,7 +68,7 @@ It should not impose an Astro-specific file contract on every target project.
 The runtime must reject invalid delegation cases such as:
 
 - implementation specialist called without a target `cwd`
-- implementation specialist called with a `cwd` that still points to the Astro repo
+- implementation specialist called with a missing, invalid, or unresolved target `cwd`
 - tutorial-only specialist used for non-tutorial work
 
 ### 6. Fix the container helper-binary mismatch
@@ -108,25 +108,26 @@ The default main agent should not:
 
 ### C. Coder specialist contract
 
-- [ ] Update [`.pi/agents/mainsequence-project-coder.md`](/Users/jose/code/MainSequenceServerSide/astro/.pi/agents/mainsequence-project-coder.md) so it assumes the project is already checked out locally.
-- [ ] Remove any ambiguity that the coder may open or set up a project itself.
-- [ ] Make the coder explicitly require a valid checked-out project `cwd`.
-- [ ] Keep the coder focused on implementation inside the target project only.
+- [x] Update [`.pi/agents/mainsequence-project-coder.md`](/Users/jose/code/MainSequenceServerSide/astro/.pi/agents/mainsequence-project-coder.md) so it assumes the project is already checked out locally.
+- [x] Remove any ambiguity that the coder may open or set up a project itself.
+- [x] Make the coder explicitly require a valid checked-out project `cwd`.
+- [x] Keep the coder focused on implementation inside the target project only.
 
 ### D. Remove Astro-specific target-project handoff ownership
 
-- [ ] Remove Astro-runtime instructions that require writing `astro/brief.md`, `astro/tasks.md`, `astro/record.md`, and `astro/status.md` as a default contract.
-- [ ] Update [`.pi/APPEND_SYSTEM.md`](/Users/jose/code/MainSequenceServerSide/astro/.pi/APPEND_SYSTEM.md) to stop referring to generic "workflow handoff artifacts" as required Astro-owned files.
-- [ ] Update [`.pi/agents/mainsequence-project-coder.md`](/Users/jose/code/MainSequenceServerSide/astro/.pi/agents/mainsequence-project-coder.md) to rely on project-local instructions and project-local skills instead of an Astro-imposed file contract.
-- [ ] Update [`pi/prompts/implement-additive.md`](/Users/jose/code/MainSequenceServerSide/astro/pi/prompts/implement-additive.md) to remove the default requirement to write `astro/` files in the target project.
-- [ ] Audit docs that still describe the `astro/` contract as mandatory and either remove that requirement or clearly mark it as legacy behavior.
+- [x] Remove Astro-runtime instructions that require writing `astro/brief.md`, `astro/tasks.md`, `astro/record.md`, and `astro/status.md` as a default contract.
+- [x] Update [`.pi/APPEND_SYSTEM.md`](/Users/jose/code/MainSequenceServerSide/astro/.pi/APPEND_SYSTEM.md) to stop referring to generic "workflow handoff artifacts" as required Astro-owned files.
+- [x] Update [`.pi/agents/mainsequence-project-coder.md`](/Users/jose/code/MainSequenceServerSide/astro/.pi/agents/mainsequence-project-coder.md) to rely on project-local instructions and project-local skills instead of an Astro-imposed file contract.
+- [x] Update [`pi/prompts/implement-additive.md`](/Users/jose/code/MainSequenceServerSide/astro/pi/prompts/implement-additive.md) to remove the default requirement to write `astro/` files in the target project.
+- [x] Audit docs that still describe the `astro/` contract as mandatory and either remove that requirement or clearly mark it as legacy behavior.
 
 ### E. Delegation runtime enforcement
 
-- [ ] Update [`pi/extensions/tools/specialist-delegate/index.ts`](/Users/jose/code/MainSequenceServerSide/astro/pi/extensions/tools/specialist-delegate/index.ts) to validate specialist eligibility before launch.
-- [ ] Update [`pi/extensions/tools/specialist-delegate/runtime.ts`](/Users/jose/code/MainSequenceServerSide/astro/pi/extensions/tools/specialist-delegate/runtime.ts) so implementation specialists cannot silently fall back to the Astro repo when `cwd` is missing.
-- [ ] Add a hard failure when `mainsequence-project-coder` is called without `cwd`.
-- [ ] Add a hard failure when `cwd` resolves to the Astro repo instead of a checked-out target project.
+- [x] Update [`pi/extensions/tools/specialist-delegate/index.ts`](/Users/jose/code/MainSequenceServerSide/astro/pi/extensions/tools/specialist-delegate/index.ts) to validate specialist eligibility before launch.
+- [x] Update [`pi/extensions/tools/specialist-delegate/runtime.ts`](/Users/jose/code/MainSequenceServerSide/astro/pi/extensions/tools/specialist-delegate/runtime.ts) so implementation specialists cannot silently fall back to an inherited working directory when `cwd` is missing.
+- [x] Add a hard failure when `mainsequence-project-coder` is called without `cwd`.
+- [x] Add a hard failure when `cwd` does not resolve to an existing checked-out target project directory.
+- [x] Add a hard failure when `mainsequence-project-coder` is called without `projectId`.
 
 ### F. Remove the extra tutorial builder role
 
@@ -137,10 +138,10 @@ The default main agent should not:
 
 ### G. Reusable prompts and docs alignment
 
-- [ ] Align [`.pi/APPEND_SYSTEM.md`](/Users/jose/code/MainSequenceServerSide/astro/.pi/APPEND_SYSTEM.md), [`pi/prompts/implement-additive.md`](/Users/jose/code/MainSequenceServerSide/astro/pi/prompts/implement-additive.md), and [`.pi/agents/mainsequence-project-coder.md`](/Users/jose/code/MainSequenceServerSide/astro/.pi/agents/mainsequence-project-coder.md) so they describe the same ownership model.
-- [ ] Update docs that currently say the parent writes mandatory `astro/` files, including [`docs/getting-started/request-lifecycle.md`](/Users/jose/code/MainSequenceServerSide/astro/docs/getting-started/request-lifecycle.md).
+- [x] Align [`.pi/APPEND_SYSTEM.md`](/Users/jose/code/MainSequenceServerSide/astro/.pi/APPEND_SYSTEM.md), [`pi/prompts/implement-additive.md`](/Users/jose/code/MainSequenceServerSide/astro/pi/prompts/implement-additive.md), and [`.pi/agents/mainsequence-project-coder.md`](/Users/jose/code/MainSequenceServerSide/astro/.pi/agents/mainsequence-project-coder.md) so they describe the same ownership model.
+- [x] Update docs that currently say the parent writes mandatory `astro/` files, including [`docs/getting-started/request-lifecycle.md`](/Users/jose/code/MainSequenceServerSide/astro/docs/getting-started/request-lifecycle.md).
 - [x] Remove docs that describe a second tutorial builder specialist.
-- [ ] Review README and getting-started docs for any remaining wording that biases normal project work toward project creation or tutorial flows.
+- [x] Review README and getting-started docs for any remaining wording that biases normal project work toward project creation or tutorial flows.
 
 ### H. Remove tutorial verification from the default main-agent contract
 
@@ -150,35 +151,37 @@ The default main agent should not:
 
 ### I. Container and helper binary fix
 
-- [ ] Investigate where the Linux container gets `/root/.pi/agent/bin/rg` from and confirm the cross-platform cache mismatch.
-- [ ] Stop sharing incompatible helper binaries between host and container.
-- [ ] Choose one container-safe strategy:
-- [ ] use a separate container-local Pi binary cache
+- [x] Investigate where the Linux container gets `/root/.pi/agent/bin/rg` from and confirm the cross-platform cache mismatch.
+- [x] Stop sharing incompatible helper binaries between host and container.
+- [x] Choose one container-safe strategy:
+- [x] use a separate container-local Pi binary cache
 - [ ] or clear and re-bootstrap helper binaries inside the container
 - [ ] or mount only sessions/config and not host-downloaded binaries
-- [ ] Update [`docker-compose.yml`](/Users/jose/code/MainSequenceServerSide/astro/docker-compose.yml), [`Dockerfile`](/Users/jose/code/MainSequenceServerSide/astro/Dockerfile), and startup docs to match the chosen approach.
+- [x] Update [`docker-compose.yml`](/Users/jose/code/MainSequenceServerSide/astro/docker-compose.yml), [`Dockerfile`](/Users/jose/code/MainSequenceServerSide/astro/Dockerfile), and startup docs to match the chosen approach.
 
 ## Suggested Order
 
-- [ ] First fix the parent prompt and reusable project prompt.
-- [ ] Then finish tightening `mainsequence-project-coder` and tutorial workflow behavior.
-- [ ] Then add runtime enforcement in the delegation tool.
-- [ ] Then remove tutorial verification from the default parent-agent contract.
-- [ ] Then clean up docs and remove stale `astro/` contract language.
-- [ ] Finally fix the container helper-binary strategy.
+- [x] First fix the parent prompt and reusable project prompt.
+- [x] Then finish tightening `mainsequence-project-coder` and tutorial workflow behavior.
+- [x] Then add runtime enforcement in the delegation tool.
+- [x] Then remove tutorial verification from the default parent-agent contract.
+- [x] Then clean up docs and remove stale `astro/` contract language.
+- [x] Finally fix the container helper-binary strategy.
 
 ## Acceptance Criteria
 
-- [ ] Asking to work on an existing project never triggers the new-project creation path.
-- [ ] Asking to create a new project requires the minimum intake before creation.
-- [ ] The orchestrator always runs `mainsequence project set-up-locally` before delegation.
-- [ ] `mainsequence-project-coder` never starts in the Astro repo.
-- [ ] `mainsequence-project-coder` cannot be launched without a valid target `cwd`.
+- [ ] Asking to work on an existing project never triggers the new-project creation path in real end-to-end runs.
+- [ ] Asking to create a new project requires the minimum intake before creation in real end-to-end runs.
+- [x] The orchestrator prompt and reusable project prompt both require `mainsequence project set-up-locally` before delegation.
+- [x] `mainsequence-project-coder` never starts without an explicit checked-out target project `cwd`.
+- [x] `mainsequence-project-coder` cannot be launched without a valid target `cwd`.
+- [x] `mainsequence-project-coder` cannot be launched without `projectId`.
 - [x] The default main agent no longer advertises or routes tutorial verification as a built-in capability.
-- [ ] The runtime and docs no longer require Astro-owned `astro/` files in target projects by default.
-- [ ] Containerized runs no longer fail because of incompatible cached helper binaries such as `rg`.
-
-
+- [x] The runtime and docs no longer require Astro-owned `astro/` files in target projects by default.
+- [x] `mainsequence-project-coder` is the only implementation specialist in the default flow.
+- [x] Tutorial verification remains only as an explicit standalone workflow prompt.
+- [x] Containerized runs no longer fail because of incompatible cached helper binaries such as `rg`.
+- [x] Containerized runs reuse host Pi auth/settings/sessions without reusing host helper binaries.
 
 ## LKast Task 
 

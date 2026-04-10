@@ -3,6 +3,7 @@ import path from "node:path";
 import process from "node:process";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { bootstrapPiAgentDir } from "./bootstrap_pi_agent_dir.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
@@ -166,6 +167,7 @@ function ensurePiCli() {
 
 function main() {
 	loadEnvFile();
+	const piAgentState = bootstrapPiAgentDir();
 	ensureNodeVersion();
 
 	if (!hasLocalNpmDeps()) {
@@ -179,6 +181,16 @@ function main() {
 	}
 
 	ensurePiCli();
+
+	if (piAgentState.hostImportDir) {
+		const importedText =
+			piAgentState.importedEntries.length > 0
+				? piAgentState.importedEntries.join(", ")
+				: "no reusable host Pi state";
+		console.log(
+			`[astro] Using container-local Pi agent dir at ${piAgentState.targetDir} (imported ${importedText} from ${piAgentState.hostImportDir}).`,
+		);
+	}
 
 	console.log("[astro] Running TypeScript check...");
 	run("npm", ["run", "check"]);

@@ -34,7 +34,7 @@ The body becomes the specialist's appended system prompt.
 Use when:
 
 - the checked-out Main Sequence project needs implementation work
-- a tutorial-verification workflow needs deterministic work inside a disposable checked-out project
+- an explicit tutorial-verification workflow needs deterministic work inside a disposable checked-out project
 
 Important rule:
 

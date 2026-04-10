@@ -12,6 +12,14 @@ Use when:
 
 - helping users interact with the Main Sequence platform or CLI
 
+### `pi/skills/mainsequence-project-creation/SKILL.md`
+
+Use when:
+
+- creating a brand new Main Sequence project
+- turning a vague project idea into a structured creation intake
+- collecting the questionnaire details needed before `project validate-name` or `project create`
+
 ### `pi/skills/mainsequence-sdk/SKILL.md`
 
 Use when:

@@ -161,13 +161,13 @@ This is useful for focused implementation or investigation inside an already che
 Interactive mode:
 
 ```bash
-npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project
+npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project --project-id <project-id>
 ```
 
 Single-task mode:
 
 ```bash
-npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project "Read astro/tasks.md and implement the next task"
+npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project --project-id <project-id> "Read the project's task and status context, then implement the next task"
 ```
 
 ### What this does

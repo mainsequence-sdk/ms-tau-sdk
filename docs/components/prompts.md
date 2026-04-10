@@ -14,9 +14,11 @@ Purpose:
 
 This is the parent workflow for:
 
+- existing-project selection
 - project creation
+- loading `mainsequence-project-creation` when a new project needs detailed intake
 - local checkout
-- `astro/` handoff files
+- project-local task and status tracking when the target project uses it
 - delegation to `mainsequence-project-coder`
 
 ### `pi/prompts/design-and-audit.md`
@@ -31,7 +33,7 @@ This is the structured review path for status, blockers, and completion.
 
 Purpose:
 
-- run the fixed tutorial-regression workflow
+- run the fixed tutorial-regression workflow as an explicit standalone path
 
 This is the source of truth for:
 

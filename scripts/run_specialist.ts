@@ -16,6 +16,7 @@ const MAINSEQUENCE_REQUIRED_ENV = [
 interface ParsedArgs {
 	agentName: string;
 	cwd?: string;
+	projectId?: string;
 	task?: string;
 }
 
@@ -27,6 +28,7 @@ function fail(message: string): never {
 function parseArgs(argv: string[]): ParsedArgs {
 	let agentName = "";
 	let cwd: string | undefined;
+	let projectId: string | undefined;
 	const taskParts: string[] = [];
 
 	for (let index = 0; index < argv.length; index++) {
@@ -44,16 +46,23 @@ function parseArgs(argv: string[]): ParsedArgs {
 			continue;
 		}
 
+		if (arg === "--project-id") {
+			projectId = argv[index + 1] || "";
+			index += 1;
+			continue;
+		}
+
 		taskParts.push(arg);
 	}
 
 	if (!agentName.trim()) {
-		fail("Usage: npm run specialist -- --agent <name> [--cwd <path>] [task...]");
+		fail("Usage: npm run specialist -- --agent <name> [--cwd <path>] [--project-id <id>] [task...]");
 	}
 
 	return {
 		agentName: agentName.trim(),
 		cwd: cwd?.trim() || undefined,
+		projectId: projectId?.trim() || undefined,
 		task: taskParts.join(" ").trim() || undefined,
 	};
 }
@@ -171,13 +180,30 @@ function startMainsequenceRefreshLoop() {
 function main() {
 	const repoRoot = findRepoRoot(process.cwd());
 	loadEnvFile(repoRoot);
-	const { agentName, cwd, task } = parseArgs(process.argv.slice(2));
+	const { agentName, cwd, projectId, task } = parseArgs(process.argv.slice(2));
 	const discovery = discoverAgents(repoRoot, "project");
 	const agent = discovery.agents.find((candidate) => candidate.name === agentName);
 
 	if (!agent) {
 		const known = discovery.agents.map((candidate) => candidate.name).sort().join(", ") || "none";
 		fail(`Unknown specialist "${agentName}". Available project specialists: ${known}`);
+	}
+
+	if (agentName === "mainsequence-project-coder") {
+		if (!cwd) {
+			fail("mainsequence-project-coder requires --cwd pointing to the checked-out target project.");
+		}
+		if (!projectId) {
+			fail("mainsequence-project-coder requires --project-id.");
+		}
+		const resolvedCwd = path.resolve(cwd);
+		try {
+			if (!fs.statSync(resolvedCwd).isDirectory()) {
+				fail("mainsequence-project-coder requires --cwd pointing to an existing checked-out target project directory.");
+			}
+		} catch {
+			fail("mainsequence-project-coder requires --cwd pointing to an existing checked-out target project directory.");
+		}
 	}
 
 	const promptPath = writePromptToTempFile(agent);
@@ -197,6 +223,7 @@ function main() {
 			...process.env,
 			ASTRO_SUBAGENT_CHILD: "1",
 			ASTRO_ACTIVE_SPECIALIST: agent.name,
+			...(projectId ? { ASTRO_TARGET_PROJECT_ID: projectId } : {}),
 		},
 	});
 

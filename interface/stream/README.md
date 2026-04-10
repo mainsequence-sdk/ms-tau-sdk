@@ -28,12 +28,32 @@ Send a request compatible with assistant-ui's data-stream runtime:
 
 ```json
 {
-  "threadId": "optional-thread-id",
   "system": "optional system prompt",
   "messages": [
-    { "role": "user", "content": [{ "type": "text", "text": "Hello" }] }
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "text",
+          "text": "the exact message the user just typed"
+        }
+      ]
+    }
   ],
-  "tools": []
+  "tools": {},
+  "threadId": "optional-thread-id",
+  "context": {
+    "appId": "...",
+    "appTitle": "...",
+    "currentPath": "...",
+    "surfaceId": "...",
+    "surfaceTitle": "...",
+    "surfaceActions": [],
+    "surfaceContextSource": "surface",
+    "surfaceDetails": {},
+    "surfaceSummary": "...",
+    "userId": "..."
+  }
 }
 ```
 
@@ -41,7 +61,18 @@ The response is always SSE and uses `event: message` with one JSON chunk per eve
 
 The response includes an `X-Thread-Id` header if a new thread was created.
 
-This endpoint is stateless. It expects the full message history in each request (assistant-ui already sends this).
+This endpoint expects `messages` to contain the current user turn only. The server reads only the
+last message entry and treats it as the exact latest user message, plus optional UI metadata in
+`context`.
+
+Conversation continuity comes from `threadId`, which maps to a Pi session file on the server.
+
+The stream wrapper injects:
+
+- `system` as an optional prompt prefix
+- `context` as structured UI context
+- `tools` as optional UI tool metadata
+- only the last `messages` entry as the turn input
 
 Response headers include:
 

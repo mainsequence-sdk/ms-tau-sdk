@@ -209,20 +209,75 @@ function extractText(content: any): string {
 		.join("");
 }
 
-function buildPrompt(system: string | undefined, messages: any[]): string {
-	const lines: string[] = [];
-	if (system) lines.push(`System: ${system}`);
+function isPlainObject(value: any): value is Record<string, unknown> {
+	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
 
-	lines.push("Conversation history:");
-	for (const msg of messages) {
-		if (!msg || typeof msg !== "object") continue;
-		const role = msg.role ?? "unknown";
-		const content = extractText(msg.content);
-		if (!content) continue;
-		lines.push(`${role}: ${content}`);
+function stringifyInline(value: unknown): string {
+	if (typeof value === "string") return value.trim();
+	try {
+		return JSON.stringify(value);
+	} catch {
+		return String(value);
+	}
+}
+
+function addPromptField(lines: string[], label: string, value: unknown) {
+	if (value == null) return;
+
+	if (typeof value === "string") {
+		const trimmed = value.trim();
+		if (!trimmed) return;
+		lines.push(`- ${label}: ${trimmed}`);
+		return;
 	}
 
-	lines.push("Respond to the latest user message above.");
+	if (Array.isArray(value) && value.length === 0) return;
+	if (isPlainObject(value) && Object.keys(value).length === 0) return;
+
+	lines.push(`- ${label}: ${stringifyInline(value)}`);
+}
+
+function extractLatestUserMessage(messages: any[]): string {
+	const msg = messages[messages.length - 1];
+	if (!msg || typeof msg !== "object") return "";
+	if (msg.role !== "user") return "";
+
+	const content = extractText(msg.content);
+	return content.trim();
+}
+
+function buildPrompt(
+	system: string | undefined,
+	latestUserMessage: string,
+	context: Record<string, unknown>,
+	tools: Record<string, unknown>,
+): string {
+	const lines: string[] = [];
+	if (system?.trim()) lines.push(`System: ${system.trim()}`);
+
+	if (Object.keys(context).length > 0) {
+		lines.push("UI context:");
+		addPromptField(lines, "appId", context.appId);
+		addPromptField(lines, "appTitle", context.appTitle);
+		addPromptField(lines, "currentPath", context.currentPath);
+		addPromptField(lines, "surfaceId", context.surfaceId);
+		addPromptField(lines, "surfaceTitle", context.surfaceTitle);
+		addPromptField(lines, "surfaceActions", context.surfaceActions);
+		addPromptField(lines, "surfaceContextSource", context.surfaceContextSource);
+		addPromptField(lines, "surfaceDetails", context.surfaceDetails);
+		addPromptField(lines, "surfaceSummary", context.surfaceSummary);
+		addPromptField(lines, "userId", context.userId);
+	}
+
+	if (Object.keys(tools).length > 0) {
+		lines.push("UI tools:");
+		lines.push(stringifyInline(tools));
+	}
+
+	lines.push("Latest user message:");
+	lines.push(latestUserMessage);
+	lines.push("Use the active session for prior conversation context when the same threadId is reused.");
 	return lines.join("\n");
 }
 
@@ -419,8 +474,26 @@ const server = createServer(async (req, res) => {
 		return;
 	}
 
+	const latestUserMessage = extractLatestUserMessage(messages);
+	if (!latestUserMessage) {
+		badRequest(res, "Missing latest user message.");
+		return;
+	}
+
+	const tools = body.tools === undefined ? {} : body.tools;
+	if (!isPlainObject(tools)) {
+		badRequest(res, "`tools` must be an object.");
+		return;
+	}
+
+	const context = body.context === undefined ? {} : body.context;
+	if (!isPlainObject(context)) {
+		badRequest(res, "`context` must be an object.");
+		return;
+	}
+
 	const system = typeof body.system === "string" ? body.system : undefined;
-	const prompt = buildPrompt(system, messages);
+	const prompt = buildPrompt(system, latestUserMessage, context, tools);
 	const threadId = typeof body.threadId === "string" && body.threadId.trim() ? body.threadId : randomUUID();
 
 	res.writeHead(200, {

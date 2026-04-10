@@ -4,7 +4,7 @@
 
 Astro is a Pi package that acts as a parent orchestrator for Main Sequence project assistants.
 
-It translates user intent into a Main Sequence project workflow, prepares `astro/` handoff files in the checked-out project, delegates implementation or review to specialists, and can also run a fixed tutorial-regression workflow for the official Main Sequence docs.
+It translates user intent into a Main Sequence project workflow, helps select an existing project or create a new one, sets the project up locally, and delegates implementation or review to specialists. A separate prompt template exists for the optional tutorial-regression workflow.
 
 ## Quick start
 
@@ -30,7 +30,7 @@ its final Docker layer, for example `mainsequence==0.1.2`.
 
 To use Docker Compose with only the exact host directories Astro needs mounted:
 
-- `${HOME}/.pi/agent` -> `/root/.pi/agent`
+- `${HOME}/.pi/agent` -> `/root/.pi/host-agent`
 - `${HOME}/mainsequence` -> `/root/mainsequence`
 - `${HOME}/mainsequence-dev` -> `/root/mainsequence-dev`
 
@@ -39,13 +39,14 @@ docker compose run --rm astro-pi
 docker compose up astro-pi-stream
 ```
 
-The compose file also sets `PI_CODING_AGENT_DIR=/root/.pi/agent`, so existing Pi auth and old
-session history from `${HOME}/.pi/agent/sessions` are reused inside the container.
+The compose file sets `PI_CODING_AGENT_DIR=/root/.pi/agent-runtime` and imports reusable host Pi
+state from `/root/.pi/host-agent`. Auth, settings, and session history are reused, but helper
+binaries stay container-local so Linux does not try to execute macOS-downloaded tools.
 
-To launch only the coding specialist instead of the full orchestrator:
+To launch only the coding specialist instead of the full orchestrator for an already selected and checked-out project:
 
 ```bash
-npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project
+npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project --project-id <project-id>
 ```
 
 ## Start reading here

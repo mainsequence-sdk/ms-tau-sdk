@@ -43,10 +43,9 @@ Why it exists:
 
 Notes:
 
-- when the active specialist is `mainsequence-project-coder`, the registration uses
-  the project id in `astro/record.md` to build a unique id in the form
-  `{agent_name}_{user_id}_{project_id}`.
-- if the user id or project id is missing, registration is skipped for that session.
+- registration uses a deterministic user-scoped unique id in the form
+  `{agent_name}_{user_id}`.
+- if the user id is missing, registration is skipped for that session.
 
 ### `specialist-delegate`
 

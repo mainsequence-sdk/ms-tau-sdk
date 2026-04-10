@@ -40,12 +40,19 @@ RUN pip install --no-cache-dir "${MAINSEQUENCE_PIP_SPEC}"
 FROM astro-mainsequence AS astro-pi-stream
 
 ENV ASTRO_STREAM_HOST=0.0.0.0 \
-    ASTRO_STREAM_PORT=8787
+    ASTRO_STREAM_PORT=8787 \
+    PI_CODING_AGENT_DIR=/root/.pi/agent-runtime
+
+RUN mkdir -p /root/.pi/agent-runtime/bin
 
 EXPOSE 8787
 
 CMD ["tsx", "scripts/start_pi_stream.ts"]
 
 FROM astro-mainsequence AS astro-pi
+
+ENV PI_CODING_AGENT_DIR=/root/.pi/agent-runtime
+
+RUN mkdir -p /root/.pi/agent-runtime/bin
 
 CMD ["node", "scripts/start_pi.mjs"]

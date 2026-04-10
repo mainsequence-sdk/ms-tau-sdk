@@ -13,7 +13,7 @@ This documentation set is organized for readers who may not know Pi yet. It expl
 If you want Pi to start in single-specialist mode instead of the full Astro orchestrator, use:
 
 ```bash
-npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project
+npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project --project-id <project-id>
 ```
 
 That launches Pi with:
@@ -26,7 +26,7 @@ That launches Pi with:
 If you want to launch it non-interactively with one task:
 
 ```bash
-npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project "Read astro/tasks.md and implement the next task"
+npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project --project-id <project-id> "Read the project's task and status context, then implement the next task"
 ```
 
 ## Architecture
@@ -59,7 +59,7 @@ AGENTS --> CODER["mainsequence-project-coder"]
   - [`getting-started/request-lifecycle.md`](./getting-started/request-lifecycle.md)
 - Just want to run Astro:
   - [`getting-started/quickstart.md`](./getting-started/quickstart.md)
-- Want the project and tutorial flow definitions:
+- Want the reusable workflow definitions:
   - [`components/prompts.md`](./components/prompts.md)
 
 ## Pi components in Astro

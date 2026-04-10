@@ -25,7 +25,6 @@ It defines Astro's main role:
 
 - orchestrate Main Sequence projects
 - use the Main Sequence CLI
-- write `astro/` handoff files
 - delegate implementation and review to specialists
 
 The parent prompt is static on purpose. It is easier to inspect and reason about than generating parent policy dynamically every run.

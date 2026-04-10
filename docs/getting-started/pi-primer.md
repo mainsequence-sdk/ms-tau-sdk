@@ -71,8 +71,9 @@ Astro has a parent-child structure:
 The parent handles:
 
 - intent translation
-- Main Sequence CLI actions
-- writing the target project's `astro/` handoff files
+- existing-project selection or new-project creation
+- loading deeper skills when a branch needs more detailed guidance, such as new-project intake
+- Main Sequence local setup and delegation
 - deciding when to delegate and when to review
 
 The child specialists handle:

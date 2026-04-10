@@ -27,7 +27,7 @@ The deployable Docker targets boot the same runtime by copying only:
 
 `docker-compose.yml` starts those same targets while bind-mounting only:
 
-- `${HOME}/.pi/agent` to `/root/.pi/agent`
+- `${HOME}/.pi/agent` to `/root/.pi/host-agent`
 - `${HOME}/mainsequence` to `/root/mainsequence`
 - `${HOME}/mainsequence-dev` to `/root/mainsequence-dev`
 
@@ -35,6 +35,15 @@ For the normal parent session, Pi also loads `.pi/APPEND_SYSTEM.md`.
 
 When `BUILD_AGENTS_IN_BACKEND=1`, every session start (parent or child) runs a deterministic
 Main Sequence CLI registration step to `get-or-create` the agent record.
+
+For the HTTP stream path, the wrapper accepts the latest UI turn plus optional UI context, then
+builds the Pi prompt from:
+
+- the optional request `system`
+- the structured request `context`
+- only the last message entry in `messages`
+
+Conversation continuity comes from the server-side session file keyed by `threadId`.
 
 ## 2. Before the agent starts
 
@@ -54,6 +63,8 @@ The parent agent reads:
 
 Then it decides whether the task is:
 
+- platform help
+- an SDK question
 - a normal Main Sequence project workflow
 - an Astro-internal review task
 - an explicitly requested standalone workflow prompt
@@ -62,14 +73,14 @@ Then it decides whether the task is:
 
 For a normal Main Sequence project, the parent:
 
-1. authenticates with `mainsequence`
-2. creates or opens the project
-3. checks it out locally
-4. writes the target project's `astro/` files:
-   - `astro/brief.md`
-   - `astro/tasks.md`
-   - `astro/record.md`
-   - `astro/status.md`
+1. translates the request into a short brief, task list, and acceptance criteria
+2. decides whether to select an existing project or create a new one
+   - if the user wants a new project, the parent loads the project-creation skill and uses it to collect the missing intake before creation
+3. runs `mainsequence project set-up-locally <id>` after the project id is known
+4. resolves the checked-out local path
+5. prepares any needed project-local task or status context for the checked-out project
+   - use the target project's own instructions, planning files, and status files when they exist
+   - do not assume an Astro-owned `astro/` file contract by default
 
 ## 5. Parent delegates to a specialist
 
@@ -81,7 +92,8 @@ That tool:
 2. reads frontmatter
 3. appends shared guideline files if the specialist declares them
 4. spawns a child `pi` process
-5. streams live child progress back to the parent
+5. passes the checked-out target `cwd` and selected `projectId` when required
+6. streams live child progress back to the parent
 
 ## 6. Child specialist runs
 
@@ -90,20 +102,21 @@ The child process gets:
 - the repo context
 - the specialist prompt
 - the child-only policy
-- an optional different `cwd`, often the checked-out target project
+- the checked-out target project `cwd` when delegated for implementation
+- the selected Main Sequence project id when the specialist requires it
 
-That is how Astro can run a specialist inside another project folder while keeping the parent in the Astro repo.
+That is how the parent can run a specialist inside another project folder while keeping the parent in its own working directory.
 
 ## 7. Parent reviews and responds
 
 The parent may:
 
 - continue orchestrating
-- review status directly using the `astro/` evidence
+- review status directly using the checked-out project's available evidence
 
 Then it returns:
 
-- project or workflow status
+- project context or workflow status
 - the local path
 - blockers or next actions
 
