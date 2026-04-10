@@ -8,12 +8,10 @@ Task: $ARGUMENTS
 Follow this workflow:
 
 1. Inspect the project's `astro/` files, especially `astro/tasks.md` and `astro/status.md`.
-2. Call `delegate_specialist` with `doc-bug-auditor` and set `cwd` to the project folder.
+2. Review the status directly using the evidence available in the checked-out project.
 3. Return the status review with:
    - overall state
    - completed tasks
    - open tasks
    - blockers or failure causes
-   - upstream `mainsequence-sdk` assessment
-   - GitHub issue status
    - next actions

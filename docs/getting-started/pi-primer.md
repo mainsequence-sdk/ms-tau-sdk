@@ -46,7 +46,6 @@ Astro currently uses:
 
 - `mainsequence-project-coder`
 - `rpro-builder`
-- `doc-bug-auditor`
 
 ### Prompt templates
 

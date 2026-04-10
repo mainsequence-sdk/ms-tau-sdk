@@ -2,6 +2,7 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { Type } from "@sinclair/typebox";
 import { type AgentConfig, type AgentScope, discoverAgents } from "./agents.js";
 import { getFinalOutput, isResultFailure, runSingleAgent, type DelegateToolDetails, type SingleResult } from "./runtime.js";
+import { emitTelemetryEvent } from "../../shared/telemetry.js";
 
 const AgentScopeSchema = Type.Union(
 	[Type.Literal("user"), Type.Literal("project"), Type.Literal("both")],
@@ -86,12 +87,11 @@ export default function (pi: ExtensionAPI) {
 		name: "delegate_specialist",
 		label: "Delegate Specialist",
 		description:
-			"Delegate coding or review work to Astro's repo-local specialists with isolated child pi processes. Use mainsequence-project-coder as the coding subagent in a checked-out project folder. Use doc-bug-auditor for structured status review. Supports single-step and sequential chain execution.",
+			"Delegate coding work to Astro's repo-local specialists with isolated child pi processes. Use mainsequence-project-coder as the coding subagent in a checked-out project folder. Supports single-step and sequential chain execution.",
 		promptSnippet:
-			"delegate_specialist: delegate coding or review work to a project-local specialist in .pi/agents",
+			"delegate_specialist: delegate coding work to a project-local specialist in .pi/agents",
 		promptGuidelines: [
 			"Use mainsequence-project-coder with cwd set to the checked-out Main Sequence project when implementation should happen there.",
-			"Use doc-bug-auditor when project status, blockers, or failures need review.",
 			"Prefer project-local specialists for this repo unless there is a clear reason to use user-level specialists.",
 		],
 		parameters: DelegateParams,
@@ -137,6 +137,14 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
+			const delegateContext = {
+				mode: hasChain ? "chain" : "single",
+				agents: requestedNames,
+				chainLength: hasChain ? params.chain!.length : 1,
+				cwd: params.cwd ?? null,
+			};
+			emitTelemetryEvent("delegate_start", delegateContext);
+
 			if (hasChain) {
 				const results: SingleResult[] = [];
 				let previousOutput = "";
@@ -174,6 +182,12 @@ export default function (pi: ExtensionAPI) {
 					results.push(result);
 
 					if (isResultFailure(result)) {
+						emitTelemetryEvent("delegate_end", {
+							...delegateContext,
+							status: "error",
+							step: index + 1,
+							agent: step.agent,
+						});
 						return {
 							content: [
 								{
@@ -193,6 +207,7 @@ export default function (pi: ExtensionAPI) {
 					previousOutput = getFinalOutput(result.messages);
 				}
 
+				emitTelemetryEvent("delegate_end", { ...delegateContext, status: "success" });
 				return {
 					content: [
 						{
@@ -218,6 +233,11 @@ export default function (pi: ExtensionAPI) {
 			});
 
 			if (isResultFailure(result)) {
+				emitTelemetryEvent("delegate_end", {
+					...delegateContext,
+					status: "error",
+					agent: params.agent as string,
+				});
 				return {
 					content: [
 						{
@@ -234,6 +254,11 @@ export default function (pi: ExtensionAPI) {
 				};
 			}
 
+			emitTelemetryEvent("delegate_end", {
+				...delegateContext,
+				status: "success",
+				agent: params.agent as string,
+			});
 			return {
 				content: [{ type: "text", text: getFinalOutput(result.messages) || "(no output)" }],
 				details: makeDetails("single", agentScope, discovery.projectAgentsDir, [result]),

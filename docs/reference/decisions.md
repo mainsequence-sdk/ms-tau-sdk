@@ -29,11 +29,10 @@ Implementation:
 
 - `.pi/agents/mainsequence-project-coder.md`
 - `.pi/agents/rpro-builder.md`
-- `.pi/agents/doc-bug-auditor.md`
 
 Why:
 
-- implementation, fixed-guideline builds, and review are different roles
+- implementation and fixed-guideline builds are different roles
 - child sessions get narrower context windows and clearer responsibilities
 
 ## 4. Keep repo-local runtime in TypeScript

@@ -10,6 +10,7 @@
   },
   "include": [
     "pi/extensions/**/*.ts",
+    "interface/**/*.ts",
     "scripts/**/*.ts",
     "types/**/*.d.ts"
   ]

@@ -6,6 +6,8 @@ This is Astro's fixed regression workflow for the official Main Sequence tutoria
 
 Verify that the documented CLI and GUI tutorial flows still match the real product and SDK behavior.
 
+This workflow requires `ADD_TUTORIAL_AGENT=1` to enable the `rpro-builder` specialist.
+
 ## Canonical sources
 
 - CLI tutorial:
@@ -51,4 +53,3 @@ and should use GitHub REST rather than `gh`.
 
 - [`main-sequence-project-flow.md`](./main-sequence-project-flow.md)
 - [`../components/prompts.md`](../components/prompts.md)
-

@@ -13,7 +13,7 @@ When a user describes a project, Astro should normally:
 5. Set the project up locally.
 6. Apply Astro's own `astro/` handoff convention inside the checked-out project.
 7. Launch `mainsequence-project-coder` in that project folder.
-8. Record the project state and review whether the requested work is finished, blocked, or failing, usually with `doc-bug-auditor`.
+8. Record the project state and review whether the requested work is finished, blocked, or failing.
 
 For the dedicated tutorial-regression flow, Astro should instead:
 
@@ -68,7 +68,7 @@ Guidance:
 - do not rely on unrelated GitHub auth state when Astro-specific secrets are missing
 - do not look for or use any GitHub credentials outside `astro-github-token` and optional `astro-github-user`
 - do not use generic GitHub environment variables like `GH_TOKEN` or `GITHUB_TOKEN` as an auth source for issue escalation
-- when the issue-escalation criteria are met, `doc-bug-auditor` does not need a second user confirmation to open the upstream issue
+- when the issue-escalation criteria are met, Astro does not need a second user confirmation to open the upstream issue
 - prefer GitHub REST API over `gh` for issue search and issue creation
 
 ## Astro-specific conventions
@@ -78,7 +78,6 @@ The following parts are Astro conventions layered on top of Main Sequence, not c
 - the `astro/` handoff folder inside the checked-out project
 - the `mainsequence-project-coder` coding subagent
 - the `rpro-builder` fixed-guideline build subagent
-- the `doc-bug-auditor` status-review subagent
 - the specific project record and status file structure below
 - the machine-local secret names used for Main Sequence login and GitHub issue escalation
 
@@ -121,8 +120,6 @@ If Astro uses that image, the whole host `~/mainsequence` root should be bind-mo
 - The parent Astro agent should orchestrate, not do most implementation work itself.
 - The coding subagent should do the main project implementation inside the target project folder.
 - `rpro-builder` should be used when a project build must always follow stable shared guidelines, especially for disposable tutorial-review runs.
-- `doc-bug-auditor` should be used for structured status review, failure analysis, upstream `mainsequence-sdk` investigation, and issue escalation when warranted.
-- `audit_recent_changes` is mainly for changes made to Astro itself, not the external project workflow.
 
 ## Preferred change surface
 

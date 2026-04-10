@@ -7,8 +7,7 @@ astro/
 │   ├── settings.json
 │   └── agents/
 │       ├── mainsequence-project-coder.md
-│       ├── rpro-builder.md
-│       └── doc-bug-auditor.md
+│       └── rpro-builder.md
 ├── pi/
 │   ├── extensions/
 │   │   ├── hooks/
@@ -22,6 +21,8 @@ astro/
 │   ├── workflows/
 │   ├── reference/
 │   └── reserach_guide/
+├── interface/
+│   └── stream/
 ├── scripts/
 ├── AGENTS.md
 ├── Dockerfile
@@ -44,6 +45,10 @@ Pi package content registered in `package.json`, including extensions, prompts, 
 ### `docs/`
 
 Canonical human-readable documentation for Astro.
+
+### `interface/`
+
+Optional runtime interfaces around Pi, including the HTTP stream wrapper.
 
 ### `scripts/`
 

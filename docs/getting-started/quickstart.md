@@ -6,6 +6,20 @@
 npm run pi
 ```
 
+## Run Astro over HTTP stream
+
+```bash
+npm run pi:stream
+```
+
+This starts the HTTP streaming wrapper on `http://0.0.0.0:8787` and is reachable on your LAN at `http://<your-ip>:8787`.
+
+The stream endpoint accepts assistant-ui compatible `ui-message-stream` requests at `POST /api/chat` and returns SSE.
+
+Sessions are persisted per `threadId` under `.astro/stream-sessions` by default.
+
+Tutorial review via `rpro-builder` is only enabled when `ADD_TUTORIAL_AGENT=1`.
+
 This launcher:
 
 - installs local npm dependencies when needed

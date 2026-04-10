@@ -42,11 +42,20 @@ Purpose:
 
 - track Astro-side file edits made by the parent session
 - register `list_recent_changes`
-- register `audit_recent_changes`
 
 Why it exists:
 
 - Astro itself sometimes needs review separate from the target project
+
+### `telemetry`
+
+Purpose:
+
+- emit structured telemetry events to stdout for streaming consumers
+
+Why it exists:
+
+- lets the HTTP stream interface forward structured events without parsing the raw TUI output
 
 ## Extension hooks used here
 

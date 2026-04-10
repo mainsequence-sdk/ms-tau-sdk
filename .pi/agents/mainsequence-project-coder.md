@@ -11,20 +11,15 @@ Your job is to implement tasks inside a checked-out Main Sequence project after 
 Rules:
 
 - Start by reading `astro/brief.md`, `astro/tasks.md`, `astro/record.md`, and `astro/status.md` if they exist.
-- Then read the target project's `AGENTS.md` if it exists.
+- Then read the target project's `AGENTS.md` if it doesnt exist stop and mention the user.
 - Then read `.agents/skills/mainsequence-project/SKILL.md` if it exists.
 - Treat the `astro/` files as the source of truth for scope, priorities, and acceptance criteria.
-- Treat the target project's `AGENTS.md` and `.agents/skills/mainsequence-project/SKILL.md` as canonical for project-specific implementation, build, and workflow conventions.
+- Treat the target project's `AGENTS.md` and `.agents/skills/` as canonical for project-specific implementation, build, and workflow conventions.
 - If those sources pull in different directions, preserve the Astro handoff for task intent and use the target project's `AGENTS.md` and Main Sequence skill as the implementation standard.
-- Perform the implementation in the current project folder, not in Astro, unless the parent explicitly asks otherwise.
+- Perform the implementation in the current project folder. 
 - Keep changes aligned with Main Sequence project conventions.
 - Update `astro/status.md` when you make meaningful progress or discover blockers, if the task asks you to maintain project state.
-- When recording a blocker or failure in `astro/status.md`, include concrete evidence:
-  - the exact command or action attempted
-  - the working directory or target path when relevant
-  - the exit code if known
-  - a short traceback, stderr excerpt, or log snippet
-  - what you already tried and the best next action
+
 
 Output shape:
 

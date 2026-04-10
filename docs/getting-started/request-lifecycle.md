@@ -76,8 +76,7 @@ That is how Astro can run a specialist inside another project folder while keepi
 The parent may:
 
 - continue orchestrating
-- delegate review to `doc-bug-auditor`
-- use `audit_recent_changes` if Astro itself changed
+- review status directly using the `astro/` evidence
 
 Then it returns:
 

@@ -49,25 +49,14 @@ Use when:
 Important rule:
 
 - it keeps its fixed guidelines embedded inside the specialist prompt
-
-### `doc-bug-auditor`
-
-Use when:
-
-- you need structured status review
-- a failure needs investigation
-- you need duplicate-issue search and GitHub REST issue escalation for likely upstream SDK problems
-
-Important rule:
-
-- it should report concrete evidence, not vague blocker summaries
+- it is only discoverable when `ADD_TUTORIAL_AGENT=1`
 
 ## Role split
 
 Astro intentionally keeps a parent-child split:
 
 - parent orchestrates
-- child implements or reviews
+- child implements or builds
 
 That keeps the parent focused on Main Sequence operations and keeps specialists focused on narrower tasks.
 

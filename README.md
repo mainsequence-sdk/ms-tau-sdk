@@ -12,10 +12,10 @@ It translates user intent into a Main Sequence project workflow, prepares `astro
 npm run pi
 ```
 
-For the tutorial-regression workflow:
+To run Astro over HTTP stream:
 
 ```bash
-pi
+npm run pi:stream
 ```
 
 To launch only the coding specialist instead of the full orchestrator:

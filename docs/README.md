@@ -47,13 +47,10 @@ flowchart LR
     P --> AGENTS[".pi/agents/"]
     P --> CLI["mainsequence CLI"]
 
-    AGENTS --> CODER["mainsequence-project-coder"]
-    AGENTS --> BUILDER["rpro-builder"]
-    AGENTS --> AUDITOR["doc-bug-auditor"]
-
+AGENTS --> CODER["mainsequence-project-coder"]
+AGENTS --> BUILDER["rpro-builder (ADD_TUTORIAL_AGENT=1)"]
     CODER --> TARGET["Checked-out Main Sequence project"]
     BUILDER --> TARGET
-    AUDITOR --> TARGET
 
     PKG --> WEB["pi-web-access"]
     P --> DOCKER["Dockerfile runtime for Python/mainsequence tasks"]

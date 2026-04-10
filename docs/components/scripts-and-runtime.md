@@ -10,6 +10,7 @@ Astro's runtime lives in:
 - `pi/extensions/tools/*/index.ts`
 - `pi/extensions/shared/*`
 - `scripts/start_pi.mjs`
+- `scripts/start_pi_stream.ts`
 
 ## Why TypeScript is the default
 
@@ -22,6 +23,10 @@ Astro's runtime lives in:
 ### `scripts/start_pi.mjs`
 
 Starts Astro through the local package setup.
+
+### `scripts/start_pi_stream.ts`
+
+Starts the HTTP streaming interface wrapper around the Pi process.
 
 ## Python runtime note
 

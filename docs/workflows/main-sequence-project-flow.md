@@ -18,7 +18,7 @@ Turn a user request into a real Main Sequence project, then hand implementation 
 5. Set it up locally.
 6. Write the target project's `astro/` handoff files.
 7. Delegate implementation to `mainsequence-project-coder`.
-8. Review status directly or through `doc-bug-auditor`.
+8. Review status directly using the `astro/` evidence.
 
 ## Handoff files
 
@@ -53,7 +53,6 @@ GitHub issue escalation when needed:
 ## Delegation rules
 
 - use `mainsequence-project-coder` for implementation in the target project
-- use `doc-bug-auditor` for structured review or upstream SDK investigation
 
 When the target project has its own:
 
@@ -66,4 +65,3 @@ those files are canonical for implementation inside that project.
 
 - [`../components/agents.md`](../components/agents.md)
 - [`tutorial-verification.md`](./tutorial-verification.md)
-

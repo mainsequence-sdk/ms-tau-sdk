@@ -32,20 +32,19 @@ Follow this workflow:
    - Use the same `astro-mainsequence-email` and `astro-mainsequence-password` secrets for GUI sign-in.
    - If GUI coverage for a GUI-validatable step does not exist in `docs/tutorial_gui`, create a concrete suggested tutorial update in `astro/status.md`.
    - If the SDK or web product changed, document the mismatch precisely in `astro/status.md`.
-10. When review is useful, call `delegate_specialist` with `doc-bug-auditor` on the checked-out project folder and have it evaluate the `astro/` evidence.
-11. GitHub issue rules for this workflow:
+10. GitHub issue rules for this workflow:
    - open GitHub issues only for tutorial documentation changes, missing instructions, or outdated guidance in `docs/tutorial` or `docs/tutorial_gui`
    - do not open issues for unrelated product bugs, auth problems, infrastructure failures, or generic SDK defects unless the problem is specifically that the tutorial docs are wrong or missing
    - use only `astro-github-token` and optional `astro-github-user`
    - `astro-github-token` must be the classic GitHub personal access token Astro uses for this workflow, not a fine-grained PAT
    - prefer GitHub REST API over `gh`
    - do not require an extra user confirmation before opening a tutorial-only issue once the evidence and duplicate-check rules are satisfied
-12. Cleanup is mandatory for this workflow.
+11. Cleanup is mandatory for this workflow.
    - Always attempt backend cleanup through the Main Sequence CLI before finishing.
    - Delete the disposable `tutorial_review_[sdk_version]` project from the backend and record the exact cleanup command and result.
    - If validation passed but cleanup failed, overall status must be `passed_with_cleanup_warning`.
    - If main validation failed and cleanup also failed, overall status must be `failed_with_cleanup_error`.
-13. Return:
+12. Return:
    - overall status
    - SDK version
    - project id or name
