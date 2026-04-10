@@ -8,7 +8,7 @@ Make Astro's Main Sequence orchestration strict and deterministic so:
 - new-project requests always collect the required information before creation
 - the orchestrator always owns project selection, creation, and `mainsequence project set-up-locally`
 - specialists only run inside the checked-out target project directory
-- tutorial-only specialists cannot be used for normal project work
+- the default main agent focuses only on platform help and Main Sequence project work
 - this repo stops assuming responsibility for writing project-local `astro/` contract files
 
 ## Strategy
@@ -20,7 +20,6 @@ The orchestrator must always decide whether the request is:
 - platform help
 - existing project work
 - new project creation
-- tutorial verification
 
 For an existing project:
 
@@ -78,13 +77,25 @@ The Linux container should not reuse incompatible helper binaries from a host-mo
 
 We need a container-safe strategy for tool binaries such as `rg`.
 
+### 7. Move tutorial verification out of the default main-agent contract
+
+Tutorial verification is too specific to be part of the default parent-agent capability list.
+
+It should remain only as an explicit, opt-in workflow prompt or separate operator task.
+
+The default main agent should not:
+
+- advertise tutorial verification as a core capability
+- classify normal user requests against a tutorial-verification branch
+- carry tutorial-specific routing in its always-on parent prompt
+
 ## Implementation Tasks
 
 ### A. Orchestrator ownership and flow control
 
 - [ ] Update [`.pi/APPEND_SYSTEM.md`](/Users/jose/code/MainSequenceServerSide/astro/.pi/APPEND_SYSTEM.md) so the orchestrator is the only owner of project selection, creation, and `mainsequence project set-up-locally`.
 - [ ] Remove the instruction that implies the coder may receive only a project id and perform local setup itself.
-- [ ] Add an explicit branch in the parent policy for `existing project` vs `new project` vs `tutorial verification`.
+- [ ] Keep the parent policy focused on `platform help`, `existing project`, and `new project`.
 - [ ] Require the orchestrator to confirm the exact existing project before any delegation.
 - [ ] Require the orchestrator to know the checked-out local path before starting the child session.
 
@@ -116,7 +127,6 @@ We need a container-safe strategy for tool binaries such as `rg`.
 - [ ] Update [`pi/extensions/tools/specialist-delegate/runtime.ts`](/Users/jose/code/MainSequenceServerSide/astro/pi/extensions/tools/specialist-delegate/runtime.ts) so implementation specialists cannot silently fall back to the Astro repo when `cwd` is missing.
 - [ ] Add a hard failure when `mainsequence-project-coder` is called without `cwd`.
 - [ ] Add a hard failure when `cwd` resolves to the Astro repo instead of a checked-out target project.
-- [ ] Validate tutorial verification through the parent workflow instead of a dedicated tutorial specialist.
 
 ### F. Remove the extra tutorial builder role
 
@@ -132,7 +142,13 @@ We need a container-safe strategy for tool binaries such as `rg`.
 - [x] Remove docs that describe a second tutorial builder specialist.
 - [ ] Review README and getting-started docs for any remaining wording that biases normal project work toward project creation or tutorial flows.
 
-### H. Container and helper binary fix
+### H. Remove tutorial verification from the default main-agent contract
+
+- [x] Remove tutorial verification from [`.pi/APPEND_SYSTEM.md`](/Users/jose/code/MainSequenceServerSide/astro/.pi/APPEND_SYSTEM.md) as a default agent capability.
+- [x] Update docs that describe tutorial verification as part of the default parent-agent decision tree.
+- [x] Keep [`pi/prompts/verify-mainsequence-tutorial.md`](/Users/jose/code/MainSequenceServerSide/astro/pi/prompts/verify-mainsequence-tutorial.md) only as an explicit standalone workflow prompt.
+
+### I. Container and helper binary fix
 
 - [ ] Investigate where the Linux container gets `/root/.pi/agent/bin/rg` from and confirm the cross-platform cache mismatch.
 - [ ] Stop sharing incompatible helper binaries between host and container.
@@ -147,6 +163,7 @@ We need a container-safe strategy for tool binaries such as `rg`.
 - [ ] First fix the parent prompt and reusable project prompt.
 - [ ] Then finish tightening `mainsequence-project-coder` and tutorial workflow behavior.
 - [ ] Then add runtime enforcement in the delegation tool.
+- [ ] Then remove tutorial verification from the default parent-agent contract.
 - [ ] Then clean up docs and remove stale `astro/` contract language.
 - [ ] Finally fix the container helper-binary strategy.
 
@@ -157,6 +174,6 @@ We need a container-safe strategy for tool binaries such as `rg`.
 - [ ] The orchestrator always runs `mainsequence project set-up-locally` before delegation.
 - [ ] `mainsequence-project-coder` never starts in the Astro repo.
 - [ ] `mainsequence-project-coder` cannot be launched without a valid target `cwd`.
-- [x] The extra tutorial builder role is gone and tutorial verification uses `mainsequence-project-coder`.
+- [x] The default main agent no longer advertises or routes tutorial verification as a built-in capability.
 - [ ] The runtime and docs no longer require Astro-owned `astro/` files in target projects by default.
 - [ ] Containerized runs no longer fail because of incompatible cached helper binaries such as `rg`.

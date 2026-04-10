@@ -61,7 +61,7 @@ Why:
 - the runtime should stay inspectable and avoid generating extra package state inside `.pi`
 - external Pi packages should live in normal npm dependency locations
 
-## 6. Keep tutorial verification as a parent workflow
+## 6. Keep tutorial verification out of the default parent-agent contract
 
 Implementation:
 
@@ -70,7 +70,8 @@ Implementation:
 Why:
 
 - it is a fixed CI-shaped workflow
-- the overall verification logic belongs to the parent, while checked-out project work can still be delegated to `mainsequence-project-coder`
+- it is too specific to live inside the default always-on agent capability list
+- it can still exist as an explicit standalone prompt without shaping normal project routing
 
 ## 7. Do not auto-inject docs into agent context
 

@@ -78,7 +78,6 @@ The parent handles:
 The child specialists handle:
 
 - implementation inside the checked-out project
-- tutorial verification work inside a disposable checked-out project when the parent delegates that step
 
 ## Read next
 

@@ -55,8 +55,8 @@ The parent agent reads:
 Then it decides whether the task is:
 
 - a normal Main Sequence project workflow
-- a tutorial-verification workflow
 - an Astro-internal review task
+- an explicitly requested standalone workflow prompt
 
 ## 4. Parent session prepares the project handoff
 
