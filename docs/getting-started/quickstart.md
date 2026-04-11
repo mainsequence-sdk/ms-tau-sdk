@@ -19,14 +19,19 @@ This starts the HTTP streaming wrapper on `http://0.0.0.0:8787` and is reachable
 
 The stream endpoint accepts assistant-ui compatible `ui-message-stream` requests at `POST /api/chat` and returns SSE.
 
-Sessions are persisted per `threadId` under `.astro/stream-sessions` by default.
+Sessions are persisted per backend agent unique id plus a session suffix under `.astro/stream-sessions`
+when agent registration is enabled (fallback to `threadId` when disabled).
 
 The request contract is latest-turn oriented:
 
+- `newChat: true` is treated as a UI hint for a new conversation
 - `messages` should contain only the exact user message just typed
-- `threadId` carries conversation continuity
+- `threadId` is returned for client bookkeeping but does not define continuity when agent registration is enabled
 - `context` carries the current UI/app/surface metadata
 - `tools` carries optional UI tool metadata
+
+Every SSE chunk includes `agent_id`, and the response also includes `X-Agent-Id` when one was
+returned by the backend for the thread.
 
 ## Build Docker images
 
@@ -85,6 +90,15 @@ docker compose run --rm astro-pi
 
 The compose file mounts:
 
+- `./.pi` -> `/app/.pi`
+- `./pi` -> `/app/pi`
+- `./interface` -> `/app/interface`
+- `./scripts` -> `/app/scripts`
+- `./docs` -> `/app/docs`
+- `./README.md` -> `/app/README.md`
+- `./package.json` -> `/app/package.json`
+- `./package-lock.json` -> `/app/package-lock.json`
+- `./tsconfig.json` -> `/app/tsconfig.json`
 - `${HOME}/.pi/agent` -> `/root/.pi/host-agent`
 - `${HOME}/mainsequence` -> `/root/mainsequence`
 - `${HOME}/mainsequence-dev` -> `/root/mainsequence-dev`
@@ -94,7 +108,10 @@ It also sets `PI_CODING_AGENT_DIR=/root/.pi/agent-runtime` and imports reusable 
 
 That means:
 
+- Astro code changes on the host are visible in the container without rebuilding the image
+- restart the service after code edits with `docker compose restart astro-pi-stream`
 - host `auth.json`, `settings.json`, and `sessions/` are reused in the container
+- `node_modules` stay container-local and Linux-native
 - helper binaries such as `rg` stay container-local under `/root/.pi/agent-runtime/bin`
 - Linux no longer reuses host-downloaded helper binaries from another OS or architecture
 

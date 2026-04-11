@@ -28,8 +28,17 @@ docker build --target astro-pi-stream -t astro:pi-stream .
 Set `MAINSEQUENCE_PIP_SPEC` in `.env` to control which `mainsequence` package spec the image installs in
 its final Docker layer, for example `mainsequence==0.1.2`.
 
-To use Docker Compose with only the exact host directories Astro needs mounted:
+To use Docker Compose in live-mounted dev mode:
 
+- `./.pi` -> `/app/.pi`
+- `./pi` -> `/app/pi`
+- `./interface` -> `/app/interface`
+- `./scripts` -> `/app/scripts`
+- `./docs` -> `/app/docs`
+- `./README.md` -> `/app/README.md`
+- `./package.json` -> `/app/package.json`
+- `./package-lock.json` -> `/app/package-lock.json`
+- `./tsconfig.json` -> `/app/tsconfig.json`
 - `${HOME}/.pi/agent` -> `/root/.pi/host-agent`
 - `${HOME}/mainsequence` -> `/root/mainsequence`
 - `${HOME}/mainsequence-dev` -> `/root/mainsequence-dev`
@@ -39,9 +48,19 @@ docker compose run --rm astro-pi
 docker compose up astro-pi-stream
 ```
 
-The compose file sets `PI_CODING_AGENT_DIR=/root/.pi/agent-runtime` and imports reusable host Pi
-state from `/root/.pi/host-agent`. Auth, settings, and session history are reused, but helper
-binaries stay container-local so Linux does not try to execute macOS-downloaded tools.
+The compose file now bind-mounts the editable Astro source files into `/app`, so normal code
+changes do not require an image rebuild. It intentionally does not bind-mount the whole repo root,
+which avoids clobbering the container's Linux `node_modules`. Restart the service to pick up code
+edits:
+
+```bash
+docker compose restart astro-pi-stream
+```
+
+The compose file also sets `PI_CODING_AGENT_DIR=/root/.pi/agent-runtime` and imports reusable host
+Pi state from `/root/.pi/host-agent`. Auth, settings, and session history are reused, but helper
+binaries and `node_modules` stay container-local so Linux does not try to execute macOS-downloaded
+tools.
 
 To launch only the coding specialist instead of the full orchestrator for an already selected and checked-out project:
 

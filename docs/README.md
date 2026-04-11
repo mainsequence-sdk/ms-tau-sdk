@@ -79,6 +79,10 @@ AGENTS --> CODER["mainsequence-project-coder"]
 - [`components/scripts-and-runtime.md`](./components/scripts-and-runtime.md)
   - scripts, TypeScript runtime, and Docker-backed Python path
 
+## Interface
+
+- [`interface/README.md`](./interface/README.md)
+
 ## Reference
 
 - [`reference/folder-structure.md`](./reference/folder-structure.md)

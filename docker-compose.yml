@@ -15,6 +15,15 @@ services:
       ASTRO_PI_HOST_AGENT_IMPORT_DIR: /root/.pi/host-agent
       BUILD_AGENTS_IN_BACKEND: "0"
     volumes:
+      - ./.pi:/app/.pi
+      - ./pi:/app/pi
+      - ./interface:/app/interface
+      - ./scripts:/app/scripts
+      - ./docs:/app/docs
+      - ./README.md:/app/README.md
+      - ./package.json:/app/package.json
+      - ./package-lock.json:/app/package-lock.json
+      - ./tsconfig.json:/app/tsconfig.json
       - ${HOME}/.pi/agent:/root/.pi/host-agent
       - ${HOME}/mainsequence:/root/mainsequence
       - ${HOME}/mainsequence-dev:/root/mainsequence-dev
@@ -39,6 +48,15 @@ services:
       ASTRO_STREAM_PORT: ${ASTRO_STREAM_PORT:-8787}
       BUILD_AGENTS_IN_BACKEND: "1"
     volumes:
+      - ./.pi:/app/.pi
+      - ./pi:/app/pi
+      - ./interface:/app/interface
+      - ./scripts:/app/scripts
+      - ./docs:/app/docs
+      - ./README.md:/app/README.md
+      - ./package.json:/app/package.json
+      - ./package-lock.json:/app/package-lock.json
+      - ./tsconfig.json:/app/tsconfig.json
       - ${HOME}/.pi/agent:/root/.pi/host-agent
       - ${HOME}/mainsequence:/root/mainsequence
       - ${HOME}/mainsequence-dev:/root/mainsequence-dev

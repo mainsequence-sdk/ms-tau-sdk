@@ -33,8 +33,8 @@ The deployable Docker targets boot the same runtime by copying only:
 
 For the normal parent session, Pi also loads `.pi/APPEND_SYSTEM.md`.
 
-When `BUILD_AGENTS_IN_BACKEND=1`, every session start (parent or child) runs a deterministic
-Main Sequence CLI registration step to `get-or-create` the agent record.
+When `BUILD_AGENTS_IN_BACKEND=1`, Astro uses deterministic `agent_unique_id` values to look up or
+create backend Agent records and then works with the backend Agent `id`.
 
 For the HTTP stream path, the wrapper accepts the latest UI turn plus optional UI context, then
 builds the Pi prompt from:
@@ -42,8 +42,12 @@ builds the Pi prompt from:
 - the optional request `system`
 - the structured request `context`
 - only the last message entry in `messages`
+- the optional `newChat: true` flag (used as a UI hint for a new conversation)
 
-Conversation continuity comes from the server-side session file keyed by `threadId`.
+Conversation continuity comes from the server-side session file keyed by the backend agent
+unique id plus a session suffix when registration is enabled (fallback to `threadId` when disabled).
+The stream wrapper persists the resolved backend Agent `id` alongside that session and includes it
+on every SSE chunk as `agent_id`.
 
 ## 2. Before the agent starts
 

@@ -34,17 +34,21 @@ Why it exists:
 
 Purpose:
 
-- register each agent session with the Main Sequence CLI (`agent get-or-create`) when enabled
+- look up or create a backend Agent record for each parent or child session when enabled
 
 Why it exists:
 
-- ensures every parent or child session has a deterministic backend agent record
+- ensures every parent or child session can be referenced by the same backend Agent `id`
 - gated by `BUILD_AGENTS_IN_BACKEND=1`
 
 Notes:
 
-- registration uses a deterministic user-scoped unique id in the form
+- registration uses a deterministic user-scoped `agent_unique_id` in the form
   `{agent_name}_{user_id}`.
+- `mainsequence-project-coder` also includes the project id in the form
+  `{agent_name}_{user_id}_{project_id}`.
+- that unique id is passed to backend `get_or_create`, and the returned Agent `id` is the value
+  Astro should expose as `agent_id`.
 - if the user id is missing, registration is skipped for that session.
 
 ### `specialist-delegate`

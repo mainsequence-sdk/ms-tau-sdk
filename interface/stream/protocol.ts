@@ -1,5 +1,15 @@
-export type StreamChunk =
+export type StreamEvent =
 	| { type: "start"; messageId: string; threadId?: string }
+	| {
+			type: "new_session";
+			new_session: {
+				agent_session_id: number;
+				session_key: string;
+				agent_unique_id: string;
+				thread_id: string;
+				agent_id: number;
+			};
+	  }
 	| { type: "reasoning-start"; id: string }
 	| { type: "reasoning-delta"; delta: string }
 	| { type: "reasoning-end" }
@@ -13,11 +23,22 @@ export type StreamChunk =
 	| { type: "finish"; finishReason: string; usage?: unknown }
 	| { type: "error"; error: string };
 
+export type StreamChunk = StreamEvent & {
+	agent_id: number | null;
+};
+
 export type SessionStatus = {
 	state: "started" | "stopped";
 	code: number | null;
 	signal: string | null;
 };
+
+export function attachAgentId(chunk: StreamEvent, agentId: number | null): StreamChunk {
+	return {
+		...chunk,
+		agent_id: agentId,
+	};
+}
 
 export function serializeSse(id: number, chunk: StreamChunk): string {
 	const lines = [
