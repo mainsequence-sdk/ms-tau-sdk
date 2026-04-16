@@ -6,12 +6,6 @@ In this repo, skills are not the main runtime mechanism. They are optional deepe
 
 ## Repo-local skills
 
-### `pi/skills/mainsequence-platform/SKILL.md`
-
-Use when:
-
-- helping users interact with the Main Sequence platform or CLI
-
 ### `pi/skills/mainsequence-project-creation/SKILL.md`
 
 Use when:

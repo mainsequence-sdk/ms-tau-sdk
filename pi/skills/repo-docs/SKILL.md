@@ -8,7 +8,6 @@ Use this skill when the task depends on understanding how the repository documen
 ## Documentation layers
 
 - `docs/` is the canonical documentation set for architecture, components, workflows, and reference material.
-- `AGENTS.md` gives project rules for contributors and coding agents.
 
 ## Update rule
 

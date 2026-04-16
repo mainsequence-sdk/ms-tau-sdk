@@ -4,6 +4,7 @@ import * as os from "node:os";
 import * as path from "node:path";
 import type { AgentToolUpdateCallback } from "@mariozechner/pi-agent-core";
 import type { Message } from "@mariozechner/pi-ai";
+import { buildMainsequenceStoredAuthEnv } from "../../../../scripts/mainsequence_runtime_auth.js";
 import type { AgentConfig, AgentScope } from "./agents.js";
 
 export type DelegateMode = "single" | "chain";
@@ -378,12 +379,12 @@ export async function runSingleAgent(options: {
 				cwd: cwd || defaultCwd,
 				shell: false,
 				stdio: ["ignore", "pipe", "pipe"],
-				env: {
+				env: buildMainsequenceStoredAuthEnv({
 					...process.env,
 					ASTRO_SUBAGENT_CHILD: "1",
 					ASTRO_ACTIVE_SPECIALIST: agent.name,
 					...(projectId ? { ASTRO_TARGET_PROJECT_ID: projectId } : {}),
-				},
+				}),
 			});
 
 			let buffer = "";

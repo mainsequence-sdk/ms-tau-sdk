@@ -197,7 +197,5 @@ hando analyze
 What should be proerly implemened
 
 [] Project is created iwth the skill and questionarie
-[] Ad the proper context for platform operation given the surfe the user is. 
-[]be sure that the agent is properly switching CWD when chaning project
-[]  be suer the Agent recod its implemented
+
 []action bridge

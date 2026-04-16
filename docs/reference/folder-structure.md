@@ -2,6 +2,10 @@
 
 ```text
 astro/
+├── .astro/
+│   ├── mainsequence-config/
+│   ├── pi-agent-runtime/
+│   └── stream-sessions/
 ├── .pi/
 │   ├── APPEND_SYSTEM.md
 │   ├── settings.json
@@ -18,12 +22,13 @@ astro/
 ├── docs/
 │   ├── getting-started/
 │   ├── components/
+│   ├── extensions/
+│   ├── prompts/
 │   ├── reference/
 │   └── reserach_guide/
 ├── interface/
 │   └── stream/
 ├── scripts/
-├── AGENTS.md
 ├── Dockerfile
 ├── README.md
 ├── package.json
@@ -36,13 +41,19 @@ astro/
 
 Project-local Pi settings, parent prompt, and specialist prompts.
 
+### `.astro/`
+
+Legacy repo-local runtime state and migration input for containerized launches. This is no longer
+the active durable runtime location for containers once the PVC-style volume layout is enabled.
+
 ### `pi/`
 
 Pi package content registered in `package.json`, including extensions, prompts, and skills. Shared helpers live under `pi/extensions/shared/`.
 
 ### `docs/`
 
-Canonical human-readable documentation for Astro.
+Canonical human-readable documentation for Astro, including mirrored per-file docs for
+`pi/extensions/` and `pi/prompts/`.
 
 ### `interface/`
 
@@ -55,3 +66,47 @@ Command-line helpers for launching Astro and running dedicated workflows.
 ### `Dockerfile`
 
 Optional app container base with Python 3.11 and Node 20 for running Pi and related tasks.
+
+## Deployed container layout
+
+When Astro runs in containers with the PVC-style storage layout, the active durable state is not
+the repo-local `.astro/` tree. It lives under the mounted runtime volume root:
+
+```text
+/root/.astro-container-data/
+├── .pi/
+│   └── agent/
+│       ├── auth.json
+│       ├── sessions/
+│       ├── settings.json
+│       ├── astro-model-provider-auth.json
+│       ├── astro-model-provider-signin.json
+│       └── bin/
+├── .config/
+│   └── mainsequence/
+│       ├── auth.json
+│       ├── config.json
+│       └── session_overrides/
+├── .astro/
+│   ├── migrations/
+│   │   └── pvc-layout-v1.json
+│   └── stream-sessions/
+├── mainsequence/
+├── mainsequence-dev/
+└── uv/
+```
+
+Compatibility symlinks expose the expected home-directory paths:
+
+- `/root/.pi/agent -> /root/.astro-container-data/.pi/agent`
+- `/root/.config/mainsequence -> /root/.astro-container-data/.config/mainsequence`
+- `/root/.astro/stream-sessions -> /root/.astro-container-data/.astro/stream-sessions`
+- `/root/mainsequence -> /root/.astro-container-data/mainsequence`
+- `/root/mainsequence-dev -> /root/.astro-container-data/mainsequence-dev`
+- `/root/.local/share/uv -> /root/.astro-container-data/uv`
+
+So in deployment terms:
+
+- local Docker named volume `astro_container_data` simulates the PVC
+- GKE should mount the real PVC at `/root/.astro-container-data`
+- the volume root is the source of truth for all durable container runtime state

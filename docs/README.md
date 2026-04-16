@@ -7,6 +7,7 @@ This documentation set is organized for readers who may not know Pi yet. It expl
 1. what Pi components Astro uses
 2. how those components are wired together
 3. how the prompt and specialist layers drive project behavior
+4. where the per-file extension and prompt docs live
 
 ## Launch one specialist directly
 
@@ -61,6 +62,9 @@ AGENTS --> CODER["mainsequence-project-coder"]
   - [`getting-started/quickstart.md`](./getting-started/quickstart.md)
 - Want the reusable workflow definitions:
   - [`components/prompts.md`](./components/prompts.md)
+- Want the mirrored per-file runtime docs:
+  - [`extensions/README.md`](./extensions/README.md)
+  - [`prompts/README.md`](./prompts/README.md)
 
 ## Pi components in Astro
 
@@ -68,10 +72,14 @@ AGENTS --> CODER["mainsequence-project-coder"]
   - `.pi/settings.json`, `.pi/APPEND_SYSTEM.md`, and child policy
 - [`components/extensions.md`](./components/extensions.md)
   - custom hooks and tools in `pi/extensions/hooks/` and `pi/extensions/tools/`
+- [`extensions/README.md`](./extensions/README.md)
+  - per-file docs for hooks, tools, and shared helpers in `pi/extensions/`
 - [`components/agents.md`](./components/agents.md)
   - specialist files in `.pi/agents/`
 - [`components/prompts.md`](./components/prompts.md)
   - reusable workflow prompts in `pi/prompts/`
+- [`prompts/README.md`](./prompts/README.md)
+  - per-file docs for workflow prompts in `pi/prompts/`
 - [`components/skills.md`](./components/skills.md)
   - repo-local skills in `pi/skills/`
 - [`components/knowledge.md`](./components/knowledge.md)
@@ -85,8 +93,15 @@ AGENTS --> CODER["mainsequence-project-coder"]
 
 ## Reference
 
+- [`reference/adr-custom-model-integration.md`](./reference/adr-custom-model-integration.md)
+- [`reference/adr-editable-session-config.md`](./reference/adr-editable-session-config.md)
+- [`reference/adr-interactive-provider-signin.md`](./reference/adr-interactive-provider-signin.md)
+- [`reference/adr-pvc-volume-layout.md`](./reference/adr-pvc-volume-layout.md)
+- [`reference/adr-remote-model-providers.md`](./reference/adr-remote-model-providers.md)
+- [`reference/adr-session-usage-and-context.md`](./reference/adr-session-usage-and-context.md)
 - [`reference/folder-structure.md`](./reference/folder-structure.md)
 - [`reference/decisions.md`](./reference/decisions.md)
+- [`reference/persistent-state.md`](./reference/persistent-state.md)
 - [`reference/scope.md`](./reference/scope.md)
 - [`reserach_guide/research_guide.md`](./reserach_guide/research_guide.md)
 

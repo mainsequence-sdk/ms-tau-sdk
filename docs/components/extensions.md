@@ -1,98 +1,39 @@
 # Extensions
 
-Extensions are the runtime core of Astro.
+Astro's runtime extensions live under `pi/extensions/`. The detailed docs now mirror that source tree under `docs/extensions/`, with one page per hook, tool, and shared helper.
 
-They live under `pi/extensions/hooks/` and `pi/extensions/tools/` and are where Astro registers hooks and tools.
+## Read by area
 
-Launch scripts load `.env` and start the Main Sequence token refresh loop (when configured) before extensions run.
+- [`../extensions/README.md`](../extensions/README.md)
+- [`../extensions/hooks/README.md`](../extensions/hooks/README.md)
+- [`../extensions/tools/README.md`](../extensions/tools/README.md)
+- [`../extensions/shared/README.md`](../extensions/shared/README.md)
 
-The Docker targets keep the same extension surface by copying `.pi/`, `pi/`, `interface/`, and
-`scripts/` into the image and then starting either the normal Pi launcher or the HTTP stream launcher.
+## Hooks
 
-`docker-compose.yml` runs those same images and mounts only the host Pi agent directory and Main Sequence
-workspace directory without changing the extension loading model.
+- [`agent-registration`](../extensions/hooks/agent-registration.md)
+- [`project-policy`](../extensions/hooks/project-policy/README.md)
+- [`telemetry`](../extensions/hooks/telemetry.md)
 
-The split is organizational:
+## Tools
 
-- `hooks/` extensions focus on lifecycle hooks like `before_agent_start`
-- `tools/` extensions focus on tool registration and delegation
+- [`ensure_mainsequence_cli_auth`](../extensions/tools/mainsequence-cli-auth.md)
+- [`list_recent_changes`](../extensions/tools/recent-changes.md)
+- [`delegate_specialist`](../extensions/tools/specialist-delegate/README.md)
+- [`switch_project_session`](../extensions/tools/switch-project-session.md)
 
-## Current extensions
+## Shared helpers
 
-### `project-policy`
+- [`agent-registration`](../extensions/shared/agent-registration.md)
+- [`project-runtime`](../extensions/shared/project-runtime.md)
+- [`repo`](../extensions/shared/repo.md)
+- [`telemetry`](../extensions/shared/telemetry.md)
 
-Purpose:
+## Runtime notes
 
-- append child-specialist policy only for delegated child processes
-
-Why it exists:
-
-- the parent already has a static prompt
-- the child still needs runtime-only guardrails
-
-### `agent-registration`
-
-Purpose:
-
-- look up or create a backend Agent record for each parent or child session when enabled
-
-Why it exists:
-
-- ensures every parent or child session can be referenced by the same backend Agent `id`
-- gated by `BUILD_AGENTS_IN_BACKEND=1`
-
-Notes:
-
-- registration uses a deterministic user-scoped `agent_unique_id` in the form
-  `{agent_name}_{user_id}`.
-- `mainsequence-project-coder` also includes the project id in the form
-  `{agent_name}_{user_id}_{project_id}`.
-- that unique id is passed to backend `get_or_create`, and the returned Agent `id` is the value
-  Astro should expose as `agent_id`.
-- if the user id is missing, registration is skipped for that session.
-
-### `specialist-delegate`
-
-Purpose:
-
-- register `delegate_specialist`
-- discover specialists in `.pi/agents/`
-- spawn child `pi` processes
-- stream live child progress back to the parent
-
-Why it exists:
-
-- gives Astro a real subagent model without changing Pi core
-- lets a child run in the checked-out project folder via `cwd`
-
-### `recent-changes`
-
-Purpose:
-
-- track Astro-side file edits made by the parent session
-- register `list_recent_changes`
-
-Why it exists:
-
-- Astro itself sometimes needs review separate from the target project
-
-### `telemetry`
-
-Purpose:
-
-- emit structured telemetry events to stdout for streaming consumers
-
-Why it exists:
-
-- lets the HTTP stream interface forward structured events without parsing the raw TUI output
-
-## Extension hooks used here
-
-The most important hook in this repo is `before_agent_start`.
-
-Astro uses it to:
-
-- append child-only policy for delegated specialists
+- launch scripts bootstrap deterministic Main Sequence CLI auth before agent work begins
+- the stream runtime owns deterministic project-session bootstrap for `mainsequence-project-coder`
+- Docker Compose keeps the same extension surface while mounting the editable repo files into `/app`
 
 ## Related pages
 

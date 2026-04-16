@@ -30,6 +30,7 @@ its final Docker layer, for example `mainsequence==0.1.2`.
 
 To use Docker Compose in live-mounted dev mode:
 
+- `./.astro` -> `/app/.astro-migration-source` (read-only, one-time migration source)
 - `./.pi` -> `/app/.pi`
 - `./pi` -> `/app/pi`
 - `./interface` -> `/app/interface`
@@ -39,14 +40,17 @@ To use Docker Compose in live-mounted dev mode:
 - `./package.json` -> `/app/package.json`
 - `./package-lock.json` -> `/app/package-lock.json`
 - `./tsconfig.json` -> `/app/tsconfig.json`
-- `${HOME}/.pi/agent` -> `/root/.pi/host-agent`
-- `${HOME}/mainsequence` -> `/root/mainsequence`
-- `${HOME}/mainsequence-dev` -> `/root/mainsequence-dev`
+- `${HOME}/.pi/agent` -> `/root/.pi/host-agent` (read-only migration source for `auth.json` and `sessions/`)
+- named volume `astro_container_data` -> `/root/.astro-container-data`
 
 ```bash
 docker compose run --rm astro-pi
 docker compose up astro-pi-stream
 ```
+
+`astro-pi` is behind the optional `pi-shell` profile, so a plain `docker compose up` now starts only
+the HTTP stream service. The standalone Pi container still works when you target it explicitly with
+`docker compose run --rm astro-pi`.
 
 The compose file now bind-mounts the editable Astro source files into `/app`, so normal code
 changes do not require an image rebuild. It intentionally does not bind-mount the whole repo root,
@@ -57,10 +61,25 @@ edits:
 docker compose restart astro-pi-stream
 ```
 
-The compose file also sets `PI_CODING_AGENT_DIR=/root/.pi/agent-runtime` and imports reusable host
-Pi state from `/root/.pi/host-agent`. Auth, settings, and session history are reused, but helper
-binaries and `node_modules` stay container-local so Linux does not try to execute macOS-downloaded
-tools.
+The compose file now treats the named volume as the canonical runtime state root:
+
+- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/root/.astro-container-data/.config/mainsequence`
+- `PI_CODING_AGENT_DIR=/root/.astro-container-data/.pi/agent`
+- `ASTRO_STREAM_SESSION_DIR=/root/.astro-container-data/.astro/stream-sessions`
+
+At startup, Astro performs a one-time migration from the read-only legacy mounts if the volume
+does not yet have the PVC-layout marker, then keeps all active runtime state inside the volume.
+Astro also creates compatibility symlinks:
+
+- `/root/.pi/agent` -> `/root/.astro-container-data/.pi/agent`
+- `/root/.config/mainsequence` -> `/root/.astro-container-data/.config/mainsequence`
+- `/root/.astro/stream-sessions` -> `/root/.astro-container-data/.astro/stream-sessions`
+- `/root/mainsequence` -> `/root/.astro-container-data/mainsequence`
+- `/root/mainsequence-dev` -> `/root/.astro-container-data/mainsequence-dev`
+- `/root/.local/share/uv` -> `/root/.astro-container-data/uv`
+
+That keeps Linux virtualenvs isolated from macOS host paths while still surviving container
+recreation, and it makes Docker behave much closer to a single-PVC Kubernetes deployment.
 
 To launch only the coding specialist instead of the full orchestrator for an already selected and checked-out project:
 
@@ -81,8 +100,10 @@ npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to
 
 - [`docs/components/settings-and-system-prompt.md`](./docs/components/settings-and-system-prompt.md)
 - [`docs/components/extensions.md`](./docs/components/extensions.md)
+- [`docs/extensions/README.md`](./docs/extensions/README.md)
 - [`docs/components/agents.md`](./docs/components/agents.md)
 - [`docs/components/prompts.md`](./docs/components/prompts.md)
+- [`docs/prompts/README.md`](./docs/prompts/README.md)
 - [`docs/components/skills.md`](./docs/components/skills.md)
 - [`docs/components/knowledge.md`](./docs/components/knowledge.md)
 - [`docs/components/scripts-and-runtime.md`](./docs/components/scripts-and-runtime.md)

@@ -10,6 +10,23 @@ export type StreamEvent =
 				agent_id: number;
 			};
 	  }
+	| {
+			type: "session_switch";
+			session_switch: {
+				from_agent_name: string;
+				to_agent_name: string;
+				project_id: string;
+				cwd: string;
+				thread_id: string;
+				agent_id: number;
+				agent_unique_id: string;
+				agent_session_id: number;
+				session_key: string;
+				runtime_session_id: string;
+				initial_task: string | null;
+				summary: string | null;
+			};
+	  }
 	| { type: "reasoning-start"; id: string }
 	| { type: "reasoning-delta"; delta: string }
 	| { type: "reasoning-end" }

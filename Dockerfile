@@ -10,6 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     git \
     gnupg \
+    openssh-client \
  && rm -rf /var/lib/apt/lists/*
 
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
@@ -41,9 +42,12 @@ FROM astro-mainsequence AS astro-pi-stream
 
 ENV ASTRO_STREAM_HOST=0.0.0.0 \
     ASTRO_STREAM_PORT=8787 \
-    PI_CODING_AGENT_DIR=/root/.pi/agent-runtime
+    ASTRO_CONTAINER_DATA_DIR=/root/.astro-container-data \
+    ASTRO_STREAM_SESSION_DIR=/root/.astro-container-data/.astro/stream-sessions \
+    ASTRO_MAINSEQUENCE_CONFIG_DIR=/root/.astro-container-data/.config/mainsequence \
+    PI_CODING_AGENT_DIR=/root/.astro-container-data/.pi/agent
 
-RUN mkdir -p /root/.pi/agent-runtime/bin
+RUN mkdir -p /root/.astro-container-data/.pi/agent/bin /root/.astro-container-data/.astro/stream-sessions /root/.astro-container-data/.config/mainsequence
 
 EXPOSE 8787
 
@@ -51,8 +55,11 @@ CMD ["tsx", "scripts/start_pi_stream.ts"]
 
 FROM astro-mainsequence AS astro-pi
 
-ENV PI_CODING_AGENT_DIR=/root/.pi/agent-runtime
+ENV ASTRO_CONTAINER_DATA_DIR=/root/.astro-container-data \
+    ASTRO_MAINSEQUENCE_CONFIG_DIR=/root/.astro-container-data/.config/mainsequence \
+    PI_CODING_AGENT_DIR=/root/.astro-container-data/.pi/agent \
+    ASTRO_STREAM_SESSION_DIR=/root/.astro-container-data/.astro/stream-sessions
 
-RUN mkdir -p /root/.pi/agent-runtime/bin
+RUN mkdir -p /root/.astro-container-data/.pi/agent/bin /root/.astro-container-data/.config/mainsequence /root/.astro-container-data/.astro/stream-sessions
 
 CMD ["node", "scripts/start_pi.mjs"]

@@ -24,18 +24,38 @@ Astro's runtime lives in:
 
 Starts Astro through the local package setup.
 
-It also loads `.env` from the repo root and starts the Main Sequence token refresh loop when
+It loads `.env` from the repo root, refreshes the Main Sequence access token, runs a blocking
+`mainsequence login --access-token ...` bootstrap before Pi starts, and then starts the Main
+Sequence token refresh loop when
 `MAINSEQUENCE_TOKEN_REFRESH_INTERVAL_SECONDS` is set.
 
 ### `scripts/start_pi_stream.ts`
 
 Starts the HTTP streaming interface wrapper around the Pi process.
 
-The stream server loads `.env` on startup and uses the same token refresh interval if configured.
+The stream server loads `.env` on startup, refreshes the Main Sequence access token, runs the same
+blocking Main Sequence CLI login bootstrap, and then uses the same token refresh interval if
+configured.
+Before each non-mock `POST /api/chat` request, it re-runs that deterministic CLI login gate so the
+session does not begin from a stale `Not logged in` CLI state.
 It accepts latest-turn UI requests, injects the optional UI `system`, `context`, and `tools`
 metadata into the prompt, treats `newChat: true` as a UI hint for a new conversation, registers
-the backend Agent when enabled, and uses backend agent unique id plus session suffix files
-(fallback to `threadId` when registration is disabled) for continuity.
+the backend Agent when enabled, and uses backend AgentSession id files (fallback to `threadId` when
+registration is disabled) for continuity.
+
+Before a new `mainsequence-project-coder` session begins normal Pi work, the stream runtime deterministically:
+
+- runs `mainsequence project sdk-status --path . --json`
+- runs `mainsequence project build_local_venv --path .`
+- runs `uv sync`
+- verifies `.venv`
+- starts the coder session with `VIRTUAL_ENV` set to that `.venv` and the venv `bin/` prepended to `PATH`
+
+Those steps are emitted to the frontend as synthetic tool events on the coder session itself.
+When the coder session is created through `session_switch`, the same stream response continues as
+that coder session so the bootstrap is visible immediately instead of waiting for another user turn.
+The resulting SDK/runtime snapshot is persisted in local session metadata and injected into the
+coder prompt as runtime context before Pi starts.
 
 ## Container runtime note
 
@@ -70,13 +90,22 @@ The repo root `docker-compose.yml` wraps those targets as two services:
 - `astro-pi-stream`
   - HTTP stream service
   - bind-mounts the editable Astro source paths into `/app` for live code iteration
-  - mounts `${HOME}/.pi/agent` to `/root/.pi/host-agent`
-  - mounts `${HOME}/mainsequence` to `/root/mainsequence`
-  - mounts `${HOME}/mainsequence-dev` to `/root/mainsequence-dev`
-  - sets `PI_CODING_AGENT_DIR=/root/.pi/agent-runtime`
-  - imports `auth.json`, `settings.json`, and `sessions/` from the mounted host Pi state
+  - bind-mounts `./.astro` to `/app/.astro-migration-source` only as a one-time migration source
+  - mounts `${HOME}/.pi/agent` to `/root/.pi/host-agent` only so migration can merge `auth.json`
+    and `sessions/`
+  - mounts named volume `astro_container_data` to `/root/.astro-container-data`
+  - sets `ASTRO_MAINSEQUENCE_CONFIG_DIR=/root/.astro-container-data/.config/mainsequence`
+  - sets `PI_CODING_AGENT_DIR=/root/.astro-container-data/.pi/agent`
+  - sets `ASTRO_STREAM_SESSION_DIR=/root/.astro-container-data/.astro/stream-sessions`
+  - sets `ASTRO_CONTAINER_DATA_DIR=/root/.astro-container-data`
+  - migrates legacy repo-local runtime state into the volume once, then merges `auth.json` and
+    `sessions/` from the host Pi source and stops reimporting it
+  - writes a runtime-local `settings.json` into `/root/.astro-container-data/.pi/agent`
+  - preserves Astro package sources like `/app` and `pi-web-access`
   - keeps `node_modules` container-local from the image layer
-  - keeps helper binaries container-local under `/root/.pi/agent-runtime/bin`
+  - keeps durable runtime state under the named volume instead of the repo-local `.astro/` tree
+  - keeps helper binaries under `/root/.astro-container-data/.pi/agent/bin`
+  - symlinks `/root/.pi/agent`, `/root/.config/mainsequence`, `/root/.astro/stream-sessions`, `/root/mainsequence`, `/root/mainsequence-dev`, and `/root/.local/share/uv` into subdirectories of `/root/.astro-container-data`
 
 When using containers, run Python commands inside this same app container (do not use a separate Python-only container).
 The image intentionally does not copy `docs/`, `tutorial/`, or `.env`; provide env vars at container start.

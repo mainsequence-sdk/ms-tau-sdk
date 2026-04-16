@@ -48,6 +48,7 @@ declare module "@mariozechner/pi-coding-agent" {
   export interface ExtensionAPI {
     on(eventName: string, handler: (event: any, ctx: ExtensionContext) => Promise<any> | any): void;
     registerTool(tool: RegisteredTool): void;
+    registerProvider(name: string, config: any): void;
   }
 
   export function parseFrontmatter<T = Record<string, any>>(content: string): { frontmatter: T; body: string };

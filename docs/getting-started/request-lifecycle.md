@@ -12,8 +12,12 @@ Pi discovers `.pi/settings.json` and loads:
 - the repository package itself
 - repo-installed packages such as `pi-web-access`
 
-The Astro launch scripts also load `.env` from the repo root and start a Main Sequence token
-refresh loop when `MAINSEQUENCE_TOKEN_REFRESH_INTERVAL_SECONDS` is set.
+The Astro launch scripts also load `.env` from the repo root, refresh the Main Sequence access
+token, run a deterministic `mainsequence login --access-token ...` bootstrap before any agent work
+starts, and then start a Main Sequence token refresh loop when
+`MAINSEQUENCE_TOKEN_REFRESH_INTERVAL_SECONDS` is set.
+For the HTTP stream path, Astro also re-runs that deterministic CLI login gate before each real
+`POST /api/chat` request so Pi never starts from a stale unauthenticated CLI state.
 
 The deployable Docker targets boot the same runtime by copying only:
 
@@ -27,9 +31,25 @@ The deployable Docker targets boot the same runtime by copying only:
 
 `docker-compose.yml` starts those same targets while bind-mounting only:
 
-- `${HOME}/.pi/agent` to `/root/.pi/host-agent`
-- `${HOME}/mainsequence` to `/root/mainsequence`
-- `${HOME}/mainsequence-dev` to `/root/mainsequence-dev`
+- `./.astro` to `/app/.astro-migration-source` as a read-only migration source
+- `${HOME}/.pi/agent` to `/root/.pi/host-agent` as a read-only migration source for `auth.json`
+  and `sessions/`
+- named volume `astro_container_data` to `/root/.astro-container-data`
+
+For the HTTP stream service, compose also sets
+`ASTRO_MAINSEQUENCE_CONFIG_DIR=/root/.astro-container-data/.config/mainsequence`,
+`PI_CODING_AGENT_DIR=/root/.astro-container-data/.pi/agent`, and
+`ASTRO_STREAM_SESSION_DIR=/root/.astro-container-data/.astro/stream-sessions` so the named volume
+acts like the deployment-time PVC.
+
+At startup, Astro also symlinks:
+
+- `/root/.pi/agent` -> `/root/.astro-container-data/.pi/agent`
+- `/root/.config/mainsequence` -> `/root/.astro-container-data/.config/mainsequence`
+- `/root/.astro/stream-sessions` -> `/root/.astro-container-data/.astro/stream-sessions`
+- `/root/mainsequence` -> `/root/.astro-container-data/mainsequence`
+- `/root/mainsequence-dev` -> `/root/.astro-container-data/mainsequence-dev`
+- `/root/.local/share/uv` -> `/root/.astro-container-data/uv`
 
 For the normal parent session, Pi also loads `.pi/APPEND_SYSTEM.md`.
 
@@ -44,10 +64,23 @@ builds the Pi prompt from:
 - only the last message entry in `messages`
 - the optional `newChat: true` flag (used as a UI hint for a new conversation)
 
-Conversation continuity comes from the server-side session file keyed by the backend agent
-unique id plus a session suffix when registration is enabled (fallback to `threadId` when disabled).
+If the request also includes `runtime_session_id`, that explicit session id wins and the wrapper
+resumes the existing backend session instead of starting a fresh one.
+
+If that latest user message contains the word `MOCK`, the HTTP stream wrapper returns a synthetic
+response immediately for frontend testing and does not invoke the Pi runtime or create session
+state.
+
+Conversation continuity comes from the server-side session file keyed by the backend AgentSession id
+when registration is enabled (fallback to `threadId` when disabled).
 The stream wrapper persists the resolved backend Agent `id` alongside that session and includes it
 on every SSE chunk as `agent_id`.
+Before a stream chunk is written to the client, the HTTP stream layer appends a normalized
+conversation event and rewrites the compact conversation snapshot synchronously so the history
+endpoint can read that snapshot directly later.
+When the frontend starts a project-scoped `mainsequence-project-coder` session, it must provide the
+selected `projectId` and checked-out project `cwd` on the first `newChat: true` request. Resume
+requests can reuse the stored session metadata.
 
 ## 2. Before the agent starts
 
@@ -77,14 +110,17 @@ Then it decides whether the task is:
 
 For a normal Main Sequence project, the parent:
 
-1. translates the request into a short brief, task list, and acceptance criteria
-2. decides whether to select an existing project or create a new one
+1. decides whether to select an existing project or create a new one
+   - for an existing project, the parent treats "work on/open this project" as selection and setup, not automatic task intake
    - if the user wants a new project, the parent loads the project-creation skill and uses it to collect the missing intake before creation
-3. runs `mainsequence project set-up-locally <id>` after the project id is known
-4. resolves the checked-out local path
-5. prepares any needed project-local task or status context for the checked-out project
+2. runs `mainsequence project set-up-locally <id>` after the project id is known
+3. resolves the checked-out local path
+4. prepares any needed project-local task or status context for the checked-out project
    - use the target project's own instructions, planning files, and status files when they exist
    - do not assume an Astro-owned `astro/` file contract by default
+5. either delegates a bounded background task or hands off into a project-scoped coding session
+   - when the active conversation should move into the checked-out project, the parent calls `switch_project_session`
+   - when there is no concrete implementation task yet, the handoff should establish project-local context and readiness instead of asking the user to restate a first task
 
 ## 5. Parent delegates to a specialist
 
@@ -99,6 +135,18 @@ That tool:
 5. passes the checked-out target `cwd` and selected `projectId` when required
 6. streams live child progress back to the parent
 
+The HTTP stream layer also supports:
+
+- starting `mainsequence-project-coder` directly as its own backend Agent session when the frontend already knows the selected `projectId` and checked-out project `cwd`
+- creating that coder session in response to a structured `switch_project_session` handoff from the orchestrator
+- continuing that same handoff response as the new coder session so the frontend can see bootstrap progress without a second user message
+- running a deterministic project-runtime bootstrap inside the new `mainsequence-project-coder` session before Pi starts:
+  - `mainsequence project sdk-status --path . --json`
+  - `mainsequence project build_local_venv --path .`
+  - `uv sync`
+  - activation of the checked-out project's `.venv`
+  - emitting those bootstrap steps as synthetic tool events so the frontend can see them
+
 ## 6. Child specialist runs
 
 The child process gets:
@@ -108,6 +156,8 @@ The child process gets:
 - the child-only policy
 - the checked-out target project `cwd` when delegated for implementation
 - the selected Main Sequence project id when the specialist requires it
+- the checked-out project's activated `.venv` when the active agent is `mainsequence-project-coder`
+- the deterministic project-runtime bootstrap summary in prompt context when the active agent is `mainsequence-project-coder`
 
 That is how the parent can run a specialist inside another project folder while keeping the parent in its own working directory.
 
@@ -123,6 +173,11 @@ Then it returns:
 - project context or workflow status
 - the local path
 - blockers or next actions
+
+When the parent switches into a project session, the stream emits a short user-facing handoff
+message and then a structured `session_switch` chunk instead of relying on plain-text narration
+alone. After that handoff, the same response can continue immediately with the coder session's
+environment verification and bootstrap steps.
 
 ## Read next
 

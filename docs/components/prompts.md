@@ -1,56 +1,21 @@
 # Prompts
 
-Prompts in `pi/prompts/` are reusable workflow templates.
+Astro's reusable workflow prompts live under `pi/prompts/`. The detailed prompt docs now live under `docs/prompts/`, one file per prompt.
 
-They are for repeatable parent-agent behavior that does not need a new extension.
+## Prompt index
 
-## Current prompt templates
+- [`../prompts/README.md`](../prompts/README.md)
 
-### `pi/prompts/implement-additive.md`
+## Prompt pages
 
-Purpose:
+- [`implement-additive`](../prompts/implement-additive.md)
+- [`design-and-audit`](../prompts/design-and-audit.md)
+- [`verify-mainsequence-tutorial`](../prompts/verify-mainsequence-tutorial.md)
 
-- orchestrate a normal Main Sequence project request
+## Why prompts stay separate from specialists
 
-This is the parent workflow for:
-
-- existing-project selection
-- project creation
-- loading `mainsequence-project-creation` when a new project needs detailed intake
-- local checkout
-- project-local task and status tracking when the target project uses it
-- delegation to `mainsequence-project-coder`
-
-### `pi/prompts/design-and-audit.md`
-
-Purpose:
-
-- review a checked-out Main Sequence project
-
-This is the structured review path for status, blockers, and completion.
-
-### `pi/prompts/verify-mainsequence-tutorial.md`
-
-Purpose:
-
-- run the fixed tutorial-regression workflow as an explicit standalone path
-
-This is the source of truth for:
-
-- reading the upstream CLI and GUI tutorials
-- deriving the SDK version
-- creating `tutorial_review_[sdk_version]`
-- delegating checked-out project work to `mainsequence-project-coder`
-- validating GUI steps with Playwright
-- opening tutorial-only issues
-- mandatory cleanup
-
-## Why prompts exist separately from specialists
-
-Prompts and specialists solve different problems:
-
-- prompts guide the parent through a reusable workflow
-- specialists define a narrower delegated role
+- prompts guide the parent through reusable workflows
+- specialists define narrower delegated child roles
 
 ## Related pages
 

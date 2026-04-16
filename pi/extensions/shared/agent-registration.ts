@@ -1,3 +1,7 @@
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import path from "node:path";
+
 type AgentRole = "orchestrator" | "specialist";
 
 type RegistrationResult = {
@@ -29,6 +33,11 @@ type RegistrationOptions = {
 };
 
 const DEFAULT_BACKEND = "https://api.main-sequence.app";
+
+type MainsequenceCredentials = {
+	accessToken: string | null;
+	refreshToken: string | null;
+};
 
 export function shouldRegisterAgents(env: NodeJS.ProcessEnv = process.env): boolean {
 	return /^(1|true|yes|on)$/i.test(env.BUILD_AGENTS_IN_BACKEND ?? "");
@@ -84,6 +93,45 @@ function resolveBackendUrl(env: NodeJS.ProcessEnv): string {
 	return raw.replace(/\/+$/, "");
 }
 
+function normalizeMainsequenceToken(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const trimmed = value.trim();
+	return trimmed ? trimmed : null;
+}
+
+function resolveMainsequenceAuthStorePath(env: NodeJS.ProcessEnv): string {
+	const configuredDir = env.ASTRO_MAINSEQUENCE_CONFIG_DIR?.trim();
+	if (configuredDir) {
+		return path.join(path.resolve(configuredDir), "auth.json");
+	}
+
+	const homeDir = env.HOME?.trim() || homedir();
+	return path.join(homeDir, ".config", "mainsequence", "auth.json");
+}
+
+function readPersistedMainsequenceAuth(env: NodeJS.ProcessEnv): MainsequenceCredentials {
+	const authPath = resolveMainsequenceAuthStorePath(env);
+	if (!existsSync(authPath)) {
+		return {
+			accessToken: null,
+			refreshToken: null,
+		};
+	}
+
+	try {
+		const parsed = JSON.parse(readFileSync(authPath, "utf8")) as Record<string, unknown>;
+		return {
+			accessToken: normalizeMainsequenceToken(parsed.access),
+			refreshToken: normalizeMainsequenceToken(parsed.refresh),
+		};
+	} catch {
+		return {
+			accessToken: null,
+			refreshToken: null,
+		};
+	}
+}
+
 export function resolveMainsequenceUserId(options: {
 	userId?: unknown;
 	env?: NodeJS.ProcessEnv;
@@ -93,6 +141,9 @@ export function resolveMainsequenceUserId(options: {
 	if (explicitUserId) return explicitUserId;
 
 	const env = options.env ?? process.env;
+	const envUserId = normalizeIdPart(env.ASTRO_MAINSEQUENCE_USER_ID);
+	if (envUserId) return envUserId;
+
 	const jwtPayload =
 		decodeJwtPayload(env.MAINSEQUENCE_ACCESS_TOKEN) ?? decodeJwtPayload(env.MAINSEQUENCE_REFRESH_TOKEN);
 	const jwtUserId =
@@ -103,7 +154,7 @@ export function resolveMainsequenceUserId(options: {
 
 	if (jwtUserId) return jwtUserId;
 
-	options.log?.("Could not resolve Main Sequence user id from request context or tokens.");
+	options.log?.("Could not resolve Main Sequence user id from request context, env, or tokens.");
 	return null;
 }
 
@@ -117,10 +168,14 @@ export function buildAgentUniqueId(options: {
 	return projectId ? `${safeAgentName}_${options.userId}_${projectId}` : `${safeAgentName}_${options.userId}`;
 }
 
-async function refreshAccessToken(env: NodeJS.ProcessEnv): Promise<string | null> {
+async function refreshAccessToken(env: NodeJS.ProcessEnv): Promise<{ token: string | null; error: string | null }> {
 	const backendUrl = resolveBackendUrl(env);
-	const refreshToken = env.MAINSEQUENCE_REFRESH_TOKEN?.trim();
-	if (!refreshToken) return null;
+	const persistedCredentials = readPersistedMainsequenceAuth(env);
+	const refreshToken =
+		normalizeMainsequenceToken(env.MAINSEQUENCE_REFRESH_TOKEN) ?? persistedCredentials.refreshToken;
+	if (!refreshToken) {
+		return { token: null, error: "Missing refresh token." };
+	}
 
 	const response = await fetch(`${backendUrl}/auth/jwt-token/token/refresh/`, {
 		method: "POST",
@@ -130,25 +185,36 @@ async function refreshAccessToken(env: NodeJS.ProcessEnv): Promise<string | null
 		body: JSON.stringify({ refresh: refreshToken }),
 	});
 
-	if (!response.ok) return null;
+	if (!response.ok) {
+		const body = await response.text();
+		const message = body || `Refresh failed with status ${response.status}.`;
+		return { token: null, error: message };
+	}
 
 	const payload = await response.json();
 	const accessToken = typeof payload?.access === "string" && payload.access.trim() ? payload.access.trim() : null;
+	const refreshedRefreshToken =
+		typeof payload?.refresh === "string" && payload.refresh.trim() ? payload.refresh.trim() : null;
 	if (accessToken) {
 		env.MAINSEQUENCE_ACCESS_TOKEN = accessToken;
 	}
-	return accessToken;
+	if (refreshedRefreshToken) {
+		env.MAINSEQUENCE_REFRESH_TOKEN = refreshedRefreshToken;
+	}
+	return accessToken
+		? { token: accessToken, error: null }
+		: { token: null, error: "Refresh response did not include access token." };
 }
 
-async function resolveAccessToken(env: NodeJS.ProcessEnv, log?: (message: string) => void): Promise<string | null> {
-	let accessToken = await refreshAccessToken(env);
-	if (!accessToken) {
-		accessToken = env.MAINSEQUENCE_ACCESS_TOKEN?.trim() || null;
-	}
-	if (!accessToken) {
-		log?.("Missing access token for backend requests.");
-	}
-	return accessToken;
+async function resolveAccessToken(
+	env: NodeJS.ProcessEnv,
+	log?: (message: string) => void,
+): Promise<{ token: string | null; error: string | null }> {
+	const refreshResult = await refreshAccessToken(env);
+	if (refreshResult.token) return refreshResult;
+
+	log?.(`Token refresh failed: ${refreshResult.error ?? "unknown error"}`);
+	return { token: null, error: refreshResult.error ?? "Token refresh failed." };
 }
 
 async function postGetOrCreateAgent(options: {
@@ -213,7 +279,7 @@ export async function registerMainsequenceAgent(
 	const resolvedUserId = resolveMainsequenceUserId({ userId, env: runtimeEnv, log });
 
 	if (!resolvedUserId) {
-		log?.(`Skipping agent registration for "${safeAgentName}": missing user id.`);
+		log?.(`Agent registration failed for "${safeAgentName}": missing user id.`);
 		return {
 			ok: false,
 			exitCode: null,
@@ -228,7 +294,7 @@ export async function registerMainsequenceAgent(
 	const isProjectCoder = agentName === "mainsequence-project-coder";
 	const resolvedProjectId = normalizeIdPart(projectId ?? runtimeEnv.ASTRO_TARGET_PROJECT_ID);
 	if (isProjectCoder && !resolvedProjectId) {
-		log?.(`Skipping agent registration for "${safeAgentName}": missing project id.`);
+		log?.(`Agent registration failed for "${safeAgentName}": missing project id.`);
 		return {
 			ok: false,
 			exitCode: null,
@@ -247,14 +313,18 @@ export async function registerMainsequenceAgent(
 	});
 	const backendUrl = resolveBackendUrl(runtimeEnv);
 
-	const accessToken = await resolveAccessToken(runtimeEnv, log);
-	if (!accessToken) {
-		log?.(`Skipping agent registration for "${safeAgentName}": missing access token.`);
+	const accessTokenResult = await resolveAccessToken(runtimeEnv, log);
+	if (!accessTokenResult.token) {
+		log?.(
+			`Agent registration failed for "${safeAgentName}": ${
+				accessTokenResult.error ?? "missing access token"
+			}.`,
+		);
 		return {
 			ok: false,
 			exitCode: null,
 			stdout: "",
-			stderr: "Missing access token for agent get_or_create.",
+			stderr: accessTokenResult.error ?? "Missing access token for agent get_or_create.",
 			agentId: null,
 			agentUniqueId,
 			userId: resolvedUserId,
@@ -268,14 +338,14 @@ export async function registerMainsequenceAgent(
 
 	let response = await postGetOrCreateAgent({
 		backendUrl,
-		accessToken,
+		accessToken: accessTokenResult.token,
 		payload,
 	});
 
 	if (response.status === 401 || response.status === 403) {
 		const refreshedAccessToken = await resolveAccessToken(runtimeEnv, log);
-		if (refreshedAccessToken) {
-			const nextAccessToken = refreshedAccessToken;
+		if (refreshedAccessToken.token) {
+			const nextAccessToken = refreshedAccessToken.token;
 			response = await postGetOrCreateAgent({
 				backendUrl,
 				accessToken: nextAccessToken,
@@ -344,31 +414,31 @@ export async function startBackendAgentSession(options: {
 }): Promise<AgentSessionResult> {
 	const runtimeEnv = options.env ?? process.env;
 	const backendUrl = resolveBackendUrl(runtimeEnv);
-	const accessToken = await resolveAccessToken(runtimeEnv, options.log);
+	const accessTokenResult = await resolveAccessToken(runtimeEnv, options.log);
 
-	if (!accessToken) {
+	if (!accessTokenResult.token) {
 		return {
 			ok: false,
 			status: null,
 			body: null,
-			error: "Missing access token for agent session creation.",
+			error: accessTokenResult.error ?? "Missing access token for agent session creation.",
 			agentSessionId: null,
 		};
 	}
 
 	let response = await postStartAgentSession({
 		backendUrl,
-		accessToken,
+		accessToken: accessTokenResult.token,
 		agentId: options.agentId,
 		payload: options.payload,
 	});
 
 	if (response.status === 401 || response.status === 403) {
 		const refreshedAccessToken = await resolveAccessToken(runtimeEnv, options.log);
-		if (refreshedAccessToken) {
+		if (refreshedAccessToken.token) {
 			response = await postStartAgentSession({
 				backendUrl,
-				accessToken: refreshedAccessToken,
+				accessToken: refreshedAccessToken.token,
 				agentId: options.agentId,
 				payload: options.payload,
 			});
