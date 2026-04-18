@@ -25,6 +25,13 @@ replicate the deployed PVC layout as closely as possible.
 
 Current durable subpaths:
 
+- `/root/.astro-container-data/.ssh`
+  - pod/container-owned SSH keys
+  - persistent `known_hosts`
+  - runtime SSH `config`
+- `/root/.astro-container-data/project-checkout-runtime`
+  - per-project checkout homes used by Astro's `set-up-locally` wrapper
+  - project-scoped `.ssh` keys and `known_hosts` so checkout keys are not reused only by slug
 - `/root/.astro-container-data/.pi/agent`
   - canonical Pi runtime state inside the durable volume
   - includes Pi `auth.json`, `sessions/`, runtime `settings.json`, and helper binaries
@@ -46,6 +53,19 @@ like this:
 
 ```text
 /root/.astro-container-data/
+├── .ssh/
+│   ├── config
+│   ├── known_hosts
+│   └── <repo-specific keys>
+├── project-checkout-runtime/
+│   └── project-<id>/
+│       └── home/
+│           ├── .config/
+│           │   └── mainsequence -> /root/.astro-container-data/.config/mainsequence
+│           └── .ssh/
+│               ├── config
+│               ├── known_hosts
+│               └── <project-scoped keys>
 ├── .pi/
 │   └── agent/
 │       ├── auth.json
@@ -70,6 +90,10 @@ like this:
 
 The intent is:
 
+- `.ssh`
+  - pod-owned SSH runtime state for project checkout and deploy-key flows
+- `project-checkout-runtime`
+  - project-scoped checkout HOME directories used to avoid basename-only SSH key collisions
 - `.pi/agent`
   - standard Pi runtime folder inside the PVC
 - `.config/mainsequence`
@@ -83,6 +107,7 @@ The intent is:
 
 Astro also creates standard home-directory links for compatibility:
 
+- `/root/.ssh -> /root/.astro-container-data/.ssh`
 - `/root/.pi/agent -> /root/.astro-container-data/.pi/agent`
 - `/root/.config/mainsequence -> /root/.astro-container-data/.config/mainsequence`
 - `/root/.astro/stream-sessions -> /root/.astro-container-data/.astro/stream-sessions`
@@ -93,10 +118,21 @@ Astro also creates standard home-directory links for compatibility:
 This means operators and tools can still use the standard-looking paths:
 
 - `/root/.pi/agent`
+- `/root/.ssh`
 - `/root/.config/mainsequence`
 - `/root/.astro/stream-sessions`
 
 while the real durable storage still lives under the PVC root.
+
+## Kubernetes guidance
+
+For Kubernetes deployments, use the same runtime contract as local Docker:
+
+- mount one durable volume at `/root/.astro-container-data`
+- do not mount a host `~/.ssh`
+- allow the pod to generate and persist its own repo SSH keys under `/root/.astro-container-data/.ssh`
+- persist `known_hosts` in that same volume so first-contact trust survives pod restarts
+- prefer one PVC per Astro runtime instance instead of sharing one writable `.ssh` state across unrelated replicas
 
 ## One-time migration
 

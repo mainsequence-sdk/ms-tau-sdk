@@ -416,6 +416,17 @@ async function runInteractiveSignIn(
 					),
 				signal: activeAttempt.abortController.signal,
 			});
+
+			authStorage.reload();
+			const authErrors = authStorage.drainErrors();
+			if (authErrors.length > 0) {
+				throw authErrors[0];
+			}
+			if (!authStorage.has(attempt.provider)) {
+				throw new Error(
+					`Provider signin finished but no persisted credentials were found for ${attempt.provider}.`,
+				);
+			}
 		});
 
 		if (activeAttempt.cancelled) {

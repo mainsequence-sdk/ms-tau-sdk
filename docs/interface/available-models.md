@@ -23,7 +23,7 @@ appears in the `sources` list.
 
 ```json
 {
-  "version": 2,
+  "version": 1,
   "providers": [
     {
       "provider": "openai",
@@ -44,16 +44,16 @@ appears in the `sources` list.
           },
           "defaults": {
             "runConfig": {
-              "reasoning_effort": "medium"
+              "reasoning_effort": "on"
             }
           },
           "capabilities": {
             "runConfig": {
               "reasoning_effort": {
                 "supported": true,
-                "mode": "levels",
-                "values": ["off", "minimal", "low", "medium", "high", "xhigh"],
-                "default": "medium"
+                "mode": "toggle",
+                "values": ["off", "on"],
+                "default": "on"
               }
             }
           }
@@ -127,8 +127,9 @@ appears in the `sources` list.
 - Ollama discovery uses `GET <OLLAMA_HOST>/api/tags`, then enriches each listed model with `POST <OLLAMA_HOST>/api/show`
 - if `OLLAMA_HOST` includes `/v1`, Astro strips that suffix before calling the Ollama native `/api/*` routes
 - `defaults.runConfig` describes the default runtime settings Astro would use for that model
-- `capabilities.runConfig.reasoning_effort` describes the reasoning levels Astro currently knows how
-  to offer for that model
+- `capabilities.runConfig.reasoning_effort` describes only the reasoning controls Astro can support
+  from explicit provider/model capability metadata; Astro no longer expands Pi-registry models into
+  inferred OpenAI-style level lists
 - `providers[*].provider` is the top-level grouping key for the frontend
 - `providers[*].models[*]` contains the actual selectable runtime models for that provider
 - `auth.required` is present for auth-backed Pi providers such as `openai` and `anthropic`
@@ -140,6 +141,8 @@ appears in the `sources` list.
   still remain visible in `GET /api/models/catalog`
 - unsupported Pi-registry providers are intentionally omitted from this endpoint
 - `capabilities.features` carries the provider-reported capability list when Astro can collect it
+- Pi-registry models that only expose a boolean `reasoning` capability are normalized as reasoning
+  `mode: "toggle"` with values `["off", "on"]`
 - Ollama models that report `thinking` or `reasoning` through `/api/show` are exposed as reasoning
   `mode: "toggle"` with values `["off", "on"]`
 - Ollama models without those features are exposed as reasoning `mode: "unsupported"`

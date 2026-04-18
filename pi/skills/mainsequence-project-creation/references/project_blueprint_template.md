@@ -1,4 +1,4 @@
-# `project_onthology.md` Template
+# `project_blueprint.md` Template
 
 Use this exact file name before any new project is created.
 

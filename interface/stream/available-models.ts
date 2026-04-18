@@ -1,5 +1,4 @@
 import { AuthStorage, ModelRegistry } from "../../node_modules/@mariozechner/pi-coding-agent/dist/index.js";
-import { supportsXhigh } from "../../node_modules/@mariozechner/pi-ai/dist/models.js";
 import {
 	getModelProviderAuthMetadata,
 	shouldExposeProviderModelsInAvailableList,
@@ -59,7 +58,7 @@ export type AvailableModelSourceStatus = {
 };
 
 export type AvailableModelsResponse = {
-	version: 2;
+	version: 1;
 	providers: AvailableModelProviderGroup[];
 	sources: AvailableModelSourceStatus[];
 };
@@ -94,17 +93,6 @@ export interface AvailableModelCollector {
 	source: string;
 	collect(context: Required<AvailableModelContext>): Promise<AvailableModelCollectionResult>;
 }
-
-const OPENAI_REASONING_LEVELS: RunConfigReasoningEffort[] = [
-	"off",
-	"minimal",
-	"low",
-	"medium",
-	"high",
-	"xhigh",
-];
-
-const STANDARD_REASONING_LEVELS: RunConfigReasoningEffort[] = ["off", "minimal", "low", "medium", "high"];
 
 function buildReasoningSupport(options: {
 	supported: boolean;
@@ -202,9 +190,9 @@ function buildPiRegistryReasoningCapability(model: {
 
 	return buildReasoningSupport({
 		supported: true,
-		mode: "levels",
-		values: supportsXhigh(model as any) ? OPENAI_REASONING_LEVELS : STANDARD_REASONING_LEVELS,
-		defaultValue: "medium",
+		mode: "toggle",
+		values: ["off", "on"],
+		defaultValue: "on",
 	});
 }
 
@@ -231,7 +219,7 @@ function buildAvailableModelFromPiRegistry(
 		available: true,
 		defaults: {
 			runConfig: {
-				reasoning_effort: model.reasoning ? "medium" : "off",
+				reasoning_effort: model.reasoning ? "on" : "off",
 			},
 		},
 		capabilities: {
@@ -580,7 +568,7 @@ export async function collectAvailableModels(
 	}));
 
 	return {
-		version: 2,
+		version: 1,
 		providers,
 		sources,
 	};

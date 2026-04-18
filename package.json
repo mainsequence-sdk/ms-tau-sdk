@@ -17,6 +17,7 @@
   },
   "scripts": {
     "check": "tsc --noEmit -p tsconfig.json",
+    "mainsequence:project-setup": "tsx scripts/mainsequence_project_set_up_locally.ts",
     "pi": "node scripts/start_pi.mjs",
     "pi:stream": "tsx scripts/start_pi_stream.ts",
     "specialist": "tsx scripts/run_specialist.ts"

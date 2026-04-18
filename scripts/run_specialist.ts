@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { spawn } from "node:child_process";
+import { bootstrapPiAgentDir } from "./bootstrap_pi_agent_dir.mjs";
 import { discoverAgents, type AgentConfig } from "../pi/extensions/tools/specialist-delegate/agents.js";
 import { resolveMainsequenceUserId } from "../pi/extensions/shared/agent-registration.js";
 import { findRepoRoot } from "../pi/extensions/shared/repo.js";
@@ -83,6 +84,7 @@ function cleanupPromptFile(promptPath: string) {
 }
 
 async function main() {
+	bootstrapPiAgentDir();
 	const repoRoot = findRepoRoot(process.cwd());
 	loadEnvFile(repoRoot);
 	try {

@@ -21,8 +21,12 @@ Follow this workflow:
      - Do not validate the name or create the project until that skill has produced a concrete brief, task list, acceptance criteria, and a confirmed or user-provided project name.
      - Validate the name with `mainsequence project validate-name "<name>"`.
      - Create the project with `mainsequence project create "<name>"`.
-3. Set up the selected or created project locally with `mainsequence project set-up-locally <id>`.
+3. Set up the selected or created project locally with `tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>`.
    - The orchestrator always owns this step.
+   - Do not call raw `mainsequence project set-up-locally <id>` directly when running inside Astro.
+   - After project creation, do not hand off, do not copy `project_blueprint.md`, and do not treat the checkout as ready until the project details report `is_initialized=true`.
+   - Query the project's details with the Main Sequence CLI and check the `is_initialized` field before continuing.
+   - If `is_initialized` is still false, wait/retry that project-details check instead of switching sessions or copying files early.
    - Resolve and keep the checked-out local path before any delegation.
    - If the exact local checkout path is not known, stop instead of delegating.
 4. If the workflow or target project uses project-local tracking or status files, keep them current in the checked-out project.
@@ -30,7 +34,7 @@ Follow this workflow:
    - Prefer the checked-out project's own instructions, task files, status files, and planning files when they exist.
    - For failures or blockers recorded in project-local tracking, include the command or action attempted, the relevant path, the exit code when known, the error evidence, and the best next action.
 5. Use `switch_project_session` when the active conversation should move into the checked-out project's `mainsequence-project-coder` session.
-   - Call it only after the checked-out local path is known.
+   - Call it only after the checked-out local path is known and the project reports `is_initialized=true`.
    - Pass the checked-out target project folder as `cwd`.
    - Pass the selected Main Sequence project id as `projectId`.
    - Use `initialTask` only when the current request already contains concrete project-local work.

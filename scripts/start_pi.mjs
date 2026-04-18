@@ -257,11 +257,32 @@ function runMainsequenceLogin(credentials) {
 	return { ok: true };
 }
 
+function summarizeSpawnSyncFailure(result) {
+	const details = [];
+	if (typeof result.status === "number") {
+		details.push(`exit code ${result.status}`);
+	} else if (result.signal) {
+		details.push(`signal ${result.signal}`);
+	}
+	const stderr =
+		typeof result.stderr === "string" ? result.stderr.trim() : result.stderr?.toString("utf8").trim();
+	const stdout =
+		typeof result.stdout === "string" ? result.stdout.trim() : result.stdout?.toString("utf8").trim();
+	if (stderr) {
+		details.push(`stderr: ${stderr}`);
+	}
+	if (stdout) {
+		details.push(`stdout: ${stdout}`);
+	}
+	return details.join("; ") || "no output";
+}
+
 function verifyMainsequenceCliAuthStore() {
 	const verifyResult = spawnSync("mainsequence", ["user"], {
 		cwd: repoRoot,
-		stdio: "ignore",
+		stdio: ["ignore", "pipe", "pipe"],
 		env: buildStoredAuthVerificationEnv(),
+		encoding: "utf8",
 	});
 	if (verifyResult.error) {
 		if (verifyResult.error.code === "ENOENT") {
@@ -272,7 +293,7 @@ function verifyMainsequenceCliAuthStore() {
 	if (verifyResult.status !== 0) {
 		return {
 			ok: false,
-			error: "Main Sequence CLI login completed but persisted auth still failed verification.",
+			error: `Main Sequence CLI login completed but persisted auth still failed verification (${summarizeSpawnSyncFailure(verifyResult)}).`,
 		};
 	}
 

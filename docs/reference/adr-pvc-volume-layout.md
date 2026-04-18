@@ -28,6 +28,8 @@ runtime state.
 
 Inside that volume, Astro uses:
 
+- `.ssh`
+  - pod-owned SSH keys, `known_hosts`, and SSH config for project checkout
 - `.pi/agent`
   - canonical Pi runtime folder inside the durable volume
 - `.config/mainsequence`
@@ -47,6 +49,7 @@ Container env now points directly at the volume-backed paths:
 
 For compatibility and operator ergonomics, Astro also creates standard home-directory symlinks:
 
+- `/root/.ssh -> /root/.astro-container-data/.ssh`
 - `/root/.pi/agent -> /root/.astro-container-data/.pi/agent`
 - `/root/.config/mainsequence -> /root/.astro-container-data/.config/mainsequence`
 - `/root/.astro/stream-sessions -> /root/.astro-container-data/.astro/stream-sessions`
@@ -82,6 +85,7 @@ This keeps the volume as the long-term source of truth while still preserving ex
 ### Positive
 
 - local Docker now simulates a single-PVC deployment much more closely
+- SSH runtime state for project checkout is durable and pod-local instead of depending on host SSH state
 - Pi runtime state lives under a standard `.pi/agent` folder inside the durable volume
 - Astro-only state is still clearly separated under `.astro/`
 - host Pi auth/session state is merged once instead of being live-linked forever

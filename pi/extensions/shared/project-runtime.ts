@@ -1,6 +1,16 @@
 import { spawnSync } from "node:child_process";
 import path from "node:path";
-import { existsSync, statSync } from "node:fs";
+import {
+	existsSync,
+	lstatSync,
+	mkdirSync,
+	readlinkSync,
+	rmSync,
+	statSync,
+	symlinkSync,
+	writeFileSync,
+} from "node:fs";
+import { homedir } from "node:os";
 import { buildMainsequenceStoredAuthEnv } from "../../../scripts/mainsequence_runtime_auth.js";
 
 export type ProjectRuntimeSnapshot = {
@@ -100,8 +110,147 @@ type BootstrapOptions = {
 	onEvent?: (event: ProjectRuntimeBootstrapEvent) => void;
 };
 
+type ProjectScopedCheckoutEnvOptions = {
+	projectId?: string | null;
+	cwd?: string | null;
+	repoUrl?: string | null;
+};
+
 function isCommandFailure(result: CommandResult): result is CommandFailure {
 	return result.ok === false;
+}
+
+function ensureDir(dirPath: string) {
+	mkdirSync(dirPath, { recursive: true, mode: 0o700 });
+}
+
+function removePath(targetPath: string) {
+	try {
+		rmSync(targetPath, { recursive: true, force: true });
+	} catch {
+		// ignore cleanup failures
+	}
+}
+
+function ensureSymlink(sourcePath: string, targetPath: string) {
+	try {
+		const existing = lstatSync(targetPath);
+		if (existing.isSymbolicLink() && readlinkSync(targetPath) === sourcePath) {
+			return;
+		}
+		removePath(targetPath);
+	} catch {
+		// missing target
+	}
+	symlinkSync(sourcePath, targetPath, "dir");
+}
+
+function sanitizeId(value: string): string {
+	return value.trim().replace(/[^A-Za-z0-9._-]+/g, "-");
+}
+
+function resolveContainerDataRoot(env: NodeJS.ProcessEnv): string {
+	const configured = env.ASTRO_CONTAINER_DATA_DIR?.trim();
+	if (configured) return path.resolve(configured);
+	const homeDir = env.HOME?.trim() || process.env.HOME?.trim() || homedir();
+	return path.join(homeDir, ".astro-container-data");
+}
+
+function resolveSharedMainsequenceConfigDir(env: NodeJS.ProcessEnv): string {
+	const configured = env.ASTRO_MAINSEQUENCE_CONFIG_DIR?.trim();
+	if (configured) return path.resolve(configured);
+
+	const homeDir = env.HOME?.trim() || process.env.HOME?.trim() || homedir();
+	return path.join(homeDir, ".config", "mainsequence");
+}
+
+function ensureProjectScopedCheckoutHome(projectId: string, env: NodeJS.ProcessEnv) {
+	const projectHome = path.join(
+		resolveContainerDataRoot(env),
+		"project-checkout-runtime",
+		`project-${sanitizeId(projectId)}`,
+		"home",
+	);
+	const sshDir = path.join(projectHome, ".ssh");
+	const knownHostsPath = path.join(sshDir, "known_hosts");
+	const sshConfigPath = path.join(sshDir, "config");
+	const configRoot = path.join(projectHome, ".config");
+	const sharedMainsequenceConfigDir = resolveSharedMainsequenceConfigDir(env);
+
+	ensureDir(sshDir);
+	ensureDir(configRoot);
+	ensureDir(sharedMainsequenceConfigDir);
+	if (!existsSync(knownHostsPath)) {
+		writeFileSync(knownHostsPath, "", { mode: 0o600 });
+	}
+	writeFileSync(
+		sshConfigPath,
+		[
+			"Host *",
+			"  StrictHostKeyChecking accept-new",
+			`  UserKnownHostsFile ${knownHostsPath}`,
+			"  IdentitiesOnly yes",
+			"",
+		].join("\n"),
+		{ mode: 0o600 },
+	);
+	ensureSymlink(sharedMainsequenceConfigDir, path.join(configRoot, "mainsequence"));
+
+	return {
+		projectHome,
+		sshDir,
+		knownHostsPath,
+		sshConfigPath,
+		configRoot,
+	};
+}
+
+function deriveRepoKeySafeName(repoUrl: string): string {
+	let last = repoUrl.replace(/[?#].*$/, "").split("/").at(-1) ?? repoUrl;
+	if (last.toLowerCase().endsWith(".git")) last = last.slice(0, -4);
+	return last.replace(/[^A-Za-z0-9._-]+/g, "-");
+}
+
+function resolveGitRemoteUrl(cwd: string, env: NodeJS.ProcessEnv): string | null {
+	const result = spawnSync("git", ["config", "--get", "remote.origin.url"], {
+		cwd,
+		env,
+		encoding: "utf8",
+	});
+	if (result.error || result.status !== 0) return null;
+	const remoteUrl = result.stdout?.trim();
+	return remoteUrl ? remoteUrl : null;
+}
+
+export function buildProjectScopedCheckoutEnv(
+	baseEnv: NodeJS.ProcessEnv,
+	options: ProjectScopedCheckoutEnvOptions,
+): NodeJS.ProcessEnv {
+	if (!options.projectId) return { ...baseEnv };
+
+	const checkoutHome = ensureProjectScopedCheckoutHome(options.projectId, baseEnv);
+	const nextEnv: NodeJS.ProcessEnv = {
+		...baseEnv,
+		HOME: checkoutHome.projectHome,
+		USERPROFILE: checkoutHome.projectHome,
+		XDG_CONFIG_HOME: path.join(checkoutHome.projectHome, ".config"),
+		ASTRO_PROJECT_CHECKOUT_HOME: checkoutHome.projectHome,
+	};
+
+	const repoUrl =
+		options.repoUrl ??
+		(options.cwd ? resolveGitRemoteUrl(options.cwd, nextEnv) : null);
+	if (!repoUrl) return nextEnv;
+
+	const keyPath = path.join(checkoutHome.sshDir, deriveRepoKeySafeName(repoUrl));
+	if (!existsSync(keyPath)) return nextEnv;
+
+	return {
+		...nextEnv,
+		ASTRO_PROJECT_CHECKOUT_REPO_URL: repoUrl,
+		ASTRO_PROJECT_CHECKOUT_KEY_PATH: keyPath,
+		GIT_SSH_COMMAND: `ssh -F ${checkoutHome.sshConfigPath} -i ${keyPath} -o IdentitiesOnly=yes`,
+	};
 }
 
 function normalizeVersion(value: unknown): string | null {
@@ -299,14 +448,16 @@ function emitBootstrapEvent(options: BootstrapOptions, event: ProjectRuntimeBoot
 export function buildActivatedProjectEnv(
 	baseEnv: NodeJS.ProcessEnv,
 	snapshot: Pick<ProjectRuntimeSnapshot, "venv"> | null,
+	options: ProjectScopedCheckoutEnvOptions = {},
 ): NodeJS.ProcessEnv {
-	if (!snapshot) return { ...baseEnv };
+	const checkoutEnv = buildProjectScopedCheckoutEnv(baseEnv, options);
+	if (!snapshot) return checkoutEnv;
 
-	const existingPath = baseEnv.PATH ?? "";
+	const existingPath = checkoutEnv.PATH ?? "";
 	const venvPath = snapshot.venv.path;
 	const venvBin = snapshot.venv.binPath;
 	return {
-		...baseEnv,
+		...checkoutEnv,
 		VIRTUAL_ENV: venvPath,
 		PATH: existingPath ? `${venvBin}${path.delimiter}${existingPath}` : venvBin,
 	};
@@ -332,7 +483,8 @@ export function formatProjectRuntimeSummary(snapshot: ProjectRuntimeSnapshot): s
 
 export function bootstrapProjectCoderRuntime(options: BootstrapOptions): ProjectRuntimeBootstrapResult {
 	const cwd = path.resolve(options.cwd);
-	const env = buildMainsequenceStoredAuthEnv({ ...process.env, ...(options.env ?? {}) });
+	const inputEnv = { ...process.env, ...(options.env ?? {}) };
+	const env = buildMainsequenceStoredAuthEnv(inputEnv);
 	const agentsFilePresent = existsSync(path.join(cwd, "AGENTS.md"));
 	const sdkStatusCommand = formatCommand("mainsequence", ["project", "sdk-status", "--path", ".", "--json"]);
 	const buildLocalVenvCommand = formatCommand("mainsequence", ["project", "build_local_venv", "--path", "."]);
@@ -500,6 +652,9 @@ export function bootstrapProjectCoderRuntime(options: BootstrapOptions): Project
 			pythonPath: venvPythonPath,
 			mainsequenceVersion: null,
 		},
+	}, {
+		projectId: inputEnv.ASTRO_TARGET_PROJECT_ID ?? null,
+		cwd,
 	});
 	emitBootstrapEvent(options, {
 		phase: "start",

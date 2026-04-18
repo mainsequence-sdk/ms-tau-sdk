@@ -16,15 +16,18 @@ This is the main parent workflow for normal Main Sequence project work.
 1. inspect the user's request and relevant Main Sequence guidance
 2. decide between existing-project and new-project flow
 3. for new projects, use the project-creation skill before validating or creating
-4. run `mainsequence project set-up-locally <id>`
-5. preserve the checked-out path and project id
-6. update any project-local tracking when it exists
-7. use `switch_project_session` to hand work into `mainsequence-project-coder`
-8. use `delegate_specialist` only for bounded background work
+4. run `tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>`
+5. query the project details with the CLI and wait until `is_initialized=true`
+6. preserve the checked-out path and project id
+7. update any project-local tracking when it exists
+8. use `switch_project_session` to hand work into `mainsequence-project-coder`
+9. use `delegate_specialist` only for bounded background work
 
 ## Important constraints
 
 - the orchestrator owns project selection and local setup
+- inside Astro, do not call raw `mainsequence project set-up-locally <id>` directly
+- do not hand off or copy `project_blueprint.md` before the project details show `is_initialized=true`
 - do not delegate coding work without both `cwd` and `projectId`
 - do not claim a session switch without calling `switch_project_session`
 

@@ -70,6 +70,7 @@ import {
 } from "../../scripts/mainsequence_runtime_auth.js";
 import {
 	bootstrapProjectCoderRuntime,
+	buildProjectScopedCheckoutEnv,
 	buildActivatedProjectEnv,
 	formatProjectRuntimeSummary,
 	type ProjectRuntimeBootstrapEvent,
@@ -234,6 +235,25 @@ function resolveTrustedCorsOrigins(env: NodeJS.ProcessEnv = process.env): Set<st
 	if (deprecatedOrigin) configured.add(deprecatedOrigin);
 
 	return configured;
+}
+
+function normalizePossiblyEncodedChatUrl(rawUrl: string | undefined): string {
+	const input = rawUrl ?? "/";
+	const encodedQuestionMarkIndex = input.search(/%3[fF]/);
+	if (encodedQuestionMarkIndex === -1) return input;
+
+	const pathPart = input.slice(0, encodedQuestionMarkIndex);
+	if (!pathPart.startsWith("/api/chat/")) return input;
+
+	const encodedQuery = input.slice(encodedQuestionMarkIndex + 3);
+	let decodedQuery = encodedQuery;
+	try {
+		decodedQuery = decodeURIComponent(encodedQuery);
+	} catch {
+		decodedQuery = encodedQuery;
+	}
+
+	return `${pathPart}?${decodedQuery}`;
 }
 
 function appendVaryHeader(res: import("node:http").ServerResponse, field: string) {
@@ -1758,10 +1778,14 @@ function runPendingProjectRuntimeBootstrap(
 		sessionConfigOverrides: SessionConfigOverrides | null;
 	},
 ): ProjectRuntimeBootstrapResult {
+	const runtimeEnv = buildProjectScopedCheckoutEnv(process.env, {
+		projectId: options.projectId,
+		cwd: options.cwd,
+	});
 	const toolCallIds = new Map<ProjectRuntimeBootstrapEvent["step"], string>();
 	const result = bootstrapProjectCoderRuntime({
 		cwd: options.cwd,
-		env: process.env,
+		env: runtimeEnv,
 		log: (message) => {
 			console.log(`[astro-stream] ${message}`);
 		},
@@ -2038,7 +2062,10 @@ async function handleProjectSessionSwitch(ctx: RequestContext, request: SessionS
 		cwd: request.cwd,
 		projectId: request.projectId,
 		agentConfig,
-		envOverrides: buildActivatedProjectEnv(process.env, projectRuntime),
+		envOverrides: buildActivatedProjectEnv(process.env, projectRuntime, {
+			projectId: request.projectId,
+			cwd: request.cwd,
+		}),
 	});
 }
 
@@ -2296,7 +2323,8 @@ function runPiPrompt(
 }
 
 const server = createServer(async (req, res) => {
-	const url = new URL(req.url ?? "/", `http://${req.headers.host ?? host}`);
+	const normalizedReqUrl = normalizePossiblyEncodedChatUrl(req.url);
+	const url = new URL(normalizedReqUrl, `http://${req.headers.host ?? host}`);
 	registerHttpAccessLog(req, res, url);
 
 	if (req.method === "OPTIONS") {
@@ -3293,7 +3321,10 @@ const server = createServer(async (req, res) => {
 		agentConfig,
 		envOverrides:
 			agentName === "mainsequence-project-coder"
-				? buildActivatedProjectEnv(process.env, projectRuntime)
+				? buildActivatedProjectEnv(process.env, projectRuntime, {
+						projectId,
+						cwd: agentCwd,
+				  })
 				: undefined,
 	});
 });

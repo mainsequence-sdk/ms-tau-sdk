@@ -20,6 +20,19 @@ function ensureDir(dirPath) {
 	fs.mkdirSync(dirPath, { recursive: true, mode: 0o700 });
 }
 
+function ensureFile(filePath, contents = "", mode = 0o600) {
+	ensureDir(path.dirname(filePath));
+	if (!fs.existsSync(filePath)) {
+		fs.writeFileSync(filePath, contents, { mode });
+		return;
+	}
+	try {
+		fs.chmodSync(filePath, mode);
+	} catch {
+		// ignore chmod failures
+	}
+}
+
 function removePath(targetPath) {
 	try {
 		fs.rmSync(targetPath, { recursive: true, force: true });
@@ -287,8 +300,9 @@ function ensurePersistentDirectoryLink(sourceDir, targetPath) {
 
 function copyIntoIfExists(sourcePath, targetPath) {
 	if (!fs.existsSync(sourcePath)) return false;
-	const sourceStat = fs.statSync(sourcePath);
+	const sourceLstat = fs.lstatSync(sourcePath);
 	const resolvedSourcePath = resolveExistingPath(sourcePath) ?? path.resolve(sourcePath);
+	const sourceStat = fs.statSync(resolvedSourcePath);
 	const resolvedTargetPath = resolveExistingPath(targetPath) ?? path.resolve(targetPath);
 
 	if (resolvedSourcePath === resolvedTargetPath) {
@@ -301,14 +315,68 @@ function copyIntoIfExists(sourcePath, targetPath) {
 	ensureDir(path.dirname(targetPath));
 	if (sourceStat.isDirectory()) {
 		ensureDir(path.dirname(targetPath));
-		fs.cpSync(sourcePath, targetPath, { recursive: true, force: false, errorOnExist: false });
+		fs.cpSync(resolvedSourcePath, targetPath, { recursive: true, force: false, errorOnExist: false });
 		return true;
 	}
 	if (!fs.existsSync(targetPath)) {
-		fs.cpSync(sourcePath, targetPath, { force: false, errorOnExist: false });
+		const copySourcePath =
+			sourceLstat.isSymbolicLink() || resolvedSourcePath !== path.resolve(sourcePath)
+				? resolvedSourcePath
+				: sourcePath;
+		fs.cpSync(copySourcePath, targetPath, { force: false, errorOnExist: false });
 		return true;
 	}
 	return false;
+}
+
+function materializeLegacyHostEntry(targetDir, legacyHostPiAgentDir, entry) {
+	if (!legacyHostPiAgentDir) return false;
+
+	const sourcePath = path.join(legacyHostPiAgentDir, entry);
+	if (!fs.existsSync(sourcePath)) return false;
+
+	const targetPath = path.join(targetDir, entry);
+	try {
+		const targetLstat = fs.lstatSync(targetPath);
+		if (!targetLstat.isSymbolicLink()) {
+			return false;
+		}
+	} catch {
+		return false;
+	}
+
+	const resolvedSourcePath = resolveExistingPath(sourcePath) ?? path.resolve(sourcePath);
+	const resolvedTargetPath = resolveExistingPath(targetPath) ?? path.resolve(targetPath);
+	const shouldReplace =
+		resolvedTargetPath === resolvedSourcePath ||
+		isSameOrNestedPath(legacyHostPiAgentDir, resolvedTargetPath);
+
+	if (!shouldReplace) return false;
+
+	removePath(targetPath);
+	const sourceStat = fs.statSync(resolvedSourcePath);
+	if (sourceStat.isDirectory()) {
+		fs.cpSync(resolvedSourcePath, targetPath, { recursive: true, force: false, errorOnExist: false });
+		return true;
+	}
+
+	ensureDir(path.dirname(targetPath));
+	fs.cpSync(resolvedSourcePath, targetPath, { force: false, errorOnExist: false });
+	return true;
+}
+
+function materializeLegacyHostImports(targetDir, legacyHostPiAgentDir) {
+	if (!legacyHostPiAgentDir || !fs.existsSync(legacyHostPiAgentDir)) {
+		return [];
+	}
+
+	const materializedEntries = [];
+	for (const entry of SAFE_HOST_ENTRIES) {
+		if (materializeLegacyHostEntry(targetDir, legacyHostPiAgentDir, entry)) {
+			materializedEntries.push(entry);
+		}
+	}
+	return materializedEntries;
 }
 
 function resolveVolumeMigrationPaths(rootDir) {
@@ -499,6 +567,7 @@ function ensureContainerDataRoots(homeDir) {
 	return {
 		rootDir,
 		links: [
+			ensurePersistentDirectoryLink(path.join(rootDir, ".ssh"), path.join(homeDir, ".ssh")),
 			ensurePersistentDirectoryLink(path.join(rootDir, "mainsequence"), path.join(homeDir, "mainsequence")),
 			ensurePersistentDirectoryLink(
 				path.join(rootDir, "mainsequence-dev"),
@@ -507,6 +576,67 @@ function ensureContainerDataRoots(homeDir) {
 			ensurePersistentDirectoryLink(path.join(rootDir, "uv"), path.join(homeDir, ".local", "share", "uv")),
 		],
 	};
+}
+
+function ensurePersistentSshRuntime(homeDir, rootDir) {
+	const sshDir = rootDir ? path.join(rootDir, ".ssh") : path.join(homeDir, ".ssh");
+	ensureDir(sshDir);
+
+	const knownHostsPath = path.join(sshDir, "known_hosts");
+	ensureFile(knownHostsPath, "", 0o600);
+
+	const managedConfigPath = rootDir ? path.join(rootDir, ".ssh", "known_hosts") : knownHostsPath;
+	const managedBlockStart = "# >>> astro-managed-runtime-ssh >>>";
+	const managedBlockEnd = "# <<< astro-managed-runtime-ssh <<<";
+	const managedBlock = [
+		managedBlockStart,
+		"Host *",
+		"  StrictHostKeyChecking accept-new",
+		`  UserKnownHostsFile ${managedConfigPath}`,
+		"  IdentitiesOnly yes",
+		managedBlockEnd,
+	].join("\n");
+
+	const configPath = path.join(sshDir, "config");
+	const existingConfig = fs.existsSync(configPath) ? fs.readFileSync(configPath, "utf8") : "";
+	const managedPattern = new RegExp(
+		`${managedBlockStart}[\\s\\S]*?${managedBlockEnd}\\n?`,
+		"g",
+	);
+	const strippedConfig = existingConfig.replace(managedPattern, "").trimEnd();
+	const nextConfig =
+		strippedConfig.length > 0 ? `${strippedConfig}\n\n${managedBlock}\n` : `${managedBlock}\n`;
+	fs.writeFileSync(configPath, nextConfig, { mode: 0o600 });
+
+	return {
+		sshDir,
+		knownHostsPath,
+		configPath,
+	};
+}
+
+function ensureManagedMainsequenceShim(targetDir) {
+	const binDir = path.join(targetDir, "bin");
+	ensureDir(binDir);
+	const shimPath = path.join(binDir, "mainsequence");
+	const shimContents = `#!/bin/sh
+set -eu
+
+REAL_MAINSEQUENCE="\${ASTRO_REAL_MAINSEQUENCE:-mainsequence}"
+
+if [ "\${ASTRO_MAINSEQUENCE_BYPASS_SHIM:-0}" = "1" ]; then
+  exec "$REAL_MAINSEQUENCE" "$@"
+fi
+
+if [ "\${1:-}" = "project" ] && [ "\${2:-}" = "set-up-locally" ]; then
+  shift 2
+  exec tsx "/app/scripts/mainsequence_project_set_up_locally.ts" "$@"
+fi
+
+exec "$REAL_MAINSEQUENCE" "$@"
+`;
+	fs.writeFileSync(shimPath, shimContents, { mode: 0o755 });
+	return shimPath;
 }
 
 export function bootstrapPiAgentDir() {
@@ -528,11 +658,17 @@ export function bootstrapPiAgentDir() {
 	});
 
 	ensureDir(targetDir);
+	const materializedLegacyHostEntries = materializeLegacyHostImports(
+		path.resolve(targetDir),
+		process.env.ASTRO_LEGACY_HOST_PI_AGENT_DIR ?? process.env.ASTRO_PI_HOST_AGENT_IMPORT_DIR ?? null,
+	);
 	ensureDir(path.join(targetDir, "bin"));
+	const mainsequenceShimPath = ensureManagedMainsequenceShim(targetDir);
 	const runtimeSettingsPath = ensureRuntimeSettings(targetDir, migration.hostSettingsSourceDir);
 	const mainsequenceCliConfig = ensureMainsequenceCliConfig(homeDir);
 	const piAgentHomeLink = ensurePiAgentHomeLink(homeDir, targetDir);
 	const streamSessions = ensureAstroStreamSessions(homeDir);
+	const sshRuntime = ensurePersistentSshRuntime(homeDir, containerData.rootDir);
 
 	return {
 		targetDir,
@@ -541,6 +677,9 @@ export function bootstrapPiAgentDir() {
 		mainsequenceCliConfig,
 		piAgentHomeLink,
 		streamSessions,
+		sshRuntime,
+		mainsequenceShimPath,
 		migration,
+		materializedLegacyHostEntries,
 	};
 }

@@ -57,6 +57,27 @@ that coder session so the bootstrap is visible immediately instead of waiting fo
 The resulting SDK/runtime snapshot is persisted in local session metadata and injected into the
 coder prompt as runtime context before Pi starts.
 
+### `scripts/mainsequence_project_set_up_locally.ts`
+
+This is Astro's hardened wrapper around `mainsequence project set-up-locally`.
+
+Inside Astro, the orchestrator should call:
+
+```bash
+tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>
+```
+
+instead of calling raw `mainsequence project set-up-locally <id>` directly.
+
+The wrapper:
+
+- bootstraps Astro's persistent SSH runtime first
+- creates a project-scoped checkout home under `/root/.astro-container-data/project-checkout-runtime/project-<id>/home`
+- keeps the checkout SSH key and `known_hosts` inside that project-scoped home so keys are not reused only by repo slug
+- symlinks the project-scoped home back to the shared Main Sequence CLI config under `/root/.astro-container-data/.config/mainsequence`
+- relies on SSH `StrictHostKeyChecking=accept-new` with a pod-local persistent `known_hosts`
+- retries bounded transient clone failures such as host-key verification or delayed deploy-key access
+
 ## Container runtime note
 
 The repo root `Dockerfile` is the deployable app image definition.
@@ -105,7 +126,24 @@ The repo root `docker-compose.yml` wraps those targets as two services:
   - keeps `node_modules` container-local from the image layer
   - keeps durable runtime state under the named volume instead of the repo-local `.astro/` tree
   - keeps helper binaries under `/root/.astro-container-data/.pi/agent/bin`
-  - symlinks `/root/.pi/agent`, `/root/.config/mainsequence`, `/root/.astro/stream-sessions`, `/root/mainsequence`, `/root/mainsequence-dev`, and `/root/.local/share/uv` into subdirectories of `/root/.astro-container-data`
+  - symlinks `/root/.ssh`, `/root/.pi/agent`, `/root/.config/mainsequence`, `/root/.astro/stream-sessions`, `/root/mainsequence`, `/root/mainsequence-dev`, and `/root/.local/share/uv` into subdirectories of `/root/.astro-container-data`
+
+## Kubernetes deployment guidance
+
+When deploying Astro in Kubernetes, keep the same runtime shape as local Docker:
+
+- mount one durable volume at `/root/.astro-container-data`
+- do not rely on host-mounted `~/.ssh`
+- let the pod generate and persist its own repo SSH keys under `/root/.astro-container-data/.ssh`
+- let Astro's checkout wrapper generate per-project SSH identities under `/root/.astro-container-data/project-checkout-runtime/project-<id>/home/.ssh`
+- let the same volume persist `known_hosts`, Main Sequence config, stream sessions, and project checkouts
+- use the same `tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>` wrapper in production pods
+
+Operational guidance:
+
+- prefer one PVC per Astro runtime instance instead of sharing one writable `.ssh` state across unrelated replicas
+- keep `/root/.astro-container-data/.ssh/known_hosts` writable so first contact can be recorded with `accept-new`
+- do not hand off to `mainsequence-project-coder` until local setup succeeds and the project reports `is_initialized=true`
 
 When using containers, run Python commands inside this same app container (do not use a separate Python-only container).
 The image intentionally does not copy `docs/`, `tutorial/`, or `.env`; provide env vars at container start.

@@ -51,16 +51,16 @@ Use `GET /api/chat/get_available_models` for:
       },
       "defaults": {
         "runConfig": {
-          "reasoning_effort": "medium"
+          "reasoning_effort": "on"
         }
       },
       "capabilities": {
         "runConfig": {
           "reasoning_effort": {
             "supported": true,
-            "mode": "levels",
-            "values": ["off", "minimal", "low", "medium", "high", "xhigh"],
-            "default": "medium"
+            "mode": "toggle",
+            "values": ["off", "on"],
+            "default": "on"
           }
         }
       },
@@ -88,6 +88,8 @@ Use `GET /api/chat/get_available_models` for:
 - `auth.signInAvailable` tells the frontend whether Astro can start provider signin right now
 - `auth.authenticated` tells the frontend whether the provider is currently signed in
 - `auth.usable` tells the frontend whether the model can execute right now
+- Pi-registry models only expose reasoning controls that are explicitly represented in the provider
+  model definitions; boolean reasoning support is normalized as `mode: "toggle"`
 - `usable: false` does not remove the model from the catalog
 - unsupported Pi-registry providers are intentionally filtered out so the catalog only shows the
   providers Astro has actually implemented in the current product surface

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
@@ -140,7 +140,48 @@ export function buildMainsequenceStoredAuthEnv(
 	delete runtimeEnv.MAINSEQUENCE_ACCESS_TOKEN;
 	delete runtimeEnv.MAINSEQUENCE_REFRESH_TOKEN;
 	runtimeEnv[MAINSEQUENCE_CLI_SESSION_ID_ENV] = resolveMainsequenceCliSessionId(env);
+	const shimBinDir = resolveManagedMainsequenceShimBinDir(env);
+	if (shimBinDir) {
+		const existingPath = runtimeEnv.PATH ?? "";
+		runtimeEnv.ASTRO_REAL_MAINSEQUENCE =
+			runtimeEnv.ASTRO_REAL_MAINSEQUENCE ?? resolveExecutableOnPath("mainsequence", existingPath, shimBinDir) ?? "mainsequence";
+		runtimeEnv.PATH = [shimBinDir, existingPath].filter(Boolean).join(path.delimiter);
+	}
 	return runtimeEnv;
+}
+
+function resolveManagedMainsequenceShimBinDir(env: NodeJS.ProcessEnv = process.env): string | null {
+	const configuredAgentDir = env.PI_CODING_AGENT_DIR?.trim();
+	if (configuredAgentDir) return path.join(path.resolve(configuredAgentDir), "bin");
+
+	const configuredRoot = env.ASTRO_CONTAINER_DATA_DIR?.trim();
+	if (configuredRoot) return path.join(path.resolve(configuredRoot), ".pi", "agent", "bin");
+
+	const homeDir = env.HOME?.trim() || homedir();
+	return path.join(homeDir, ".pi", "agent", "bin");
+}
+
+function resolveExecutableOnPath(
+	command: string,
+	pathValue: string,
+	shimBinDir: string | null,
+): string | null {
+	const shimDir = shimBinDir ? path.resolve(shimBinDir) : null;
+	for (const entry of pathValue.split(path.delimiter)) {
+		const trimmed = entry.trim();
+		if (!trimmed) continue;
+		const resolvedEntry = path.resolve(trimmed);
+		if (shimDir && resolvedEntry === shimDir) continue;
+		const candidate = path.join(resolvedEntry, command);
+		if (!existsSync(candidate)) continue;
+		try {
+			if (!statSync(candidate).isFile()) continue;
+		} catch {
+			continue;
+		}
+		return candidate;
+	}
+	return null;
 }
 
 function buildMainsequenceLoginArgs(
@@ -184,13 +225,37 @@ function runMainsequenceLogin(options: {
 	return { ok: true };
 }
 
+function summarizeSpawnSyncFailure(result: {
+	status: number | null;
+	signal: NodeJS.Signals | null;
+	stdout?: string | Buffer | null;
+	stderr?: string | Buffer | null;
+}): string {
+	const details: string[] = [];
+	if (typeof result.status === "number") {
+		details.push(`exit code ${result.status}`);
+	} else if (result.signal) {
+		details.push(`signal ${result.signal}`);
+	}
+	const stderr = typeof result.stderr === "string" ? result.stderr.trim() : result.stderr?.toString("utf8").trim();
+	const stdout = typeof result.stdout === "string" ? result.stdout.trim() : result.stdout?.toString("utf8").trim();
+	if (stderr) {
+		details.push(`stderr: ${stderr}`);
+	}
+	if (stdout) {
+		details.push(`stdout: ${stdout}`);
+	}
+	return details.join("; ") || "no output";
+}
+
 function verifyMainsequenceCliAuthStore(
 	env: NodeJS.ProcessEnv = process.env,
 ): { ok: true } | { ok: false; error: string } {
 	const verifyResult = spawnSync("mainsequence", ["user"], {
-		stdio: "ignore",
+		stdio: ["ignore", "pipe", "pipe"],
 		shell: false,
 		env: buildMainsequenceStoredAuthEnv(env),
+		encoding: "utf8",
 	});
 	if (verifyResult.error) {
 		if ((verifyResult.error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -201,7 +266,7 @@ function verifyMainsequenceCliAuthStore(
 	if (verifyResult.status !== 0) {
 		return {
 			ok: false,
-			error: "Main Sequence CLI login completed but persisted auth still failed verification.",
+			error: `Main Sequence CLI login completed but persisted auth still failed verification (${summarizeSpawnSyncFailure(verifyResult)}).`,
 		};
 	}
 
@@ -294,15 +359,15 @@ export async function bootstrapMainsequenceCliAuth(options: {
 			return false;
 		}
 
-		const verifyResult = verifyMainsequenceCliAuthStore(env);
-		if ("error" in verifyResult) {
-			attemptedErrors.push(`${label}: ${verifyResult.error}`);
-			return false;
-		}
+			const verifyResult = verifyMainsequenceCliAuthStore(env);
+			if ("error" in verifyResult) {
+				attemptedErrors.push(`${label}: ${verifyResult.error}`);
+				return false;
+			}
 
-		syncEnvFromPersistedMainsequenceAuth(env, credentials);
-		options.log?.("Main Sequence CLI auth is ready.");
-		return true;
+			syncEnvFromPersistedMainsequenceAuth(env, credentials);
+			options.log?.("Main Sequence CLI auth is ready.");
+			return true;
 	};
 
 	const refreshCandidates = [

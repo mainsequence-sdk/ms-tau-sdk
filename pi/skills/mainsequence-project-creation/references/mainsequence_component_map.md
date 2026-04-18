@@ -10,8 +10,8 @@ Use this file to translate intent into the correct SDK component set.
 
 Primary docs:
 
-- `/Users/jose/code/MainSequenceClientSide/mainsequence-sdk/docs/tutorial/setting_a_project.md`
-- `/Users/jose/code/MainSequenceClientSide/mainsequence-sdk/docs/knowledge/infrastructure/scheduling_jobs.md`
+- [Part 1 — Setting a Project (CLI)](https://mainsequence-sdk.github.io/mainsequence-sdk/tutorial/setting_a_project/)
+- [Scheduling Jobs](https://mainsequence-sdk.github.io/mainsequence-sdk/knowledge/infrastructure/scheduling_jobs/)
 
 ## Data production and storage
 
@@ -25,9 +25,9 @@ Primary docs:
 
 Primary docs:
 
-- `/Users/jose/code/MainSequenceClientSide/mainsequence-sdk/docs/knowledge/data_nodes.md`
-- `/Users/jose/code/MainSequenceClientSide/mainsequence-sdk/docs/knowledge/simple_tables/simple_table.md`
-- `/Users/jose/code/MainSequenceClientSide/mainsequence-sdk/docs/knowledge/infrastructure/artifacts.md`
+- [Data Nodes](https://mainsequence-sdk.github.io/mainsequence-sdk/knowledge/data_nodes/)
+- [Simple Table](https://mainsequence-sdk.github.io/mainsequence-sdk/knowledge/simple_tables/simple_table/)
+- [Artifacts](https://mainsequence-sdk.github.io/mainsequence-sdk/knowledge/infrastructure/artifacts/)
 
 Decision rule:
 
@@ -44,9 +44,9 @@ Decision rule:
 
 Primary docs:
 
-- `/Users/jose/code/MainSequenceClientSide/mainsequence-sdk/docs/tutorial/create_your_first_api.md`
-- `/Users/jose/code/MainSequenceClientSide/mainsequence-sdk/docs/knowledge/fastapi/index.md`
-- `/Users/jose/code/MainSequenceClientSide/mainsequence-sdk/docs/knowledge/dashboards/streamlit/index.md`
+- [Create Your First API](https://mainsequence-sdk.github.io/mainsequence-sdk/tutorial/create_your_first_api/)
+- [FastAPI](https://mainsequence-sdk.github.io/mainsequence-sdk/knowledge/fastapi/)
+- [Streamlit](https://mainsequence-sdk.github.io/mainsequence-sdk/knowledge/dashboards/streamlit/)
 
 ## Command Center
 
@@ -58,10 +58,10 @@ Primary docs:
 
 Primary docs:
 
-- `/Users/jose/code/MainSequenceClientSide/mainsequence-sdk/docs/knowledge/command_center/index.md`
-- `/Users/jose/code/MainSequenceClientSide/mainsequence-sdk/docs/knowledge/command_center/workspaces.md`
-- `/Users/jose/code/MainSequenceClientSide/mainsequence-sdk/docs/knowledge/command_center/forms.md`
-- `/Users/jose/code/MainSequenceClientSide/mainsequence-sdk/docs/knowledge/command_center/widget_data_contracts.md`
+- [Command Center](https://mainsequence-sdk.github.io/mainsequence-sdk/knowledge/command_center/)
+- [Command Center Workspaces](https://mainsequence-sdk.github.io/mainsequence-sdk/knowledge/command_center/workspaces/)
+- [Command Center Forms](https://mainsequence-sdk.github.io/mainsequence-sdk/knowledge/command_center/forms/)
+- [Command Center Widget Data Contracts](https://mainsequence-sdk.github.io/mainsequence-sdk/knowledge/command_center/widget_data_contracts/)
 
 Decision rule:
 
@@ -79,11 +79,11 @@ Decision rule:
 
 Primary docs:
 
-- `/Users/jose/code/MainSequenceClientSide/mainsequence-sdk/docs/knowledge/markets/assets.md`
-- `/Users/jose/code/MainSequenceClientSide/mainsequence-sdk/docs/knowledge/markets/asset_categories.md`
-- `/Users/jose/code/MainSequenceClientSide/mainsequence-sdk/docs/knowledge/markets/translation_tables.md`
-- `/Users/jose/code/MainSequenceClientSide/mainsequence-sdk/docs/knowledge/instruments/index.md`
-- `/Users/jose/code/MainSequenceClientSide/mainsequence-sdk/docs/knowledge/virtualfundbuilder/index.md`
+- [Assets](https://mainsequence-sdk.github.io/mainsequence-sdk/knowledge/markets/assets/)
+- [Asset Categories](https://mainsequence-sdk.github.io/mainsequence-sdk/knowledge/markets/asset_categories/)
+- [Translation Tables](https://mainsequence-sdk.github.io/mainsequence-sdk/knowledge/markets/translation_tables/)
+- [Instruments](https://mainsequence-sdk.github.io/mainsequence-sdk/knowledge/instruments/)
+- [Virtual Fund Builder](https://mainsequence-sdk.github.io/mainsequence-sdk/knowledge/virtualfundbuilder/)
 
 Decision rule:
 
@@ -99,8 +99,8 @@ Decision rule:
 
 Primary docs:
 
-- `/Users/jose/code/MainSequenceClientSide/mainsequence-sdk/docs/knowledge/infrastructure/constants_and_secrets.md`
-- `/Users/jose/code/MainSequenceClientSide/mainsequence-sdk/docs/tutorial/dashboards/streamlit/streamlit_integration_2.md`
+- [Constants and Secrets](https://mainsequence-sdk.github.io/mainsequence-sdk/knowledge/infrastructure/constants_and_secrets/)
+- [Part 5.2 — Streamlit Integration II](https://mainsequence-sdk.github.io/mainsequence-sdk/tutorial/dashboards/streamlit/streamlit_integration_2/)
 
 Decision rule:
 
@@ -124,4 +124,4 @@ Use platform search before building new resources.
 
 Primary docs:
 
-- `/Users/jose/code/MainSequenceClientSide/mainsequence-sdk/docs/cli/index.md`
+- [CLI Overview](https://mainsequence-sdk.github.io/mainsequence-sdk/cli/)

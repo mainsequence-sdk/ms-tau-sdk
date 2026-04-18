@@ -113,12 +113,15 @@ For a normal Main Sequence project, the parent:
 1. decides whether to select an existing project or create a new one
    - for an existing project, the parent treats "work on/open this project" as selection and setup, not automatic task intake
    - if the user wants a new project, the parent loads the project-creation skill and uses it to collect the missing intake before creation
-2. runs `mainsequence project set-up-locally <id>` after the project id is known
-3. resolves the checked-out local path
-4. prepares any needed project-local task or status context for the checked-out project
+2. runs `tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>` after the project id is known
+   - inside Astro, the parent should not call raw `mainsequence project set-up-locally <id>` directly
+3. queries the project details with the CLI and waits until `is_initialized=true` before treating the checkout as ready
+   - the parent must not hand off or copy `project_blueprint.md` before that readiness check passes
+4. resolves the checked-out local path
+5. prepares any needed project-local task or status context for the checked-out project
    - use the target project's own instructions, planning files, and status files when they exist
    - do not assume an Astro-owned `astro/` file contract by default
-5. either delegates a bounded background task or hands off into a project-scoped coding session
+6. either delegates a bounded background task or hands off into a project-scoped coding session
    - when the active conversation should move into the checked-out project, the parent calls `switch_project_session`
    - when there is no concrete implementation task yet, the handoff should establish project-local context and readiness instead of asking the user to restate a first task
 

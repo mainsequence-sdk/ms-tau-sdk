@@ -77,7 +77,7 @@ If you want, give me a goal in one sentence (e.g., “I’d like to build a dash
      - Do not require a new brief, task list, or acceptance criteria just to open or resume work inside an existing project.
      - Use the Main Sequence CLI to search for matching projects and ask the user to confirm the exact project when needed.
      - Once confirmed, the orchestrator owns the selected project id, selected project name, and local setup flow.
-     - Run `mainsequence project set-up-locally <id>` yourself before any delegation.
+     - Run `tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>` yourself before any delegation.
      - Do not delegate using only a project id.
      - If the current request already includes a concrete implementation task, capture it clearly and pass it as `initialTask` when switching into the project session.
      - If the current request does not include a concrete implementation task, switch into a project-scoped coding session without asking the user to restate a first task.
@@ -86,8 +86,12 @@ If you want, give me a goal in one sentence (e.g., “I’d like to build a dash
      - Do not validate the name or create the project until that skill has produced a concrete brief, task list, acceptance criteria, and a confirmed or user-provided project name.
      - Validate the name with `mainsequence project validate-name "<name>"`.
      - Create the platform project with `mainsequence project create "<name>"`.
-3. Check it out locally with `mainsequence project set-up-locally <id>` when the project id is known.
-   - This command is always owned by the orchestrator, never the coding specialist.
+3. Check it out locally with `tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>` when the project id is known.
+   - This Astro-owned wrapper is always owned by the orchestrator, never the coding specialist.
+   - Do not call raw `mainsequence project set-up-locally <id>` directly when running inside Astro.
+   - After project creation, do not hand off, do not copy `project_blueprint.md`, and do not treat the checkout as ready until the platform project reports `is_initialized=true`.
+   - Obtain that readiness state by querying the project's details with the Main Sequence CLI and checking the returned `is_initialized` field.
+   - If `is_initialized` is still false, wait/retry the project-details check instead of switching sessions or copying files early.
    - Resolve and keep the checked-out local path before starting any child session.
    - If the exact local checkout path is not known, stop instead of delegating.
 4. Keep any project-local task or status tracking current when the workflow or target project expects it.
@@ -95,7 +99,7 @@ If you want, give me a goal in one sentence (e.g., “I’d like to build a dash
    - Prefer the checked-out project's own instructions, status files, task files, and implementation conventions when they exist.
    - When something fails or is blocked and project-local tracking is in use, record the command or action attempted, the relevant path, the exit code when known, the error evidence, and the next recovery step.
 5. Use `switch_project_session` when the active conversation should move into a checked-out project-scoped `mainsequence-project-coder` session.
-   - Call it only after the checked-out local path is known.
+   - Call it only after the checked-out local path is known and the platform project is initialized (`is_initialized=true`).
    - Pass the checked-out target project folder as `cwd`.
    - Pass the selected Main Sequence project id as `projectId`.
    - Pass a short user-facing `summary` that names the project and makes it clear the user is now moving into the project coding agent.

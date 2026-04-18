@@ -1,7 +1,7 @@
-
-main-sequence-project-creation
-
-Use this skill when the user needs to define, review, or extend a Main Sequence domain ontology, including entity definitions, relationships, constraints, and naming consistency for projects, jobs, assets, and intelligence workflows.
+---
+name: mainsequence-project-creation
+description: Guidance for turning a user's idea into a concrete Main Sequence project blueprint, component plan, and creation-ready scope before running project creation commands.
+---
 
 # Main Sequence Project Creation
 
@@ -17,21 +17,30 @@ Use this skill to turn a human research idea into a self-sufficient Main Sequenc
 
 Before proposing project creation or implementation, create a temporary file named exactly:
 
-`project_onthology.md`
+`project_blueprint.md`
 
 This file must be self-sufficient for another Main Sequence agent to read and implement without needing the original chat.
 
-Use the template in [references/project_onthology_template.md](project_onthology_template.md).
+Use the template in [references/project_blueprint_template.md](./references/project_blueprint_template.md).
 
 ## Required workflow
 
-1. Create or update `project_onthology.md`.
+1. Create or update `project_blueprint.md`.
 2. Run the discovery questions below.
 3. Translate each answer into explicit `tasks[]`.
 4. Search the Main Sequence platform for reusable resources before proposing new ones.
 5. Map the intent into platform components.
-6. Only after the ontology is coherent should you create the project or start implementation.
-7. After creating the new project and setting it locally, copy the project_onthology.md file to the root of that new project
+6. Only after the project blueprint is coherent should you create the project or start implementation.
+7. After creating the new project, set it locally with `tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>`, then query the project's details with the Main Sequence CLI and wait until `is_initialized=true`.
+8. Only after `is_initialized=true` may you copy `project_blueprint.md` to the root of that new project or hand the session off for implementation.
+
+## Operational rules
+
+- Never ask the user to run `mainsequence login` or any other manual auth command.
+- If a Main Sequence CLI command fails with auth during project creation, call `ensure_mainsequence_cli_auth` once and retry the blocked command before treating it as a runtime failure.
+- When running inside Astro, do not call raw `mainsequence project set-up-locally <id>` directly; use `tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>` so the persistent pod SSH runtime is prepared first.
+- Do not hand off to `mainsequence-project-coder`, and do not copy `project_blueprint.md` into the checked-out project, while the new platform project is still initializing.
+- Treat the CLI-reported project details as the source of truth for readiness and explicitly check `is_initialized` before continuing past local setup.
 
 Do not create the project first and ask questions later.
 
@@ -77,12 +86,12 @@ Ask how the user wants to analyze and visualize the result.
 If the user chooses Streamlit:
 
 - use the Streamlit dashboard skill when available
-- otherwise read the Streamlit docs referenced in [references/mainsequence_component_map.md](mainsequence_component_map.md)
+- otherwise read the Streamlit docs referenced in [references/mainsequence_component_map.md](./references/mainsequence_component_map.md)
 
 If the user chooses Command Center:
 
 - use the Command Center skills when available
-- otherwise read the Command Center docs referenced in [references/mainsequence_component_map.md](mainsequence_component_map.md)
+- otherwise read the Command Center docs referenced in [references/mainsequence_component_map.md](./references/mainsequence_component_map.md)
 - include API tasks because Command Center widgets usually need an application surface
 
 ### 4. API surface
@@ -98,7 +107,7 @@ If the workflow needs reusable app access, widget feeds, or agent consumption:
 
 Do not reduce Main Sequence to only assets and jobs. Select from the real platform surface.
 
-Read [references/mainsequence_component_map.md](mainsequence_component_map.md) and choose the smallest correct set of components:
+Read [references/mainsequence_component_map.md](./references/mainsequence_component_map.md) and choose the smallest correct set of components:
 
 - `Project`
 - `DataNode`
@@ -136,7 +145,7 @@ If the companion skill does not exist, use the SDK docs directly.
 
 ## Task writing rules
 
-Every major answer in `project_onthology.md` must include a `tasks[]` list.
+Every major answer in `project_blueprint.md` must include a `tasks[]` list.
 
 Each task must:
 
@@ -174,7 +183,7 @@ Bad example:
 
 ## Output requirements
 
-`project_onthology.md` must contain:
+`project_blueprint.md` must contain:
 
 - overall intent description
 - assumptions
@@ -189,5 +198,5 @@ The file should be implementation-oriented, not a brainstorm.
 
 ## References to load as needed
 
-- For the ontology file structure: [references/project_onthology_template.md](project_onthology_template.md)
-- For platform component mapping and relevant SDK docs: [references/mainsequence_component_map.md](mainsequence_component_map.md)
+- For the project blueprint file structure: [references/project_blueprint_template.md](./references/project_blueprint_template.md)
+- For platform component mapping and relevant SDK docs: [references/mainsequence_component_map.md](./references/mainsequence_component_map.md)
