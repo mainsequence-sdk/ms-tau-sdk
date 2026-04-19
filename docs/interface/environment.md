@@ -9,6 +9,7 @@
 - `ASTRO_MAINSEQUENCE_CONFIG_DIR` (in containers use `/root/.astro-container-data/.config/mainsequence`)
 - `PI_CODING_AGENT_DIR` (Pi runtime state directory; in containers use `/root/.astro-container-data/.pi/agent`)
 - `ASTRO_CONTAINER_DATA_DIR` (durable container runtime root; in containers use `/root/.astro-container-data`)
+- `ASTRO_STORAGE_SIM_TOTAL_BYTES` (optional simulated storage capacity in bytes for `GET /api/storage/usage`)
 - `ASTRO_LEGACY_REPO_STATE_DIR` (optional read-only legacy repo-local Astro state used only for one-time migration)
 - `ASTRO_LEGACY_HOST_PI_AGENT_DIR` (optional read-only host Pi source used to merge `auth.json` and `sessions/` during one-time migration)
 - `BUILD_AGENTS_IN_BACKEND` (enable backend agent registration)

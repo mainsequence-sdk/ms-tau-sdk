@@ -67,6 +67,11 @@ builds the Pi prompt from:
 If the request also includes `runtime_session_id`, that explicit session id wins and the wrapper
 resumes the existing backend session instead of starting a fresh one.
 
+If that `runtime_session_id` points to an existing backend `astro-orchestrator` session but the
+local Astro wrapper files are missing, the same `/api/chat` request first hydrates the local
+session metadata/history wrapper state from the backend session record and then continues the
+triggering user turn. The frontend does not need to send a second request or any extra fields.
+
 If that latest user message contains the word `MOCK`, the HTTP stream wrapper returns a synthetic
 response immediately for frontend testing and does not invoke the Pi runtime or create session
 state.

@@ -177,3 +177,19 @@ Why:
   values
 - writes should still happen through a separate narrow patch endpoint without duplicating the full
   effective config payload
+
+## 15. Hydrate Astro local orchestrator runtime state from backend-owned sessions
+
+Implementation:
+
+- `reference/adr-backend-session-hydration.md`
+
+Why:
+
+- backend `AgentSession.id` should be the source of truth for orchestrator session
+  recoverability, not only the visible runtime id
+- Astro must be able to attach to backend-created `astro-orchestrator` sessions it did not
+  originally start
+- the first implementation should attach and locally hydrate wrapper state, not create a second
+  backend session or re-run deterministic agent registration
+- project-scoped coder sessions are intentionally out of scope for the first hydration pass

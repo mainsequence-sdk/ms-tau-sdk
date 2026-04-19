@@ -57,11 +57,13 @@ import {
 import { discoverAgents, type AgentConfig } from "../../pi/extensions/tools/specialist-delegate/agents.js";
 import {
 	buildAgentUniqueId,
+	fetchBackendAgentSession,
 	registerMainsequenceAgent,
 	resolveMainsequenceUserId,
 	startBackendAgentSession,
 	shouldRegisterAgents,
 } from "../../pi/extensions/shared/agent-registration.js";
+import { logStructuredEvent } from "../../pi/extensions/shared/structured-logging.js";
 import {
 	buildMainsequenceStoredAuthEnv,
 	bootstrapMainsequenceCliAuth,
@@ -194,6 +196,12 @@ type ThreadSessionBinding = {
 	threadId: string;
 	runtimeSessionId: string;
 	updatedAt: string | null;
+};
+
+type HydratedBackendOrchestratorSession = {
+	agentId: number;
+	agentUniqueId: string;
+	metadata: SessionMetadata;
 };
 
 type SessionSwitchRequest = {
@@ -563,6 +571,348 @@ function normalizeRepoRoot(value: unknown): string | null {
 	if (typeof value !== "string") return null;
 	const trimmed = value.trim();
 	return trimmed ? path.resolve(trimmed) : null;
+}
+
+function normalizeNumericId(value: unknown): number | null {
+	if (typeof value === "number" && Number.isFinite(value)) {
+		return Math.trunc(value);
+	}
+	if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+		const parsed = Number.parseInt(value.trim(), 10);
+		return Number.isFinite(parsed) ? parsed : null;
+	}
+	return null;
+}
+
+function extractObjectPropertyRecord(
+	record: Record<string, unknown>,
+	...keys: string[]
+): Record<string, unknown> | null {
+	for (const key of keys) {
+		const value = record[key];
+		if (isPlainObject(value)) return value;
+	}
+	return null;
+}
+
+function extractStringProperty(record: Record<string, unknown>, ...keys: string[]): string | null {
+	for (const key of keys) {
+		const value = record[key];
+		if (typeof value === "string" && value.trim()) {
+			return value.trim();
+		}
+	}
+	return null;
+}
+
+function extractNumericProperty(record: Record<string, unknown>, ...keys: string[]): number | null {
+	for (const key of keys) {
+		const value = normalizeNumericId(record[key]);
+		if (value != null) return value;
+	}
+	return null;
+}
+
+function extractBackendSessionAgentId(payload: Record<string, unknown>): number | null {
+	return (
+		extractNumericProperty(payload, "agent", "agent_id", "agentId") ??
+		extractNumericProperty(payload, "agent_id", "agentId") ??
+		(() => {
+			const agentRecord = extractObjectPropertyRecord(payload, "agent");
+			if (!agentRecord) return null;
+			return extractNumericProperty(agentRecord, "id", "agent_id", "agentId");
+		})()
+	);
+}
+
+function extractBackendSessionWorkflowKey(
+	payload: Record<string, unknown>,
+	sessionMetadata: Record<string, unknown> | null,
+): string | null {
+	return (
+		extractStringProperty(
+			sessionMetadata ?? {},
+			"workflow_key",
+			"workflowKey",
+			"agent_name",
+			"agentName",
+		) ??
+		extractStringProperty(
+			payload,
+			"workflow_key",
+			"workflowKey",
+			"agent_name",
+			"agentName",
+		) ??
+		(() => {
+			const agentRecord = extractObjectPropertyRecord(payload, "agent");
+			if (!agentRecord) return null;
+			return extractStringProperty(agentRecord, "name", "agent_name", "agentName");
+		})()
+	);
+}
+
+function extractBackendSessionThreadId(
+	payload: Record<string, unknown>,
+	sessionMetadata: Record<string, unknown> | null,
+	requestedThreadId: string | null,
+): string | null {
+	return (
+		extractStringProperty(payload, "thread_id", "threadId") ??
+		extractStringProperty(sessionMetadata ?? {}, "thread_id", "threadId") ??
+		requestedThreadId
+	);
+}
+
+async function attachHydratedBackendSession(options: {
+	runtimeSessionId: string;
+	userId: string;
+	requestedThreadId: string | null;
+	log?: (message: string) => void;
+}): Promise<
+	| { ok: true; hydrated: HydratedBackendOrchestratorSession }
+	| { ok: false; error: string; message: string; statusCode: number }
+> {
+	const normalizedAgentSessionId = normalizeNumericId(options.runtimeSessionId);
+	logStructuredEvent({
+		component: "astro-stream",
+		event: "backend_session_hydration_attempt",
+		message: "Attempting backend session hydration for the orchestrator.",
+		data: {
+			runtimeSessionId: options.runtimeSessionId,
+			normalizedAgentSessionId,
+			requestedThreadId: options.requestedThreadId,
+			userId: options.userId,
+		},
+	});
+	if (normalizedAgentSessionId == null) {
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "backend_session_hydration_invalid_id",
+			message: "Backend session hydration was aborted because runtime_session_id was not numeric.",
+			data: {
+				runtimeSessionId: options.runtimeSessionId,
+			},
+		});
+		return {
+			ok: false,
+			error: "session_not_found",
+			message: "No local session found for the provided runtime_session_id.",
+			statusCode: 409,
+		};
+	}
+
+	const fetched = await fetchBackendAgentSession({
+		agentSessionId: normalizedAgentSessionId,
+		env: process.env,
+		log: options.log,
+	});
+
+	if (!fetched.ok) {
+		if (fetched.notFound) {
+			logStructuredEvent({
+				severity: "WARNING",
+				component: "astro-stream",
+				event: "backend_session_hydration_not_found",
+				message: "Backend session hydration failed because the backend session does not exist.",
+				data: {
+					agentSessionId: normalizedAgentSessionId,
+				},
+			});
+			return {
+				ok: false,
+				error: "session_not_found",
+				message: "No local session found for the provided runtime_session_id.",
+				statusCode: 409,
+			};
+		}
+		logStructuredEvent({
+			severity: "ERROR",
+			component: "astro-stream",
+			event: "backend_session_hydration_fetch_failed",
+			message: "Backend session hydration failed during backend session fetch.",
+			data: {
+				agentSessionId: normalizedAgentSessionId,
+				error: fetched.error ?? "unknown fetch error",
+				status: fetched.status,
+				endpoint: fetched.endpoint,
+			},
+		});
+		return {
+			ok: false,
+			error: "session_hydration_failed",
+			message: fetched.error ?? "Failed to hydrate the backend-owned orchestrator session.",
+			statusCode: fetched.status && fetched.status >= 500 ? 502 : 409,
+		};
+	}
+
+	if (!isPlainObject(fetched.body)) {
+		logStructuredEvent({
+			severity: "ERROR",
+			component: "astro-stream",
+			event: "backend_session_hydration_invalid_payload",
+			message: "Backend session hydration failed because the backend response body was not an object.",
+			data: {
+				agentSessionId: normalizedAgentSessionId,
+			},
+		});
+		return {
+			ok: false,
+			error: "session_hydration_failed",
+			message: "The backend session response was not an object.",
+			statusCode: 409,
+		};
+	}
+
+	const sessionPayload = fetched.body;
+	const sessionMetadata = extractObjectPropertyRecord(sessionPayload, "session_metadata", "sessionMetadata");
+	const workflowKey = extractBackendSessionWorkflowKey(sessionPayload, sessionMetadata);
+	if (workflowKey !== "astro-orchestrator") {
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "backend_session_hydration_wrong_workflow",
+			message: "Backend session hydration was rejected because the session is not an orchestrator session.",
+			data: {
+				agentSessionId: normalizedAgentSessionId,
+				workflowKey,
+				agentName: extractStringProperty(sessionPayload, "agent_name", "agentName"),
+				sessionMetadataWorkflowKey: extractStringProperty(
+					sessionMetadata ?? {},
+					"workflow_key",
+					"workflowKey",
+					"agent_name",
+					"agentName",
+				),
+			},
+		});
+		return {
+			ok: false,
+			error: "session_hydration_failed",
+			message: "The backend session is not an astro-orchestrator session.",
+			statusCode: 409,
+		};
+	}
+
+	const agentId = extractBackendSessionAgentId(sessionPayload);
+	if (agentId == null) {
+		logStructuredEvent({
+			severity: "ERROR",
+			component: "astro-stream",
+			event: "backend_session_hydration_missing_agent_id",
+			message: "Backend session hydration failed because the backend payload had no usable agent id.",
+			data: {
+				agentSessionId: normalizedAgentSessionId,
+			},
+		});
+		return {
+			ok: false,
+			error: "session_hydration_failed",
+			message: "The backend session did not include a valid agent id.",
+			statusCode: 409,
+		};
+	}
+
+	const threadId = extractBackendSessionThreadId(sessionPayload, sessionMetadata, options.requestedThreadId);
+	if (!threadId) {
+		logStructuredEvent({
+			severity: "ERROR",
+			component: "astro-stream",
+			event: "backend_session_hydration_missing_thread_id",
+			message: "Backend session hydration failed because no thread id was available from the backend payload or request.",
+			data: {
+				agentSessionId: normalizedAgentSessionId,
+				requestedThreadId: options.requestedThreadId,
+			},
+		});
+		return {
+			ok: false,
+			error: "session_hydration_failed",
+			message: "The backend session did not include a usable thread id.",
+			statusCode: 409,
+		};
+	}
+
+	const createdByUser =
+		extractStringProperty(sessionPayload, "created_by_user", "createdByUser") ??
+		(() => {
+			const userId = extractNumericProperty(sessionPayload, "created_by_user", "createdByUser");
+			return userId != null ? String(userId) : null;
+		})() ??
+		extractStringProperty(sessionMetadata ?? {}, "created_by_user", "createdByUser") ??
+		(() => {
+			const userId = extractNumericProperty(sessionMetadata ?? {}, "created_by_user", "createdByUser");
+			return userId != null ? String(userId) : null;
+		})();
+	if (createdByUser && createdByUser !== options.userId) {
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "backend_session_hydration_wrong_user",
+			message: "Backend session hydration was rejected because the backend session belongs to a different user.",
+			data: {
+				agentSessionId: normalizedAgentSessionId,
+				createdByUser,
+				requestUserId: options.userId,
+			},
+		});
+		return {
+			ok: false,
+			error: "session_hydration_failed",
+			message: "The backend session belongs to a different user.",
+			statusCode: 409,
+		};
+	}
+
+	const sessionModelBinding = normalizeSessionModelBinding(
+		sessionMetadata?.session_model_binding ?? sessionMetadata?.sessionModelBinding,
+	);
+	const startedAt =
+		extractStringProperty(sessionPayload, "started_at", "startedAt") ??
+		extractStringProperty(sessionMetadata ?? {}, "started_at", "startedAt");
+	const agentUniqueId = buildAgentUniqueId({
+		agentName: "astro-orchestrator",
+		userId: options.userId,
+	});
+	logStructuredEvent({
+		component: "astro-stream",
+		event: "backend_session_hydration_succeeded",
+		message: "Backend orchestrator session hydration succeeded.",
+		data: {
+			agentSessionId: normalizedAgentSessionId,
+			agentId,
+			threadId,
+			agentUniqueId,
+			startedAt,
+			hasSessionModelBinding: Boolean(sessionModelBinding),
+		},
+	});
+
+	return {
+		ok: true,
+		hydrated: {
+			agentId,
+			agentUniqueId,
+			metadata: {
+				agentId,
+				agentUniqueId,
+				agentSessionId: fetched.agentSessionId ?? normalizedAgentSessionId,
+				threadId,
+				startedAt,
+				agentName: "astro-orchestrator",
+				projectId: null,
+				cwd: null,
+				repoRoot: null,
+				pendingOnboarding: false,
+				pendingRuntimeBootstrap: false,
+				switchSummary: null,
+				projectRuntime: null,
+				sessionModelBinding,
+				sessionConfigOverrides: null,
+			},
+		},
+	};
 }
 
 function runGitCommand(
@@ -2857,14 +3207,63 @@ const server = createServer(async (req, res) => {
 		});
 		return;
 	}
-	if (runtimeSessionId && !sessionExists(runtimeSessionId)) {
+	const registrationRequired = shouldRegisterAgents(process.env);
+	let hydratedBackendSession: HydratedBackendOrchestratorSession | null = null;
+	const localSessionExists = runtimeSessionId ? sessionExists(runtimeSessionId) : false;
+	if (
+		runtimeSessionId &&
+		!localSessionExists &&
+		registrationRequired &&
+		agentName === "astro-orchestrator"
+	) {
+		logStructuredEvent({
+			component: "astro-stream",
+			event: "backend_session_hydration_local_session_missing",
+			message: "Local session files were missing, so Astro is attempting backend orchestrator hydration.",
+			data: {
+				runtimeSessionId,
+				agentName,
+				userId,
+				requestedThreadId,
+			},
+		});
+		const hydrationResult = await attachHydratedBackendSession({
+			runtimeSessionId,
+			userId,
+			requestedThreadId,
+			log: undefined,
+		});
+		if (hydrationResult.ok === false) {
+			json(res, hydrationResult.statusCode, {
+				error: hydrationResult.error,
+				message: hydrationResult.message,
+			});
+			return;
+		}
+		hydratedBackendSession = hydrationResult.hydrated;
+		logStructuredEvent({
+			component: "astro-stream",
+			event: "backend_session_hydration_attached",
+			message: "Astro attached the hydrated backend orchestrator session to the current request.",
+			data: {
+				runtimeSessionId,
+				threadId: hydratedBackendSession.metadata.threadId,
+				agentId: hydratedBackendSession.agentId,
+				agentSessionId: hydratedBackendSession.metadata.agentSessionId,
+			},
+		});
+	}
+	if (runtimeSessionId && !localSessionExists && !hydratedBackendSession) {
 		json(res, 409, {
 			error: "session_not_found",
 			message: "No local session found for the provided runtime_session_id.",
 		});
 		return;
 	}
-	const existingSessionMetadata = runtimeSessionId ? readSessionMetadata(runtimeSessionId) : null;
+	let existingSessionMetadata = runtimeSessionId ? readSessionMetadata(runtimeSessionId) : null;
+	if (!existingSessionMetadata && hydratedBackendSession) {
+		existingSessionMetadata = hydratedBackendSession.metadata;
+	}
 	if (!newChat && runtimeSessionId && !existingSessionMetadata) {
 		json(res, 409, {
 			error: "session_metadata_missing",
@@ -2989,7 +3388,6 @@ const server = createServer(async (req, res) => {
 	const switchSummary = existingSessionMetadata?.switchSummary ?? null;
 
 	const threadId = existingSessionMetadata?.threadId ?? requestedThreadId ?? randomUUID();
-	const registrationRequired = shouldRegisterAgents(process.env);
 	if (!registrationRequired) {
 		json(res, 503, {
 			error: "agent_registration_disabled",
@@ -2997,35 +3395,48 @@ const server = createServer(async (req, res) => {
 		});
 		return;
 	}
-
-	const registration = await registerMainsequenceAgent({
-		agentName,
-		agentRole: agentName === "astro-orchestrator" ? "orchestrator" : "specialist",
-		cwd: agentCwd ?? repoRoot,
-		projectId,
-		userId,
-		log: (message) => {
-			console.log(`[astro-stream] ${message}`);
-		},
-	});
-
-	if (!registration.agentId) {
-		logAgentResolutionFailure({
-			threadId,
-			newChat,
-			error: registration.stderr || "Agent registration failed.",
-			context: { userId, agentName },
+	let agentId: number | null = null;
+	let agentUniqueId: string | null = null;
+	if (hydratedBackendSession) {
+		agentId = hydratedBackendSession.agentId;
+		agentUniqueId = hydratedBackendSession.agentUniqueId;
+	} else {
+		const registration = await registerMainsequenceAgent({
+			agentName,
+			agentRole: agentName === "astro-orchestrator" ? "orchestrator" : "specialist",
+			cwd: agentCwd ?? repoRoot,
+			projectId,
+			userId,
+			log: (message) => {
+				console.log(`[astro-stream] ${message}`);
+			},
 		});
-		json(res, 502, {
-			error: "agent_registration_failed",
-			message: registration.stderr || "Failed to resolve backend agent id.",
+
+		if (!registration.agentId) {
+			logAgentResolutionFailure({
+				threadId,
+				newChat,
+				error: registration.stderr || "Agent registration failed.",
+				context: { userId, agentName },
+			});
+			json(res, 502, {
+				error: "agent_registration_failed",
+				message: registration.stderr || "Failed to resolve backend agent id.",
+			});
+			return;
+		}
+
+		agentId = registration.agentId;
+		agentUniqueId = registration.agentUniqueId ?? buildAgentUniqueId({ agentName, userId, projectId });
+	}
+
+	if (agentId == null || !agentUniqueId) {
+		json(res, 409, {
+			error: "session_hydration_failed",
+			message: "The backend-owned session could not be attached safely.",
 		});
 		return;
 	}
-
-	const agentId = registration.agentId;
-	const agentUniqueId =
-		registration.agentUniqueId ?? buildAgentUniqueId({ agentName, userId, projectId });
 
 	let sessionKey: string;
 	let agentSessionId: number | null = null;

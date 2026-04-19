@@ -119,6 +119,7 @@ The repo root `docker-compose.yml` wraps those targets as two services:
   - sets `PI_CODING_AGENT_DIR=/root/.astro-container-data/.pi/agent`
   - sets `ASTRO_STREAM_SESSION_DIR=/root/.astro-container-data/.astro/stream-sessions`
   - sets `ASTRO_CONTAINER_DATA_DIR=/root/.astro-container-data`
+  - optionally honors `ASTRO_STORAGE_SIM_TOTAL_BYTES` so `GET /api/storage/usage` can simulate a fixed PVC capacity during local development
   - migrates legacy repo-local runtime state into the volume once, then merges `auth.json` and
     `sessions/` from the host Pi source and stops reimporting it
   - writes a runtime-local `settings.json` into `/root/.astro-container-data/.pi/agent`

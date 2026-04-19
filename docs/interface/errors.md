@@ -19,6 +19,8 @@ Typical error responses:
 - `403` — `cors_origin_not_allowed` when the browser `Origin` is not listed in `ASTRO_STREAM_TRUSTED_ORIGINS`
 - `404` — `model_not_found` when the requested session model is not in `GET /api/chat/get_available_models`
 - `409` — session mismatch or unknown session for provided `runtime_session_id`
+- `409` — `session_hydration_failed` when a backend-owned `astro-orchestrator` session exists but
+  Astro cannot safely reconstruct the local wrapper state from it
 - `409` — `provider_env_not_configured` when `POST /api/model-providers/:provider/signin` has no runtime env credentials
 - `409` — `provider_signin_not_available` when the provider is known but cannot be signed in through Astro's current signin flow
 - `409` — `provider_signin_in_progress` when a second signin is started while the provider already has an active attempt

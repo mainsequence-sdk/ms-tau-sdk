@@ -18,6 +18,7 @@ Example response:
 {
   "version": 1,
   "root": "/root/.astro-container-data",
+  "capacitySource": "filesystem",
   "totalBytes": 274877906944,
   "availableBytes": 201863462912,
   "filesystemUsedBytes": 73014444032,
@@ -42,6 +43,9 @@ Field meanings:
   - bytes currently available to Astro on that filesystem
 - `filesystemUsedBytes`
   - filesystem-level used space derived from the same root mount
+- `capacitySource`
+  - `filesystem` when capacity comes from `statfs`
+  - `simulated` when `ASTRO_STORAGE_SIM_TOTAL_BYTES` overrides the reported capacity
 - `consumedBytes`
   - Astro-managed bytes currently stored under the runtime root
 - `detail.pi.bytes`
@@ -64,3 +68,6 @@ Notes:
 - `consumedBytes` reflects the bytes Astro can attribute to its own managed runtime tree.
 - In local Docker, this endpoint reports against the named volume mounted at
   `/root/.astro-container-data`, which is intended to simulate the deployed PVC layout.
+- To simulate a fixed-capacity PVC in local Docker, set `ASTRO_STORAGE_SIM_TOTAL_BYTES` to a
+  positive integer number of bytes. When set, the endpoint reports that simulated capacity instead
+  of the host-backed volume size.

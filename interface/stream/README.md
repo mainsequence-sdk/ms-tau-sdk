@@ -274,6 +274,7 @@ It reports:
 - total filesystem/PVC capacity
 - currently available bytes
 - Astro-managed consumed bytes
+- whether capacity is coming from the real filesystem or from `ASTRO_STORAGE_SIM_TOTAL_BYTES`
 - a four-way bucket breakdown:
   - `pi`
   - `astro`

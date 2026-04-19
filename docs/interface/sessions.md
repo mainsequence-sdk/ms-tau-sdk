@@ -25,6 +25,10 @@ ASTRO_STREAM_SESSION_DIR/<threadId>.history.json
 - `newChat: true` triggers backend `start_new_session` and uses the returned backend `AgentSession.id`
   as the runtime session key.
 - `newChat: false` requires `runtime_session_id` and reuses that existing local session.
+- If `runtime_session_id` is provided for `astro-orchestrator` and the local session wrapper files
+  are missing, Astro first tries to attach to the existing backend `AgentSession` with that id,
+  hydrate the local metadata/history wrapper state, and then continue the same request without
+  creating a second backend session.
 - An explicit `runtime_session_id` takes precedence over `newChat: true`, so reopening an existing
   session does not create a second backend AgentSession.
 - When backend registration is enabled, `threadId` is stored for metadata and UI bookkeeping only;
@@ -45,3 +49,5 @@ ASTRO_STREAM_SESSION_DIR/<threadId>.history.json
 
 When a new session is created, the stream emits a `new_session` chunk before `start` so the client
 can capture `agent_session_id`, `session_key`, and `agent_unique_id`.
+
+The attach/hydrate path does not emit `new_session` because the backend session already existed.

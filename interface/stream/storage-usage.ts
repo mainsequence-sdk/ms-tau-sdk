@@ -6,10 +6,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..", "..");
 
 type StorageBucketName = "pi" | "astro" | "sessions" | "system";
+type StorageCapacitySource = "filesystem" | "simulated";
 
 export type StorageUsageResponse = {
 	version: 1;
 	root: string;
+	capacitySource: StorageCapacitySource;
 	totalBytes: number;
 	availableBytes: number;
 	filesystemUsedBytes: number;
@@ -80,12 +82,25 @@ function normalizePercent(numerator: number, denominator: number): number | null
 	return Number(((numerator / denominator) * 100).toFixed(2));
 }
 
+function resolveSimulatedTotalBytes(env: NodeJS.ProcessEnv): number | null {
+	const rawValue = env.ASTRO_STORAGE_SIM_TOTAL_BYTES?.trim();
+	if (!rawValue) return null;
+
+	const parsed = Number(rawValue);
+	if (!Number.isFinite(parsed) || !Number.isInteger(parsed) || parsed <= 0) {
+		throw new Error(
+			`ASTRO_STORAGE_SIM_TOTAL_BYTES must be a positive integer number of bytes. Received: ${rawValue}`,
+		);
+	}
+
+	return parsed;
+}
+
 export function readStorageUsage(env: NodeJS.ProcessEnv = process.env): StorageUsageResponse {
 	const root = resolveStorageRoot(env);
 	const statfs = statfsSync(root);
-	const totalBytes = statfs.blocks * statfs.bsize;
-	const availableBytes = statfs.bavail * statfs.bsize;
-	const filesystemUsedBytes = Math.max(totalBytes - availableBytes, 0);
+	const filesystemTotalBytes = statfs.blocks * statfs.bsize;
+	const filesystemAvailableBytes = statfs.bavail * statfs.bsize;
 
 	const bucketSizes: Record<StorageBucketName, number> = {
 		pi: 0,
@@ -96,10 +111,20 @@ export function readStorageUsage(env: NodeJS.ProcessEnv = process.env): StorageU
 	walkStorageTree(root, root, bucketSizes);
 
 	const consumedBytes = Object.values(bucketSizes).reduce((sum, value) => sum + value, 0);
+	const simulatedTotalBytes = resolveSimulatedTotalBytes(env);
+	const capacitySource: StorageCapacitySource = simulatedTotalBytes ? "simulated" : "filesystem";
+	const totalBytes = simulatedTotalBytes ?? filesystemTotalBytes;
+	const filesystemUsedBytes = simulatedTotalBytes
+		? Math.min(consumedBytes, simulatedTotalBytes)
+		: Math.max(filesystemTotalBytes - filesystemAvailableBytes, 0);
+	const availableBytes = simulatedTotalBytes
+		? Math.max(simulatedTotalBytes - filesystemUsedBytes, 0)
+		: filesystemAvailableBytes;
 
 	return {
 		version: 1,
 		root,
+		capacitySource,
 		totalBytes,
 		availableBytes,
 		filesystemUsedBytes,

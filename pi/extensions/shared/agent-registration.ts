@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { logStructuredEvent } from "./structured-logging.js";
 
 type AgentRole = "orchestrator" | "specialist";
 
@@ -20,6 +21,16 @@ type AgentSessionResult = {
 	body: unknown;
 	error: string | null;
 	agentSessionId: number | null;
+};
+
+export type BackendAgentSessionFetchResult = {
+	ok: boolean;
+	status: number | null;
+	body: unknown;
+	error: string | null;
+	agentSessionId: number | null;
+	notFound: boolean;
+	endpoint: string | null;
 };
 
 type RegistrationOptions = {
@@ -248,6 +259,19 @@ async function postStartAgentSession(options: {
 	});
 }
 
+async function getAgentSessionByEndpoint(options: {
+	endpoint: string;
+	accessToken: string;
+}): Promise<Response> {
+	return fetch(options.endpoint, {
+		method: "GET",
+		headers: {
+			Authorization: `Bearer ${options.accessToken}`,
+			"Content-Type": "application/json",
+		},
+	});
+}
+
 function parseAgentId(payload: any): number | null {
 	if (typeof payload?.id === "number" && Number.isFinite(payload.id)) {
 		return payload.id;
@@ -265,6 +289,17 @@ function parseAgentSessionId(payload: any): number | null {
 	}
 	if (typeof payload?.id === "string" && payload.id.trim()) {
 		const parsed = Number.parseInt(payload.id, 10);
+		return Number.isFinite(parsed) ? parsed : null;
+	}
+	return null;
+}
+
+function normalizeAgentSessionLookupId(value: unknown): number | null {
+	if (typeof value === "number" && Number.isFinite(value)) {
+		return Math.trunc(value);
+	}
+	if (typeof value === "string" && /^\d+$/.test(value.trim())) {
+		const parsed = Number.parseInt(value.trim(), 10);
 		return Number.isFinite(parsed) ? parsed : null;
 	}
 	return null;
@@ -486,5 +521,186 @@ export async function startBackendAgentSession(options: {
 		body: parsedBody,
 		error: null,
 		agentSessionId,
+	};
+}
+
+export async function fetchBackendAgentSession(options: {
+	agentSessionId: number | string;
+	env?: NodeJS.ProcessEnv;
+	log?: (message: string) => void;
+}): Promise<BackendAgentSessionFetchResult> {
+	const runtimeEnv = options.env ?? process.env;
+	const backendUrl = resolveBackendUrl(runtimeEnv);
+	const normalizedSessionId = normalizeAgentSessionLookupId(options.agentSessionId);
+
+	if (normalizedSessionId == null) {
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "agent-registration",
+			event: "backend_session_fetch_invalid_id",
+			message: "Backend agent session fetch skipped because the session id was invalid.",
+			data: {
+				agentSessionId: options.agentSessionId,
+			},
+		});
+		return {
+			ok: false,
+			status: null,
+			body: null,
+			error: "Invalid backend agent session id.",
+			agentSessionId: null,
+			notFound: false,
+			endpoint: null,
+		};
+	}
+
+	const accessTokenResult = await resolveAccessToken(runtimeEnv, options.log);
+	if (!accessTokenResult.token) {
+		logStructuredEvent({
+			severity: "ERROR",
+			component: "agent-registration",
+			event: "backend_session_fetch_missing_access_token",
+			message: "Backend agent session fetch failed before the request because no access token was available.",
+			data: {
+				agentSessionId: normalizedSessionId,
+				error: accessTokenResult.error ?? "missing access token",
+			},
+		});
+		return {
+			ok: false,
+			status: null,
+			body: null,
+			error: accessTokenResult.error ?? "Missing access token for backend session fetch.",
+			agentSessionId: normalizedSessionId,
+			notFound: false,
+			endpoint: null,
+		};
+	}
+
+	const candidateEndpoints = [
+		`${backendUrl}/orm/api/agents/v1/sessions/${normalizedSessionId}/`,
+		`${backendUrl}/orm/api/agents/v1/agent_sessions/${normalizedSessionId}/`,
+		`${backendUrl}/orm/api/agents/v1/agent-sessions/${normalizedSessionId}/`,
+	];
+
+	let lastNon404Error: BackendAgentSessionFetchResult | null = null;
+
+	for (const endpoint of candidateEndpoints) {
+		logStructuredEvent({
+			component: "agent-registration",
+			event: "backend_session_fetch_attempt",
+			message: "Trying backend agent session fetch.",
+			data: {
+				agentSessionId: normalizedSessionId,
+				endpoint,
+			},
+		});
+		let response = await getAgentSessionByEndpoint({
+			endpoint,
+			accessToken: accessTokenResult.token,
+		});
+
+		if (response.status === 401 || response.status === 403) {
+			const refreshedAccessToken = await resolveAccessToken(runtimeEnv, options.log);
+			if (refreshedAccessToken.token) {
+				response = await getAgentSessionByEndpoint({
+					endpoint,
+					accessToken: refreshedAccessToken.token,
+				});
+			}
+		}
+
+		const responseText = await response.text();
+		let parsedBody: any = null;
+		try {
+			parsedBody = responseText ? JSON.parse(responseText) : null;
+		} catch {
+			parsedBody = null;
+		}
+
+		if (response.status === 404) {
+			logStructuredEvent({
+				severity: "DEBUG",
+				component: "agent-registration",
+				event: "backend_session_fetch_endpoint_not_found",
+				message: "Backend agent session was not found at this endpoint; trying the next candidate.",
+				data: {
+					agentSessionId: normalizedSessionId,
+					endpoint,
+				},
+			});
+			continue;
+		}
+
+		if (!response.ok) {
+			const message =
+				parsedBody?.detail || responseText || `Backend session fetch failed with status ${response.status}.`;
+			lastNon404Error = {
+				ok: false,
+				status: response.status,
+				body: parsedBody,
+				error: String(message),
+				agentSessionId: normalizedSessionId,
+				notFound: false,
+				endpoint,
+			};
+			logStructuredEvent({
+				severity: "ERROR",
+				component: "agent-registration",
+				event: "backend_session_fetch_rejected",
+				message: "Backend agent session fetch was rejected.",
+				data: {
+					agentSessionId: normalizedSessionId,
+					endpoint,
+					status: response.status,
+					error: message,
+				},
+			});
+			break;
+		}
+
+		logStructuredEvent({
+			component: "agent-registration",
+			event: "backend_session_fetch_succeeded",
+			message: "Backend agent session fetch succeeded.",
+			data: {
+				agentSessionId: normalizedSessionId,
+				endpoint,
+				status: response.status,
+			},
+		});
+		return {
+			ok: true,
+			status: response.status,
+			body: parsedBody,
+			error: null,
+			agentSessionId: parseAgentSessionId(parsedBody) ?? normalizedSessionId,
+			notFound: false,
+			endpoint,
+		};
+	}
+
+	if (lastNon404Error) {
+		return lastNon404Error;
+	}
+
+	logStructuredEvent({
+		severity: "WARNING",
+		component: "agent-registration",
+		event: "backend_session_fetch_not_found",
+		message: "Backend agent session was not found on any known endpoint.",
+		data: {
+			agentSessionId: normalizedSessionId,
+			candidateEndpoints,
+		},
+	});
+	return {
+		ok: false,
+		status: 404,
+		body: null,
+		error: `Backend agent session ${normalizedSessionId} was not found.`,
+		agentSessionId: normalizedSessionId,
+		notFound: true,
+		endpoint: null,
 	};
 }

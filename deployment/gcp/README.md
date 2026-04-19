@@ -129,6 +129,41 @@ These are the main non-secret runtime values the existing GKE service should alr
 - `ASTRO_STREAM_TRUSTED_ORIGINS`
 - `OLLAMA_HOST`
 
+### Concrete Split For The Current Env
+
+For the values currently shown in local `.env`, the split is:
+
+Set these on the existing GKE workload when the pod is created or updated:
+
+```env
+MAINSEQUENCE_BACKEND=http://192.168.1.111:8000
+MAINSEQUENCE_PROJECTS_BASE=mainsequence-dev
+MAINSEQUENCE_TOKEN_REFRESH_INTERVAL_SECONDS=600
+BUILD_AGENTS_IN_BACKEND=true
+OLLAMA_HOST=http://192.168.1.10:11434
+ASTRO_STREAM_TRUSTED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
+```
+
+Do not pass this one to the pod as runtime env:
+
+```env
+MAINSEQUENCE_PIP_SPEC=mainsequence==3.17.53
+```
+
+`MAINSEQUENCE_PIP_SPEC` is a build-time concern only.
+With the current `cloudbuild.yaml`, we intentionally do not set it there either.
+The Dockerfile default `MAINSEQUENCE_PIP_SPEC=mainsequence` is used so the image installs the
+latest available `mainsequence`, then Cloud Build detects the installed version and publishes both:
+
+- `<image>:<mainsequence-version>`
+- `<image>:latest`
+
+If the running GKE workload also needs auth at runtime, provide these through your existing secret
+path or persisted runtime storage:
+
+- `MAINSEQUENCE_ACCESS_TOKEN`
+- `MAINSEQUENCE_REFRESH_TOKEN`
+
 ### Build-Time Note
 
 This Cloud Build file intentionally does not set `MAINSEQUENCE_PIP_SPEC`.
