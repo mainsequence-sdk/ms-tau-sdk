@@ -205,19 +205,17 @@ steps:
         docker build \
           -f Dockerfile \
           --target ${_DOCKER_TARGET} \
-          -t "${LOCAL_IMAGE}" \
+          -t "$${LOCAL_IMAGE}" \
           .
 
-        MAINSEQUENCE_VERSION="$(
-          docker run --rm --entrypoint python "${LOCAL_IMAGE}" \
-            -c "import importlib.metadata as metadata; print(metadata.version('mainsequence'))"
-        )"
+        MAINSEQUENCE_VERSION="$$(docker run --rm --entrypoint python "$${LOCAL_IMAGE}" \
+          -c "import importlib.metadata as metadata; print(metadata.version('mainsequence'))")"
 
-        VERSION_IMAGE="${_IMAGE_PREFIX}:${MAINSEQUENCE_VERSION}"
+        VERSION_IMAGE="${_IMAGE_PREFIX}:$${MAINSEQUENCE_VERSION}"
 
-        printf '%s' "${VERSION_IMAGE}" > /workspace/version_image.txt
-        docker tag "${LOCAL_IMAGE}" "${VERSION_IMAGE}"
-        docker tag "${LOCAL_IMAGE}" "${_LATEST_IMAGE}"
+        printf '%s' "$${VERSION_IMAGE}" > /workspace/version_image.txt
+        docker tag "$${LOCAL_IMAGE}" "$${VERSION_IMAGE}"
+        docker tag "$${LOCAL_IMAGE}" "${_LATEST_IMAGE}"
 
   - id: push-version-image
     waitFor:
@@ -227,8 +225,8 @@ steps:
     args:
       - -c
       - |
-        VERSION_IMAGE="$(cat /workspace/version_image.txt)"
-        docker push "${VERSION_IMAGE}"
+        VERSION_IMAGE="$$(cat /workspace/version_image.txt)"
+        docker push "$${VERSION_IMAGE}"
 
   - id: push-latest-image
     waitFor:
