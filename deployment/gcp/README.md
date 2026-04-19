@@ -28,12 +28,13 @@ deployment/
 
 ## What `cloudbuild.yaml` Should Do
 
-The current `deployment/gcp/cloudbuild.yaml` has three responsibilities:
+The current `deployment/gcp/cloudbuild.yaml` has four responsibilities:
 
-1. Build the `astro-pi-stream` image from the repo `Dockerfile`
-2. Detect which `mainsequence` version was actually installed in the image
-3. Push two tags to Artifact Registry:
-   one tag for the detected library version and one `latest` tag
+1. Build the `astro-pi-stream` Docker target from the repo `Dockerfile`
+2. Detect which `mainsequence`, Python, and Node versions were actually installed in the image
+3. Stamp OCI labels on the final image with the exact full detected versions
+4. Push three tags to Artifact Registry:
+   one tag for the detected `mainsequence` version, one descriptive runtime tag, and one `latest` tag
 
 Suggested high-level flow:
 
@@ -48,7 +49,16 @@ steps:
   - name: Detect installed mainsequence version
     uses: docker run + python importlib.metadata
 
+  - name: Detect installed python and node versions
+    uses: docker run + python/node version commands
+
+  - name: Stamp OCI labels for exact versions
+    uses: docker commit --change LABEL=...
+
   - name: Push version tag
+    uses: docker push
+
+  - name: Push descriptive runtime tag
     uses: docker push
 
   - name: Push latest tag
@@ -72,6 +82,13 @@ Reasoning:
 - the registry location is clearer when region is split out exactly like `${_AR_REGION}-docker.pkg.dev`
 - `_IMAGE_PREFIX` keeps the dynamic version tag simple to compute inside the build step
 - `_LATEST_IMAGE` stays explicit and readable in the push step
+
+Current intended Artifact Registry path layout:
+
+- repository: `tsorm-images`
+- image path inside the repository: `astro/astro-pi-stream`
+- resulting prefix:
+  `europe-west1-docker.pkg.dev/${PROJECT_ID}/tsorm-images/astro/astro-pi-stream`
 
 ## Runtime Env For The Existing GKE Workload
 
@@ -156,7 +173,14 @@ The Dockerfile default `MAINSEQUENCE_PIP_SPEC=mainsequence` is used so the image
 latest available `mainsequence`, then Cloud Build detects the installed version and publishes both:
 
 - `<image>:<mainsequence-version>`
+- `<image>:py<python-major.minor>-node<node-major.minor>-ms<mainsequence-version>`
 - `<image>:latest`
+
+The final published image is also labeled with exact full versions:
+
+- `org.opencontainers.image.mainsequence.version=<mainsequence-full-version>`
+- `org.opencontainers.image.python.version=<python-full-version>`
+- `org.opencontainers.image.node.version=<node-full-version>`
 
 If the running GKE workload also needs auth at runtime, provide these through your existing secret
 path or persisted runtime storage:
@@ -187,8 +211,8 @@ This is the structure now used in `deployment/gcp/cloudbuild.yaml`:
 ```yaml
 substitutions:
   _AR_REGION: europe-west1
-  _AR_REPO: astro
-  _IMAGE_NAME: astro-pi-stream
+  _AR_REPO: tsorm-images
+  _IMAGE_NAME: astro/astro-pi-stream
   _DOCKER_TARGET: astro-pi-stream
   _IMAGE_PREFIX: ${_AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE_NAME}
   _LATEST_IMAGE: ${_AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE_NAME}:latest
@@ -201,6 +225,7 @@ steps:
       - -c
       - |
         LOCAL_IMAGE="astro-pi-stream:build-${BUILD_ID}"
+        LABELED_IMAGE="astro-pi-stream:labeled-${BUILD_ID}"
 
         docker build \
           -f Dockerfile \
@@ -210,12 +235,37 @@ steps:
 
         MAINSEQUENCE_VERSION="$$(docker run --rm --entrypoint python "$${LOCAL_IMAGE}" \
           -c "import importlib.metadata as metadata; print(metadata.version('mainsequence'))")"
+        PYTHON_VERSION_FULL="$$(docker run --rm --entrypoint python "$${LOCAL_IMAGE}" \
+          -c "import platform; print(platform.python_version())")"
+        PYTHON_VERSION_TAG="$$(docker run --rm --entrypoint python "$${LOCAL_IMAGE}" \
+          -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")"
+        NODE_VERSION_FULL="$$(docker run --rm --entrypoint node "$${LOCAL_IMAGE}" \
+          -p "process.versions.node")"
+        NODE_VERSION_TAG="$$(docker run --rm --entrypoint node "$${LOCAL_IMAGE}" \
+          -p "process.versions.node.split('.').slice(0, 2).join('.')" )"
 
         VERSION_IMAGE="${_IMAGE_PREFIX}:$${MAINSEQUENCE_VERSION}"
+        DESCRIPTIVE_IMAGE="${_IMAGE_PREFIX}:py$${PYTHON_VERSION_TAG}-node$${NODE_VERSION_TAG}-ms$${MAINSEQUENCE_VERSION}"
 
         printf '%s' "$${VERSION_IMAGE}" > /workspace/version_image.txt
-        docker tag "$${LOCAL_IMAGE}" "$${VERSION_IMAGE}"
-        docker tag "$${LOCAL_IMAGE}" "${_LATEST_IMAGE}"
+        printf '%s' "$${DESCRIPTIVE_IMAGE}" > /workspace/descriptive_image.txt
+
+        CONTAINER_ID="$$(docker create "$${LOCAL_IMAGE}")"
+        trap 'docker rm -f "$${CONTAINER_ID}" >/dev/null 2>&1 || true' EXIT
+
+        docker commit \
+          --change "LABEL org.opencontainers.image.mainsequence.version=$${MAINSEQUENCE_VERSION}" \
+          --change "LABEL org.opencontainers.image.python.version=$${PYTHON_VERSION_FULL}" \
+          --change "LABEL org.opencontainers.image.node.version=$${NODE_VERSION_FULL}" \
+          "$${CONTAINER_ID}" \
+          "$${LABELED_IMAGE}" >/dev/null
+
+        docker tag "$${LABELED_IMAGE}" "$${VERSION_IMAGE}"
+        docker tag "$${LABELED_IMAGE}" "$${DESCRIPTIVE_IMAGE}"
+        docker tag "$${LABELED_IMAGE}" "${_LATEST_IMAGE}"
+
+        docker rm -f "$${CONTAINER_ID}" >/dev/null 2>&1 || true
+        trap - EXIT
 
   - id: push-version-image
     waitFor:
@@ -236,6 +286,17 @@ steps:
       - push
       - ${_LATEST_IMAGE}
 
+  - id: push-descriptive-image
+    waitFor:
+      - build-image-and-detect-mainsequence-version
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        DESCRIPTIVE_IMAGE="$$(cat /workspace/descriptive_image.txt)"
+        docker push "$${DESCRIPTIVE_IMAGE}"
+
 options:
   dynamicSubstitutions: true
   logging: CLOUD_LOGGING_ONLY
@@ -248,6 +309,10 @@ options:
 - the running service still depends on durable storage at `/root/.astro-container-data`
 - rebuilding while `mainsequence` stays on the same version will repoint that version tag to the
   newly built image
+- the extra `py...-node...-ms...` tag is still just another tag on the same built image, not a
+  separate build
+- the published tags now point at the same final labeled image, while the unlabeled local build
+  image is only an internal intermediate used during Cloud Build
 - if we want horizontal scaling later, we should think carefully about whether multiple replicas can
   safely share the same writable runtime volume
 - if we need strict stateless deployment later, the app will need architectural changes around
