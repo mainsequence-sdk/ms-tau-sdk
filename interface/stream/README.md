@@ -275,10 +275,11 @@ It reports:
 - currently available bytes
 - Astro-managed consumed bytes
 - whether capacity is coming from the real filesystem or from `ASTRO_STORAGE_SIM_TOTAL_BYTES`
-- a four-way bucket breakdown:
+- a five-way bucket breakdown:
   - `pi`
   - `astro`
   - `sessions`
+  - `mainsequence`
   - `system`
 
 ### `POST /api/model-providers/:provider/signin`

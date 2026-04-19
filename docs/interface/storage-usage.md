@@ -29,7 +29,8 @@ Example response:
     "pi": { "bytes": 10485760 },
     "astro": { "bytes": 5242880 },
     "sessions": { "bytes": 73400320 },
-    "system": { "bytes": 1769998336 }
+    "mainsequence": { "bytes": 314572800 },
+    "system": { "bytes": 1455425536 }
   },
   "capturedAt": "2026-04-16T10:20:00.000Z"
 }
@@ -54,11 +55,12 @@ Field meanings:
   - `.astro` except `stream-sessions/`
 - `detail.sessions.bytes`
   - Pi `sessions/` plus Astro `stream-sessions/`
+- `detail.mainsequence.bytes`
+  - Main Sequence project workspace bytes under the durable runtime root
+  - currently includes both `mainsequence/` and `mainsequence-dev/`
 - `detail.system.bytes`
   - everything else under the durable runtime root, such as:
     - `.config/mainsequence`
-    - `mainsequence`
-    - `mainsequence-dev`
     - `uv`
 
 Notes:

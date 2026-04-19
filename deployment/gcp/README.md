@@ -178,6 +178,8 @@ latest available `mainsequence`, then Cloud Build detects the installed version 
 
 The final published image is also labeled with exact full versions:
 
+- `org.opencontainers.image.title=astro-ms<mainsequence-full-version>`
+- `org.opencontainers.image.description=Astro stream image for Main Sequence orchestration with Python <python-full-version>, Node <node-full-version>, and mainsequence <mainsequence-full-version>.`
 - `org.opencontainers.image.mainsequence.version=<mainsequence-full-version>`
 - `org.opencontainers.image.python.version=<python-full-version>`
 - `org.opencontainers.image.node.version=<node-full-version>`
@@ -254,6 +256,8 @@ steps:
         trap 'docker rm -f "$${CONTAINER_ID}" >/dev/null 2>&1 || true' EXIT
 
         docker commit \
+          --change "LABEL org.opencontainers.image.title=astro-ms$${MAINSEQUENCE_VERSION}" \
+          --change "LABEL org.opencontainers.image.description=Astro stream image for Main Sequence orchestration with Python $${PYTHON_VERSION_FULL}, Node $${NODE_VERSION_FULL}, and mainsequence $${MAINSEQUENCE_VERSION}." \
           --change "LABEL org.opencontainers.image.mainsequence.version=$${MAINSEQUENCE_VERSION}" \
           --change "LABEL org.opencontainers.image.python.version=$${PYTHON_VERSION_FULL}" \
           --change "LABEL org.opencontainers.image.node.version=$${NODE_VERSION_FULL}" \

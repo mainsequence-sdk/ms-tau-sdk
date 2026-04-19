@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..", "..");
 
-type StorageBucketName = "pi" | "astro" | "sessions" | "system";
+type StorageBucketName = "pi" | "astro" | "sessions" | "mainsequence" | "system";
 type StorageCapacitySource = "filesystem" | "simulated";
 
 export type StorageUsageResponse = {
@@ -45,6 +45,14 @@ function classifyStorageBucket(relativePath: string): StorageBucketName {
 		normalizedPath.startsWith(".astro/stream-sessions/")
 	) {
 		return "sessions";
+	}
+	if (
+		normalizedPath === "mainsequence" ||
+		normalizedPath.startsWith("mainsequence/") ||
+		normalizedPath === "mainsequence-dev" ||
+		normalizedPath.startsWith("mainsequence-dev/")
+	) {
+		return "mainsequence";
 	}
 	if (normalizedPath === ".pi/agent" || normalizedPath.startsWith(".pi/agent/")) {
 		return "pi";
@@ -106,6 +114,7 @@ export function readStorageUsage(env: NodeJS.ProcessEnv = process.env): StorageU
 		pi: 0,
 		astro: 0,
 		sessions: 0,
+		mainsequence: 0,
 		system: 0,
 	};
 	walkStorageTree(root, root, bucketSizes);
@@ -135,6 +144,7 @@ export function readStorageUsage(env: NodeJS.ProcessEnv = process.env): StorageU
 			pi: { bytes: bucketSizes.pi },
 			astro: { bytes: bucketSizes.astro },
 			sessions: { bytes: bucketSizes.sessions },
+			mainsequence: { bytes: bucketSizes.mainsequence },
 			system: { bytes: bucketSizes.system },
 		},
 		capturedAt: new Date().toISOString(),
