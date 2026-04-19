@@ -42,6 +42,8 @@ FROM astro-mainsequence AS astro-runtime
 
 ENV APP_USER=appuser \
     APP_GROUP=appuser \
+    APP_UID=10000 \
+    APP_GID=10000 \
     APP_HOME=/home/appuser \
     HOME=/home/appuser \
     ASTRO_CONTAINER_DATA_DIR=/home/appuser/.astro-container-data \
@@ -49,8 +51,8 @@ ENV APP_USER=appuser \
     ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence \
     PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent
 
-RUN groupadd --system "${APP_GROUP}" \
- && useradd --system --gid "${APP_GROUP}" --create-home --home-dir "${APP_HOME}" --shell /bin/bash "${APP_USER}" \
+RUN groupadd --gid "${APP_GID}" "${APP_GROUP}" \
+ && useradd --uid "${APP_UID}" --gid "${APP_GID}" --create-home --home-dir "${APP_HOME}" --shell /bin/bash "${APP_USER}" \
  && mkdir -p \
     "${APP_HOME}/.astro-container-data/.pi/agent/bin" \
     "${APP_HOME}/.astro-container-data/.astro/stream-sessions" \
