@@ -4,7 +4,7 @@
 
 This repo is not a purely stateless web container. The runtime expects durable local state under:
 
-- `/root/.astro-container-data`
+- `/home/appuser/.astro-container-data`
 
 That state includes Main Sequence auth, Pi runtime state, stream sessions, SSH material, and other
 runtime artifacts. Because of that, the safest production target on GCP is:
@@ -100,12 +100,12 @@ They belong to the already-deployed GKE workload outside this repo's image publi
 These are container contract values from the repo and should usually stay fixed in the running
 service instead of varying per environment:
 
-- `HOME=/root`
+- `HOME=/home/appuser`
 - `ASTRO_STREAM_HOST=0.0.0.0`
-- `ASTRO_CONTAINER_DATA_DIR=/root/.astro-container-data`
-- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/root/.astro-container-data/.config/mainsequence`
-- `PI_CODING_AGENT_DIR=/root/.astro-container-data/.pi/agent`
-- `ASTRO_STREAM_SESSION_DIR=/root/.astro-container-data/.astro/stream-sessions`
+- `ASTRO_CONTAINER_DATA_DIR=/home/appuser/.astro-container-data`
+- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`
+- `PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`
+- `ASTRO_STREAM_SESSION_DIR=/home/appuser/.astro-container-data/.astro/stream-sessions`
 
 These come directly from the Dockerfile, compose file, and persistent-state docs.
 
@@ -310,7 +310,7 @@ options:
 
 - `.env` is excluded by `.dockerignore`, which is good and should stay that way
 - the deploy target should use the `astro-pi-stream` Docker target, not `astro-pi`
-- the running service still depends on durable storage at `/root/.astro-container-data`
+- the running service still depends on durable storage at `/home/appuser/.astro-container-data`
 - rebuilding while `mainsequence` stays on the same version will repoint that version tag to the
   newly built image
 - the extra `py...-node...-ms...` tag is still just another tag on the same built image, not a

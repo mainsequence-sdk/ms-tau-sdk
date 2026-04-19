@@ -42,26 +42,16 @@ Inside that volume, Astro uses:
 
 Container env now points directly at the volume-backed paths:
 
-- `PI_CODING_AGENT_DIR=/root/.astro-container-data/.pi/agent`
-- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/root/.astro-container-data/.config/mainsequence`
-- `ASTRO_STREAM_SESSION_DIR=/root/.astro-container-data/.astro/stream-sessions`
-- `ASTRO_CONTAINER_DATA_DIR=/root/.astro-container-data`
-
-For compatibility and operator ergonomics, Astro also creates standard home-directory symlinks:
-
-- `/root/.ssh -> /root/.astro-container-data/.ssh`
-- `/root/.pi/agent -> /root/.astro-container-data/.pi/agent`
-- `/root/.config/mainsequence -> /root/.astro-container-data/.config/mainsequence`
-- `/root/.astro/stream-sessions -> /root/.astro-container-data/.astro/stream-sessions`
-- `/root/mainsequence -> /root/.astro-container-data/mainsequence`
-- `/root/mainsequence-dev -> /root/.astro-container-data/mainsequence-dev`
-- `/root/.local/share/uv -> /root/.astro-container-data/uv`
+- `PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`
+- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`
+- `ASTRO_STREAM_SESSION_DIR=/home/appuser/.astro-container-data/.astro/stream-sessions`
+- `ASTRO_CONTAINER_DATA_DIR=/home/appuser/.astro-container-data`
 
 ## One-Time Migration
 
 Astro performs a one-time migration into the volume when the marker file below is absent:
 
-- `/root/.astro-container-data/.astro/migrations/pvc-layout-v1.json`
+- `/home/appuser/.astro-container-data/.astro/migrations/pvc-layout-v1.json`
 
 Migration sources:
 

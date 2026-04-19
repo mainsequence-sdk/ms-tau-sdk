@@ -32,24 +32,18 @@ The deployable Docker targets boot the same runtime by copying only:
 `docker-compose.yml` starts those same targets while bind-mounting only:
 
 - `./.astro` to `/app/.astro-migration-source` as a read-only migration source
-- `${HOME}/.pi/agent` to `/root/.pi/host-agent` as a read-only migration source for `auth.json`
+- `${HOME}/.pi/agent` to `/home/appuser/.pi/host-agent` as a read-only migration source for `auth.json`
   and `sessions/`
-- named volume `astro_container_data` to `/root/.astro-container-data`
+- named volume `astro_container_data` to `/home/appuser/.astro-container-data`
 
 For the HTTP stream service, compose also sets
-`ASTRO_MAINSEQUENCE_CONFIG_DIR=/root/.astro-container-data/.config/mainsequence`,
-`PI_CODING_AGENT_DIR=/root/.astro-container-data/.pi/agent`, and
-`ASTRO_STREAM_SESSION_DIR=/root/.astro-container-data/.astro/stream-sessions` so the named volume
+`ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`,
+`PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`, and
+`ASTRO_STREAM_SESSION_DIR=/home/appuser/.astro-container-data/.astro/stream-sessions` so the named volume
 acts like the deployment-time PVC.
 
-At startup, Astro also symlinks:
-
-- `/root/.pi/agent` -> `/root/.astro-container-data/.pi/agent`
-- `/root/.config/mainsequence` -> `/root/.astro-container-data/.config/mainsequence`
-- `/root/.astro/stream-sessions` -> `/root/.astro-container-data/.astro/stream-sessions`
-- `/root/mainsequence` -> `/root/.astro-container-data/mainsequence`
-- `/root/mainsequence-dev` -> `/root/.astro-container-data/mainsequence-dev`
-- `/root/.local/share/uv` -> `/root/.astro-container-data/uv`
+The stream/runtime contract uses `/home/appuser/.astro-container-data` as the single durable
+container path for Astro state.
 
 For the normal parent session, Pi also loads `.pi/APPEND_SYSTEM.md`.
 

@@ -40,8 +40,8 @@ To use Docker Compose in live-mounted dev mode:
 - `./package.json` -> `/app/package.json`
 - `./package-lock.json` -> `/app/package-lock.json`
 - `./tsconfig.json` -> `/app/tsconfig.json`
-- `${HOME}/.pi/agent` -> `/root/.pi/host-agent` (read-only migration source for `auth.json` and `sessions/`)
-- named volume `astro_container_data` -> `/root/.astro-container-data`
+- `${HOME}/.pi/agent` -> `/home/appuser/.pi/host-agent` (read-only migration source for `auth.json` and `sessions/`)
+- named volume `astro_container_data` -> `/home/appuser/.astro-container-data`
 
 ```bash
 docker compose run --rm astro-pi
@@ -63,20 +63,14 @@ docker compose restart astro-pi-stream
 
 The compose file now treats the named volume as the canonical runtime state root:
 
-- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/root/.astro-container-data/.config/mainsequence`
-- `PI_CODING_AGENT_DIR=/root/.astro-container-data/.pi/agent`
-- `ASTRO_STREAM_SESSION_DIR=/root/.astro-container-data/.astro/stream-sessions`
+- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`
+- `PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`
+- `ASTRO_STREAM_SESSION_DIR=/home/appuser/.astro-container-data/.astro/stream-sessions`
 
 At startup, Astro performs a one-time migration from the read-only legacy mounts if the volume
 does not yet have the PVC-layout marker, then keeps all active runtime state inside the volume.
-Astro also creates compatibility symlinks:
-
-- `/root/.pi/agent` -> `/root/.astro-container-data/.pi/agent`
-- `/root/.config/mainsequence` -> `/root/.astro-container-data/.config/mainsequence`
-- `/root/.astro/stream-sessions` -> `/root/.astro-container-data/.astro/stream-sessions`
-- `/root/mainsequence` -> `/root/.astro-container-data/mainsequence`
-- `/root/mainsequence-dev` -> `/root/.astro-container-data/mainsequence-dev`
-- `/root/.local/share/uv` -> `/root/.astro-container-data/uv`
+The image now runs as non-root `appuser`, and the only valid durable runtime root is
+`/home/appuser/.astro-container-data`.
 
 That keeps Linux virtualenvs isolated from macOS host paths while still surviving container
 recreation, and it makes Docker behave much closer to a single-PVC Kubernetes deployment.

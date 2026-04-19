@@ -16,35 +16,35 @@ filesystems.
 The canonical durable container state root is:
 
 ```text
-/root/.astro-container-data
+/home/appuser/.astro-container-data
 ```
 
 In local Docker, the named volume `astro_container_data` is mounted there. In Kubernetes, this path
 is intended to be backed by a single PVC mount. The local volume layout is therefore meant to
-replicate the deployed PVC layout as closely as possible.
+replicate the deployed PVC layout as closely as possible. The image runs as non-root `appuser`.
 
 Current durable subpaths:
 
-- `/root/.astro-container-data/.ssh`
+- `/home/appuser/.astro-container-data/.ssh`
   - pod/container-owned SSH keys
   - persistent `known_hosts`
   - runtime SSH `config`
-- `/root/.astro-container-data/project-checkout-runtime`
+- `/home/appuser/.astro-container-data/project-checkout-runtime`
   - per-project checkout homes used by Astro's `set-up-locally` wrapper
   - project-scoped `.ssh` keys and `known_hosts` so checkout keys are not reused only by slug
-- `/root/.astro-container-data/.pi/agent`
+- `/home/appuser/.astro-container-data/.pi/agent`
   - canonical Pi runtime state inside the durable volume
   - includes Pi `auth.json`, `sessions/`, runtime `settings.json`, and helper binaries
-- `/root/.astro-container-data/.config/mainsequence`
+- `/home/appuser/.astro-container-data/.config/mainsequence`
   - Main Sequence CLI auth/config
-- `/root/.astro-container-data/.astro/stream-sessions`
+- `/home/appuser/.astro-container-data/.astro/stream-sessions`
   - Astro HTTP stream session metadata
   - hydrated chat history snapshots
   - normalized conversation logs
   - raw runtime session logs
-- `/root/.astro-container-data/mainsequence`
-- `/root/.astro-container-data/mainsequence-dev`
-- `/root/.astro-container-data/uv`
+- `/home/appuser/.astro-container-data/mainsequence`
+- `/home/appuser/.astro-container-data/mainsequence-dev`
+- `/home/appuser/.astro-container-data/uv`
 
 ## Deployed/PVC layout
 
@@ -52,7 +52,7 @@ When Astro is deployed with one persistent volume, the durable state layout is e
 like this:
 
 ```text
-/root/.astro-container-data/
+/home/appuser/.astro-container-data/
 ├── .ssh/
 │   ├── config
 │   ├── known_hosts
@@ -61,7 +61,7 @@ like this:
 │   └── project-<id>/
 │       └── home/
 │           ├── .config/
-│           │   └── mainsequence -> /root/.astro-container-data/.config/mainsequence
+│           │   └── mainsequence -> /home/appuser/.astro-container-data/.config/mainsequence
 │           └── .ssh/
 │               ├── config
 │               ├── known_hosts
@@ -103,34 +103,13 @@ The intent is:
 - `mainsequence`, `mainsequence-dev`, `uv`
   - other durable container-local working state
 
-## Compatibility paths
-
-Astro also creates standard home-directory links for compatibility:
-
-- `/root/.ssh -> /root/.astro-container-data/.ssh`
-- `/root/.pi/agent -> /root/.astro-container-data/.pi/agent`
-- `/root/.config/mainsequence -> /root/.astro-container-data/.config/mainsequence`
-- `/root/.astro/stream-sessions -> /root/.astro-container-data/.astro/stream-sessions`
-- `/root/mainsequence -> /root/.astro-container-data/mainsequence`
-- `/root/mainsequence-dev -> /root/.astro-container-data/mainsequence-dev`
-- `/root/.local/share/uv -> /root/.astro-container-data/uv`
-
-This means operators and tools can still use the standard-looking paths:
-
-- `/root/.pi/agent`
-- `/root/.ssh`
-- `/root/.config/mainsequence`
-- `/root/.astro/stream-sessions`
-
-while the real durable storage still lives under the PVC root.
-
 ## Kubernetes guidance
 
 For Kubernetes deployments, use the same runtime contract as local Docker:
 
-- mount one durable volume at `/root/.astro-container-data`
+- mount one durable volume at `/home/appuser/.astro-container-data`
 - do not mount a host `~/.ssh`
-- allow the pod to generate and persist its own repo SSH keys under `/root/.astro-container-data/.ssh`
+- allow the pod to generate and persist its own repo SSH keys under `/home/appuser/.astro-container-data/.ssh`
 - persist `known_hosts` in that same volume so first-contact trust survives pod restarts
 - prefer one PVC per Astro runtime instance instead of sharing one writable `.ssh` state across unrelated replicas
 
@@ -144,7 +123,7 @@ Legacy state can be imported once from:
 Migration stops after Astro writes:
 
 ```text
-/root/.astro-container-data/.astro/migrations/pvc-layout-v1.json
+/home/appuser/.astro-container-data/.astro/migrations/pvc-layout-v1.json
 ```
 
 After that marker exists, the volume is the only runtime source of truth.
@@ -165,12 +144,12 @@ The following may remain ephemeral:
 
 For containerized Astro services:
 
-- mount `astro_container_data` to `/root/.astro-container-data`
-- in Kubernetes, mount the PVC at `/root/.astro-container-data`
-- set `ASTRO_MAINSEQUENCE_CONFIG_DIR=/root/.astro-container-data/.config/mainsequence`
-- set `PI_CODING_AGENT_DIR=/root/.astro-container-data/.pi/agent`
-- set `ASTRO_STREAM_SESSION_DIR=/root/.astro-container-data/.astro/stream-sessions`
+- mount `astro_container_data` to `/home/appuser/.astro-container-data`
+- in Kubernetes, mount the PVC at `/home/appuser/.astro-container-data`
+- set `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`
+- set `PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`
+- set `ASTRO_STREAM_SESSION_DIR=/home/appuser/.astro-container-data/.astro/stream-sessions`
 - mount legacy migration sources read-only only when needed for one-time import
 
 If a future feature introduces new runtime state that users or developers may need to inspect later,
-that state should be added under `/root/.astro-container-data` in containers.
+that state should be added under `/home/appuser/.astro-container-data` in containers.

@@ -73,7 +73,7 @@ When Astro runs in containers with the PVC-style storage layout, the active dura
 the repo-local `.astro/` tree. It lives under the mounted runtime volume root:
 
 ```text
-/root/.astro-container-data/
+/home/appuser/.astro-container-data/
 ├── .pi/
 │   └── agent/
 │       ├── auth.json
@@ -96,17 +96,8 @@ the repo-local `.astro/` tree. It lives under the mounted runtime volume root:
 └── uv/
 ```
 
-Compatibility symlinks expose the expected home-directory paths:
-
-- `/root/.pi/agent -> /root/.astro-container-data/.pi/agent`
-- `/root/.config/mainsequence -> /root/.astro-container-data/.config/mainsequence`
-- `/root/.astro/stream-sessions -> /root/.astro-container-data/.astro/stream-sessions`
-- `/root/mainsequence -> /root/.astro-container-data/mainsequence`
-- `/root/mainsequence-dev -> /root/.astro-container-data/mainsequence-dev`
-- `/root/.local/share/uv -> /root/.astro-container-data/uv`
-
 So in deployment terms:
 
 - local Docker named volume `astro_container_data` simulates the PVC
-- GKE should mount the real PVC at `/root/.astro-container-data`
+- GKE should mount the real PVC at `/home/appuser/.astro-container-data`
 - the volume root is the source of truth for all durable container runtime state

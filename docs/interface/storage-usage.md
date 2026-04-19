@@ -4,7 +4,7 @@
 
 This endpoint is global, not session-specific.
 It reports against `ASTRO_CONTAINER_DATA_DIR`, which in containerized deployments is the PVC-like
-runtime root at `/root/.astro-container-data`.
+runtime root at `/home/appuser/.astro-container-data`.
 
 Canonical example:
 
@@ -17,7 +17,7 @@ Example response:
 ```json
 {
   "version": 1,
-  "root": "/root/.astro-container-data",
+  "root": "/home/appuser/.astro-container-data",
   "capacitySource": "filesystem",
   "totalBytes": 274877906944,
   "availableBytes": 201863462912,
@@ -69,7 +69,7 @@ Notes:
 - `filesystemUsedBytes` reflects the mounted filesystem or PVC.
 - `consumedBytes` reflects the bytes Astro can attribute to its own managed runtime tree.
 - In local Docker, this endpoint reports against the named volume mounted at
-  `/root/.astro-container-data`, which is intended to simulate the deployed PVC layout.
+  `/home/appuser/.astro-container-data`, which is intended to simulate the deployed PVC layout.
 - To simulate a fixed-capacity PVC in local Docker, set `ASTRO_STORAGE_SIM_TOTAL_BYTES` to a
   positive integer number of bytes. When set, the endpoint reports that simulated capacity instead
   of the host-backed volume size.

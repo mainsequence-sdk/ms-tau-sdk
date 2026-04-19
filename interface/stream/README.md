@@ -26,10 +26,9 @@ Environment overrides:
 configuration is `ASTRO_STREAM_TRUSTED_ORIGINS`.
 
 In `docker-compose.yml`, the stream service mounts the named volume `astro_container_data` to
-`/root/.astro-container-data`, points runtime env at volume-backed paths such as
-`/root/.astro-container-data/.pi/agent` and `/root/.astro-container-data/.astro/stream-sessions`,
-and uses read-only legacy mounts only for one-time migration. That makes the container behave much
-closer to a PVC-backed deployment.
+`/home/appuser/.astro-container-data`, points runtime env at volume-backed paths such as
+`/home/appuser/.astro-container-data/.pi/agent` and `/home/appuser/.astro-container-data/.astro/stream-sessions`,
+and uses read-only legacy mounts only for one-time migration. The image runs as non-root `appuser`.
 
 ## Endpoints
 

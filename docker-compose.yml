@@ -12,13 +12,13 @@ services:
     env_file:
       - .env
     environment:
-      HOME: /root
-      ASTRO_CONTAINER_DATA_DIR: /root/.astro-container-data
-      ASTRO_MAINSEQUENCE_CONFIG_DIR: /root/.astro-container-data/.config/mainsequence
-      PI_CODING_AGENT_DIR: /root/.astro-container-data/.pi/agent
-      ASTRO_STREAM_SESSION_DIR: /root/.astro-container-data/.astro/stream-sessions
+      HOME: /home/appuser
+      ASTRO_CONTAINER_DATA_DIR: /home/appuser/.astro-container-data
+      ASTRO_MAINSEQUENCE_CONFIG_DIR: /home/appuser/.astro-container-data/.config/mainsequence
+      PI_CODING_AGENT_DIR: /home/appuser/.astro-container-data/.pi/agent
+      ASTRO_STREAM_SESSION_DIR: /home/appuser/.astro-container-data/.astro/stream-sessions
       ASTRO_LEGACY_REPO_STATE_DIR: /app/.astro-migration-source
-      ASTRO_LEGACY_HOST_PI_AGENT_DIR: /root/.pi/host-agent
+      ASTRO_LEGACY_HOST_PI_AGENT_DIR: /home/appuser/.pi/host-agent
       BUILD_AGENTS_IN_BACKEND: "0"
     volumes:
       - ./.astro:/app/.astro-migration-source:ro
@@ -31,8 +31,8 @@ services:
       - ./package.json:/app/package.json
       - ./package-lock.json:/app/package-lock.json
       - ./tsconfig.json:/app/tsconfig.json
-      - ${HOME}/.pi/agent:/root/.pi/host-agent:ro
-      - astro_container_data:/root/.astro-container-data
+      - ${HOME}/.pi/agent:/home/appuser/.pi/host-agent:ro
+      - astro_container_data:/home/appuser/.astro-container-data
     stdin_open: true
     tty: true
 
@@ -47,15 +47,15 @@ services:
     env_file:
       - .env
     environment:
-      HOME: /root
-      ASTRO_CONTAINER_DATA_DIR: /root/.astro-container-data
-      ASTRO_MAINSEQUENCE_CONFIG_DIR: /root/.astro-container-data/.config/mainsequence
-      PI_CODING_AGENT_DIR: /root/.astro-container-data/.pi/agent
+      HOME: /home/appuser
+      ASTRO_CONTAINER_DATA_DIR: /home/appuser/.astro-container-data
+      ASTRO_MAINSEQUENCE_CONFIG_DIR: /home/appuser/.astro-container-data/.config/mainsequence
+      PI_CODING_AGENT_DIR: /home/appuser/.astro-container-data/.pi/agent
       ASTRO_STREAM_HOST: 0.0.0.0
       ASTRO_STREAM_PORT: ${ASTRO_STREAM_PORT:-8787}
-      ASTRO_STREAM_SESSION_DIR: /root/.astro-container-data/.astro/stream-sessions
+      ASTRO_STREAM_SESSION_DIR: /home/appuser/.astro-container-data/.astro/stream-sessions
       ASTRO_LEGACY_REPO_STATE_DIR: /app/.astro-migration-source
-      ASTRO_LEGACY_HOST_PI_AGENT_DIR: /root/.pi/host-agent
+      ASTRO_LEGACY_HOST_PI_AGENT_DIR: /home/appuser/.pi/host-agent
       BUILD_AGENTS_IN_BACKEND: "1"
     volumes:
       - ./.astro:/app/.astro-migration-source:ro
@@ -68,8 +68,8 @@ services:
       - ./package.json:/app/package.json
       - ./package-lock.json:/app/package-lock.json
       - ./tsconfig.json:/app/tsconfig.json
-      - ${HOME}/.pi/agent:/root/.pi/host-agent:ro
-      - astro_container_data:/root/.astro-container-data
+      - ${HOME}/.pi/agent:/home/appuser/.pi/host-agent:ro
+      - astro_container_data:/home/appuser/.astro-container-data
     ports:
       - "${ASTRO_STREAM_PORT:-8787}:8787"
 

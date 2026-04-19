@@ -38,28 +38,40 @@ ENV MAINSEQUENCE_PIP_SPEC=${MAINSEQUENCE_PIP_SPEC}
 
 RUN pip install --no-cache-dir "${MAINSEQUENCE_PIP_SPEC}"
 
-FROM astro-mainsequence AS astro-pi-stream
+FROM astro-mainsequence AS astro-runtime
+
+ENV APP_USER=appuser \
+    APP_GROUP=appuser \
+    APP_HOME=/home/appuser \
+    HOME=/home/appuser \
+    ASTRO_CONTAINER_DATA_DIR=/home/appuser/.astro-container-data \
+    ASTRO_STREAM_SESSION_DIR=/home/appuser/.astro-container-data/.astro/stream-sessions \
+    ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence \
+    PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent
+
+RUN groupadd --system "${APP_GROUP}" \
+ && useradd --system --gid "${APP_GROUP}" --create-home --home-dir "${APP_HOME}" --shell /bin/bash "${APP_USER}" \
+ && mkdir -p \
+    "${APP_HOME}/.astro-container-data/.pi/agent/bin" \
+    "${APP_HOME}/.astro-container-data/.astro/stream-sessions" \
+    "${APP_HOME}/.astro-container-data/.config/mainsequence" \
+    "${APP_HOME}/.local/share" \
+    "${APP_HOME}/.pi" \
+    "${APP_HOME}/.config" \
+    "${APP_HOME}/.astro" \
+ && chown -R "${APP_USER}:${APP_GROUP}" "${APP_HOME}"
+
+USER appuser
+
+FROM astro-runtime AS astro-pi-stream
 
 ENV ASTRO_STREAM_HOST=0.0.0.0 \
-    ASTRO_STREAM_PORT=8787 \
-    ASTRO_CONTAINER_DATA_DIR=/root/.astro-container-data \
-    ASTRO_STREAM_SESSION_DIR=/root/.astro-container-data/.astro/stream-sessions \
-    ASTRO_MAINSEQUENCE_CONFIG_DIR=/root/.astro-container-data/.config/mainsequence \
-    PI_CODING_AGENT_DIR=/root/.astro-container-data/.pi/agent
-
-RUN mkdir -p /root/.astro-container-data/.pi/agent/bin /root/.astro-container-data/.astro/stream-sessions /root/.astro-container-data/.config/mainsequence
+    ASTRO_STREAM_PORT=8787
 
 EXPOSE 8787
 
 CMD ["tsx", "scripts/start_pi_stream.ts"]
 
-FROM astro-mainsequence AS astro-pi
-
-ENV ASTRO_CONTAINER_DATA_DIR=/root/.astro-container-data \
-    ASTRO_MAINSEQUENCE_CONFIG_DIR=/root/.astro-container-data/.config/mainsequence \
-    PI_CODING_AGENT_DIR=/root/.astro-container-data/.pi/agent \
-    ASTRO_STREAM_SESSION_DIR=/root/.astro-container-data/.astro/stream-sessions
-
-RUN mkdir -p /root/.astro-container-data/.pi/agent/bin /root/.astro-container-data/.config/mainsequence /root/.astro-container-data/.astro/stream-sessions
+FROM astro-runtime AS astro-pi
 
 CMD ["node", "scripts/start_pi.mjs"]

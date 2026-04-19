@@ -107,39 +107,33 @@ The compose file mounts:
 - `./package.json` -> `/app/package.json`
 - `./package-lock.json` -> `/app/package-lock.json`
 - `./tsconfig.json` -> `/app/tsconfig.json`
-- `${HOME}/.pi/agent` -> `/root/.pi/host-agent` (read-only migration source for `auth.json` and `sessions/`)
-- named volume `astro_container_data` -> `/root/.astro-container-data`
+- `${HOME}/.pi/agent` -> `/home/appuser/.pi/host-agent` (read-only migration source for `auth.json` and `sessions/`)
+- named volume `astro_container_data` -> `/home/appuser/.astro-container-data`
 
 It also sets:
 
-- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/root/.astro-container-data/.config/mainsequence`
-- `PI_CODING_AGENT_DIR=/root/.astro-container-data/.pi/agent`
-- `ASTRO_STREAM_SESSION_DIR=/root/.astro-container-data/.astro/stream-sessions`
+- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`
+- `PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`
+- `ASTRO_STREAM_SESSION_DIR=/home/appuser/.astro-container-data/.astro/stream-sessions`
 
 At first boot, Astro migrates legacy repo-local runtime state into the volume once, then merges
 `auth.json` plus `sessions/` from the read-only host Pi source, and keeps using the volume as the
 only durable runtime source of truth.
 
-At runtime, Astro maps container-only persistent subdirectories through symlinks:
-
-- `/root/.pi/agent` -> `/root/.astro-container-data/.pi/agent`
-- `/root/.config/mainsequence` -> `/root/.astro-container-data/.config/mainsequence`
-- `/root/.astro/stream-sessions` -> `/root/.astro-container-data/.astro/stream-sessions`
-- `/root/mainsequence` -> `/root/.astro-container-data/mainsequence`
-- `/root/mainsequence-dev` -> `/root/.astro-container-data/mainsequence-dev`
-- `/root/.local/share/uv` -> `/root/.astro-container-data/uv`
+At runtime, Astro runs as non-root `appuser`, and the only valid durable runtime root is
+`/home/appuser/.astro-container-data`.
 
 That means:
 
 - Astro code changes on the host are visible in the container without rebuilding the image
 - restart the service after code edits with `docker compose restart astro-pi-stream`
 - the active durable runtime state now lives inside the named volume instead of `./.astro`
-- Pi runtime state lives under `/root/.astro-container-data/.pi/agent`
-- Main Sequence CLI auth lives under `/root/.astro-container-data/.config/mainsequence`
-- stream session artifacts live under `/root/.astro-container-data/.astro/stream-sessions`
+- Pi runtime state lives under `/home/appuser/.astro-container-data/.pi/agent`
+- Main Sequence CLI auth lives under `/home/appuser/.astro-container-data/.config/mainsequence`
+- stream session artifacts live under `/home/appuser/.astro-container-data/.astro/stream-sessions`
 - the host mounts are used only as one-time migration sources
 - `node_modules` stay container-local and Linux-native
-- helper binaries such as `rg` persist under `/root/.astro-container-data/.pi/agent/bin`
+- helper binaries such as `rg` persist under `/home/appuser/.astro-container-data/.pi/agent/bin`
 - those helper binaries remain container-managed and Linux-native instead of being reused from the
   host's general Pi install
 
