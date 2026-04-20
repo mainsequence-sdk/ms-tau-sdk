@@ -9,9 +9,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
 const MAINSEQUENCE_REFRESH_INTERVAL_ENV = "MAINSEQUENCE_TOKEN_REFRESH_INTERVAL_SECONDS";
 const MAINSEQUENCE_CLI_SESSION_ID_ENV = "MAINSEQUENCE_CLI_SESSION_ID";
+const MAINSEQUENCE_AUTH_MODE_ENV = "MAINSEQUENCE_AUTH_MODE";
+const MAINSEQUENCE_RUNTIME_CREDENTIAL_ID_ENV = "MAINSEQUENCE_RUNTIME_CREDENTIAL_ID";
+const MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET_ENV = "MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET";
 const MAINSEQUENCE_REQUIRED_ENV = [
 	"MAINSEQUENCE_BACKEND",
 	"MAINSEQUENCE_PROJECTS_BASE",
+];
+const MAINSEQUENCE_RUNTIME_CREDENTIAL_REQUIRED_ENV = [
+	MAINSEQUENCE_RUNTIME_CREDENTIAL_ID_ENV,
+	MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET_ENV,
 ];
 const DEFAULT_BACKEND = "https://api.main-sequence.app";
 const DEFAULT_CLI_SESSION_ID_PREFIX = "astro-mainsequence-cli";
@@ -133,10 +140,24 @@ function getRefreshIntervalMs() {
 	return seconds * 1000;
 }
 
+function getMainsequenceAuthMode(env = process.env) {
+	const raw = env[MAINSEQUENCE_AUTH_MODE_ENV]?.trim().toLowerCase();
+	if (!raw || raw === "token") return "token";
+	if (raw === "runtime_credential") return "runtime_credential";
+	fail(`${MAINSEQUENCE_AUTH_MODE_ENV} must be "runtime_credential" or "token".`);
+}
+
 function ensureMainsequenceEnv() {
 	const missing = MAINSEQUENCE_REQUIRED_ENV.filter((key) => !process.env[key]);
 	if (missing.length) {
 		fail(`Missing required env for deterministic Main Sequence login: ${missing.join(", ")}`);
+	}
+}
+
+function ensureMainsequenceRuntimeCredentialEnv() {
+	const missing = MAINSEQUENCE_RUNTIME_CREDENTIAL_REQUIRED_ENV.filter((key) => !process.env[key]?.trim());
+	if (missing.length) {
+		fail(`Missing required env for Main Sequence runtime credential auth: ${missing.join(", ")}`);
 	}
 }
 
@@ -217,8 +238,11 @@ function syncProcessEnvFromPersistedMainsequenceAuth(fallback) {
 
 function buildStoredAuthVerificationEnv() {
 	const verifyEnv = { ...process.env };
+	const backendUrl = resolveBackendUrl();
 	delete verifyEnv.MAINSEQUENCE_ACCESS_TOKEN;
 	delete verifyEnv.MAINSEQUENCE_REFRESH_TOKEN;
+	verifyEnv.MAINSEQUENCE_ENDPOINT = verifyEnv.MAINSEQUENCE_ENDPOINT ?? backendUrl;
+	verifyEnv.TDAG_ENDPOINT = verifyEnv.TDAG_ENDPOINT ?? backendUrl;
 	verifyEnv[MAINSEQUENCE_CLI_SESSION_ID_ENV] = resolveMainsequenceCliSessionId(process.env);
 	return verifyEnv;
 }
@@ -293,7 +317,7 @@ function verifyMainsequenceCliAuthStore() {
 	if (verifyResult.status !== 0) {
 		return {
 			ok: false,
-			error: `Main Sequence CLI login completed but persisted auth still failed verification (${summarizeSpawnSyncFailure(verifyResult)}).`,
+			error: `Main Sequence CLI auth verification failed (${summarizeSpawnSyncFailure(verifyResult)}).`,
 		};
 	}
 
@@ -345,6 +369,17 @@ function isRefreshFailure(result) {
 }
 
 async function ensureMainsequenceCliAuth() {
+	if (getMainsequenceAuthMode() === "runtime_credential") {
+		ensureMainsequenceRuntimeCredentialEnv();
+		console.log("[astro] Using Main Sequence runtime credential auth...");
+		const verifyResult = verifyMainsequenceCliAuthStore();
+		if (!verifyResult.ok) {
+			fail(`Main Sequence runtime credential auth failed: ${verifyResult.error}`);
+		}
+		console.log("[astro] Main Sequence runtime credential auth is ready.");
+		return;
+	}
+
 	ensureMainsequenceEnv();
 	const configuredCredentials = {
 		accessToken: normalizeMainsequenceToken(process.env.MAINSEQUENCE_ACCESS_TOKEN),
@@ -426,6 +461,13 @@ async function ensureMainsequenceCliAuth() {
 }
 
 function startMainsequenceRefreshLoop() {
+	if (getMainsequenceAuthMode() === "runtime_credential") {
+		if (process.env[MAINSEQUENCE_REFRESH_INTERVAL_ENV]) {
+			console.log("[astro] Skipping Main Sequence token refresh loop because runtime credential auth is active.");
+		}
+		return null;
+	}
+
 	const intervalMs = getRefreshIntervalMs();
 	if (!intervalMs) return null;
 	ensureMainsequenceEnv();

@@ -274,6 +274,8 @@ It reports:
 - currently available bytes
 - Astro-managed consumed bytes
 - whether capacity is coming from the real filesystem or from `ASTRO_STORAGE_SIM_TOTAL_BYTES`
+- whether the scan was complete
+- per-directory `scanErrors` when a mounted path exists but is not readable by the stream user
 - a five-way bucket breakdown:
   - `pi`
   - `astro`
@@ -337,11 +339,32 @@ Session files are stored at:
 
 ### `GET /health`
 
-Returns a simple status payload:
+Returns the current stream process health plus recent captured runtime issues.
+The endpoint stays HTTP 200 while the process is alive, even when `status` is `degraded`, so
+platform health probes do not restart the pod just because a recoverable request/runtime error was
+captured.
 
 ```json
-{ "ok": true }
+{
+  "ok": true,
+  "status": "ok",
+  "degraded": false,
+  "pid": 123,
+  "startedAt": "2026-04-20T12:00:00.000Z",
+  "lastUpdatedAt": "2026-04-20T12:01:00.000Z",
+  "uptimeSeconds": 60,
+  "healthStatePath": "/home/appuser/.astro-container-data/.astro/stream-health.json",
+  "issueCount": 0,
+  "recentIssues": [],
+  "previousRun": null
+}
 ```
+
+Captured issues are also persisted to `ASTRO_STREAM_HEALTH_STATE_PATH` when set, otherwise to
+`ASTRO_CONTAINER_DATA_DIR/.astro/stream-health.json` in the deployable container.
+The stream records startup bootstrap failures, uncaught exceptions, unhandled promise rejections,
+top-level request failures, HTTP server/client errors, and failed Pi child processes there instead
+of intentionally exiting the whole stream process.
 
 ## Logging
 

@@ -12,12 +12,16 @@ Pi discovers `.pi/settings.json` and loads:
 - the repository package itself
 - repo-installed packages such as `pi-web-access`
 
-The Astro launch scripts also load `.env` from the repo root, refresh the Main Sequence access
-token, run a deterministic `mainsequence login --access-token ...` bootstrap before any agent work
-starts, and then start a Main Sequence token refresh loop when
+The Astro launch scripts load `.env` from the repo root and prepare Main Sequence auth according
+to `MAINSEQUENCE_AUTH_MODE`.
+In production, `MAINSEQUENCE_AUTH_MODE=runtime_credential` uses
+`MAINSEQUENCE_RUNTIME_CREDENTIAL_ID` and `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET`; it does not
+require `MAINSEQUENCE_REFRESH_TOKEN` and does not call the JWT refresh endpoint.
+Token-mode launches can still refresh/login before Pi starts and can run a token refresh loop when
 `MAINSEQUENCE_TOKEN_REFRESH_INTERVAL_SECONDS` is set.
-For the HTTP stream path, Astro also re-runs that deterministic CLI login gate before each real
-`POST /api/chat` request so Pi never starts from a stale unauthenticated CLI state.
+For the HTTP stream path, Astro keeps startup and `GET /health` independent from auth, then runs
+the Main Sequence auth gate before each real `POST /api/chat` request so Pi never starts from an
+unauthenticated CLI state.
 
 The deployable Docker targets boot the same runtime by copying only:
 

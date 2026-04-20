@@ -1,4 +1,4 @@
-import { existsSync, lstatSync, readdirSync, realpathSync, statfsSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, realpathSync, statfsSync, type Dirent } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -7,6 +7,14 @@ const repoRoot = path.resolve(__dirname, "..", "..");
 
 type StorageBucketName = "pi" | "astro" | "sessions" | "mainsequence" | "system";
 type StorageCapacitySource = "filesystem" | "simulated";
+
+type StorageScanError = {
+	path: string;
+	operation: "readdir" | "lstat";
+	code: string | null;
+	message: string;
+	bucket: StorageBucketName | null;
+};
 
 export type StorageUsageResponse = {
 	version: 1;
@@ -19,6 +27,8 @@ export type StorageUsageResponse = {
 	consumedBytes: number;
 	consumedPercentOfTotal: number | null;
 	detail: Record<StorageBucketName, { bytes: number }>;
+	scanComplete: boolean;
+	scanErrors: StorageScanError[];
 	capturedAt: string;
 };
 
@@ -50,11 +60,18 @@ function classifyStorageBucket(relativePath: string): StorageBucketName {
 		normalizedPath === "mainsequence" ||
 		normalizedPath.startsWith("mainsequence/") ||
 		normalizedPath === "mainsequence-dev" ||
-		normalizedPath.startsWith("mainsequence-dev/")
+		normalizedPath.startsWith("mainsequence-dev/") ||
+		normalizedPath === ".config" ||
+		normalizedPath.startsWith(".config/")
 	) {
 		return "mainsequence";
 	}
-	if (normalizedPath === ".pi/agent" || normalizedPath.startsWith(".pi/agent/")) {
+	if (
+		normalizedPath === ".pi" ||
+		normalizedPath.startsWith(".pi/") ||
+		normalizedPath === ".pi/agent" ||
+		normalizedPath.startsWith(".pi/agent/")
+	) {
 		return "pi";
 	}
 	if (normalizedPath === ".astro" || normalizedPath.startsWith(".astro/")) {
@@ -67,12 +84,39 @@ function walkStorageTree(
 	rootDir: string,
 	currentDir: string,
 	bucketSizes: Record<StorageBucketName, number>,
+	scanErrors: StorageScanError[],
 ): void {
-	for (const entry of readdirSync(currentDir, { withFileTypes: true })) {
+	let entries: Dirent[];
+	try {
+		entries = readdirSync(currentDir, { withFileTypes: true });
+	} catch (error) {
+		const relativePath = path.relative(rootDir, currentDir);
+		scanErrors.push(buildStorageScanError({
+			error,
+			operation: "readdir",
+			path: currentDir,
+			bucket: relativePath ? classifyStorageBucket(relativePath) : null,
+		}));
+		return;
+	}
+
+	for (const entry of entries) {
 		const entryPath = path.join(currentDir, entry.name);
-		const stats = lstatSync(entryPath);
+		let stats: ReturnType<typeof lstatSync>;
+		try {
+			stats = lstatSync(entryPath);
+		} catch (error) {
+			const relativePath = path.relative(rootDir, entryPath);
+			scanErrors.push(buildStorageScanError({
+				error,
+				operation: "lstat",
+				path: entryPath,
+				bucket: relativePath ? classifyStorageBucket(relativePath) : null,
+			}));
+			continue;
+		}
 		if (entry.isDirectory()) {
-			walkStorageTree(rootDir, entryPath, bucketSizes);
+			walkStorageTree(rootDir, entryPath, bucketSizes, scanErrors);
 			continue;
 		}
 
@@ -81,6 +125,22 @@ function walkStorageTree(
 		const bucket = classifyStorageBucket(relativePath);
 		bucketSizes[bucket] += stats.size;
 	}
+}
+
+function buildStorageScanError(options: {
+	error: unknown;
+	operation: StorageScanError["operation"];
+	path: string;
+	bucket: StorageBucketName | null;
+}): StorageScanError {
+	const nodeError = options.error as NodeJS.ErrnoException;
+	return {
+		path: options.path,
+		operation: options.operation,
+		code: typeof nodeError?.code === "string" ? nodeError.code : null,
+		message: options.error instanceof Error ? options.error.message : String(options.error),
+		bucket: options.bucket,
+	};
 }
 
 function normalizePercent(numerator: number, denominator: number): number | null {
@@ -117,7 +177,8 @@ export function readStorageUsage(env: NodeJS.ProcessEnv = process.env): StorageU
 		mainsequence: 0,
 		system: 0,
 	};
-	walkStorageTree(root, root, bucketSizes);
+	const scanErrors: StorageScanError[] = [];
+	walkStorageTree(root, root, bucketSizes, scanErrors);
 
 	const consumedBytes = Object.values(bucketSizes).reduce((sum, value) => sum + value, 0);
 	const simulatedTotalBytes = resolveSimulatedTotalBytes(env);
@@ -147,6 +208,8 @@ export function readStorageUsage(env: NodeJS.ProcessEnv = process.env): StorageU
 			mainsequence: { bytes: bucketSizes.mainsequence },
 			system: { bytes: bucketSizes.system },
 		},
+		scanComplete: scanErrors.length === 0,
+		scanErrors,
 		capturedAt: new Date().toISOString(),
 	};
 }

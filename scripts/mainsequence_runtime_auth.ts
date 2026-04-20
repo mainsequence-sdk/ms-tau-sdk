@@ -5,12 +5,21 @@ import { spawn, spawnSync } from "node:child_process";
 
 export const MAINSEQUENCE_REFRESH_INTERVAL_ENV = "MAINSEQUENCE_TOKEN_REFRESH_INTERVAL_SECONDS";
 export const MAINSEQUENCE_CLI_SESSION_ID_ENV = "MAINSEQUENCE_CLI_SESSION_ID";
+export const MAINSEQUENCE_AUTH_MODE_ENV = "MAINSEQUENCE_AUTH_MODE";
+export const MAINSEQUENCE_RUNTIME_CREDENTIAL_ID_ENV = "MAINSEQUENCE_RUNTIME_CREDENTIAL_ID";
+export const MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET_ENV = "MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET";
 export const MAINSEQUENCE_REQUIRED_ENV = [
 	"MAINSEQUENCE_BACKEND",
 	"MAINSEQUENCE_PROJECTS_BASE",
 ] as const;
+export const MAINSEQUENCE_RUNTIME_CREDENTIAL_REQUIRED_ENV = [
+	MAINSEQUENCE_RUNTIME_CREDENTIAL_ID_ENV,
+	MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET_ENV,
+] as const;
 const DEFAULT_BACKEND = "https://api.main-sequence.app";
 const DEFAULT_CLI_SESSION_ID_PREFIX = "astro-mainsequence-cli";
+
+export type MainsequenceAuthMode = "token" | "runtime_credential";
 
 type MainsequenceCredentials = {
 	accessToken: string | null;
@@ -51,8 +60,34 @@ function getRefreshIntervalMs(env: NodeJS.ProcessEnv = process.env): number | nu
 	return seconds * 1000;
 }
 
+export function getMainsequenceAuthMode(
+	env: NodeJS.ProcessEnv = process.env,
+): MainsequenceAuthMode {
+	const raw = env[MAINSEQUENCE_AUTH_MODE_ENV]?.trim().toLowerCase();
+	if (!raw || raw === "token") return "token";
+	if (raw === "runtime_credential") return "runtime_credential";
+	throw new Error(`${MAINSEQUENCE_AUTH_MODE_ENV} must be "runtime_credential" or "token".`);
+}
+
 function getMissingMainsequenceEnv(env: NodeJS.ProcessEnv = process.env): string[] {
 	return MAINSEQUENCE_REQUIRED_ENV.filter((key) => !env[key]);
+}
+
+function getMissingMainsequenceRuntimeCredentialEnv(
+	env: NodeJS.ProcessEnv = process.env,
+): string[] {
+	return MAINSEQUENCE_RUNTIME_CREDENTIAL_REQUIRED_ENV.filter((key) => !env[key]?.trim());
+}
+
+export function validateMainsequenceRuntimeCredentialEnv(
+	env: NodeJS.ProcessEnv = process.env,
+) {
+	const missing = getMissingMainsequenceRuntimeCredentialEnv(env);
+	if (missing.length) {
+		throw new Error(
+			`Missing required env for Main Sequence runtime credential auth: ${missing.join(", ")}`,
+		);
+	}
 }
 
 function resolveBackendUrl(env: NodeJS.ProcessEnv = process.env): string {
@@ -137,8 +172,11 @@ export function buildMainsequenceStoredAuthEnv(
 	env: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
 	const runtimeEnv = { ...env };
+	const backendUrl = resolveBackendUrl(env);
 	delete runtimeEnv.MAINSEQUENCE_ACCESS_TOKEN;
 	delete runtimeEnv.MAINSEQUENCE_REFRESH_TOKEN;
+	runtimeEnv.MAINSEQUENCE_ENDPOINT = runtimeEnv.MAINSEQUENCE_ENDPOINT ?? backendUrl;
+	runtimeEnv.TDAG_ENDPOINT = runtimeEnv.TDAG_ENDPOINT ?? backendUrl;
 	runtimeEnv[MAINSEQUENCE_CLI_SESSION_ID_ENV] = resolveMainsequenceCliSessionId(env);
 	const shimBinDir = resolveManagedMainsequenceShimBinDir(env);
 	if (shimBinDir) {
@@ -266,7 +304,7 @@ function verifyMainsequenceCliAuthStore(
 	if (verifyResult.status !== 0) {
 		return {
 			ok: false,
-			error: `Main Sequence CLI login completed but persisted auth still failed verification (${summarizeSpawnSyncFailure(verifyResult)}).`,
+			error: `Main Sequence CLI auth verification failed (${summarizeSpawnSyncFailure(verifyResult)}).`,
 		};
 	}
 
@@ -326,6 +364,17 @@ export async function bootstrapMainsequenceCliAuth(options: {
 	log?: (message: string) => void;
 } = {}) {
 	const env = options.env ?? process.env;
+	if (getMainsequenceAuthMode(env) === "runtime_credential") {
+		validateMainsequenceRuntimeCredentialEnv(env);
+		options.log?.("Using Main Sequence runtime credential auth.");
+		const verifyResult = verifyMainsequenceCliAuthStore(env);
+		if ("error" in verifyResult) {
+			throw new Error(`Main Sequence runtime credential auth failed: ${verifyResult.error}`);
+		}
+		options.log?.("Main Sequence runtime credential auth is ready.");
+		return;
+	}
+
 	const missing = getMissingMainsequenceEnv(env);
 	if (missing.length) {
 		throw new Error(`Missing required env for deterministic Main Sequence login: ${missing.join(", ")}`);
@@ -426,6 +475,13 @@ export function startMainsequenceRefreshLoop(options: {
 	log?: (message: string) => void;
 } = {}) {
 	const env = options.env ?? process.env;
+	if (getMainsequenceAuthMode(env) === "runtime_credential") {
+		if (env[MAINSEQUENCE_REFRESH_INTERVAL_ENV]) {
+			options.log?.("Skipping Main Sequence token refresh loop because runtime credential auth is active.");
+		}
+		return null;
+	}
+
 	const intervalMs = getRefreshIntervalMs(env);
 	if (!intervalMs) return null;
 

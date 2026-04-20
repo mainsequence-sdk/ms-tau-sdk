@@ -193,3 +193,17 @@ Why:
 - the first implementation should attach and locally hydrate wrapper state, not create a second
   backend session or re-run deterministic agent registration
 - project-scoped coder sessions are intentionally out of scope for the first hydration pass
+
+## 16. Treat runtime credentials as the production Main Sequence auth mode
+
+Implementation:
+
+- `reference/adr-runtime-credential-auth.md`
+
+Why:
+
+- deployed coding-agent pods authenticate with runtime credentials instead of user refresh tokens
+- the stream runtime must not block startup on `MAINSEQUENCE_REFRESH_TOKEN` when
+  `MAINSEQUENCE_AUTH_MODE=runtime_credential`
+- child `pi`, specialist, and project setup processes need the same runtime credential env as the
+  parent process

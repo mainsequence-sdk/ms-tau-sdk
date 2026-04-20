@@ -113,8 +113,8 @@ These come directly from the Dockerfile, compose file, and persistent-state docs
 
 Do not put these in `cloudbuild.yaml` substitutions:
 
-- `MAINSEQUENCE_ACCESS_TOKEN`
-- `MAINSEQUENCE_REFRESH_TOKEN`
+- `MAINSEQUENCE_RUNTIME_CREDENTIAL_ID`
+- `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET`
 - `OPENAI_API_KEY`
 - `ANTHROPIC_API_KEY`
 - `ANTHROPIC_OAUTH_TOKEN`
@@ -138,9 +138,8 @@ These should be injected into the existing runtime through your current secret-m
 
 These are the main non-secret runtime values the existing GKE service should already provide:
 
-- `MAINSEQUENCE_BACKEND`
-- `MAINSEQUENCE_PROJECTS_BASE`
-- `MAINSEQUENCE_TOKEN_REFRESH_INTERVAL_SECONDS`
+- `MAINSEQUENCE_AUTH_MODE=runtime_credential`
+- `MAINSEQUENCE_BACKEND` if the pod should use a non-default backend
 - `BUILD_AGENTS_IN_BACKEND`
 - `ASTRO_STREAM_PORT`
 - `ASTRO_STREAM_TRUSTED_ORIGINS`
@@ -153,9 +152,8 @@ For the values currently shown in local `.env`, the split is:
 Set these on the existing GKE workload when the pod is created or updated:
 
 ```env
+MAINSEQUENCE_AUTH_MODE=runtime_credential
 MAINSEQUENCE_BACKEND=http://192.168.1.111:8000
-MAINSEQUENCE_PROJECTS_BASE=mainsequence-dev
-MAINSEQUENCE_TOKEN_REFRESH_INTERVAL_SECONDS=600
 BUILD_AGENTS_IN_BACKEND=true
 OLLAMA_HOST=http://192.168.1.10:11434
 ASTRO_STREAM_TRUSTED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173
@@ -184,11 +182,12 @@ The final published image is also labeled with exact full versions:
 - `org.opencontainers.image.python.version=<python-full-version>`
 - `org.opencontainers.image.node.version=<node-full-version>`
 
-If the running GKE workload also needs auth at runtime, provide these through your existing secret
-path or persisted runtime storage:
+Provide production Main Sequence auth through your existing secret path:
 
-- `MAINSEQUENCE_ACCESS_TOKEN`
-- `MAINSEQUENCE_REFRESH_TOKEN`
+- `MAINSEQUENCE_RUNTIME_CREDENTIAL_ID`
+- `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET`
+
+Do not provide `MAINSEQUENCE_REFRESH_TOKEN` for runtime credential mode.
 
 ### Build-Time Note
 

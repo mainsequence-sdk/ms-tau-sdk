@@ -86,27 +86,258 @@ const ALLOWED_AGENTS = new Set(["astro-orchestrator", "mainsequence-project-code
 const PI_BUILT_IN_TOOL_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
 
 loadEnvFile(repoRoot);
-try {
-	await bootstrapMainsequenceCliAuth({
-		env: process.env,
-		log: (message) => console.log(`[astro] ${message}`),
-	});
-	startMainsequenceRefreshLoop({
-		env: process.env,
-		log: (message) => console.error(`[astro] ${message}`),
-	});
-} catch (error) {
-	const message = error instanceof Error ? error.message : "Unknown Main Sequence auth bootstrap failure.";
-	console.error(`[astro] ${message}`);
-	process.exit(1);
-}
 
 const host = process.env.ASTRO_STREAM_HOST ?? "0.0.0.0";
-const port = Number(process.env.ASTRO_STREAM_PORT ?? "8787");
+const configuredPort = Number(process.env.ASTRO_STREAM_PORT ?? "8787");
+const port = Number.isFinite(configuredPort) && configuredPort > 0 ? configuredPort : 8787;
 const logTraffic = process.env.ASTRO_STREAM_LOG_TRAFFIC !== "0";
 const logRequestBodies = process.env.ASTRO_STREAM_LOG_REQUEST_BODIES === "1";
 const sessionDir =
 	process.env.ASTRO_STREAM_SESSION_DIR ?? path.join(repoRoot, ".astro", "stream-sessions");
+const runtimeHealthStartedAt = new Date().toISOString();
+const runtimeHealthStatePath =
+	process.env.ASTRO_STREAM_HEALTH_STATE_PATH ??
+	path.join(
+		process.env.ASTRO_CONTAINER_DATA_DIR
+			? path.join(path.resolve(process.env.ASTRO_CONTAINER_DATA_DIR), ".astro")
+			: path.join(repoRoot, ".astro"),
+		"stream-health.json",
+	);
+let mainsequenceRefreshLoop: ReturnType<typeof startMainsequenceRefreshLoop> | null = null;
+let mainsequenceRefreshLoopStarted = false;
+
+type RuntimeHealthSeverity = "warning" | "error" | "fatal";
+
+type RuntimeHealthIssue = {
+	id: string;
+	source: string;
+	severity: RuntimeHealthSeverity;
+	at: string;
+	message: string;
+	name: string | null;
+	stack: string | null;
+	context: Record<string, unknown> | null;
+};
+
+type RuntimeHealthSnapshot = {
+	ok: true;
+	status: "ok" | "degraded";
+	degraded: boolean;
+	pid: number;
+	startedAt: string;
+	lastUpdatedAt: string;
+	uptimeSeconds: number;
+	healthStatePath: string;
+	issueCount: number;
+	recentIssues: RuntimeHealthIssue[];
+	previousRun: {
+		pid: number | null;
+		startedAt: string | null;
+		lastUpdatedAt: string | null;
+		status: string | null;
+		issueCount: number;
+		recentIssues: RuntimeHealthIssue[];
+	} | null;
+};
+
+const MAX_RUNTIME_HEALTH_ISSUES = 25;
+const previousRuntimeHealthSnapshot = readPreviousRuntimeHealthSnapshot();
+const runtimeHealthIssues: RuntimeHealthIssue[] = [];
+let runtimeHealthIssueCount = 0;
+
+function readPreviousRuntimeHealthSnapshot(): RuntimeHealthSnapshot | null {
+	try {
+		if (!existsSync(runtimeHealthStatePath)) return null;
+		const parsed = JSON.parse(readFileSync(runtimeHealthStatePath, "utf8"));
+		if (!parsed || typeof parsed !== "object") return null;
+		return parsed as RuntimeHealthSnapshot;
+	} catch {
+		return null;
+	}
+}
+
+function serializeRuntimeHealthError(error: unknown): {
+	name: string | null;
+	message: string;
+	stack: string | null;
+} {
+	if (error instanceof Error) {
+		return {
+			name: error.name || null,
+			message: redactRuntimeHealthText(error.message || String(error)) ?? "Unknown error",
+			stack: redactRuntimeHealthText(typeof error.stack === "string" ? error.stack : null),
+		};
+	}
+	if (typeof error === "string") {
+		return { name: null, message: redactRuntimeHealthText(error) ?? "Unknown error", stack: null };
+	}
+	try {
+		return {
+			name: null,
+			message: redactRuntimeHealthText(JSON.stringify(error)) ?? "Unknown error",
+			stack: null,
+		};
+	} catch {
+		return { name: null, message: redactRuntimeHealthText(String(error)) ?? "Unknown error", stack: null };
+	}
+}
+
+function redactRuntimeHealthText(value: string | null): string | null {
+	if (!value) return value;
+	let redacted = value;
+	for (const [key, rawSecret] of Object.entries(process.env)) {
+		if (!rawSecret || rawSecret.length < 4) continue;
+		if (!/(TOKEN|SECRET|PASSWORD|API_?KEY|CREDENTIAL)/i.test(key)) continue;
+		redacted = redacted.split(rawSecret).join(`[redacted:${key}]`);
+	}
+	return redacted;
+}
+
+function buildRuntimeHealthSnapshot(): RuntimeHealthSnapshot {
+	const lastUpdatedAt = new Date().toISOString();
+	const recentIssues = runtimeHealthIssues.slice(-MAX_RUNTIME_HEALTH_ISSUES);
+	return {
+		ok: true,
+		status: recentIssues.length > 0 ? "degraded" : "ok",
+		degraded: recentIssues.length > 0,
+		pid: process.pid,
+		startedAt: runtimeHealthStartedAt,
+		lastUpdatedAt,
+		uptimeSeconds: Math.round(process.uptime()),
+		healthStatePath: runtimeHealthStatePath,
+		issueCount: runtimeHealthIssueCount,
+		recentIssues,
+		previousRun: previousRuntimeHealthSnapshot
+			? {
+					pid:
+						typeof previousRuntimeHealthSnapshot.pid === "number"
+							? previousRuntimeHealthSnapshot.pid
+							: null,
+					startedAt:
+						typeof previousRuntimeHealthSnapshot.startedAt === "string"
+							? previousRuntimeHealthSnapshot.startedAt
+							: null,
+					lastUpdatedAt:
+						typeof previousRuntimeHealthSnapshot.lastUpdatedAt === "string"
+							? previousRuntimeHealthSnapshot.lastUpdatedAt
+							: null,
+					status:
+						typeof previousRuntimeHealthSnapshot.status === "string"
+							? previousRuntimeHealthSnapshot.status
+							: null,
+					issueCount:
+						typeof previousRuntimeHealthSnapshot.issueCount === "number"
+							? previousRuntimeHealthSnapshot.issueCount
+							: 0,
+					recentIssues: Array.isArray(previousRuntimeHealthSnapshot.recentIssues)
+						? previousRuntimeHealthSnapshot.recentIssues.slice(-MAX_RUNTIME_HEALTH_ISSUES)
+						: [],
+			  }
+			: null,
+	};
+}
+
+function persistRuntimeHealthSnapshot() {
+	try {
+		mkdirSync(path.dirname(runtimeHealthStatePath), { recursive: true });
+		writeFileSync(runtimeHealthStatePath, JSON.stringify(buildRuntimeHealthSnapshot(), null, 2));
+	} catch (error) {
+		const serialized = serializeRuntimeHealthError(error);
+		console.error(`[astro-stream] failed to persist runtime health state: ${serialized.message}`);
+	}
+}
+
+function recordRuntimeHealthIssue(options: {
+	source: string;
+	error: unknown;
+	severity?: RuntimeHealthSeverity;
+	context?: Record<string, unknown>;
+}): RuntimeHealthIssue {
+	const serialized = serializeRuntimeHealthError(options.error);
+	const issue: RuntimeHealthIssue = {
+		id: randomUUID(),
+		source: options.source,
+		severity: options.severity ?? "error",
+		at: new Date().toISOString(),
+		message: serialized.message,
+		name: serialized.name,
+		stack: serialized.stack,
+		context: options.context ?? null,
+	};
+	runtimeHealthIssues.push(issue);
+	runtimeHealthIssueCount += 1;
+	if (runtimeHealthIssues.length > MAX_RUNTIME_HEALTH_ISSUES) {
+		runtimeHealthIssues.splice(0, runtimeHealthIssues.length - MAX_RUNTIME_HEALTH_ISSUES);
+	}
+	persistRuntimeHealthSnapshot();
+	return issue;
+}
+
+if (!Number.isFinite(configuredPort) || configuredPort <= 0) {
+	recordRuntimeHealthIssue({
+		source: "startup_config",
+		severity: "warning",
+		error: new Error(
+			`Invalid ASTRO_STREAM_PORT "${process.env.ASTRO_STREAM_PORT}", falling back to ${port}.`,
+		),
+	});
+} else {
+	persistRuntimeHealthSnapshot();
+}
+
+if (process.env.ASTRO_STREAM_BOOTSTRAP_ERROR) {
+	let bootstrapError: unknown = process.env.ASTRO_STREAM_BOOTSTRAP_ERROR;
+	try {
+		const parsed = JSON.parse(process.env.ASTRO_STREAM_BOOTSTRAP_ERROR);
+		const error = new Error(
+			typeof parsed?.message === "string" ? parsed.message : process.env.ASTRO_STREAM_BOOTSTRAP_ERROR,
+		);
+		error.name = typeof parsed?.name === "string" && parsed.name ? parsed.name : "StartupBootstrapError";
+		if (typeof parsed?.stack === "string") {
+			error.stack = parsed.stack;
+		}
+		bootstrapError = error;
+	} catch {
+		// Keep the raw serialized value.
+	}
+	recordRuntimeHealthIssue({
+		source: "startup_bootstrap",
+		severity: "fatal",
+		error: bootstrapError,
+	});
+}
+
+function ensureMainsequenceRefreshLoopStarted() {
+	if (mainsequenceRefreshLoopStarted) return;
+	mainsequenceRefreshLoop = startMainsequenceRefreshLoop({
+		env: process.env,
+		log: (message) => console.error(`[astro] ${message}`),
+	});
+	mainsequenceRefreshLoopStarted = true;
+}
+
+process.once("exit", () => {
+	mainsequenceRefreshLoop?.stop();
+});
+
+process.on("uncaughtException", (error, origin) => {
+	const issue = recordRuntimeHealthIssue({
+		source: "uncaught_exception",
+		severity: "fatal",
+		error,
+		context: { origin },
+	});
+	console.error(`[astro-stream] captured uncaught exception issue=${issue.id}: ${issue.message}`);
+});
+
+process.on("unhandledRejection", (reason) => {
+	const issue = recordRuntimeHealthIssue({
+		source: "unhandled_rejection",
+		severity: "fatal",
+		error: reason,
+	});
+	console.error(`[astro-stream] captured unhandled rejection issue=${issue.id}: ${issue.message}`);
+});
 
 type RequestContext = {
 	res: import("node:http").ServerResponse;
@@ -482,13 +713,14 @@ async function ensureRequestCliAuth(
 			env: process.env,
 			log: (message) => console.log(`[astro] ${message}`),
 		});
+		ensureMainsequenceRefreshLoopStarted();
 		return { ok: true };
 	} catch (error) {
 		const message =
 			error instanceof Error ? error.message : "Unknown Main Sequence CLI auth bootstrap failure.";
 		json(res, 503, {
 			error: "runtime_auth_unavailable",
-			message: `Deterministic Main Sequence CLI login failed before the session started: ${message}`,
+			message: `Main Sequence runtime auth failed before the session started: ${message}`,
 		});
 		return { ok: false };
 	}
@@ -2648,6 +2880,16 @@ function runPiPrompt(
 		if (ctx.finished) return;
 		if (signal || (typeof code === "number" && code !== 0)) {
 			const reason = signal ? `Process exited with signal ${signal}.` : `Process exited with code ${code}.`;
+			recordRuntimeHealthIssue({
+				source: "pi_child_exit",
+				severity: "error",
+				error: new Error(reason),
+				context: {
+					agentName: ctx.agentName,
+					sessionKey: ctx.sessionKey,
+					threadId: ctx.threadId,
+				},
+			});
 			writeChunk(ctx, { type: "error", error: reason });
 			writeDone(ctx);
 			return;
@@ -2664,6 +2906,16 @@ function runPiPrompt(
 	child.on("error", (error) => {
 		ctx.piProcess = null;
 		cleanupPromptFile(promptPath);
+		recordRuntimeHealthIssue({
+			source: "pi_child_error",
+			severity: "error",
+			error,
+			context: {
+				agentName: ctx.agentName,
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId,
+			},
+		});
 		if (ctx.switching) return;
 		if (!ctx.finished) {
 			writeChunk(ctx, { type: "error", error: error.message });
@@ -2672,7 +2924,34 @@ function runPiPrompt(
 	});
 }
 
-const server = createServer(async (req, res) => {
+const server = createServer((req, res) => {
+	void handleStreamRequest(req, res).catch((error) => {
+		const issue = recordRuntimeHealthIssue({
+			source: "http_request",
+			severity: "error",
+			error,
+			context: {
+				method: req.method ?? null,
+				url: req.url ?? null,
+			},
+		});
+		console.error(`[astro-stream] request failed issue=${issue.id}: ${issue.message}`);
+		if (!res.headersSent) {
+			json(res, 500, {
+				error: "internal_error",
+				message: "The stream service encountered an unexpected error.",
+				health_issue_id: issue.id,
+			});
+			return;
+		}
+		res.destroy(error instanceof Error ? error : undefined);
+	});
+});
+
+async function handleStreamRequest(
+	req: import("node:http").IncomingMessage,
+	res: import("node:http").ServerResponse,
+) {
 	const normalizedReqUrl = normalizePossiblyEncodedChatUrl(req.url);
 	const url = new URL(normalizedReqUrl, `http://${req.headers.host ?? host}`);
 	registerHttpAccessLog(req, res, url);
@@ -2693,7 +2972,7 @@ const server = createServer(async (req, res) => {
 	}
 
 	if (req.method === "GET" && url.pathname === "/health") {
-		json(res, 200, { ok: true });
+		json(res, 200, buildRuntimeHealthSnapshot());
 		return;
 	}
 
@@ -3738,6 +4017,38 @@ const server = createServer(async (req, res) => {
 				  })
 				: undefined,
 	});
+}
+
+server.on("clientError", (error, socket) => {
+	const remoteSocket = socket as typeof socket & {
+		remoteAddress?: string;
+		remotePort?: number;
+	};
+	const issue = recordRuntimeHealthIssue({
+		source: "http_client_error",
+		severity: "warning",
+		error,
+		context: {
+			remoteAddress: remoteSocket.remoteAddress ?? null,
+			remotePort: remoteSocket.remotePort ?? null,
+		},
+	});
+	if (logTraffic) {
+		console.log(`[astro-stream] client error issue=${issue.id}: ${issue.message}`);
+	}
+	if (socket.writable) {
+		socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
+	}
+});
+
+server.on("error", (error) => {
+	const issue = recordRuntimeHealthIssue({
+		source: "http_server",
+		severity: "fatal",
+		error,
+		context: { host, port },
+	});
+	console.error(`[astro-stream] server error issue=${issue.id}: ${issue.message}`);
 });
 
 server.listen(port, host, () => {

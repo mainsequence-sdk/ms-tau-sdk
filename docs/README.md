@@ -98,6 +98,7 @@ AGENTS --> CODER["mainsequence-project-coder"]
 - [`reference/adr-interactive-provider-signin.md`](./reference/adr-interactive-provider-signin.md)
 - [`reference/adr-pvc-volume-layout.md`](./reference/adr-pvc-volume-layout.md)
 - [`reference/adr-remote-model-providers.md`](./reference/adr-remote-model-providers.md)
+- [`reference/adr-runtime-credential-auth.md`](./reference/adr-runtime-credential-auth.md)
 - [`reference/adr-session-usage-and-context.md`](./reference/adr-session-usage-and-context.md)
 - [`reference/folder-structure.md`](./reference/folder-structure.md)
 - [`reference/decisions.md`](./reference/decisions.md)

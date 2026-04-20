@@ -24,20 +24,24 @@ Astro's runtime lives in:
 
 Starts Astro through the local package setup.
 
-It loads `.env` from the repo root, refreshes the Main Sequence access token, runs a blocking
-`mainsequence login --access-token ...` bootstrap before Pi starts, and then starts the Main
-Sequence token refresh loop when
+It loads `.env` from the repo root and prepares Main Sequence auth according to
+`MAINSEQUENCE_AUTH_MODE`.
+With `MAINSEQUENCE_AUTH_MODE=runtime_credential`, it validates
+`MAINSEQUENCE_RUNTIME_CREDENTIAL_ID` and `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET`, verifies the CLI
+auth state, and skips refresh-token login and token refresh.
+Token mode can still run the refresh-token login bootstrap and token refresh loop when
 `MAINSEQUENCE_TOKEN_REFRESH_INTERVAL_SECONDS` is set.
 
 ### `scripts/start_pi_stream.ts`
 
 Starts the HTTP streaming interface wrapper around the Pi process.
 
-The stream server loads `.env` on startup, refreshes the Main Sequence access token, runs the same
-blocking Main Sequence CLI login bootstrap, and then uses the same token refresh interval if
-configured.
-Before each non-mock `POST /api/chat` request, it re-runs that deterministic CLI login gate so the
-session does not begin from a stale `Not logged in` CLI state.
+The stream server loads `.env` on startup, binds the HTTP port, and keeps `GET /health`
+independent from Main Sequence auth.
+Before each non-mock `POST /api/chat` request, it runs the auth-mode-aware Main Sequence CLI gate
+so the session does not begin from a stale unauthenticated CLI state.
+Runtime credential mode skips refresh-token login and token refresh; token mode can still start the
+refresh loop after request-time auth succeeds.
 It accepts latest-turn UI requests, injects the optional UI `system`, `context`, and `tools`
 metadata into the prompt, treats `newChat: true` as a UI hint for a new conversation, registers
 the backend Agent when enabled, and uses backend AgentSession id files (fallback to `threadId` when

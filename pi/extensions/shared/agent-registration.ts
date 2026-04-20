@@ -1,7 +1,9 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { logStructuredEvent } from "./structured-logging.js";
+import { getMainsequenceAuthMode } from "../../../scripts/mainsequence_runtime_auth.js";
 
 type AgentRole = "orchestrator" | "specialist";
 
@@ -49,6 +51,8 @@ type MainsequenceCredentials = {
 	accessToken: string | null;
 	refreshToken: string | null;
 };
+
+type BackendAuthHeaders = Record<string, string>;
 
 export function shouldRegisterAgents(env: NodeJS.ProcessEnv = process.env): boolean {
 	return /^(1|true|yes|on)$/i.test(env.BUILD_AGENTS_IN_BACKEND ?? "");
@@ -165,7 +169,13 @@ export function resolveMainsequenceUserId(options: {
 
 	if (jwtUserId) return jwtUserId;
 
-	options.log?.("Could not resolve Main Sequence user id from request context, env, or tokens.");
+	if (getMainsequenceAuthMode(env) === "runtime_credential") {
+		options.log?.(
+			"Could not resolve Main Sequence user id. Runtime credential auth does not expose a JWT user id; pass userId in the request or set ASTRO_MAINSEQUENCE_USER_ID.",
+		);
+	} else {
+		options.log?.("Could not resolve Main Sequence user id from request context, env, or tokens.");
+	}
 	return null;
 }
 
@@ -228,15 +238,110 @@ async function resolveAccessToken(
 	return { token: null, error: refreshResult.error ?? "Token refresh failed." };
 }
 
+function buildMainsequenceSdkEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+	const backendUrl = resolveBackendUrl(env);
+	return {
+		...env,
+		MAINSEQUENCE_ENDPOINT: env.MAINSEQUENCE_ENDPOINT ?? backendUrl,
+		TDAG_ENDPOINT: env.TDAG_ENDPOINT ?? backendUrl,
+	};
+}
+
+function normalizeBackendAuthHeaders(value: unknown): BackendAuthHeaders | null {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+	const headers: BackendAuthHeaders = {};
+	for (const [key, rawValue] of Object.entries(value)) {
+		if (!key.trim() || typeof rawValue !== "string" || !rawValue.trim()) continue;
+		headers[key] = rawValue;
+	}
+	return Object.keys(headers).length > 0 ? headers : null;
+}
+
+function resolveRuntimeCredentialAuthHeaders(
+	env: NodeJS.ProcessEnv,
+	log?: (message: string) => void,
+): { headers: BackendAuthHeaders | null; error: string | null } {
+	const script = [
+		"import json",
+		"from mainsequence.client.utils import get_authorization_headers",
+		"print(json.dumps(dict(get_authorization_headers())))",
+	].join("; ");
+	const result = spawnSync("python3", ["-c", script], {
+		stdio: ["ignore", "pipe", "pipe"],
+		env: buildMainsequenceSdkEnv(env),
+		encoding: "utf8",
+	});
+
+	if (result.error) {
+		const message =
+			(result.error as NodeJS.ErrnoException).code === "ENOENT"
+				? "Missing required command: python3"
+				: result.error.message;
+		log?.(`Runtime credential auth header resolution failed: ${message}`);
+		return { headers: null, error: message };
+	}
+
+	if (result.status !== 0) {
+		const stderr = result.stderr.trim();
+		const stdout = result.stdout.trim();
+		const message =
+			stderr || stdout || `mainsequence SDK auth header resolution failed with code ${result.status ?? 1}.`;
+		log?.(`Runtime credential auth header resolution failed: ${message}`);
+		return { headers: null, error: message };
+	}
+
+	try {
+		const lastJsonLine = result.stdout
+			.split(/\r?\n/)
+			.map((line) => line.trim())
+			.filter(Boolean)
+			.at(-1);
+		const headers = normalizeBackendAuthHeaders(JSON.parse(lastJsonLine ?? ""));
+		if (!headers) {
+			return {
+				headers: null,
+				error: "Main Sequence SDK did not return authorization headers for runtime credential auth.",
+			};
+		}
+		return { headers, error: null };
+	} catch (error) {
+		const message = error instanceof Error ? error.message : "invalid JSON";
+		return {
+			headers: null,
+			error: `Could not parse Main Sequence SDK auth headers: ${message}`,
+		};
+	}
+}
+
+async function resolveBackendAuthHeaders(
+	env: NodeJS.ProcessEnv,
+	log?: (message: string) => void,
+): Promise<{ headers: BackendAuthHeaders | null; error: string | null }> {
+	if (getMainsequenceAuthMode(env) === "runtime_credential") {
+		return resolveRuntimeCredentialAuthHeaders(env, log);
+	}
+
+	const accessTokenResult = await resolveAccessToken(env, log);
+	if (!accessTokenResult.token) {
+		return { headers: null, error: accessTokenResult.error };
+	}
+	return {
+		headers: {
+			Authorization: `Bearer ${accessTokenResult.token}`,
+		},
+		error: null,
+	};
+}
+
 async function postGetOrCreateAgent(options: {
 	backendUrl: string;
-	accessToken: string;
+	authHeaders: BackendAuthHeaders;
 	payload: Record<string, unknown>;
 }): Promise<Response> {
 	return fetch(`${options.backendUrl}/orm/api/agents/v1/agents/get_or_create/`, {
 		method: "POST",
 		headers: {
-			Authorization: `Bearer ${options.accessToken}`,
+			...options.authHeaders,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify(options.payload),
@@ -245,14 +350,14 @@ async function postGetOrCreateAgent(options: {
 
 async function postStartAgentSession(options: {
 	backendUrl: string;
-	accessToken: string;
+	authHeaders: BackendAuthHeaders;
 	agentId: number;
 	payload: Record<string, unknown>;
 }): Promise<Response> {
 	return fetch(`${options.backendUrl}/orm/api/agents/v1/agents/${options.agentId}/start_new_session/`, {
 		method: "POST",
 		headers: {
-			Authorization: `Bearer ${options.accessToken}`,
+			...options.authHeaders,
 			"Content-Type": "application/json",
 		},
 		body: JSON.stringify(options.payload),
@@ -261,12 +366,12 @@ async function postStartAgentSession(options: {
 
 async function getAgentSessionByEndpoint(options: {
 	endpoint: string;
-	accessToken: string;
+	authHeaders: BackendAuthHeaders;
 }): Promise<Response> {
 	return fetch(options.endpoint, {
 		method: "GET",
 		headers: {
-			Authorization: `Bearer ${options.accessToken}`,
+			...options.authHeaders,
 			"Content-Type": "application/json",
 		},
 	});
@@ -348,18 +453,18 @@ export async function registerMainsequenceAgent(
 	});
 	const backendUrl = resolveBackendUrl(runtimeEnv);
 
-	const accessTokenResult = await resolveAccessToken(runtimeEnv, log);
-	if (!accessTokenResult.token) {
+	const authHeadersResult = await resolveBackendAuthHeaders(runtimeEnv, log);
+	if (!authHeadersResult.headers) {
 		log?.(
 			`Agent registration failed for "${safeAgentName}": ${
-				accessTokenResult.error ?? "missing access token"
+				authHeadersResult.error ?? "missing backend auth headers"
 			}.`,
 		);
 		return {
 			ok: false,
 			exitCode: null,
 			stdout: "",
-			stderr: accessTokenResult.error ?? "Missing access token for agent get_or_create.",
+			stderr: authHeadersResult.error ?? "Missing backend auth headers for agent get_or_create.",
 			agentId: null,
 			agentUniqueId,
 			userId: resolvedUserId,
@@ -373,17 +478,16 @@ export async function registerMainsequenceAgent(
 
 	let response = await postGetOrCreateAgent({
 		backendUrl,
-		accessToken: accessTokenResult.token,
+		authHeaders: authHeadersResult.headers,
 		payload,
 	});
 
 	if (response.status === 401 || response.status === 403) {
-		const refreshedAccessToken = await resolveAccessToken(runtimeEnv, log);
-		if (refreshedAccessToken.token) {
-			const nextAccessToken = refreshedAccessToken.token;
+		const refreshedAuthHeaders = await resolveBackendAuthHeaders(runtimeEnv, log);
+		if (refreshedAuthHeaders.headers) {
 			response = await postGetOrCreateAgent({
 				backendUrl,
-				accessToken: nextAccessToken,
+				authHeaders: refreshedAuthHeaders.headers,
 				payload,
 			});
 		}
@@ -449,31 +553,31 @@ export async function startBackendAgentSession(options: {
 }): Promise<AgentSessionResult> {
 	const runtimeEnv = options.env ?? process.env;
 	const backendUrl = resolveBackendUrl(runtimeEnv);
-	const accessTokenResult = await resolveAccessToken(runtimeEnv, options.log);
+	const authHeadersResult = await resolveBackendAuthHeaders(runtimeEnv, options.log);
 
-	if (!accessTokenResult.token) {
+	if (!authHeadersResult.headers) {
 		return {
 			ok: false,
 			status: null,
 			body: null,
-			error: accessTokenResult.error ?? "Missing access token for agent session creation.",
+			error: authHeadersResult.error ?? "Missing backend auth headers for agent session creation.",
 			agentSessionId: null,
 		};
 	}
 
 	let response = await postStartAgentSession({
 		backendUrl,
-		accessToken: accessTokenResult.token,
+		authHeaders: authHeadersResult.headers,
 		agentId: options.agentId,
 		payload: options.payload,
 	});
 
 	if (response.status === 401 || response.status === 403) {
-		const refreshedAccessToken = await resolveAccessToken(runtimeEnv, options.log);
-		if (refreshedAccessToken.token) {
+		const refreshedAuthHeaders = await resolveBackendAuthHeaders(runtimeEnv, options.log);
+		if (refreshedAuthHeaders.headers) {
 			response = await postStartAgentSession({
 				backendUrl,
-				accessToken: refreshedAccessToken.token,
+				authHeaders: refreshedAuthHeaders.headers,
 				agentId: options.agentId,
 				payload: options.payload,
 			});
@@ -554,23 +658,23 @@ export async function fetchBackendAgentSession(options: {
 		};
 	}
 
-	const accessTokenResult = await resolveAccessToken(runtimeEnv, options.log);
-	if (!accessTokenResult.token) {
+	const authHeadersResult = await resolveBackendAuthHeaders(runtimeEnv, options.log);
+	if (!authHeadersResult.headers) {
 		logStructuredEvent({
 			severity: "ERROR",
 			component: "agent-registration",
-			event: "backend_session_fetch_missing_access_token",
-			message: "Backend agent session fetch failed before the request because no access token was available.",
+			event: "backend_session_fetch_missing_auth_headers",
+			message: "Backend agent session fetch failed before the request because no backend auth headers were available.",
 			data: {
 				agentSessionId: normalizedSessionId,
-				error: accessTokenResult.error ?? "missing access token",
+				error: authHeadersResult.error ?? "missing backend auth headers",
 			},
 		});
 		return {
 			ok: false,
 			status: null,
 			body: null,
-			error: accessTokenResult.error ?? "Missing access token for backend session fetch.",
+			error: authHeadersResult.error ?? "Missing backend auth headers for backend session fetch.",
 			agentSessionId: normalizedSessionId,
 			notFound: false,
 			endpoint: null,
@@ -597,15 +701,15 @@ export async function fetchBackendAgentSession(options: {
 		});
 		let response = await getAgentSessionByEndpoint({
 			endpoint,
-			accessToken: accessTokenResult.token,
+			authHeaders: authHeadersResult.headers,
 		});
 
 		if (response.status === 401 || response.status === 403) {
-			const refreshedAccessToken = await resolveAccessToken(runtimeEnv, options.log);
-			if (refreshedAccessToken.token) {
+			const refreshedAuthHeaders = await resolveBackendAuthHeaders(runtimeEnv, options.log);
+			if (refreshedAuthHeaders.headers) {
 				response = await getAgentSessionByEndpoint({
 					endpoint,
-					accessToken: refreshedAccessToken.token,
+					authHeaders: refreshedAuthHeaders.headers,
 				});
 			}
 		}
