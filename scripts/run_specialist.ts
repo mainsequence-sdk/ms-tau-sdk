@@ -10,7 +10,7 @@ import {
 	buildMainsequenceStoredAuthEnv,
 	bootstrapMainsequenceCliAuth,
 	loadEnvFile,
-	startMainsequenceRefreshLoop,
+	startMainsequenceCredentialExchangeLoop,
 } from "./mainsequence_runtime_auth.js";
 
 interface ParsedArgs {
@@ -130,7 +130,7 @@ async function main() {
 	args.push("--append-system-prompt", promptPath);
 	if (task) args.push("-p", "--no-session", task);
 
-	const refreshLoop = startMainsequenceRefreshLoop({
+	const credentialExchangeLoop = startMainsequenceCredentialExchangeLoop({
 		env: process.env,
 		log: (message) => console.error(`[astro] ${message}`),
 	});
@@ -149,13 +149,13 @@ async function main() {
 
 	proc.on("close", (code) => {
 		cleanupPromptFile(promptPath);
-		refreshLoop?.stop();
+		credentialExchangeLoop?.stop();
 		process.exit(code ?? 0);
 	});
 
 	proc.on("error", (error: NodeJS.ErrnoException) => {
 		cleanupPromptFile(promptPath);
-		refreshLoop?.stop();
+		credentialExchangeLoop?.stop();
 		if (error.code === "ENOENT") fail("Pi CLI is not installed or not on your PATH.");
 		fail(error.message);
 	});

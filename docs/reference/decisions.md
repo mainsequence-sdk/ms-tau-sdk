@@ -202,8 +202,8 @@ Implementation:
 
 Why:
 
-- deployed coding-agent pods authenticate with runtime credentials instead of user refresh tokens
-- the stream runtime must not block startup on `MAINSEQUENCE_REFRESH_TOKEN` when
+- deployed coding-agent pods authenticate with runtime credentials
+- the stream runtime must not block startup on legacy auth when
   `MAINSEQUENCE_AUTH_MODE=runtime_credential`
 - child `pi`, specialist, and project setup processes need the same runtime credential env as the
   parent process

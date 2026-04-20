@@ -16,8 +16,9 @@ The current implementation collects models from:
 - Ollama, when `OLLAMA_HOST` is configured
 
 The endpoint is source-aware and supports partial failure.
-If Ollama is unavailable, Pi-registry-backed models can still be returned and the Ollama failure
-appears in the `sources` list.
+If `OLLAMA_HOST` is not configured, Ollama is omitted from the `sources` list.
+If `OLLAMA_HOST` is configured but unavailable, Pi-registry-backed models can still be returned and
+the Ollama failure appears in the `sources` list.
 
 ## Response shape
 
@@ -125,6 +126,7 @@ appears in the `sources` list.
 - the endpoint does not synthesize a fake default provider/model entry when no auth-backed Pi model
   is available
 - Ollama discovery uses `GET <OLLAMA_HOST>/api/tags`, then enriches each listed model with `POST <OLLAMA_HOST>/api/show`
+- when `OLLAMA_HOST` is not configured, the endpoint does not include an Ollama source entry
 - if `OLLAMA_HOST` includes `/v1`, Astro strips that suffix before calling the Ollama native `/api/*` routes
 - `defaults.runConfig` describes the default runtime settings Astro would use for that model
 - `capabilities.runConfig.reasoning_effort` describes only the reasoning controls Astro can support

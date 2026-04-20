@@ -6,8 +6,8 @@
 npm run pi
 ```
 
-The launch script loads `.env` from the repo root (if present) and starts the Main Sequence token
-refresh loop when `MAINSEQUENCE_TOKEN_REFRESH_INTERVAL_SECONDS` is set.
+The launch script loads `.env` from the repo root (if present) and prepares Main Sequence auth for
+the configured auth mode.
 
 ## Run Astro over HTTP stream
 

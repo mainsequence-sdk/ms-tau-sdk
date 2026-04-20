@@ -11,7 +11,7 @@ Provide the deterministic Main Sequence backend registration and backend session
 - decide whether backend registration is enabled
 - resolve the Main Sequence user id
 - build deterministic `agent_unique_id` values
-- refresh backend access tokens
+- resolve backend auth headers from runtime credentials
 - call backend `get_or_create`
 - call backend `start_new_session`
 
@@ -28,8 +28,9 @@ The helper can read credentials from:
 
 - explicit user id passed by the caller
 - `ASTRO_MAINSEQUENCE_USER_ID`
-- JWT payloads in env tokens
-- persisted auth at `ASTRO_MAINSEQUENCE_CONFIG_DIR/auth.json`
+
+Backend API authentication is resolved through Main Sequence runtime credentials. Astro does
+not use user token env vars for backend registration.
 
 ## Main exports
 

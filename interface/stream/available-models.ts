@@ -427,12 +427,7 @@ export class OllamaModelCollector implements AvailableModelCollector {
 	async collect(context: Required<AvailableModelContext>): Promise<AvailableModelCollectionResult> {
 		const host = resolveOllamaHost(context.env);
 		if (!host) {
-			return {
-				source: this.source,
-				ok: false,
-				models: [],
-				error: "OLLAMA_HOST is not configured.",
-			};
+			return { source: this.source, ok: true, models: [] };
 		}
 
 		let response: Response;
@@ -512,6 +507,18 @@ export function getAvailableModelCollectors(): AvailableModelCollector[] {
 	return [new PiAvailableModelCollector(), new OllamaModelCollector()];
 }
 
+function getEnabledAvailableModelCollectors(
+	context: Required<AvailableModelContext>,
+	collectors: AvailableModelCollector[],
+): AvailableModelCollector[] {
+	return collectors.filter((collector) => {
+		if (collector.source === "ollama") {
+			return Boolean(resolveOllamaHost(context.env));
+		}
+		return true;
+	});
+}
+
 export async function collectAvailableModels(
 	context: AvailableModelContext = {},
 	collectors: AvailableModelCollector[] = getAvailableModelCollectors(),
@@ -522,9 +529,10 @@ export async function collectAvailableModels(
 		defaultOpenAiProvider: context.defaultOpenAiProvider ?? DEFAULT_OPENAI_PROVIDER,
 		defaultOpenAiModel: context.defaultOpenAiModel ?? DEFAULT_OPENAI_MODEL,
 	};
+	const enabledCollectors = getEnabledAvailableModelCollectors(resolvedContext, collectors);
 
 	const results = await Promise.all(
-		collectors.map(async (collector): Promise<AvailableModelCollectionResult> => {
+		enabledCollectors.map(async (collector): Promise<AvailableModelCollectionResult> => {
 			try {
 				return await collector.collect(resolvedContext);
 			} catch (error) {

@@ -7,7 +7,7 @@ export default function (pi: ExtensionAPI) {
 		name: "ensure_mainsequence_cli_auth",
 		label: "Ensure Main Sequence CLI Auth",
 		description:
-			"Repair or refresh the runtime-managed Main Sequence CLI login for this agent session. Use this when a mainsequence command reports auth failure, then retry the blocked command.",
+			"Repair or re-run the runtime-managed Main Sequence CLI login for this agent session. Use this when a mainsequence command reports auth failure, then retry the blocked command.",
 		promptSnippet:
 			"ensure_mainsequence_cli_auth: repair runtime-managed Main Sequence CLI auth before retrying a blocked mainsequence command",
 		promptGuidelines: [

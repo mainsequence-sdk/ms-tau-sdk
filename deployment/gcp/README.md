@@ -187,7 +187,7 @@ Provide production Main Sequence auth through your existing secret path:
 - `MAINSEQUENCE_RUNTIME_CREDENTIAL_ID`
 - `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET`
 
-Do not provide `MAINSEQUENCE_REFRESH_TOKEN` for runtime credential mode.
+Only the runtime credential env vars are required for Main Sequence auth.
 
 ### Build-Time Note
 

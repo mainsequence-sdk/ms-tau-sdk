@@ -321,8 +321,10 @@ Current sources:
 - Pi's actual available model registry, filtered to Astro-supported providers
 - Ollama models discovered from `OLLAMA_HOST` with `/api/tags` plus per-model `/api/show`, when configured
 
-The response is source-aware and supports partial failure. If Ollama discovery fails, the endpoint
-can still return Pi-registry-backed models plus an error entry for the Ollama source.
+The response is source-aware and supports partial failure.
+If `OLLAMA_HOST` is not configured, the Ollama source is omitted.
+If Ollama discovery fails after `OLLAMA_HOST` is configured, the endpoint can still return
+Pi-registry-backed models plus an error entry for the Ollama source.
 Auth-backed Pi models only appear here when they are executable right now. Known-but-signed-off
 models remain visible in `GET /api/models/catalog` instead.
 

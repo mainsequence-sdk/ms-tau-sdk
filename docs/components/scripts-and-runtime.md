@@ -27,10 +27,9 @@ Starts Astro through the local package setup.
 It loads `.env` from the repo root and prepares Main Sequence auth according to
 `MAINSEQUENCE_AUTH_MODE`.
 With `MAINSEQUENCE_AUTH_MODE=runtime_credential`, it validates
-`MAINSEQUENCE_RUNTIME_CREDENTIAL_ID` and `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET`, verifies the CLI
-auth state, and skips refresh-token login and token refresh.
-Token mode can still run the refresh-token login bootstrap and token refresh loop when
-`MAINSEQUENCE_TOKEN_REFRESH_INTERVAL_SECONDS` is set.
+`MAINSEQUENCE_RUNTIME_CREDENTIAL_ID` and `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET`, exchanges the
+runtime credential through the CLI, verifies the updated CLI auth state, and re-exchanges it on
+the configured interval.
 
 ### `scripts/start_pi_stream.ts`
 
@@ -40,8 +39,10 @@ The stream server loads `.env` on startup, binds the HTTP port, and keeps `GET /
 independent from Main Sequence auth.
 Before each non-mock `POST /api/chat` request, it runs the auth-mode-aware Main Sequence CLI gate
 so the session does not begin from a stale unauthenticated CLI state.
-Runtime credential mode skips refresh-token login and token refresh; token mode can still start the
-refresh loop after request-time auth succeeds.
+Runtime credential mode updates the CLI auth store by re-exchanging the runtime credential.
+Spawned agent processes inherit the runtime credential env and the shared CLI auth-store location.
+They do not inherit legacy Main Sequence auth env vars, which prevents a long-running agent process
+from overriding the runtime-managed auth store.
 It accepts latest-turn UI requests, injects the optional UI `system`, `context`, and `tools`
 metadata into the prompt, treats `newChat: true` as a UI hint for a new conversation, registers
 the backend Agent when enabled, and uses backend AgentSession id files (fallback to `threadId` when

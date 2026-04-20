@@ -4,7 +4,7 @@ Source: [`pi/extensions/tools/mainsequence-cli-auth/index.ts`](../../../pi/exten
 
 ## Purpose
 
-Repair or refresh Astro's runtime-managed Main Sequence CLI login for the current agent session.
+Repair or re-run Astro's runtime-managed Main Sequence CLI login for the current agent session.
 
 ## When to use it
 

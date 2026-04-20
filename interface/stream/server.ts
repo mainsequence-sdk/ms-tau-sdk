@@ -68,7 +68,7 @@ import {
 	buildMainsequenceStoredAuthEnv,
 	bootstrapMainsequenceCliAuth,
 	loadEnvFile,
-	startMainsequenceRefreshLoop,
+	startMainsequenceCredentialExchangeLoop,
 } from "../../scripts/mainsequence_runtime_auth.js";
 import {
 	bootstrapProjectCoderRuntime,
@@ -103,8 +103,8 @@ const runtimeHealthStatePath =
 			: path.join(repoRoot, ".astro"),
 		"stream-health.json",
 	);
-let mainsequenceRefreshLoop: ReturnType<typeof startMainsequenceRefreshLoop> | null = null;
-let mainsequenceRefreshLoopStarted = false;
+let mainsequenceCredentialExchangeLoop: ReturnType<typeof startMainsequenceCredentialExchangeLoop> | null = null;
+let mainsequenceCredentialExchangeLoopStarted = false;
 
 type RuntimeHealthSeverity = "warning" | "error" | "fatal";
 
@@ -307,17 +307,17 @@ if (process.env.ASTRO_STREAM_BOOTSTRAP_ERROR) {
 	});
 }
 
-function ensureMainsequenceRefreshLoopStarted() {
-	if (mainsequenceRefreshLoopStarted) return;
-	mainsequenceRefreshLoop = startMainsequenceRefreshLoop({
+function ensureMainsequenceCredentialExchangeLoopStarted() {
+	if (mainsequenceCredentialExchangeLoopStarted) return;
+	mainsequenceCredentialExchangeLoop = startMainsequenceCredentialExchangeLoop({
 		env: process.env,
 		log: (message) => console.error(`[astro] ${message}`),
 	});
-	mainsequenceRefreshLoopStarted = true;
+	mainsequenceCredentialExchangeLoopStarted = true;
 }
 
 process.once("exit", () => {
-	mainsequenceRefreshLoop?.stop();
+	mainsequenceCredentialExchangeLoop?.stop();
 });
 
 process.on("uncaughtException", (error, origin) => {
@@ -713,7 +713,7 @@ async function ensureRequestCliAuth(
 			env: process.env,
 			log: (message) => console.log(`[astro] ${message}`),
 		});
-		ensureMainsequenceRefreshLoopStarted();
+		ensureMainsequenceCredentialExchangeLoopStarted();
 		return { ok: true };
 	} catch (error) {
 		const message =

@@ -1,9 +1,5 @@
-import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
-import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { logStructuredEvent } from "./structured-logging.js";
-import { getMainsequenceAuthMode } from "../../../scripts/mainsequence_runtime_auth.js";
 
 type AgentRole = "orchestrator" | "specialist";
 
@@ -47,11 +43,6 @@ type RegistrationOptions = {
 
 const DEFAULT_BACKEND = "https://api.main-sequence.app";
 
-type MainsequenceCredentials = {
-	accessToken: string | null;
-	refreshToken: string | null;
-};
-
 type BackendAuthHeaders = Record<string, string>;
 
 export function shouldRegisterAgents(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -72,31 +63,6 @@ function normalizeIdPart(value: unknown): string | null {
 	return null;
 }
 
-function decodeBase64Url(value: string): string | null {
-	try {
-		const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
-		const padded = normalized.padEnd(normalized.length + ((4 - (normalized.length % 4)) % 4), "=");
-		return Buffer.from(padded, "base64").toString("utf8");
-	} catch {
-		return null;
-	}
-}
-
-function decodeJwtPayload(token: string | undefined): Record<string, unknown> | null {
-	if (!token) return null;
-	const parts = token.split(".");
-	if (parts.length !== 3) return null;
-	const decoded = decodeBase64Url(parts[1]);
-	if (!decoded) return null;
-
-	try {
-		const parsed = JSON.parse(decoded);
-		return parsed && typeof parsed === "object" ? parsed : null;
-	} catch {
-		return null;
-	}
-}
-
 function resolveBackendUrl(env: NodeJS.ProcessEnv): string {
 	const raw =
 		env.MAINSEQUENCE_BACKEND ||
@@ -106,45 +72,6 @@ function resolveBackendUrl(env: NodeJS.ProcessEnv): string {
 		DEFAULT_BACKEND;
 
 	return raw.replace(/\/+$/, "");
-}
-
-function normalizeMainsequenceToken(value: unknown): string | null {
-	if (typeof value !== "string") return null;
-	const trimmed = value.trim();
-	return trimmed ? trimmed : null;
-}
-
-function resolveMainsequenceAuthStorePath(env: NodeJS.ProcessEnv): string {
-	const configuredDir = env.ASTRO_MAINSEQUENCE_CONFIG_DIR?.trim();
-	if (configuredDir) {
-		return path.join(path.resolve(configuredDir), "auth.json");
-	}
-
-	const homeDir = env.HOME?.trim() || homedir();
-	return path.join(homeDir, ".config", "mainsequence", "auth.json");
-}
-
-function readPersistedMainsequenceAuth(env: NodeJS.ProcessEnv): MainsequenceCredentials {
-	const authPath = resolveMainsequenceAuthStorePath(env);
-	if (!existsSync(authPath)) {
-		return {
-			accessToken: null,
-			refreshToken: null,
-		};
-	}
-
-	try {
-		const parsed = JSON.parse(readFileSync(authPath, "utf8")) as Record<string, unknown>;
-		return {
-			accessToken: normalizeMainsequenceToken(parsed.access),
-			refreshToken: normalizeMainsequenceToken(parsed.refresh),
-		};
-	} catch {
-		return {
-			accessToken: null,
-			refreshToken: null,
-		};
-	}
 }
 
 export function resolveMainsequenceUserId(options: {
@@ -159,23 +86,9 @@ export function resolveMainsequenceUserId(options: {
 	const envUserId = normalizeIdPart(env.ASTRO_MAINSEQUENCE_USER_ID);
 	if (envUserId) return envUserId;
 
-	const jwtPayload =
-		decodeJwtPayload(env.MAINSEQUENCE_ACCESS_TOKEN) ?? decodeJwtPayload(env.MAINSEQUENCE_REFRESH_TOKEN);
-	const jwtUserId =
-		normalizeIdPart(jwtPayload?.user_id) ??
-		normalizeIdPart(jwtPayload?.userId) ??
-		normalizeIdPart(jwtPayload?.id) ??
-		normalizeIdPart(jwtPayload?.sub);
-
-	if (jwtUserId) return jwtUserId;
-
-	if (getMainsequenceAuthMode(env) === "runtime_credential") {
-		options.log?.(
-			"Could not resolve Main Sequence user id. Runtime credential auth does not expose a JWT user id; pass userId in the request or set ASTRO_MAINSEQUENCE_USER_ID.",
-		);
-	} else {
-		options.log?.("Could not resolve Main Sequence user id from request context, env, or tokens.");
-	}
+	options.log?.(
+		"Could not resolve Main Sequence user id from runtime credential auth alone; pass userId in the request or set ASTRO_MAINSEQUENCE_USER_ID.",
+	);
 	return null;
 }
 
@@ -187,55 +100,6 @@ export function buildAgentUniqueId(options: {
 	const safeAgentName = sanitizeId(options.agentName);
 	const projectId = normalizeIdPart(options.projectId);
 	return projectId ? `${safeAgentName}_${options.userId}_${projectId}` : `${safeAgentName}_${options.userId}`;
-}
-
-async function refreshAccessToken(env: NodeJS.ProcessEnv): Promise<{ token: string | null; error: string | null }> {
-	const backendUrl = resolveBackendUrl(env);
-	const persistedCredentials = readPersistedMainsequenceAuth(env);
-	const refreshToken =
-		normalizeMainsequenceToken(env.MAINSEQUENCE_REFRESH_TOKEN) ?? persistedCredentials.refreshToken;
-	if (!refreshToken) {
-		return { token: null, error: "Missing refresh token." };
-	}
-
-	const response = await fetch(`${backendUrl}/auth/jwt-token/token/refresh/`, {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-		},
-		body: JSON.stringify({ refresh: refreshToken }),
-	});
-
-	if (!response.ok) {
-		const body = await response.text();
-		const message = body || `Refresh failed with status ${response.status}.`;
-		return { token: null, error: message };
-	}
-
-	const payload = await response.json();
-	const accessToken = typeof payload?.access === "string" && payload.access.trim() ? payload.access.trim() : null;
-	const refreshedRefreshToken =
-		typeof payload?.refresh === "string" && payload.refresh.trim() ? payload.refresh.trim() : null;
-	if (accessToken) {
-		env.MAINSEQUENCE_ACCESS_TOKEN = accessToken;
-	}
-	if (refreshedRefreshToken) {
-		env.MAINSEQUENCE_REFRESH_TOKEN = refreshedRefreshToken;
-	}
-	return accessToken
-		? { token: accessToken, error: null }
-		: { token: null, error: "Refresh response did not include access token." };
-}
-
-async function resolveAccessToken(
-	env: NodeJS.ProcessEnv,
-	log?: (message: string) => void,
-): Promise<{ token: string | null; error: string | null }> {
-	const refreshResult = await refreshAccessToken(env);
-	if (refreshResult.token) return refreshResult;
-
-	log?.(`Token refresh failed: ${refreshResult.error ?? "unknown error"}`);
-	return { token: null, error: refreshResult.error ?? "Token refresh failed." };
 }
 
 function buildMainsequenceSdkEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -317,20 +181,7 @@ async function resolveBackendAuthHeaders(
 	env: NodeJS.ProcessEnv,
 	log?: (message: string) => void,
 ): Promise<{ headers: BackendAuthHeaders | null; error: string | null }> {
-	if (getMainsequenceAuthMode(env) === "runtime_credential") {
-		return resolveRuntimeCredentialAuthHeaders(env, log);
-	}
-
-	const accessTokenResult = await resolveAccessToken(env, log);
-	if (!accessTokenResult.token) {
-		return { headers: null, error: accessTokenResult.error };
-	}
-	return {
-		headers: {
-			Authorization: `Bearer ${accessTokenResult.token}`,
-		},
-		error: null,
-	};
+	return resolveRuntimeCredentialAuthHeaders(env, log);
 }
 
 async function postGetOrCreateAgent(options: {
@@ -483,11 +334,11 @@ export async function registerMainsequenceAgent(
 	});
 
 	if (response.status === 401 || response.status === 403) {
-		const refreshedAuthHeaders = await resolveBackendAuthHeaders(runtimeEnv, log);
-		if (refreshedAuthHeaders.headers) {
+		const retryAuthHeaders = await resolveBackendAuthHeaders(runtimeEnv, log);
+		if (retryAuthHeaders.headers) {
 			response = await postGetOrCreateAgent({
 				backendUrl,
-				authHeaders: refreshedAuthHeaders.headers,
+				authHeaders: retryAuthHeaders.headers,
 				payload,
 			});
 		}
@@ -573,11 +424,11 @@ export async function startBackendAgentSession(options: {
 	});
 
 	if (response.status === 401 || response.status === 403) {
-		const refreshedAuthHeaders = await resolveBackendAuthHeaders(runtimeEnv, options.log);
-		if (refreshedAuthHeaders.headers) {
+		const retryAuthHeaders = await resolveBackendAuthHeaders(runtimeEnv, options.log);
+		if (retryAuthHeaders.headers) {
 			response = await postStartAgentSession({
 				backendUrl,
-				authHeaders: refreshedAuthHeaders.headers,
+				authHeaders: retryAuthHeaders.headers,
 				agentId: options.agentId,
 				payload: options.payload,
 			});
@@ -705,11 +556,11 @@ export async function fetchBackendAgentSession(options: {
 		});
 
 		if (response.status === 401 || response.status === 403) {
-			const refreshedAuthHeaders = await resolveBackendAuthHeaders(runtimeEnv, options.log);
-			if (refreshedAuthHeaders.headers) {
+			const retryAuthHeaders = await resolveBackendAuthHeaders(runtimeEnv, options.log);
+			if (retryAuthHeaders.headers) {
 				response = await getAgentSessionByEndpoint({
 					endpoint,
-					authHeaders: refreshedAuthHeaders.headers,
+					authHeaders: retryAuthHeaders.headers,
 				});
 			}
 		}
