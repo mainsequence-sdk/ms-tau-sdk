@@ -35,6 +35,13 @@ Current durable subpaths:
 - `/home/appuser/.astro-container-data/.pi/agent`
   - canonical Pi runtime state inside the durable volume
   - includes Pi `auth.json`, `sessions/`, runtime `settings.json`, and helper binaries
+- `/home/appuser/.astro-container-data/.pi/project`
+  - writable materialized copy of Astro's repo-local `/app/.pi` project settings
+  - used by `astro-orchestrator` so Pi project settings lock files are never written under `/app`
+  - follows Pi's standard project settings contract: project settings are loaded from `<cwd>/.pi/settings.json`
+- `/home/appuser/.astro-container-data/astro-orchestrator-runtime`
+  - writable cwd for `astro-orchestrator` Pi processes
+  - contains `.pi -> /home/appuser/.astro-container-data/.pi/project`
 - `/home/appuser/.astro-container-data/.config/mainsequence`
   - Main Sequence CLI auth/config
 - `/home/appuser/.astro-container-data/.astro/stream-sessions`
@@ -67,13 +74,20 @@ like this:
 │               ├── known_hosts
 │               └── <project-scoped keys>
 ├── .pi/
-│   └── agent/
-│       ├── auth.json
-│       ├── sessions/
+│   ├── agent/
+│   │   ├── auth.json
+│   │   ├── sessions/
+│   │   ├── settings.json
+│   │   ├── astro-model-provider-auth.json
+│   │   ├── astro-model-provider-signin.json
+│   │   └── bin/
+│   └── project/
+│       ├── APPEND_SYSTEM.md
+│       ├── agents/
 │       ├── settings.json
-│       ├── astro-model-provider-auth.json
-│       ├── astro-model-provider-signin.json
-│       └── bin/
+│       └── skills/
+├── astro-orchestrator-runtime/
+│   └── .pi -> /home/appuser/.astro-container-data/.pi/project
 ├── .config/
 │   └── mainsequence/
 │       ├── auth.json
@@ -96,6 +110,10 @@ The intent is:
   - project-scoped checkout HOME directories used to avoid basename-only SSH key collisions
 - `.pi/agent`
   - standard Pi runtime folder inside the PVC
+- `.pi/project`
+  - writable copy of Astro's project-local Pi configuration
+- `astro-orchestrator-runtime`
+  - writable working directory used only by `astro-orchestrator`
 - `.config/mainsequence`
   - Main Sequence CLI auth and overrides
 - `.astro/stream-sessions`
@@ -149,6 +167,8 @@ For containerized Astro services:
 - set `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`
 - set `PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`
 - set `ASTRO_STREAM_SESSION_DIR=/home/appuser/.astro-container-data/.astro/stream-sessions`
+- let Astro materialize `/app/.pi` into `/home/appuser/.astro-container-data/.pi/project`
+- run `astro-orchestrator` from `/home/appuser/.astro-container-data/astro-orchestrator-runtime`
 - mount legacy migration sources read-only only when needed for one-time import
 
 If a future feature introduces new runtime state that users or developers may need to inspect later,

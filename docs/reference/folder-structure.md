@@ -75,13 +75,20 @@ the repo-local `.astro/` tree. It lives under the mounted runtime volume root:
 ```text
 /home/appuser/.astro-container-data/
 ├── .pi/
-│   └── agent/
-│       ├── auth.json
-│       ├── sessions/
+│   ├── agent/
+│   │   ├── auth.json
+│   │   ├── sessions/
+│   │   ├── settings.json
+│   │   ├── astro-model-provider-auth.json
+│   │   ├── astro-model-provider-signin.json
+│   │   └── bin/
+│   └── project/
+│       ├── APPEND_SYSTEM.md
+│       ├── agents/
 │       ├── settings.json
-│       ├── astro-model-provider-auth.json
-│       ├── astro-model-provider-signin.json
-│       └── bin/
+│       └── skills/
+├── astro-orchestrator-runtime/
+│   └── .pi -> /home/appuser/.astro-container-data/.pi/project
 ├── .config/
 │   └── mainsequence/
 │       ├── auth.json
@@ -101,3 +108,5 @@ So in deployment terms:
 - local Docker named volume `astro_container_data` simulates the PVC
 - GKE should mount the real PVC at `/home/appuser/.astro-container-data`
 - the volume root is the source of truth for all durable container runtime state
+- `astro-orchestrator` runs from the writable `astro-orchestrator-runtime` cwd so Pi lock files
+  are never written into `/app/.pi`

@@ -286,9 +286,9 @@ function ensureNodeVersion() {
 	}
 }
 
-function ensurePiCli() {
+function ensurePiCli(cwd = repoRoot) {
 	const result = spawnSync("pi", ["--version"], {
-		cwd: repoRoot,
+		cwd,
 		stdio: "ignore",
 	});
 
@@ -313,7 +313,7 @@ async function main() {
 		run("npm", ["install"]);
 	}
 
-	ensurePiCli();
+	ensurePiCli(piAgentState.orchestratorRuntime?.runtimeCwd ?? repoRoot);
 
 	if (piAgentState.hostImportDir) {
 		const importedText =
@@ -332,11 +332,12 @@ async function main() {
 
 	console.log("[astro] Starting Pi...");
 	const child = spawn("pi", [], {
-		cwd: repoRoot,
+		cwd: piAgentState.orchestratorRuntime?.runtimeCwd ?? repoRoot,
 		stdio: "inherit",
 		shell: false,
 		env: {
 			...buildStoredAuthVerificationEnv(),
+			PWD: piAgentState.orchestratorRuntime?.runtimeCwd ?? repoRoot,
 			...(runtimeUserId ? { ASTRO_MAINSEQUENCE_USER_ID: runtimeUserId } : {}),
 		},
 	});

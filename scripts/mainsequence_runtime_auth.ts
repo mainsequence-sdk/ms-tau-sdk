@@ -219,6 +219,49 @@ function clearLegacyTokenEnv(env: NodeJS.ProcessEnv = process.env) {
 	}
 }
 
+function redactRuntimeCredentialText(text: string, env: NodeJS.ProcessEnv = process.env): string {
+	let redacted = text;
+	for (const key of MAINSEQUENCE_RUNTIME_CREDENTIAL_REQUIRED_ENV) {
+		const value = env[key]?.trim();
+		if (!value) continue;
+		redacted = redacted.split(value).join(`[redacted:${key}]`);
+	}
+	return redacted;
+}
+
+function summarizeHttpBody(text: string): string {
+	const trimmed = text.replace(/\s+/g, " ").trim();
+	if (!trimmed) return "(empty body)";
+	return trimmed.length > 500 ? `${trimmed.slice(0, 500)}...` : trimmed;
+}
+
+async function diagnoseRuntimeCredentialExchangeFailure(
+	env: NodeJS.ProcessEnv = process.env,
+): Promise<string | null> {
+	const backendUrl = resolveBackendUrl(env);
+	const credentialId = env[MAINSEQUENCE_RUNTIME_CREDENTIAL_ID_ENV]?.trim() ?? "";
+	const credentialSecret = env[MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET_ENV]?.trim() ?? "";
+	if (!credentialId || !credentialSecret) return null;
+
+	try {
+		const response = await fetch(`${backendUrl}/orm/api/pods/runtime-credentials/token/`, {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({
+				credential_id: credentialId,
+				credential_secret: credentialSecret,
+			}),
+		});
+		if (response.ok) {
+			return "A direct runtime credential probe succeeded, but CLI persistence failed.";
+		}
+		const body = redactRuntimeCredentialText(await response.text(), env);
+		return `Direct runtime credential probe returned HTTP ${response.status}: ${summarizeHttpBody(body)}`;
+	} catch (error) {
+		return `Direct runtime credential probe failed: ${error instanceof Error ? error.message : String(error)}`;
+	}
+}
+
 export function buildMainsequenceStoredAuthEnv(
 	env: NodeJS.ProcessEnv = process.env,
 ): NodeJS.ProcessEnv {
@@ -275,13 +318,10 @@ function resolveExecutableOnPath(
 function buildMainsequenceRuntimeCredentialLoginArgs(
 	env: NodeJS.ProcessEnv = process.env,
 ): string[] {
-	return [
-		"login",
-		"--backend",
-		env.MAINSEQUENCE_BACKEND ?? "",
-		"--projects-base",
-		env.MAINSEQUENCE_PROJECTS_BASE ?? "",
-	];
+	const args = ["login", "--backend", resolveBackendUrl(env)];
+	const projectsBase = env.MAINSEQUENCE_PROJECTS_BASE?.trim();
+	if (projectsBase) args.push("--projects-base", projectsBase);
+	return args;
 }
 
 function runMainsequenceRuntimeCredentialLogin(
@@ -290,9 +330,10 @@ function runMainsequenceRuntimeCredentialLogin(
 	repairMainsequenceCliPathConfig(env);
 	clearLegacyTokenEnv(env);
 	const loginResult = spawnSync("mainsequence", buildMainsequenceRuntimeCredentialLoginArgs(env), {
-		stdio: "inherit",
+		stdio: ["ignore", "pipe", "pipe"],
 		shell: false,
 		env: buildMainsequenceStoredAuthEnv(env),
+		encoding: "utf8",
 	});
 
 	if (loginResult.error) {
@@ -304,7 +345,7 @@ function runMainsequenceRuntimeCredentialLogin(
 	if (loginResult.status !== 0) {
 		return {
 			ok: false,
-			error: `mainsequence runtime credential login failed with code ${loginResult.status ?? 1}.`,
+			error: `mainsequence runtime credential login failed (${redactRuntimeCredentialText(summarizeSpawnSyncFailure(loginResult), env)}).`,
 		};
 	}
 
@@ -371,7 +412,10 @@ export async function bootstrapMainsequenceCliAuth(options: {
 	options.log?.("Exchanging runtime credential before CLI auth verification.");
 	const loginResult = runMainsequenceRuntimeCredentialLogin(env);
 	if ("error" in loginResult) {
-		throw new Error(`Main Sequence runtime credential auth failed: ${loginResult.error}`);
+		const detail = await diagnoseRuntimeCredentialExchangeFailure(env);
+		throw new Error(
+			`Main Sequence runtime credential auth failed: ${loginResult.error}${detail ? ` ${detail}` : ""}`,
+		);
 	}
 	const verifyResult = verifyMainsequenceCliAuthStore(env);
 	if ("error" in verifyResult) {

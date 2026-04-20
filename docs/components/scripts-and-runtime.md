@@ -128,6 +128,9 @@ The repo root `docker-compose.yml` wraps those targets as two services:
   - migrates legacy repo-local runtime state into the volume once, then merges `auth.json` and
     `sessions/` from the host Pi source and stops reimporting it
   - writes a runtime-local `settings.json` into `/home/appuser/.astro-container-data/.pi/agent`
+  - materializes the repo-local `/app/.pi` project settings into `/home/appuser/.astro-container-data/.pi/project`
+  - runs `astro-orchestrator` from `/home/appuser/.astro-container-data/astro-orchestrator-runtime`
+    with `.pi` symlinked to the writable project settings copy
   - preserves Astro package sources like `/app` and `pi-web-access`
   - keeps `node_modules` container-local from the image layer
   - keeps durable runtime state under the named volume instead of the repo-local `.astro/` tree
@@ -143,6 +146,7 @@ When deploying Astro in Kubernetes, keep the same runtime shape as local Docker:
 - do not rely on host-mounted `~/.ssh`
 - let the pod generate and persist its own repo SSH keys under `/home/appuser/.astro-container-data/.ssh`
 - let Astro's checkout wrapper generate per-project SSH identities under `/home/appuser/.astro-container-data/project-checkout-runtime/project-<id>/home/.ssh`
+- let Astro run `astro-orchestrator` from `/home/appuser/.astro-container-data/astro-orchestrator-runtime`, not `/app`
 - let the same volume persist `known_hosts`, Main Sequence config, stream sessions, and project checkouts
 - use the same `tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>` wrapper in production pods
 

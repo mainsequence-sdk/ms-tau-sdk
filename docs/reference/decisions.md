@@ -160,6 +160,8 @@ Why:
 - local Docker should simulate a single-PVC deployment instead of mixing repo-local state, host Pi
   auth/session state, and one named volume
 - Pi runtime state should live under a standard `.pi/agent` folder inside the durable volume
+- the `astro-orchestrator` process should use a writable runtime cwd with a materialized `.pi`
+  copy, not `/app`, because Pi creates project settings lock files next to `.pi/settings.json`
 - legacy repo-local state should be migrated once, with host Pi `auth.json` and `sessions/` merged
   once, then the volume should become the only runtime source of truth
 

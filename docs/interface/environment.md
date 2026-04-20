@@ -9,6 +9,8 @@
 - `ASTRO_MAINSEQUENCE_CONFIG_DIR` (in containers use `/home/appuser/.astro-container-data/.config/mainsequence`)
 - `PI_CODING_AGENT_DIR` (Pi runtime state directory; in containers use `/home/appuser/.astro-container-data/.pi/agent`)
 - `ASTRO_CONTAINER_DATA_DIR` (durable container runtime root; in containers use `/home/appuser/.astro-container-data`)
+- `ASTRO_ORCHESTRATOR_CWD` (optional writable cwd override for `astro-orchestrator`; defaults to `<ASTRO_CONTAINER_DATA_DIR>/astro-orchestrator-runtime`)
+- `ASTRO_ORCHESTRATOR_PROJECT_PI_DIR` (optional writable project `.pi` override for `astro-orchestrator`; defaults to `<ASTRO_CONTAINER_DATA_DIR>/.pi/project`)
 - `ASTRO_STORAGE_SIM_TOTAL_BYTES` (optional simulated storage capacity in bytes for `GET /api/storage/usage`)
 - `ASTRO_LEGACY_REPO_STATE_DIR` (optional read-only legacy repo-local Astro state used only for one-time migration)
 - `ASTRO_LEGACY_HOST_PI_AGENT_DIR` (optional read-only host Pi source used to merge `auth.json` and `sessions/` during one-time migration)

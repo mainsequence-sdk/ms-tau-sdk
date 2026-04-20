@@ -15,6 +15,8 @@ const SAFE_LEGACY_REPO_PI_AGENT_ENTRIES = [
 const RESOURCE_ARRAY_KEYS = ["extensions", "skills", "prompts", "themes"];
 const PATH_BASED_SETTINGS_KEYS = ["packages", ...RESOURCE_ARRAY_KEYS];
 const PVC_LAYOUT_MIGRATION_VERSION = "pvc-layout-v1";
+const ASTRO_ORCHESTRATOR_CWD_ENV = "ASTRO_ORCHESTRATOR_CWD";
+const ASTRO_ORCHESTRATOR_PROJECT_PI_DIR_ENV = "ASTRO_ORCHESTRATOR_PROJECT_PI_DIR";
 
 function ensureDir(dirPath) {
 	fs.mkdirSync(dirPath, { recursive: true, mode: 0o700 });
@@ -265,6 +267,71 @@ function ensureRuntimeSettings(targetDir, hostImportDir) {
 	});
 
 	return targetSettingsPath;
+}
+
+// Pi's standard settings model is:
+// - global settings: PI_CODING_AGENT_DIR/settings.json
+// - project settings: <cwd>/.pi/settings.json
+// Containers may run with /app read-only, so Astro materializes its project-local
+// Pi config into a writable runtime cwd instead of patching Pi or writing to /app.
+function buildRuntimePiSettings(sourcePiDir, targetPiDir) {
+	const sourceSettingsPath = path.join(sourcePiDir, "settings.json");
+	const settings = relativizeSettingsForTarget(sourcePiDir, targetPiDir, readJsonFile(sourceSettingsPath));
+	const requiredPackages = [
+		relativizeResolvedPath(repoRoot, targetPiDir),
+		relativizeResolvedPath(path.join(repoRoot, "node_modules", "pi-web-access"), targetPiDir),
+	];
+
+	settings.packages = dedupeByJson([
+		...ensureArray(settings.packages),
+		...requiredPackages,
+	]);
+
+	for (const key of RESOURCE_ARRAY_KEYS) {
+		if (key in settings) {
+			settings[key] = dedupeByJson(ensureArray(settings[key]));
+		}
+	}
+
+	return settings;
+}
+
+function materializeRuntimeProjectPiDir(targetPiDir) {
+	const repoPiDir = path.join(repoRoot, ".pi");
+	removePath(targetPiDir);
+	ensureDir(path.dirname(targetPiDir));
+	fs.cpSync(repoPiDir, targetPiDir, { recursive: true, force: true });
+	writeJsonFile(path.join(targetPiDir, "settings.json"), buildRuntimePiSettings(repoPiDir, targetPiDir));
+	removePath(path.join(targetPiDir, "settings.json.lock"));
+	return targetPiDir;
+}
+
+function ensureOrchestratorRuntimeProject(options) {
+	const { containerDataRoot, targetDir } = options;
+	const runtimeRoot = containerDataRoot ?? path.join(path.resolve(targetDir), ".astro-runtime");
+	const configuredRuntimeCwd = process.env[ASTRO_ORCHESTRATOR_CWD_ENV]?.trim();
+	const configuredProjectPiDir = process.env[ASTRO_ORCHESTRATOR_PROJECT_PI_DIR_ENV]?.trim();
+	const runtimeCwd = path.resolve(
+		configuredRuntimeCwd || path.join(runtimeRoot, "astro-orchestrator-runtime"),
+	);
+	const projectPiDir = path.resolve(
+		configuredProjectPiDir || path.join(runtimeRoot, ".pi", "project"),
+	);
+
+	materializeRuntimeProjectPiDir(projectPiDir);
+	ensureDir(runtimeCwd);
+	const projectPiLink = path.join(runtimeCwd, ".pi");
+	const projectPiLinkChanged = ensureSymlink(projectPiDir, projectPiLink);
+
+	process.env[ASTRO_ORCHESTRATOR_CWD_ENV] = runtimeCwd;
+	process.env[ASTRO_ORCHESTRATOR_PROJECT_PI_DIR_ENV] = projectPiDir;
+
+	return {
+		runtimeCwd,
+		projectPiDir,
+		projectPiLink,
+		projectPiLinkChanged,
+	};
 }
 
 function ensurePersistentDirectoryLink(sourceDir, targetPath) {
@@ -665,6 +732,10 @@ export function bootstrapPiAgentDir() {
 	ensureDir(path.join(targetDir, "bin"));
 	const mainsequenceShimPath = ensureManagedMainsequenceShim(targetDir);
 	const runtimeSettingsPath = ensureRuntimeSettings(targetDir, migration.hostSettingsSourceDir);
+	const orchestratorRuntime = ensureOrchestratorRuntimeProject({
+		containerDataRoot: containerData.rootDir,
+		targetDir,
+	});
 	const mainsequenceCliConfig = ensureMainsequenceCliConfig(homeDir);
 	const piAgentHomeLink = ensurePiAgentHomeLink(homeDir, targetDir);
 	const streamSessions = ensureAstroStreamSessions(homeDir);
@@ -673,6 +744,7 @@ export function bootstrapPiAgentDir() {
 	return {
 		targetDir,
 		runtimeSettingsPath,
+		orchestratorRuntime,
 		containerData,
 		mainsequenceCliConfig,
 		piAgentHomeLink,

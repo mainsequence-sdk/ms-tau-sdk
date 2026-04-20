@@ -106,6 +106,11 @@ const runtimeHealthStatePath =
 let mainsequenceCredentialExchangeLoop: ReturnType<typeof startMainsequenceCredentialExchangeLoop> | null = null;
 let mainsequenceCredentialExchangeLoopStarted = false;
 
+function resolveOrchestratorRuntimeCwd(): string {
+	const configured = process.env.ASTRO_ORCHESTRATOR_CWD?.trim();
+	return configured ? path.resolve(configured) : repoRoot;
+}
+
 type RuntimeHealthSeverity = "warning" | "error" | "fatal";
 
 type RuntimeHealthIssue = {
@@ -2796,6 +2801,7 @@ function runPiPrompt(
 			...buildSessionModelEnv(ctx.sessionModelBinding, process.env),
 			...(scopedPiAgentDir ? { PI_CODING_AGENT_DIR: scopedPiAgentDir } : {}),
 			...(options.envOverrides ?? {}),
+			PWD: options.cwd,
 			ASTRO_TELEMETRY: "0",
 			ASTRO_MAINSEQUENCE_USER_ID: ctx.userId,
 			...(options.agentConfig
@@ -3656,7 +3662,7 @@ async function handleStreamRequest(
 	const agentCwd =
 		agentName === "mainsequence-project-coder"
 			? requestedCwd ?? existingSessionMetadata?.cwd ?? null
-			: repoRoot;
+			: resolveOrchestratorRuntimeCwd();
 	const agentConfig = agentName === "mainsequence-project-coder" ? loadSpecialistAgent(agentName) : null;
 	if (agentName === "mainsequence-project-coder") {
 		if (!projectId) {

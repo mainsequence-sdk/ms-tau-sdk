@@ -42,12 +42,17 @@ For the HTTP stream service, compose also sets
 `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`,
 `PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`, and
 `ASTRO_STREAM_SESSION_DIR=/home/appuser/.astro-container-data/.astro/stream-sessions` so the named volume
-acts like the deployment-time PVC.
+acts like the deployment-time PVC. Astro also materializes repo-local `/app/.pi` into
+`/home/appuser/.astro-container-data/.pi/project` and runs `astro-orchestrator` from
+`/home/appuser/.astro-container-data/astro-orchestrator-runtime`, where `.pi` points to that
+writable copy. This uses Pi's normal project settings mechanism: Pi reads project settings from
+the process cwd's `.pi/settings.json`.
 
 The stream/runtime contract uses `/home/appuser/.astro-container-data` as the single durable
 container path for Astro state.
 
-For the normal parent session, Pi also loads `.pi/APPEND_SYSTEM.md`.
+For the normal parent session, Pi also loads `.pi/APPEND_SYSTEM.md` through the writable runtime
+copy instead of locking `/app/.pi/settings.json`.
 
 When `BUILD_AGENTS_IN_BACKEND=1`, Astro uses deterministic `agent_unique_id` values to look up or
 create backend Agent records and then works with the backend Agent `id`.

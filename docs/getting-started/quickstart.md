@@ -115,6 +115,7 @@ It also sets:
 - `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`
 - `PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`
 - `ASTRO_STREAM_SESSION_DIR=/home/appuser/.astro-container-data/.astro/stream-sessions`
+- `ASTRO_CONTAINER_DATA_DIR=/home/appuser/.astro-container-data`
 
 At first boot, Astro migrates legacy repo-local runtime state into the volume once, then merges
 `auth.json` plus `sessions/` from the read-only host Pi source, and keeps using the volume as the
@@ -129,6 +130,8 @@ That means:
 - restart the service after code edits with `docker compose restart astro-pi-stream`
 - the active durable runtime state now lives inside the named volume instead of `./.astro`
 - Pi runtime state lives under `/home/appuser/.astro-container-data/.pi/agent`
+- the orchestrator project `.pi` copy lives under `/home/appuser/.astro-container-data/.pi/project`
+- the orchestrator runs from `/home/appuser/.astro-container-data/astro-orchestrator-runtime`, not `/app`
 - Main Sequence CLI auth lives under `/home/appuser/.astro-container-data/.config/mainsequence`
 - stream session artifacts live under `/home/appuser/.astro-container-data/.astro/stream-sessions`
 - the host mounts are used only as one-time migration sources
