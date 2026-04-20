@@ -27,6 +27,8 @@ data: [DONE]
 [`history-hydration.md`](./history-hydration.md) for the response shape.
 `GET /api/chat/session-tools` also returns JSON, not SSE. It advertises deterministic backend tools
 available for the runtime session, including session-scoped URLs such as `repo_diff`.
+If no deterministic tools are available, or if local metadata is not available yet, it returns
+`available_tools: {}` rather than an error.
 `GET /api/chat/session-model` also returns JSON, not SSE. It exposes the model binding stored for
 the runtime session.
 `GET /api/chat/diff` also returns JSON, not SSE. It exposes the current deterministic git diff

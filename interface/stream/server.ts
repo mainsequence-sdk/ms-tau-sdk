@@ -929,9 +929,10 @@ async function attachHydratedBackendSession(options: {
 		});
 		return {
 			ok: false,
-			error: "session_not_found",
-			message: "No local session found for the provided runtime_session_id.",
-			statusCode: 409,
+			error: "invalid_runtime_session_id",
+			message:
+				"The provided runtime_session_id is not a numeric backend AgentSession id, so Astro cannot hydrate it without local session files.",
+			statusCode: 400,
 		};
 	}
 
@@ -955,7 +956,8 @@ async function attachHydratedBackendSession(options: {
 			return {
 				ok: false,
 				error: "session_not_found",
-				message: "No local session found for the provided runtime_session_id.",
+				message:
+					"The backend AgentSession for the provided runtime_session_id was not found, and no local session files exist.",
 				statusCode: 409,
 			};
 		}
@@ -3295,11 +3297,33 @@ async function handleStreamRequest(
 
 		const metadata = readSessionMetadata(sessionKey);
 		if (!metadata) {
-			json(res, 404, {
-				error: sessionExists(sessionKey) ? "session_metadata_missing" : "session_not_found",
-				message: sessionExists(sessionKey)
-					? "No session metadata is available for the provided session."
-					: "No local session found for the provided session id.",
+			logStructuredEvent({
+				severity: "DEBUG",
+				component: "astro-stream",
+				event: "session_tools_metadata_missing",
+				message: "Session tool discovery had no local metadata, so Astro returned an empty tool set.",
+				data: {
+					sessionId: sessionKey,
+					localSessionExists: sessionExists(sessionKey),
+				},
+			});
+			json(res, 200, {
+				version: 1,
+				session: {
+					sessionId: sessionKey,
+					agentName: null,
+					agentId: null,
+					agentUniqueId: null,
+					agentSessionId: normalizeNumericId(sessionKey),
+					projectId: null,
+				},
+				available_tools: {},
+				warnings: [
+					{
+						code: sessionExists(sessionKey) ? "session_metadata_missing" : "session_not_found",
+						message: "No local session metadata is available yet, so no deterministic tools are advertised.",
+					},
+				],
 			});
 			return;
 		}
@@ -3489,16 +3513,31 @@ async function handleStreamRequest(
 	const registrationRequired = shouldRegisterAgents(process.env);
 	let hydratedBackendSession: HydratedBackendOrchestratorSession | null = null;
 	const localSessionExists = runtimeSessionId ? sessionExists(runtimeSessionId) : false;
-	if (
-		runtimeSessionId &&
-		!localSessionExists &&
-		registrationRequired &&
-		agentName === "astro-orchestrator"
-	) {
+	if (runtimeSessionId && !localSessionExists) {
+		if (!registrationRequired) {
+			logStructuredEvent({
+				severity: "ERROR",
+				component: "astro-stream",
+				event: "backend_session_hydration_unavailable",
+				message: "Local session files were missing, but backend session lookup is disabled.",
+				data: {
+					runtimeSessionId,
+					agentName,
+					userId,
+					requestedThreadId,
+				},
+			});
+			json(res, 409, {
+				error: "session_hydration_unavailable",
+				message:
+					"No local session files exist for the provided runtime_session_id, and Astro cannot ask the backend authority because backend agent registration is disabled.",
+			});
+			return;
+		}
 		logStructuredEvent({
 			component: "astro-stream",
 			event: "backend_session_hydration_local_session_missing",
-			message: "Local session files were missing, so Astro is attempting backend orchestrator hydration.",
+			message: "Local session files were missing, so Astro is asking the backend session authority.",
 			data: {
 				runtimeSessionId,
 				agentName,
@@ -3531,13 +3570,6 @@ async function handleStreamRequest(
 				agentSessionId: hydratedBackendSession.metadata.agentSessionId,
 			},
 		});
-	}
-	if (runtimeSessionId && !localSessionExists && !hydratedBackendSession) {
-		json(res, 409, {
-			error: "session_not_found",
-			message: "No local session found for the provided runtime_session_id.",
-		});
-		return;
 	}
 	let existingSessionMetadata = runtimeSessionId ? readSessionMetadata(runtimeSessionId) : null;
 	if (!existingSessionMetadata && hydratedBackendSession) {

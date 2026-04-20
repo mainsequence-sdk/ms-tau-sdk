@@ -212,6 +212,8 @@ session metadata and returns the current patch plus a file summary.
 
 Returns the deterministic backend tools advertised for the runtime session. The initial use case is
 `repo_diff`, which points to the relative `GET /api/chat/diff?...` URL for the same session.
+When no deterministic tools are available, or local metadata is not available yet, the response is
+still `200` with `available_tools: {}`.
 
 ### `GET /api/chat/session-model?sessionId=<runtime_session_id>`
 

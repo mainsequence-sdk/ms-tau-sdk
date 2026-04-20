@@ -16,10 +16,10 @@ That means Astro can only resume a session when it already has local runtime art
 - `<runtime_session_id>.conversation.jsonl`
 - `<runtime_session_id>.history.json`
 
-Today, if the backend creates an `AgentSession` that Astro did not start itself, Astro cannot attach
-to it from the session id alone. The current behavior is:
+Previously, if the backend created an `AgentSession` that Astro did not start itself, Astro could
+not attach to it from the session id alone. The old behavior was:
 
-- `session_not_found` when no local session files exist
+- `session_not_found` when no local session files exist, even if the backend session might exist
 - `session_metadata_missing` when the local metadata file is missing
 
 That gap is real, but the first implementation target is narrower than "all agents." This ADR is
@@ -192,6 +192,8 @@ Hydration must be idempotent:
 Hydration must fail with a precise error when:
 
 - the backend session does not exist
+- the provided runtime session id cannot be queried as a backend `AgentSession.id`
+- backend lookup is disabled, so Astro cannot ask the backend authority
 - the backend session exists but does not resolve to `workflow_key = astro-orchestrator`
 - the backend session exists but required orchestrator metadata is missing
 - the recovered session agent does not match the requested agent
@@ -200,6 +202,8 @@ Hydration must fail with a precise error when:
 Hydration should return a dedicated error such as:
 
 - `session_hydration_failed`
+- `invalid_runtime_session_id`
+- `session_hydration_unavailable`
 
 instead of overloading:
 
@@ -207,6 +211,8 @@ instead of overloading:
 - `session_metadata_missing`
 
 when the backend session exists but could not be reconstructed safely.
+`session_not_found` should only be returned after the backend authority reports that the requested
+`AgentSession.id` does not exist.
 
 ## Consequences
 
@@ -269,7 +275,7 @@ when the backend session exists but could not be reconstructed safely.
 - [x] Add an ADR for backend-owned session hydration.
 - [x] Add a backend session fetch helper by `AgentSession.id`.
 - [x] Add `attachHydratedBackendSession(...)` to the stream runtime.
-- [x] Attempt hydration before returning `session_not_found` for registered backends.
+- [x] Ask the backend authority before returning `session_not_found` for registered backends.
 - [x] Skip `registerMainsequenceAgent(...)` on the hydration attach path.
 - [x] Skip `startBackendAgentSession(...)` on the hydration attach path.
 - [x] Keep hydration inside the existing `/api/chat` request path with no new request fields.

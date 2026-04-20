@@ -13,6 +13,8 @@ diff snapshot for a `mainsequence-project-coder` session.
 
 `GET /api/chat/session-tools` also accepts the same query parameters and returns the deterministic
 backend tools currently advertised for that runtime session.
+If local metadata is not available yet, this endpoint still returns `200` with
+`available_tools: {}` so the UI can treat tool discovery as best-effort.
 
 `GET /api/chat/session-model` also accepts the same query parameters and returns the model binding
 currently stored for that runtime session.
@@ -54,6 +56,8 @@ currently stored for that runtime session.
   session metadata already contains them.
 - `GET /api/chat/session-tools` is the canonical discovery endpoint for deterministic session-level
   backend tools such as `repo_diff`.
+- `GET /api/chat/session-tools` must not fail only because no tools are available; no tools is
+  represented as an empty `available_tools` object.
 - `model`, when present on `POST /api/chat`, is stored in the runtime session metadata before Pi
   starts for that turn.
 - `model.source` plus `model.model` must match one of the records from
