@@ -25,6 +25,18 @@ docker build --target astro-pi -t astro:pi .
 docker build --target astro-pi-stream -t astro:pi-stream .
 ```
 
+To bump the Astro project patch version before publishing a deployable image:
+
+```bash
+npm run version:patch
+```
+
+Review and commit the version change, then publish the image:
+
+```bash
+npm run build:gcp
+```
+
 Set `MAINSEQUENCE_PIP_SPEC` in `.env` to control which `mainsequence` package spec the image installs in
 its final Docker layer, for example `mainsequence==0.1.2`.
 

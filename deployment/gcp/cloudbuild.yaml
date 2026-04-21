@@ -16,6 +16,8 @@ steps:
           -t "$${LOCAL_IMAGE}" \
           .
 
+        ASTRO_VERSION="$$(docker run --rm --entrypoint node "$${LOCAL_IMAGE}" \
+          -p "require('/app/package.json').version")"
         MAINSEQUENCE_VERSION="$$(docker run --rm --entrypoint python "$${LOCAL_IMAGE}" \
           -c "import importlib.metadata as metadata; print(metadata.version('mainsequence'))")"
         PYTHON_VERSION_FULL="$$(docker run --rm --entrypoint python "$${LOCAL_IMAGE}" \
@@ -27,8 +29,8 @@ steps:
         NODE_VERSION_TAG="$$(docker run --rm --entrypoint node "$${LOCAL_IMAGE}" \
           -p "process.versions.node.split('.').slice(0, 2).join('.')" )"
 
-        VERSION_IMAGE="${_IMAGE_PREFIX}:$${MAINSEQUENCE_VERSION}"
-        DESCRIPTIVE_IMAGE="${_IMAGE_PREFIX}:py$${PYTHON_VERSION_TAG}-node$${NODE_VERSION_TAG}-ms$${MAINSEQUENCE_VERSION}"
+        VERSION_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}"
+        DESCRIPTIVE_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}-py$${PYTHON_VERSION_TAG}-node$${NODE_VERSION_TAG}-ms$${MAINSEQUENCE_VERSION}"
 
         printf '%s' "$${VERSION_IMAGE}" > /workspace/version_image.txt
         printf '%s' "$${DESCRIPTIVE_IMAGE}" > /workspace/descriptive_image.txt
@@ -37,8 +39,9 @@ steps:
         trap 'docker rm -f "$${CONTAINER_ID}" >/dev/null 2>&1 || true' EXIT
 
         docker commit \
-          --change "LABEL org.opencontainers.image.title=\"astro-ms$${MAINSEQUENCE_VERSION}\"" \
-          --change "LABEL org.opencontainers.image.description=\"Astro stream image for Main Sequence orchestration with Python $${PYTHON_VERSION_FULL}, Node $${NODE_VERSION_FULL}, and mainsequence $${MAINSEQUENCE_VERSION}.\"" \
+          --change "LABEL org.opencontainers.image.title=\"astro-$${ASTRO_VERSION}\"" \
+          --change "LABEL org.opencontainers.image.description=\"Astro $${ASTRO_VERSION} stream image for Main Sequence orchestration with Python $${PYTHON_VERSION_FULL}, Node $${NODE_VERSION_FULL}, and mainsequence $${MAINSEQUENCE_VERSION}.\"" \
+          --change "LABEL org.opencontainers.image.version=$${ASTRO_VERSION}" \
           --change "LABEL org.opencontainers.image.mainsequence.version=$${MAINSEQUENCE_VERSION}" \
           --change "LABEL org.opencontainers.image.python.version=$${PYTHON_VERSION_FULL}" \
           --change "LABEL org.opencontainers.image.node.version=$${NODE_VERSION_FULL}" \

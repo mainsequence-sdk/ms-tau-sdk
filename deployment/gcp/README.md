@@ -31,10 +31,10 @@ deployment/
 The current `deployment/gcp/cloudbuild.yaml` has four responsibilities:
 
 1. Build the `astro-pi-stream` Docker target from the repo `Dockerfile`
-2. Detect which `mainsequence`, Python, and Node versions were actually installed in the image
+2. Detect the Astro package version plus which `mainsequence`, Python, and Node versions were actually installed in the image
 3. Stamp OCI labels on the final image with the exact full detected versions
 4. Push three tags to Artifact Registry:
-   one tag for the detected `mainsequence` version, one descriptive runtime tag, and one `latest` tag
+   one tag for the Astro package version, one descriptive runtime tag, and one `latest` tag
 
 Suggested high-level flow:
 
@@ -46,7 +46,7 @@ steps:
       - target should be astro-pi-stream
       - rely on the Dockerfile default so `mainsequence` resolves to latest
 
-  - name: Detect installed mainsequence version
+  - name: Detect Astro and installed mainsequence versions
     uses: docker run + python importlib.metadata
 
   - name: Detect installed python and node versions
@@ -168,19 +168,36 @@ MAINSEQUENCE_PIP_SPEC=mainsequence==3.17.53
 `MAINSEQUENCE_PIP_SPEC` is a build-time concern only.
 With the current `cloudbuild.yaml`, we intentionally do not set it there either.
 The Dockerfile default `MAINSEQUENCE_PIP_SPEC=mainsequence` is used so the image installs the
-latest available `mainsequence`, then Cloud Build detects the installed version and publishes both:
+latest available `mainsequence`, then Cloud Build detects the Astro project version and installed
+runtime versions and publishes:
 
-- `<image>:<mainsequence-version>`
-- `<image>:py<python-major.minor>-node<node-major.minor>-ms<mainsequence-version>`
+- `<image>:astro-<astro-version>`
+- `<image>:astro-<astro-version>-py<python-major.minor>-node<node-major.minor>-ms<mainsequence-version>`
 - `<image>:latest`
 
 The final published image is also labeled with exact full versions:
 
-- `org.opencontainers.image.title=astro-ms<mainsequence-full-version>`
-- `org.opencontainers.image.description=Astro stream image for Main Sequence orchestration with Python <python-full-version>, Node <node-full-version>, and mainsequence <mainsequence-full-version>.`
+- `org.opencontainers.image.title=astro-<astro-version>`
+- `org.opencontainers.image.description=Astro <astro-version> stream image for Main Sequence orchestration with Python <python-full-version>, Node <node-full-version>, and mainsequence <mainsequence-full-version>.`
+- `org.opencontainers.image.version=<astro-version>`
 - `org.opencontainers.image.mainsequence.version=<mainsequence-full-version>`
 - `org.opencontainers.image.python.version=<python-full-version>`
 - `org.opencontainers.image.node.version=<node-full-version>`
+
+Before publishing a deployable image, bump the Astro project patch version locally and commit it:
+
+```bash
+npm run version:patch
+```
+
+After the version change is reviewed and committed, publish the image:
+
+```bash
+npm run build:gcp
+```
+
+Cloud Build reads the committed `package.json` version. It does not mutate git state or create
+versions inside CI.
 
 Provide production Main Sequence auth through your existing secret path:
 
@@ -234,6 +251,8 @@ steps:
           -t "$${LOCAL_IMAGE}" \
           .
 
+        ASTRO_VERSION="$$(docker run --rm --entrypoint node "$${LOCAL_IMAGE}" \
+          -p "require('/app/package.json').version")"
         MAINSEQUENCE_VERSION="$$(docker run --rm --entrypoint python "$${LOCAL_IMAGE}" \
           -c "import importlib.metadata as metadata; print(metadata.version('mainsequence'))")"
         PYTHON_VERSION_FULL="$$(docker run --rm --entrypoint python "$${LOCAL_IMAGE}" \
@@ -245,8 +264,8 @@ steps:
         NODE_VERSION_TAG="$$(docker run --rm --entrypoint node "$${LOCAL_IMAGE}" \
           -p "process.versions.node.split('.').slice(0, 2).join('.')" )"
 
-        VERSION_IMAGE="${_IMAGE_PREFIX}:$${MAINSEQUENCE_VERSION}"
-        DESCRIPTIVE_IMAGE="${_IMAGE_PREFIX}:py$${PYTHON_VERSION_TAG}-node$${NODE_VERSION_TAG}-ms$${MAINSEQUENCE_VERSION}"
+        VERSION_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}"
+        DESCRIPTIVE_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}-py$${PYTHON_VERSION_TAG}-node$${NODE_VERSION_TAG}-ms$${MAINSEQUENCE_VERSION}"
 
         printf '%s' "$${VERSION_IMAGE}" > /workspace/version_image.txt
         printf '%s' "$${DESCRIPTIVE_IMAGE}" > /workspace/descriptive_image.txt
@@ -255,8 +274,9 @@ steps:
         trap 'docker rm -f "$${CONTAINER_ID}" >/dev/null 2>&1 || true' EXIT
 
         docker commit \
-          --change "LABEL org.opencontainers.image.title=\"astro-ms$${MAINSEQUENCE_VERSION}\"" \
-          --change "LABEL org.opencontainers.image.description=\"Astro stream image for Main Sequence orchestration with Python $${PYTHON_VERSION_FULL}, Node $${NODE_VERSION_FULL}, and mainsequence $${MAINSEQUENCE_VERSION}.\"" \
+          --change "LABEL org.opencontainers.image.title=\"astro-$${ASTRO_VERSION}\"" \
+          --change "LABEL org.opencontainers.image.description=\"Astro $${ASTRO_VERSION} stream image for Main Sequence orchestration with Python $${PYTHON_VERSION_FULL}, Node $${NODE_VERSION_FULL}, and mainsequence $${MAINSEQUENCE_VERSION}.\"" \
+          --change "LABEL org.opencontainers.image.version=$${ASTRO_VERSION}" \
           --change "LABEL org.opencontainers.image.mainsequence.version=$${MAINSEQUENCE_VERSION}" \
           --change "LABEL org.opencontainers.image.python.version=$${PYTHON_VERSION_FULL}" \
           --change "LABEL org.opencontainers.image.node.version=$${NODE_VERSION_FULL}" \
@@ -310,10 +330,10 @@ options:
 - `.env` is excluded by `.dockerignore`, which is good and should stay that way
 - the deploy target should use the `astro-pi-stream` Docker target, not `astro-pi`
 - the running service still depends on durable storage at `/home/appuser/.astro-container-data`
-- rebuilding while `mainsequence` stays on the same version will repoint that version tag to the
-  newly built image
-- the extra `py...-node...-ms...` tag is still just another tag on the same built image, not a
-  separate build
+- rebuilding without bumping the Astro package version will repoint that `astro-<version>` tag to
+  the newly built image
+- the extra `astro...-py...-node...-ms...` tag is still just another tag on the same built image,
+  not a separate build
 - the published tags now point at the same final labeled image, while the unlabeled local build
   image is only an internal intermediate used during Cloud Build
 - if we want horizontal scaling later, we should think carefully about whether multiple replicas can
