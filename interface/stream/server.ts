@@ -8,18 +8,38 @@ import {
 	existsSync,
 	mkdirSync,
 	mkdtempSync,
+	renameSync,
 	readFileSync,
 	rmSync,
 	statSync,
 	writeFileSync,
 } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { attachAgentId, serializeSse, type StreamEvent } from "./protocol.js";
+import {
+	attachAgentId,
+	serializeSse,
+	type StreamErrorSource,
+	type StreamEvent,
+} from "./protocol.js";
 import {
 	createConversationStore,
 	readConversationHistorySync,
+	writeConversationHistorySync,
 	type ConversationStore,
+	type ConversationHistorySnapshot,
 } from "./conversation-store.js";
+import {
+	applyReasoningAnnotationsToConversationHistorySnapshot,
+	rebuildConversationHistoryFromPiJsonl,
+	sanitizeConversationHistorySnapshot,
+} from "./pi-history-projector.js";
+import {
+	SessionCheckpointClient,
+	type CheckpointBundle,
+	type CheckpointLatestResponse,
+	type CheckpointLeaseResponse,
+	type SessionCheckpointClientResult,
+} from "./session-checkpoint-client.js";
 import {
 	collectAvailableModels,
 	collectModelCatalog,
@@ -34,7 +54,6 @@ import {
 	resolveSessionModelBinding,
 	type SessionModelBinding,
 } from "./session-model.js";
-import { readSessionInsights } from "./session-insights.js";
 import {
 	ensureSessionScopedPiAgentDir,
 	normalizeSessionConfigOverrides,
@@ -42,12 +61,17 @@ import {
 	validateSessionConfigPatch,
 	type SessionConfigOverrides,
 } from "./session-config.js";
-import { readStorageUsage } from "./storage-usage.js";
+import { resolveProviderDefinition } from "./model-provider-definitions.js";
 import {
-	getModelProviderAuthResponse,
 	isProviderUsableForExecution,
+	listModelProviderAuthStatuses,
 	signOffModelProvider,
 } from "./model-provider-auth.js";
+import {
+	cleanupScopedPiAgentDir,
+	flushScopedProviderCredential,
+	hydrateScopedProviderCredentials,
+} from "./model-provider-scoped-auth.js";
 import {
 	cancelModelProviderSignInAttempt,
 	getModelProviderSignInAttempt,
@@ -103,8 +127,30 @@ const runtimeHealthStatePath =
 			: path.join(repoRoot, ".astro"),
 		"stream-health.json",
 	);
+const providerCredentialFlushIntervalMs = (() => {
+	const configured = Number(process.env.ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS ?? "10000");
+	return Number.isFinite(configured) && configured >= 1000 ? Math.trunc(configured) : 10000;
+})();
+const sessionCancelGraceMs = (() => {
+	const configured = Number(process.env.ASTRO_SESSION_CANCEL_GRACE_MS ?? "5000");
+	return Number.isFinite(configured) && configured >= 500 ? Math.trunc(configured) : 5000;
+})();
 let mainsequenceCredentialExchangeLoop: ReturnType<typeof startMainsequenceCredentialExchangeLoop> | null = null;
 let mainsequenceCredentialExchangeLoopStarted = false;
+let mainsequenceCliAuthReady = false;
+let mainsequenceCliAuthBootstrapPromise: Promise<void> | null = null;
+let checkpointRestoreCount = 0;
+
+type ActiveScopedProviderCredential = {
+	scopedPiAgentDir: string;
+	createdByUser: string;
+	agentSessionId: number | null;
+	provider: string;
+	env: NodeJS.ProcessEnv;
+	sessionKey: string;
+};
+
+const activeScopedProviderCredentials = new Map<string, ActiveScopedProviderCredential>();
 
 function resolveOrchestratorRuntimeCwd(): string {
 	const configured = process.env.ASTRO_ORCHESTRATOR_CWD?.trim();
@@ -242,6 +288,63 @@ function buildRuntimeHealthSnapshot(): RuntimeHealthSnapshot {
 	};
 }
 
+async function flushActiveScopedProviderCredentialsForShutdown(signal: string) {
+	const records = [...activeScopedProviderCredentials.values()];
+	if (records.length === 0) return;
+	logStructuredEvent({
+		component: "astro-stream",
+		event: "provider_credentials_shutdown_flush_started",
+		message: "Astro is flushing active scoped provider credentials before shutdown.",
+		data: {
+			signal,
+			count: records.length,
+		},
+	});
+	await Promise.allSettled(
+		records.map(async (record) => {
+			const flushed = await flushScopedProviderCredential({
+				scopedPiAgentDir: record.scopedPiAgentDir,
+				createdByUser: record.createdByUser,
+				agentSessionId: record.agentSessionId,
+				provider: record.provider,
+				reason: "shutdown_flush",
+				env: record.env,
+				log: (message) => console.log(`[astro-stream] ${message}`),
+			});
+			if (flushed.ok === false) {
+				logStructuredEvent({
+					severity: "ERROR",
+					component: "astro-stream",
+					event: "provider_credentials_shutdown_flush_failed",
+					message: "Astro could not flush scoped provider credentials during shutdown.",
+					data: {
+						signal,
+						sessionId: record.sessionKey,
+						agentSessionId: record.agentSessionId,
+						provider: record.provider,
+						error: flushed.error,
+						backendMessage: flushed.message,
+					},
+				});
+				return;
+			}
+			logStructuredEvent({
+				component: "astro-stream",
+				event: "provider_credentials_shutdown_flushed",
+				message: "Astro flushed scoped provider credentials during shutdown.",
+				data: {
+					signal,
+					sessionId: record.sessionKey,
+					agentSessionId: record.agentSessionId,
+					provider: record.provider,
+					version: flushed.value.version,
+					credentialHash: flushed.value.credential_hash,
+				},
+			});
+		}),
+	);
+}
+
 function persistRuntimeHealthSnapshot() {
 	try {
 		mkdirSync(path.dirname(runtimeHealthStatePath), { recursive: true });
@@ -321,6 +424,33 @@ function ensureMainsequenceCredentialExchangeLoopStarted() {
 	mainsequenceCredentialExchangeLoopStarted = true;
 }
 
+async function ensureMainsequenceCliAuthReady() {
+	if (mainsequenceCliAuthReady) {
+		ensureMainsequenceCredentialExchangeLoopStarted();
+		return;
+	}
+
+	if (!mainsequenceCliAuthBootstrapPromise) {
+		mainsequenceCliAuthBootstrapPromise = bootstrapMainsequenceCliAuth({
+			env: process.env,
+			log: (message) => console.log(`[astro] ${message}`),
+		})
+			.then(() => {
+				mainsequenceCliAuthReady = true;
+				ensureMainsequenceCredentialExchangeLoopStarted();
+			})
+			.catch((error) => {
+				mainsequenceCliAuthReady = false;
+				throw error;
+			})
+			.finally(() => {
+				mainsequenceCliAuthBootstrapPromise = null;
+			});
+	}
+
+	await mainsequenceCliAuthBootstrapPromise;
+}
+
 process.once("exit", () => {
 	mainsequenceCredentialExchangeLoop?.stop();
 });
@@ -359,11 +489,16 @@ type RequestContext = {
 	eventId: number;
 	textCounter: number;
 	reasoningCounter: number;
+	activeReasoningAnnotationOrdinal: number | null;
 	runtimeToolCounter: number;
 	toolCallIds: Map<number, { toolCallId: string; toolName: string }>;
 	switching: boolean;
 	piProcess: ChildProcess | null;
+	cancelKillTimer: ReturnType<typeof setTimeout> | null;
+	cancellation: ActiveRunCancellation | null;
+	clientAttached: boolean;
 	finished: boolean;
+	terminalError: { errorCode: string | null; errorDetail: string | null } | null;
 	system: string | undefined;
 	uiContext: Record<string, unknown>;
 	uiTools: Record<string, unknown>;
@@ -374,6 +509,15 @@ type RequestContext = {
 	piAssistantTextSeen: boolean;
 	lastAssistantFinishReason: string | null;
 	lastAssistantUsage: { inputTokens?: number; outputTokens?: number } | undefined;
+	checkpointLease: CheckpointLeaseState | null;
+};
+
+type ActiveRunCancellation = {
+	requested: true;
+	cancellationId: string | null;
+	requestedByUser: string | null;
+	reason: string;
+	message: string | null;
 };
 
 type RequestLogState = {
@@ -381,6 +525,84 @@ type RequestLogState = {
 	text: { id: string; text: string } | null;
 	toolCalls: Map<string, { toolName: string; args: string }>;
 };
+
+type ActiveStreamSession = {
+	sessionKey: string;
+	threadId: string;
+	agentSessionId: number | null;
+	messageId: string;
+	agentName: string;
+	startedAt: string;
+	clientAttached: boolean;
+	lastPiEventAt: string | null;
+	checkpointVersion: number | null;
+	bundleHash: string | null;
+	cancelling: boolean;
+	cancellationId: string | null;
+};
+
+const activeStreamSessions = new Map<string, ActiveStreamSession>();
+const activeStreamContexts = new Map<string, RequestContext>();
+
+function getActiveStreamSessionKey(sessionKey: string, agentSessionId: number | null): string {
+	return agentSessionId == null ? `session:${sessionKey}` : `agent_session:${agentSessionId}`;
+}
+
+function getActiveStreamSessionKeyFromContext(ctx: RequestContext): string {
+	return getActiveStreamSessionKey(ctx.sessionKey, ctx.agentSessionId);
+}
+
+function markActiveStreamSession(ctx: RequestContext) {
+	activeStreamSessions.set(getActiveStreamSessionKeyFromContext(ctx), {
+		sessionKey: ctx.sessionKey,
+		threadId: ctx.threadId,
+		agentSessionId: ctx.agentSessionId,
+		messageId: ctx.messageId,
+		agentName: ctx.agentName,
+		startedAt: new Date().toISOString(),
+		clientAttached: ctx.clientAttached,
+		lastPiEventAt: null,
+		checkpointVersion: ctx.checkpointLease?.checkpointVersion ?? null,
+		bundleHash: ctx.checkpointLease?.bundleHash ?? null,
+		cancelling: ctx.cancellation?.requested === true,
+		cancellationId: ctx.cancellation?.cancellationId ?? null,
+	});
+	activeStreamContexts.set(getActiveStreamSessionKeyFromContext(ctx), ctx);
+}
+
+function clearActiveStreamSession(ctx: RequestContext) {
+	const activeKey = getActiveStreamSessionKeyFromContext(ctx);
+	const active = activeStreamSessions.get(activeKey);
+	if (!active || active.messageId !== ctx.messageId) return;
+	activeStreamSessions.delete(activeKey);
+	activeStreamContexts.delete(activeKey);
+}
+
+function updateActiveStreamSession(ctx: RequestContext, updates: Partial<ActiveStreamSession>) {
+	const activeKey = getActiveStreamSessionKeyFromContext(ctx);
+	const active = activeStreamSessions.get(activeKey);
+	if (!active || active.messageId !== ctx.messageId) return;
+	activeStreamSessions.set(activeKey, {
+		...active,
+		...updates,
+	});
+}
+
+function getActiveStreamSession(sessionKey: string, agentSessionId: number | null = normalizeNumericId(sessionKey)): ActiveStreamSession | null {
+	return (
+		activeStreamSessions.get(getActiveStreamSessionKey(sessionKey, agentSessionId)) ??
+		activeStreamSessions.get(getActiveStreamSessionKey(sessionKey, null)) ??
+		null
+	);
+}
+
+function getActiveStreamContext(sessionKey: string, agentSessionId: number | null = normalizeNumericId(sessionKey)): RequestContext | null {
+	return (
+		activeStreamContexts.get(getActiveStreamSessionKey(sessionKey, agentSessionId)) ??
+		activeStreamContexts.get(getActiveStreamSessionKey(sessionKey, null)) ??
+		null
+	);
+}
 
 type SessionMetadata = {
 	agentId: number | null;
@@ -398,6 +620,53 @@ type SessionMetadata = {
 	projectRuntime: ProjectRuntimeSnapshot | null;
 	sessionModelBinding: SessionModelBinding | null;
 	sessionConfigOverrides: SessionConfigOverrides | null;
+	history_annotations?: HistoryAnnotations;
+};
+
+type HistoryAnnotation = {
+	assistant_ordinal: number;
+	pi_entry_id: string | null;
+	stream_message_id: string | null;
+	had_reasoning: true;
+	reasoning_text_persisted: boolean;
+	reasoning_started_at: string | null;
+	reasoning_completed_at: string | null;
+};
+
+type HistoryAnnotations = {
+	version: 1;
+	assistant_messages: HistoryAnnotation[];
+};
+
+type CheckpointManifest = {
+	session_id: string;
+	checkpoint_version: number;
+	restored_at: string;
+	bundle_hash: string;
+	lease_holder_id: string;
+	lease_token: string;
+	lease_expires_at: string;
+};
+
+type CheckpointLifecycleState = {
+	session_id: string;
+	state: "running" | "finalizing_checkpoint" | "idle";
+	updated_at: string;
+	lease_holder_id: string | null;
+	lease_token: string | null;
+	checkpoint_version: number | null;
+	bundle_hash: string | null;
+	reason: string | null;
+	marker_file?: string | null;
+};
+
+type CheckpointLeaseState = {
+	holderId: string;
+	leaseToken: string;
+	leaseExpiresAt: string;
+	checkpointVersion: number;
+	bundleHash: string;
+	renewTimer: ReturnType<typeof setInterval> | null;
 };
 
 type DiffFileStatus =
@@ -714,11 +983,7 @@ async function ensureRequestCliAuth(
 	res: import("node:http").ServerResponse,
 ): Promise<{ ok: true } | { ok: false }> {
 	try {
-		await bootstrapMainsequenceCliAuth({
-			env: process.env,
-			log: (message) => console.log(`[astro] ${message}`),
-		});
-		ensureMainsequenceCredentialExchangeLoopStarted();
+		await ensureMainsequenceCliAuthReady();
 		return { ok: true };
 	} catch (error) {
 		const message =
@@ -786,6 +1051,99 @@ function shouldUseMockResponse(latestUserMessage: string): boolean {
 
 function resolveUserId(value: unknown): string | null {
 	return resolveMainsequenceUserId({ userId: value, env: process.env });
+}
+
+function resolveHeaderString(
+	req: import("node:http").IncomingMessage,
+	headerNames: string[],
+): string | null {
+	for (const headerName of headerNames) {
+		const rawValue = req.headers[headerName.toLowerCase()];
+		const value = Array.isArray(rawValue) ? rawValue.find((entry) => entry.trim()) : rawValue;
+		if (typeof value === "string" && value.trim()) return value.trim();
+	}
+	return null;
+}
+
+function parseJwtPayload(token: string): Record<string, unknown> | null {
+	const [, payload] = token.split(".");
+	if (!payload) return null;
+	try {
+		const normalizedPayload = payload.replace(/-/g, "+").replace(/_/g, "/");
+		const paddedPayload = normalizedPayload.padEnd(
+			normalizedPayload.length + ((4 - (normalizedPayload.length % 4)) % 4),
+			"=",
+		);
+		const parsed = JSON.parse(Buffer.from(paddedPayload, "base64").toString("utf8"));
+		return isPlainObject(parsed) ? parsed : null;
+	} catch {
+		return null;
+	}
+}
+
+function resolveUserIdFromAuthorizationHeader(req: import("node:http").IncomingMessage): string | null {
+	const authorization = resolveHeaderString(req, ["authorization"]);
+	const matched = authorization?.match(/^Bearer\s+(.+)$/i);
+	if (!matched) return null;
+	const payload = parseJwtPayload(matched[1].trim());
+	if (!payload) return null;
+	return resolveUserId(
+		payload.userId ??
+			payload.user_id ??
+			payload.created_by_user ??
+			payload.createdByUser ??
+			payload.mainsequence_user_id ??
+			payload.sub,
+	);
+}
+
+function resolveUserIdFromHeaders(req: import("node:http").IncomingMessage): string | null {
+	return resolveUserId(
+		resolveHeaderString(req, [
+			"x-mainsequence-user-id",
+			"x-ms-user-id",
+			"x-user-id",
+			"x-created-by-user",
+		]),
+	);
+}
+
+function resolveUserIdFromRequest(
+	req: import("node:http").IncomingMessage,
+	url: URL,
+	body?: Record<string, unknown>,
+): string | null {
+	return (
+		resolveUserId(
+			body?.userId ??
+				body?.user_id ??
+				body?.created_by_user ??
+				body?.createdByUser ??
+				url.searchParams.get("userId") ??
+				url.searchParams.get("user_id") ??
+				url.searchParams.get("created_by_user") ??
+				url.searchParams.get("createdByUser"),
+		) ??
+		resolveUserIdFromHeaders(req) ??
+		resolveUserIdFromAuthorizationHeader(req) ??
+		resolveUserId(undefined)
+	);
+}
+
+function resolveOptionalAgentSessionIdFromBodyOrSearch(
+	body: Record<string, unknown>,
+	url: URL,
+): number | null {
+	return normalizeNumericId(
+		body.agent_session_id ??
+			body.agentSessionId ??
+			body.session_id ??
+			body.sessionId ??
+			url.searchParams.get("agent_session_id") ??
+			url.searchParams.get("agentSessionId") ??
+			url.searchParams.get("session_id") ??
+			url.searchParams.get("sessionId"),
+	);
 }
 
 function normalizeProjectId(value: unknown): string | null {
@@ -899,6 +1257,79 @@ function extractBackendSessionThreadId(
 		extractStringProperty(sessionMetadata ?? {}, "thread_id", "threadId") ??
 		requestedThreadId
 	);
+}
+
+function mapBackendSessionStatusToHistoryStatus(value: string | null): ConversationHistorySnapshot["session"]["status"] {
+	if (value === "completed") return "completed";
+	if (value === "failed" || value === "canceled") return "error";
+	return "running";
+}
+
+function buildConversationHistorySessionFromBackendSession(options: {
+	sessionKey: string;
+	agentSessionId: number;
+	payload: Record<string, unknown>;
+	metadata: SessionMetadata | null;
+	requestedThreadId: string | null;
+}): ConversationHistorySnapshot["session"] | null {
+	const sessionMetadata = extractObjectPropertyRecord(options.payload, "session_metadata", "sessionMetadata");
+	const threadId =
+		extractBackendSessionThreadId(options.payload, sessionMetadata, options.requestedThreadId) ??
+		options.metadata?.threadId ??
+		options.sessionKey;
+
+	const agentRecord = extractObjectPropertyRecord(options.payload, "agent");
+	const agentName =
+		extractStringProperty(options.payload, "agent_name", "agentName") ??
+		(agentRecord ? extractStringProperty(agentRecord, "name", "agent_name", "agentName") : null) ??
+		options.metadata?.agentName ??
+		"astro-orchestrator";
+	const agentId =
+		extractBackendSessionAgentId(options.payload) ??
+		options.metadata?.agentId ??
+		null;
+	const startedAt =
+		extractStringProperty(options.payload, "started_at", "startedAt") ??
+		options.metadata?.startedAt ??
+		null;
+	const endedAt = extractStringProperty(options.payload, "ended_at", "endedAt");
+	const updatedAt = endedAt ?? extractStringProperty(options.payload, "updated_at", "updatedAt");
+	const status = mapBackendSessionStatusToHistoryStatus(
+		extractStringProperty(options.payload, "status"),
+	);
+	const error =
+		status === "error"
+			? extractStringProperty(options.payload, "error_detail", "errorDetail") ?? "Backend session ended with an error."
+			: null;
+
+	return {
+		sessionId: options.sessionKey,
+		threadId,
+		agentName,
+		agentId,
+		agentSessionId: options.agentSessionId,
+		status,
+		startedAt,
+		updatedAt,
+		error,
+	};
+}
+
+function reconstructConversationHistoryFromBackendSession(options: {
+	sessionKey: string;
+	agentSessionId: number;
+	payload: Record<string, unknown>;
+	metadata: SessionMetadata | null;
+	requestedThreadId: string | null;
+}): ConversationHistorySnapshot | null {
+	const session = buildConversationHistorySessionFromBackendSession(options);
+	if (!session) return null;
+	return {
+		version: 1,
+		session,
+		messages: [],
+		inProgressMessage: null,
+	};
 }
 
 async function attachHydratedBackendSession(options: {
@@ -1053,25 +1484,9 @@ async function attachHydratedBackendSession(options: {
 		};
 	}
 
-	const threadId = extractBackendSessionThreadId(sessionPayload, sessionMetadata, options.requestedThreadId);
-	if (!threadId) {
-		logStructuredEvent({
-			severity: "ERROR",
-			component: "astro-stream",
-			event: "backend_session_hydration_missing_thread_id",
-			message: "Backend session hydration failed because no thread id was available from the backend payload or request.",
-			data: {
-				agentSessionId: normalizedAgentSessionId,
-				requestedThreadId: options.requestedThreadId,
-			},
-		});
-		return {
-			ok: false,
-			error: "session_hydration_failed",
-			message: "The backend session did not include a usable thread id.",
-			statusCode: 409,
-		};
-	}
+	const threadId =
+		extractBackendSessionThreadId(sessionPayload, sessionMetadata, options.requestedThreadId) ??
+		options.runtimeSessionId;
 
 	const createdByUser =
 		extractStringProperty(sessionPayload, "created_by_user", "createdByUser") ??
@@ -1270,7 +1685,7 @@ function buildUntrackedPatch(repoRootPath: string, relativePath: string): { ok: 
 		["diff", "--no-index", "--binary", "--no-ext-diff", "--", "/dev/null", relativePath],
 		[0, 1],
 	);
-	if (!result.ok) {
+	if (result.ok === false) {
 		return {
 			ok: false,
 			patch: "",
@@ -1440,15 +1855,6 @@ function parseSessionSwitchRequest(result: any): SessionSwitchRequest | null {
 	};
 }
 
-function toSessionTimestamp(input: string): string {
-	const parsed = Date.parse(input);
-	return Number.isFinite(parsed) ? String(parsed) : String(Date.now());
-}
-
-function buildPendingRuntimeSessionId(agentUniqueId: string, startedAt: string): string {
-	return sanitizeSessionKey(`${agentUniqueId}__pending_${toSessionTimestamp(startedAt)}`);
-}
-
 function buildBackendRuntimeSessionId(agentSessionId: number): string {
 	return sanitizeSessionKey(String(agentSessionId));
 }
@@ -1467,6 +1873,40 @@ function getSessionMetadataPath(sessionKey: string): string {
 
 function getThreadBindingPath(threadId: string): string {
 	return path.join(sessionDir, `${sanitizeSessionKey(threadId)}.thread.json`);
+}
+
+function getSessionStateDir(): string {
+	return path.dirname(sessionDir);
+}
+
+function getManifestDir(): string {
+	return path.join(getSessionStateDir(), "manifests");
+}
+
+function getCheckpointMarkerDir(): string {
+	return path.join(getSessionStateDir(), "checkpoints");
+}
+
+function getCheckpointLifecycleDir(): string {
+	return path.join(getSessionStateDir(), "checkpoint-lifecycle");
+}
+
+function getCheckpointManifestPath(sessionKey: string): string {
+	return path.join(getManifestDir(), `${sessionKey}.manifest.json`);
+}
+
+function getCheckpointLifecyclePath(sessionKey: string): string {
+	return path.join(getCheckpointLifecycleDir(), `${sessionKey}.json`);
+}
+
+function getSessionOverridesPath(sessionKey: string): string {
+	const piAgentDir =
+		process.env.PI_CODING_AGENT_DIR?.trim() ||
+		path.join(process.env.HOME?.trim() || process.cwd(), ".pi", "agent");
+	const overridesRoot =
+		process.env.ASTRO_SESSION_OVERRIDES_DIR?.trim() ||
+		path.join(piAgentDir, ".astro-session-overrides");
+	return path.join(overridesRoot, sessionKey, "settings.json");
 }
 
 function readSessionMetadata(sessionKey: string): SessionMetadata | null {
@@ -1491,6 +1931,7 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 		const rawProjectRuntime = (parsed as { projectRuntime?: unknown }).projectRuntime;
 		const rawSessionModelBinding = (parsed as { sessionModelBinding?: unknown }).sessionModelBinding;
 		const rawSessionConfigOverrides = (parsed as { sessionConfigOverrides?: unknown }).sessionConfigOverrides;
+		const rawHistoryAnnotations = (parsed as { history_annotations?: unknown }).history_annotations;
 		const normalizedAgentId =
 			typeof rawAgentId === "number" && Number.isFinite(rawAgentId)
 				? rawAgentId
@@ -1526,6 +1967,7 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 				: null;
 		const normalizedSessionModelBinding = normalizeSessionModelBinding(rawSessionModelBinding);
 		const normalizedSessionConfigOverrides = normalizeSessionConfigOverrides(rawSessionConfigOverrides);
+		const normalizedHistoryAnnotations = normalizeHistoryAnnotations(rawHistoryAnnotations);
 		return {
 			agentId: Number.isFinite(normalizedAgentId as number) ? (normalizedAgentId as number) : null,
 			agentUniqueId: normalizedAgentUniqueId,
@@ -1544,6 +1986,7 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 			projectRuntime: normalizedProjectRuntime,
 			sessionModelBinding: normalizedSessionModelBinding,
 			sessionConfigOverrides: normalizedSessionConfigOverrides,
+			...(normalizedHistoryAnnotations ? { history_annotations: normalizedHistoryAnnotations } : {}),
 		};
 	} catch {
 		return null;
@@ -1552,7 +1995,1331 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 
 function writeSessionMetadata(sessionKey: string, metadata: SessionMetadata) {
 	mkdirSync(sessionDir, { recursive: true });
-	writeFileSync(getSessionMetadataPath(sessionKey), JSON.stringify(metadata, null, 2));
+	const metadataPath = getSessionMetadataPath(sessionKey);
+	const nextMetadata: Record<string, unknown> = { ...metadata };
+	if (!Object.prototype.hasOwnProperty.call(nextMetadata, "history_annotations")) {
+		const existingAnnotations = normalizeHistoryAnnotations(
+			readJsonFileObject(metadataPath)?.history_annotations,
+		);
+		if (existingAnnotations) nextMetadata.history_annotations = existingAnnotations;
+	}
+	writeFileSync(metadataPath, JSON.stringify(nextMetadata, null, 2));
+}
+
+function readJsonFileObject(filePath: string): Record<string, unknown> | null {
+	if (!existsSync(filePath)) return null;
+	try {
+		const parsed = JSON.parse(readFileSync(filePath, "utf8"));
+		return isPlainObject(parsed) ? parsed : null;
+	} catch {
+		return null;
+	}
+}
+
+function normalizeHistoryAnnotations(value: unknown): HistoryAnnotations | null {
+	if (!isPlainObject(value) || value.version !== 1 || !Array.isArray(value.assistant_messages)) {
+		return null;
+	}
+
+	const assistantMessages: HistoryAnnotation[] = [];
+	for (const rawAnnotation of value.assistant_messages) {
+		if (!isPlainObject(rawAnnotation) || rawAnnotation.had_reasoning !== true) continue;
+		const assistantOrdinal = normalizeNumericId(rawAnnotation.assistant_ordinal);
+		if (assistantOrdinal == null || assistantOrdinal <= 0) continue;
+		const piEntryId =
+			typeof rawAnnotation.pi_entry_id === "string" && rawAnnotation.pi_entry_id.trim()
+				? rawAnnotation.pi_entry_id.trim()
+				: null;
+		const streamMessageId =
+			typeof rawAnnotation.stream_message_id === "string" && rawAnnotation.stream_message_id.trim()
+				? rawAnnotation.stream_message_id.trim()
+				: null;
+		const reasoningStartedAt =
+			typeof rawAnnotation.reasoning_started_at === "string" && rawAnnotation.reasoning_started_at.trim()
+				? rawAnnotation.reasoning_started_at.trim()
+				: null;
+		const reasoningCompletedAt =
+			typeof rawAnnotation.reasoning_completed_at === "string" && rawAnnotation.reasoning_completed_at.trim()
+				? rawAnnotation.reasoning_completed_at.trim()
+				: null;
+		assistantMessages.push({
+			assistant_ordinal: assistantOrdinal,
+			pi_entry_id: piEntryId,
+			stream_message_id: streamMessageId,
+			had_reasoning: true,
+			reasoning_text_persisted: rawAnnotation.reasoning_text_persisted === true,
+			reasoning_started_at: reasoningStartedAt,
+			reasoning_completed_at: reasoningCompletedAt,
+		});
+	}
+
+	return {
+		version: 1,
+		assistant_messages: assistantMessages,
+	};
+}
+
+function updateSessionHistoryAnnotations(
+	sessionKey: string,
+	update: (annotations: HistoryAnnotations) => HistoryAnnotations,
+) {
+	const metadataPath = getSessionMetadataPath(sessionKey);
+	const metadata = readJsonFileObject(metadataPath) ?? {};
+	const currentAnnotations =
+		normalizeHistoryAnnotations(metadata.history_annotations) ??
+		({
+			version: 1,
+			assistant_messages: [],
+		} satisfies HistoryAnnotations);
+	const nextAnnotations = update(currentAnnotations);
+	metadata.history_annotations = nextAnnotations;
+	mkdirSync(sessionDir, { recursive: true });
+	writeFileSync(metadataPath, JSON.stringify(metadata, null, 2));
+}
+
+function readCheckpointManifest(sessionKey: string): CheckpointManifest | null {
+	const parsed = readJsonFileObject(getCheckpointManifestPath(sessionKey));
+	if (!parsed) return null;
+	const checkpointVersion = normalizeNumericId(parsed.checkpoint_version);
+	const sessionId = typeof parsed.session_id === "string" && parsed.session_id.trim() ? parsed.session_id.trim() : null;
+	const bundleHash =
+		typeof parsed.bundle_hash === "string" && parsed.bundle_hash.trim() ? parsed.bundle_hash.trim() : "";
+	const holderId =
+		typeof parsed.lease_holder_id === "string" && parsed.lease_holder_id.trim()
+			? parsed.lease_holder_id.trim()
+			: null;
+	const leaseToken =
+		typeof parsed.lease_token === "string" && parsed.lease_token.trim() ? parsed.lease_token.trim() : null;
+	const leaseExpiresAt =
+		typeof parsed.lease_expires_at === "string" && parsed.lease_expires_at.trim()
+			? parsed.lease_expires_at.trim()
+			: null;
+	const restoredAt =
+		typeof parsed.restored_at === "string" && parsed.restored_at.trim()
+			? parsed.restored_at.trim()
+			: null;
+	if (!sessionId || checkpointVersion == null || !holderId || !leaseToken || !leaseExpiresAt) return null;
+	return {
+		session_id: sessionId,
+		checkpoint_version: checkpointVersion,
+		restored_at: restoredAt ?? new Date().toISOString(),
+		bundle_hash: bundleHash,
+		lease_holder_id: holderId,
+		lease_token: leaseToken,
+		lease_expires_at: leaseExpiresAt,
+	};
+}
+
+function writeCheckpointManifest(
+	sessionKey: string,
+		input: {
+			checkpointVersion: number;
+			bundleHash: string;
+			holderId: string;
+			leaseToken: string;
+			leaseExpiresAt: string;
+			restoredAt?: string;
+		},
+	) {
+	mkdirSync(getManifestDir(), { recursive: true });
+	const existingManifest = readCheckpointManifest(sessionKey);
+	const manifest: CheckpointManifest = {
+		session_id: sessionKey,
+		checkpoint_version: input.checkpointVersion,
+		restored_at: input.restoredAt ?? existingManifest?.restored_at ?? new Date().toISOString(),
+		bundle_hash: input.bundleHash,
+		lease_holder_id: input.holderId,
+		lease_token: input.leaseToken,
+		lease_expires_at: input.leaseExpiresAt,
+	};
+	writeFileSync(getCheckpointManifestPath(sessionKey), JSON.stringify(manifest, null, 2));
+}
+
+function readCheckpointLifecycleState(sessionKey: string): CheckpointLifecycleState | null {
+	const parsed = readJsonFileObject(getCheckpointLifecyclePath(sessionKey));
+	if (!parsed) return null;
+	const state =
+		parsed.state === "running" ||
+		parsed.state === "finalizing_checkpoint" ||
+		parsed.state === "idle"
+			? parsed.state
+			: null;
+	const updatedAt =
+		typeof parsed.updated_at === "string" && parsed.updated_at.trim() ? parsed.updated_at.trim() : null;
+	if (!state || !updatedAt) return null;
+	return {
+		session_id:
+			typeof parsed.session_id === "string" && parsed.session_id.trim()
+				? parsed.session_id.trim()
+				: sessionKey,
+		state,
+		updated_at: updatedAt,
+		lease_holder_id:
+			typeof parsed.lease_holder_id === "string" && parsed.lease_holder_id.trim()
+				? parsed.lease_holder_id.trim()
+				: null,
+		lease_token:
+			typeof parsed.lease_token === "string" && parsed.lease_token.trim()
+				? parsed.lease_token.trim()
+				: null,
+		checkpoint_version: normalizeNumericId(parsed.checkpoint_version),
+		bundle_hash:
+			typeof parsed.bundle_hash === "string" && parsed.bundle_hash.trim()
+				? parsed.bundle_hash.trim()
+				: null,
+		reason: typeof parsed.reason === "string" && parsed.reason.trim() ? parsed.reason.trim() : null,
+		marker_file:
+			typeof parsed.marker_file === "string" && parsed.marker_file.trim()
+				? parsed.marker_file.trim()
+				: null,
+	};
+}
+
+function writeCheckpointLifecycleState(
+	sessionKey: string,
+	input: Omit<CheckpointLifecycleState, "session_id" | "updated_at"> & { updated_at?: string },
+) {
+	mkdirSync(getCheckpointLifecycleDir(), { recursive: true });
+	const state: CheckpointLifecycleState = {
+		session_id: sessionKey,
+		updated_at: input.updated_at ?? new Date().toISOString(),
+		state: input.state,
+		lease_holder_id: input.lease_holder_id,
+		lease_token: input.lease_token,
+		checkpoint_version: input.checkpoint_version,
+		bundle_hash: input.bundle_hash,
+		reason: input.reason,
+		marker_file: input.marker_file ?? null,
+	};
+	writeFileSync(getCheckpointLifecyclePath(sessionKey), JSON.stringify(state, null, 2));
+}
+
+function clearCheckpointLifecycleState(sessionKey: string) {
+	rmSync(getCheckpointLifecyclePath(sessionKey), { force: true });
+}
+
+function resolveCheckpointHolderId(): string {
+	const configured = process.env.ASTRO_CHECKPOINT_HOLDER_ID?.trim();
+	if (configured) return configured;
+	const podUid = process.env.POD_UID?.trim() || process.env.K8S_POD_UID?.trim();
+	if (podUid) return `pod/${podUid}`;
+	const hostname = process.env.HOSTNAME?.trim();
+	if (hostname) return `pod/${hostname}`;
+	return `process/${process.pid}`;
+}
+
+function resolveCheckpointLeaseTtlSeconds(): number {
+	const parsed = Number.parseInt(process.env.ASTRO_CHECKPOINT_LEASE_TTL_SECONDS ?? "120", 10);
+	return Number.isFinite(parsed) && parsed > 0 ? parsed : 120;
+}
+
+function resolveCheckpointFinalizeWaitMs(): number {
+	const parsed = Number.parseInt(process.env.ASTRO_CHECKPOINT_FINALIZE_WAIT_MS ?? "15000", 10);
+	return Number.isFinite(parsed) && parsed >= 0 ? parsed : 15000;
+}
+
+function checkpointLifecycleStateIsFresh(state: CheckpointLifecycleState): boolean {
+	const updatedAt = Date.parse(state.updated_at);
+	if (!Number.isFinite(updatedAt)) return false;
+	const maxAgeMs = Math.max(resolveCheckpointLeaseTtlSeconds() * 1000 * 2, 300000);
+	return updatedAt > Date.now() - maxAgeMs;
+}
+
+function checkpointFinalizationCanBeRecovered(
+	sessionKey: string,
+	state: CheckpointLifecycleState,
+	waitMs: number,
+): { ok: true; reason: string } | { ok: false } {
+	const stateUpdatedAt = Date.parse(state.updated_at);
+	const stateAgeMs = Number.isFinite(stateUpdatedAt) ? Date.now() - stateUpdatedAt : Number.POSITIVE_INFINITY;
+	const markerMissing = state.marker_file
+		? !existsSync(path.join(getCheckpointMarkerDir(), state.marker_file))
+		: true;
+	const manifest = readCheckpointManifest(sessionKey);
+
+	if (!checkpointLifecycleStateIsFresh(state)) {
+		return { ok: true, reason: "stale_lifecycle_state" };
+	}
+	if (manifest) {
+		const sameLease = !state.lease_token || manifest.lease_token === state.lease_token;
+		const leaseExpiresAt = Date.parse(manifest.lease_expires_at);
+		if (sameLease && Number.isFinite(leaseExpiresAt) && leaseExpiresAt <= Date.now()) {
+			return { ok: true, reason: "manifest_lease_expired" };
+		}
+		if (
+			sameLease &&
+			markerMissing &&
+			state.checkpoint_version != null &&
+			manifest.checkpoint_version > state.checkpoint_version &&
+			stateAgeMs >= waitMs
+		) {
+			return { ok: true, reason: "manifest_advanced_past_finalizing_state" };
+		}
+	}
+	if (markerMissing && stateAgeMs >= Math.max(waitMs * 2, 30000)) {
+		return { ok: true, reason: "missing_marker_after_grace" };
+	}
+
+	return { ok: false };
+}
+
+function recoverCheckpointFinalizationIfDead(
+	sessionKey: string,
+	state: CheckpointLifecycleState,
+	waitMs: number,
+): boolean {
+	const recovery = checkpointFinalizationCanBeRecovered(sessionKey, state, waitMs);
+	if (recovery.ok === false) return false;
+	clearCheckpointLifecycleState(sessionKey);
+	logStructuredEvent({
+		severity: "WARNING",
+		component: "astro-stream",
+		event: "checkpoint_finalization_recovered",
+		message: "Astro cleared a dead checkpoint finalization state before launching Pi.",
+		data: {
+			sessionKey,
+			reason: recovery.reason,
+			finalizingState: state,
+			manifest: readCheckpointManifest(sessionKey),
+		},
+	});
+	return true;
+}
+
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitForCheckpointFinalization(sessionKey: string): Promise<
+	| { ok: true }
+	| { ok: false; state: CheckpointLifecycleState | null }
+> {
+	const waitMs = resolveCheckpointFinalizeWaitMs();
+	const startedAt = Date.now();
+	while (true) {
+		const state = readCheckpointLifecycleState(sessionKey);
+		if (!state || state.state !== "finalizing_checkpoint") {
+			return { ok: true };
+		}
+		if (recoverCheckpointFinalizationIfDead(sessionKey, state, waitMs)) return { ok: true };
+		if (Date.now() - startedAt >= waitMs) {
+			if (recoverCheckpointFinalizationIfDead(sessionKey, state, waitMs)) return { ok: true };
+			return { ok: false, state };
+		}
+		await sleep(250);
+	}
+}
+
+function buildCheckpointFinalizingErrorEvent(
+	state: CheckpointLifecycleState | null,
+): Extract<StreamEvent, { type: "error" }> {
+	const detail = "The previous turn is still finalizing its checkpoint. Retry the chat request shortly.";
+	return {
+		type: "error",
+		error: `Checkpoint finalization pending: ${detail}`,
+		error_source: "checkpoint",
+		status: 409,
+		error_code: "session_checkpoint_finalizing",
+		error_detail: detail,
+		field_errors: null,
+		forensics: {
+			backend_request_url: null,
+			backend_response_text: null,
+			backend_response_body: state,
+			backend_checkpoint_version: state?.checkpoint_version ?? null,
+			backend_bundle_hash: state?.bundle_hash ?? null,
+		},
+	};
+}
+
+function isCheckpointFinalizationPendingError(error: string | null | undefined): boolean {
+	return typeof error === "string" && error.includes("Checkpoint finalization pending:");
+}
+
+function historyHasTransientCheckpointError(history: ConversationHistorySnapshot): boolean {
+	return (
+		history.session.status === "error" &&
+		isCheckpointFinalizationPendingError(history.session.error)
+	);
+}
+
+function shouldRenewManifestLease(manifest: CheckpointManifest | null, holderId: string): manifest is CheckpointManifest {
+	if (!manifest || manifest.lease_holder_id !== holderId) return false;
+	const expiresAt = Date.parse(manifest.lease_expires_at);
+	return Number.isFinite(expiresAt) && expiresAt > Date.now() + 5000;
+}
+
+function checkpointManifestIsCurrent(
+	manifest: CheckpointManifest | null,
+	lease: CheckpointLeaseResponse,
+	sessionKey: string,
+): boolean {
+	return Boolean(
+		manifest &&
+			manifest.session_id === sessionKey &&
+			manifest.checkpoint_version === lease.checkpoint_version &&
+			manifest.bundle_hash === lease.bundle_hash &&
+			existsSync(getSessionPath(sessionKey)) &&
+			existsSync(getSessionMetadataPath(sessionKey)),
+	);
+}
+
+function materializeCheckpointBundle(ctx: RequestContext, bundle: CheckpointBundle) {
+	mkdirSync(sessionDir, { recursive: true });
+	writeFileSync(getSessionPath(ctx.sessionKey), bundle.pi_session_jsonl);
+
+	const existingMetadata = readJsonFileObject(getSessionMetadataPath(ctx.sessionKey)) ?? {};
+	const metadata =
+		isPlainObject(bundle.astro_metadata_json) && Object.keys(bundle.astro_metadata_json).length > 0
+			? {
+					...existingMetadata,
+					...bundle.astro_metadata_json,
+			  }
+			: existingMetadata;
+	if (Object.keys(metadata).length > 0) {
+		writeFileSync(getSessionMetadataPath(ctx.sessionKey), JSON.stringify(metadata, null, 2));
+	}
+
+	const threadBinding =
+		isPlainObject(bundle.thread_binding_json) && Object.keys(bundle.thread_binding_json).length > 0
+			? bundle.thread_binding_json
+			: {
+					threadId: ctx.threadId,
+					runtimeSessionId: ctx.sessionKey,
+					updatedAt: new Date().toISOString(),
+			  };
+	const threadId =
+		typeof threadBinding.threadId === "string" && threadBinding.threadId.trim()
+			? threadBinding.threadId.trim()
+			: ctx.threadId;
+	writeFileSync(getThreadBindingPath(threadId), JSON.stringify(threadBinding, null, 2));
+
+	const overridesPath = getSessionOverridesPath(ctx.sessionKey);
+	if (isPlainObject(bundle.session_overrides_json)) {
+		mkdirSync(path.dirname(overridesPath), { recursive: true });
+		writeFileSync(overridesPath, JSON.stringify(bundle.session_overrides_json, null, 2));
+	} else if (bundle.session_overrides_json === null) {
+		rmSync(path.dirname(overridesPath), { recursive: true, force: true });
+	}
+}
+
+function stopCheckpointLeaseRenewal(ctx: RequestContext) {
+	if (ctx.checkpointLease?.renewTimer) {
+		clearInterval(ctx.checkpointLease.renewTimer);
+		ctx.checkpointLease.renewTimer = null;
+	}
+}
+
+function startCheckpointLeaseRenewal(ctx: RequestContext, client: SessionCheckpointClient, ttlSeconds: number) {
+	stopCheckpointLeaseRenewal(ctx);
+	if (!ctx.checkpointLease || ctx.agentSessionId == null) return;
+
+	const renewIntervalMs = Math.max(5000, Math.floor((ttlSeconds * 1000) / 2));
+	ctx.checkpointLease.renewTimer = setInterval(() => {
+		const activeLease = ctx.checkpointLease;
+		if (!activeLease || ctx.finished || ctx.switching || ctx.agentSessionId == null) {
+			stopCheckpointLeaseRenewal(ctx);
+			return;
+		}
+		void client
+			.renewLease({
+				agentSessionId: ctx.agentSessionId,
+				holderId: activeLease.holderId,
+				leaseToken: activeLease.leaseToken,
+				ttlSeconds,
+				leasePurpose: "runtime_run",
+			})
+			.then((result) => {
+				if (!ctx.checkpointLease || ctx.finished || ctx.switching) return;
+				if (result.ok === false) {
+					const errorMessage = "error" in result ? result.error : "Checkpoint lease renewal failed.";
+					logStructuredEvent({
+						severity: "ERROR",
+						component: "astro-stream",
+						event: "checkpoint_lease_renew_failed",
+						message: "Checkpoint lease renewal failed; stopping the active Pi process.",
+						data: {
+							sessionKey: ctx.sessionKey,
+							agentSessionId: ctx.agentSessionId,
+							...checkpointFailureDiagnostics(result),
+							error: errorMessage,
+						},
+					});
+					stopCheckpointLeaseRenewal(ctx);
+					stopActivePiProcess(ctx);
+					if (!ctx.finished) {
+						writeChunk(
+							ctx,
+							buildBackendFailureErrorEvent(
+								"Checkpoint lease renewal failed; the active session was stopped to prevent concurrent writes",
+								result,
+								"checkpoint",
+							),
+						);
+						writeDone(ctx);
+					}
+					return;
+				}
+				ctx.checkpointLease.leaseExpiresAt = result.body.lease_expires_at;
+				ctx.checkpointLease.checkpointVersion = result.body.checkpoint_version;
+				ctx.checkpointLease.bundleHash = result.body.bundle_hash;
+				updateActiveStreamSession(ctx, {
+					checkpointVersion: result.body.checkpoint_version,
+					bundleHash: result.body.bundle_hash,
+				});
+				writeCheckpointManifest(ctx.sessionKey, {
+					checkpointVersion: result.body.checkpoint_version,
+					bundleHash: result.body.bundle_hash,
+					holderId: activeLease.holderId,
+					leaseToken: activeLease.leaseToken,
+					leaseExpiresAt: result.body.lease_expires_at,
+				});
+				if (result.body.cancel_requested === true) {
+					beginActiveRunCancellation(ctx, {
+						cancellationId: result.body.cancellation?.cancellation_id ?? null,
+						requestedByUser: result.body.cancellation?.requested_by_user ?? null,
+						reason: result.body.cancellation?.reason ?? "user_requested",
+						message: result.body.cancellation?.message ?? null,
+					});
+				}
+			})
+			.catch((error) => {
+				const message = error instanceof Error ? error.message : String(error);
+				logStructuredEvent({
+					severity: "ERROR",
+					component: "astro-stream",
+					event: "checkpoint_lease_renew_error",
+					message: "Checkpoint lease renewal failed with an unexpected error.",
+					data: {
+						sessionKey: ctx.sessionKey,
+						agentSessionId: ctx.agentSessionId,
+						error: message,
+					},
+				});
+				stopCheckpointLeaseRenewal(ctx);
+				stopActivePiProcess(ctx);
+				if (!ctx.finished) {
+					writeChunk(ctx, {
+						type: "error",
+						error: "Checkpoint lease renewal failed; the active session was stopped to prevent concurrent writes.",
+						error_source: "checkpoint",
+					});
+					writeDone(ctx);
+				}
+			});
+	}, renewIntervalMs);
+}
+
+function extractCheckpointErrorCode(body: unknown): string | null {
+	return isPlainObject(body) ? extractStringProperty(body, "error_code", "errorCode") : null;
+}
+
+type BackendFailureLike = {
+	status?: number | null;
+	statusCode?: number | null;
+	error?: string | null;
+	message?: string | null;
+	body?: unknown;
+	responseText?: string | null;
+	url?: string | null;
+	errorCode?: string | null;
+	errorDetail?: string | null;
+	fieldErrors?: unknown;
+};
+
+type StreamErrorForensics = NonNullable<Extract<StreamEvent, { type: "error" }>["forensics"]>;
+
+function extractBackendFailureFields(result: BackendFailureLike): {
+	status: number | null;
+	errorCode: string | null;
+	errorDetail: string | null;
+	fieldErrors: unknown;
+	explicitError: string | null;
+} {
+	const body = isPlainObject(result.body) ? result.body : null;
+	const status = result.status ?? result.statusCode ?? null;
+	const errorCode =
+		result.errorCode ?? (body ? extractStringProperty(body, "error_code", "errorCode") : null);
+	const errorDetail =
+		result.errorDetail ??
+		(body ? extractStringProperty(body, "error_detail", "errorDetail", "detail", "message", "error") : null);
+	const fieldErrors =
+		result.fieldErrors ?? (body ? (body.field_errors ?? body.fieldErrors) : undefined);
+	const explicitError = errorDetail || errorCode || result.message || result.error || null;
+	return { status, errorCode, errorDetail, fieldErrors, explicitError };
+}
+
+function buildBackendFailureForensics(result: BackendFailureLike): StreamErrorForensics {
+	const body = isPlainObject(result.body) ? result.body : null;
+	return {
+		backend_request_url: result.url ?? null,
+		backend_response_text: result.responseText ?? null,
+		backend_response_body: result.body ?? null,
+		backend_checkpoint_version: body?.checkpoint_version ?? null,
+		backend_bundle_hash: body?.bundle_hash ?? null,
+	};
+}
+
+function backendFailureDiagnostics(result: BackendFailureLike): Record<string, unknown> {
+	const fields = extractBackendFailureFields(result);
+	const forensics = buildBackendFailureForensics(result);
+	return {
+		status: fields.status,
+		error: result.error,
+		backend_request_url: forensics.backend_request_url,
+		backend_response_body: forensics.backend_response_body,
+		backend_response_text: forensics.backend_response_text,
+		backend_error_code: fields.errorCode,
+		backend_error_detail: fields.errorDetail,
+		backend_field_errors: fields.fieldErrors ?? null,
+		backend_checkpoint_version: forensics.backend_checkpoint_version,
+		backend_bundle_hash: forensics.backend_bundle_hash,
+	};
+}
+
+function checkpointFailureDiagnostics(
+	result: Extract<SessionCheckpointClientResult<unknown>, { ok: false }>,
+): Record<string, unknown> {
+	return backendFailureDiagnostics(result);
+}
+
+function checkpointLeaseRenewCanFallbackToAcquire(
+	result: Extract<SessionCheckpointClientResult<unknown>, { ok: false }>,
+): boolean {
+	const code = extractCheckpointErrorCode(result.body);
+	return (
+		code === "checkpoint_lease_missing" ||
+		code === "checkpoint_lease_expired" ||
+		code === "checkpoint_lease_token_mismatch"
+	);
+}
+
+function buildBackendFailureErrorEvent(
+	prefix: string,
+	result: BackendFailureLike,
+	errorSource: StreamErrorSource = "backend",
+): Extract<StreamEvent, { type: "error" }> {
+	const fields = extractBackendFailureFields(result);
+
+	return {
+		type: "error",
+		error: fields.explicitError ? `${prefix}: ${fields.explicitError}` : prefix,
+		error_source: errorSource,
+		status: fields.status,
+		error_code: fields.errorCode,
+		error_detail: fields.errorDetail,
+		field_errors: fields.fieldErrors ?? null,
+		forensics: buildBackendFailureForensics(result),
+	};
+}
+
+function checkpointLatestRouteMissing(
+	result: Extract<SessionCheckpointClientResult<CheckpointLatestResponse>, { ok: false }>,
+): boolean {
+	const responseText = result.responseText ?? "";
+	return (
+		result.status === 404 &&
+		responseText.includes("Page not found") &&
+		responseText.includes("/checkpoint/latest/")
+	);
+}
+
+async function fetchCheckpointForHistoryHydration(input: {
+	agentSessionId: number;
+	sessionKey: string;
+}): Promise<SessionCheckpointClientResult<CheckpointLatestResponse>> {
+	const client = new SessionCheckpointClient({
+		env: process.env,
+		log: (message) => console.log(`[astro-stream] ${message}`),
+	});
+	const latestCheckpoint = await client.latest({ agentSessionId: input.agentSessionId });
+	if (latestCheckpoint.ok === true) {
+		return latestCheckpoint;
+	}
+	if (!checkpointLatestRouteMissing(latestCheckpoint)) {
+		return latestCheckpoint;
+	}
+
+	const holderId = `${resolveCheckpointHolderId()}/history`;
+	const ttlSeconds = Math.max(30, Math.min(resolveCheckpointLeaseTtlSeconds(), 120));
+	logStructuredEvent({
+		severity: "WARNING",
+		component: "astro-stream",
+		event: "checkpoint_latest_missing_restore_fallback",
+		message: "Backend checkpoint/latest route is missing; Astro is using lease + restore for history hydration.",
+		data: {
+			sessionId: input.sessionKey,
+			agentSessionId: input.agentSessionId,
+			latestUrl: latestCheckpoint.url,
+		},
+	});
+
+	const leaseResult = await client.acquireLease({
+		agentSessionId: input.agentSessionId,
+		holderId,
+		ttlSeconds,
+		leasePurpose: "read_restore",
+	});
+	if (leaseResult.ok === false) {
+		return {
+			ok: false,
+			status: leaseResult.status,
+			error: leaseResult.error,
+			body: leaseResult.body,
+			responseText: leaseResult.responseText,
+			url: leaseResult.url,
+		};
+	}
+
+	let restoreResult: SessionCheckpointClientResult<CheckpointLatestResponse>;
+	try {
+		restoreResult = await client.restore({
+			agentSessionId: input.agentSessionId,
+			holderId,
+			leaseToken: leaseResult.body.lease_token,
+		});
+	} finally {
+		client
+			.releaseLease({
+				agentSessionId: input.agentSessionId,
+				holderId,
+				leaseToken: leaseResult.body.lease_token,
+				reason: "history_hydration",
+			})
+			.then((releaseResult) => {
+				if (releaseResult.ok === false) {
+					logStructuredEvent({
+						severity: "WARNING",
+						component: "astro-stream",
+						event: "checkpoint_history_restore_release_failed",
+						message: "History hydration restore fallback could not release its checkpoint lease.",
+						data: {
+							sessionId: input.sessionKey,
+							agentSessionId: input.agentSessionId,
+							status: releaseResult.status,
+							error: releaseResult.error,
+							backendResponseText: releaseResult.responseText,
+							backendResponseBody: releaseResult.body,
+						},
+					});
+				}
+			})
+			.catch((error) => {
+				logStructuredEvent({
+					severity: "WARNING",
+					component: "astro-stream",
+					event: "checkpoint_history_restore_release_error",
+					message: "History hydration restore fallback hit an unexpected error while releasing its lease.",
+					data: {
+						sessionId: input.sessionKey,
+						agentSessionId: input.agentSessionId,
+						error: error instanceof Error ? error.message : String(error),
+					},
+				});
+			});
+	}
+
+	return restoreResult;
+}
+
+function buildSessionMetadataFromBackendCheckpoint(input: {
+	sessionKey: string;
+	agentSessionId: number;
+	sessionPayload: Record<string, unknown>;
+	checkpointBundle: CheckpointBundle;
+	requestedThreadId: string | null;
+}): SessionMetadata {
+	const sessionMetadata = extractObjectPropertyRecord(input.sessionPayload, "session_metadata", "sessionMetadata");
+	const bundleMetadata = isPlainObject(input.checkpointBundle.astro_metadata_json)
+		? input.checkpointBundle.astro_metadata_json
+		: {};
+	const historyAnnotations = normalizeHistoryAnnotations(bundleMetadata.history_annotations);
+	const agentRecord = extractObjectPropertyRecord(input.sessionPayload, "agent");
+	const agentName =
+		extractStringProperty(bundleMetadata, "agentName", "agent_name") ??
+		extractStringProperty(input.sessionPayload, "agent_name", "agentName") ??
+		(agentRecord ? extractStringProperty(agentRecord, "name", "agent_name", "agentName") : null) ??
+		extractBackendSessionWorkflowKey(input.sessionPayload, sessionMetadata);
+	const agentId =
+		extractNumericProperty(bundleMetadata, "agentId", "agent_id") ??
+		extractBackendSessionAgentId(input.sessionPayload);
+	const agentUniqueId =
+		extractStringProperty(bundleMetadata, "agentUniqueId", "agent_unique_id") ??
+		(agentRecord ? extractStringProperty(agentRecord, "agent_unique_id", "agentUniqueId") : null);
+	const threadId =
+		extractStringProperty(bundleMetadata, "threadId", "thread_id") ??
+		extractBackendSessionThreadId(input.sessionPayload, sessionMetadata, input.requestedThreadId) ??
+		input.sessionKey;
+	const startedAt =
+		extractStringProperty(bundleMetadata, "startedAt", "started_at") ??
+		extractStringProperty(input.sessionPayload, "started_at", "startedAt") ??
+		extractStringProperty(sessionMetadata ?? {}, "started_at", "startedAt");
+	const projectRuntime =
+		(bundleMetadata.projectRuntime && typeof bundleMetadata.projectRuntime === "object"
+			? (bundleMetadata.projectRuntime as ProjectRuntimeSnapshot)
+			: null) ??
+		(sessionMetadata?.project_runtime_snapshot && typeof sessionMetadata.project_runtime_snapshot === "object"
+			? (sessionMetadata.project_runtime_snapshot as ProjectRuntimeSnapshot)
+			: null);
+
+	return {
+		agentId,
+		agentUniqueId,
+		agentSessionId: input.agentSessionId,
+		threadId,
+		startedAt,
+		agentName,
+		projectId: normalizeProjectId(bundleMetadata.projectId ?? sessionMetadata?.project_id),
+		cwd: normalizeProjectCwd(bundleMetadata.cwd ?? sessionMetadata?.project_cwd),
+		repoRoot: normalizeRepoRoot(bundleMetadata.repoRoot ?? sessionMetadata?.project_repo_root),
+		pendingOnboarding: bundleMetadata.pendingOnboarding === true || sessionMetadata?.pending_onboarding === true,
+		pendingRuntimeBootstrap:
+			bundleMetadata.pendingRuntimeBootstrap === true || sessionMetadata?.pending_runtime_bootstrap === true,
+		switchSummary:
+			extractStringProperty(bundleMetadata, "switchSummary", "switch_summary") ??
+			extractStringProperty(sessionMetadata ?? {}, "switch_summary", "switchSummary"),
+		projectRuntime,
+		sessionModelBinding: normalizeSessionModelBinding(
+			bundleMetadata.sessionModelBinding ?? sessionMetadata?.session_model_binding,
+		),
+		sessionConfigOverrides: normalizeSessionConfigOverrides(
+			bundleMetadata.sessionConfigOverrides ?? sessionMetadata?.session_config_overrides,
+		),
+		...(historyAnnotations ? { history_annotations: historyAnnotations } : {}),
+	};
+}
+
+async function hydrateLocalSessionFilesForRead(input: {
+	sessionKey: string;
+	requestedThreadId: string | null;
+	reason: "session_model" | "session_tools" | "session_config" | "session_diff";
+}): Promise<
+	| { ok: true; metadata: SessionMetadata }
+	| { ok: false; statusCode: number; error: string; message: string }
+> {
+	const agentSessionId = normalizeNumericId(input.sessionKey);
+	if (agentSessionId == null || !shouldRegisterAgents(process.env)) {
+		return {
+			ok: false,
+			statusCode: 404,
+			error: "session_not_found",
+			message: "No local session found for the provided session id.",
+		};
+	}
+
+	const fetched = await fetchBackendAgentSession({
+		agentSessionId,
+		env: process.env,
+		log: (message) => console.log(`[astro-stream] ${message}`),
+	});
+	if (!fetched.ok) {
+		return {
+			ok: false,
+			statusCode: fetched.notFound ? 404 : 502,
+			error: fetched.notFound ? "session_not_found" : "session_hydration_failed",
+			message:
+				fetched.error ??
+				(fetched.notFound
+					? "The backend AgentSession was not found."
+					: "Could not fetch backend session information for session hydration."),
+		};
+	}
+	if (!isPlainObject(fetched.body)) {
+		return {
+			ok: false,
+			statusCode: 502,
+			error: "session_hydration_failed",
+			message: "Backend AgentSession response was not a JSON object.",
+		};
+	}
+
+	const checkpoint = await fetchCheckpointForHistoryHydration({
+		agentSessionId: fetched.agentSessionId ?? agentSessionId,
+		sessionKey: input.sessionKey,
+	});
+	if (checkpoint.ok === false) {
+		logStructuredEvent({
+			severity: checkpoint.status === 404 ? "WARNING" : "ERROR",
+			component: "astro-stream",
+			event: "read_endpoint_checkpoint_hydration_failed",
+			message: "Astro could not hydrate local session files from the backend checkpoint for a read endpoint.",
+			data: {
+				sessionId: input.sessionKey,
+				agentSessionId: fetched.agentSessionId ?? agentSessionId,
+				reason: input.reason,
+				status: checkpoint.status,
+				error: checkpoint.error,
+				backendResponseText: checkpoint.responseText,
+				backendResponseBody: checkpoint.body,
+			},
+		});
+		return {
+			ok: false,
+			statusCode: checkpoint.status === 404 ? 404 : 502,
+			error: checkpoint.status === 404 ? "session_checkpoint_not_found" : "session_hydration_failed",
+			message: checkpoint.error ?? "Could not hydrate session files from the backend checkpoint.",
+		};
+	}
+
+	const bundle = checkpoint.body.bundle;
+	if (!isPlainObject(bundle) || typeof bundle.pi_session_jsonl !== "string") {
+		return {
+			ok: false,
+			statusCode: 502,
+			error: "session_hydration_failed",
+			message: "Backend checkpoint response did not include bundle.pi_session_jsonl.",
+		};
+	}
+
+	mkdirSync(sessionDir, { recursive: true });
+	writeFileSync(getSessionPath(input.sessionKey), bundle.pi_session_jsonl);
+	const metadata = buildSessionMetadataFromBackendCheckpoint({
+		sessionKey: input.sessionKey,
+		agentSessionId: fetched.agentSessionId ?? agentSessionId,
+		sessionPayload: fetched.body,
+		checkpointBundle: bundle,
+		requestedThreadId: input.requestedThreadId,
+	});
+	writeSessionMetadata(input.sessionKey, metadata);
+	const threadBinding = isPlainObject(bundle.thread_binding_json)
+		? bundle.thread_binding_json
+		: {
+				threadId: metadata.threadId ?? input.sessionKey,
+				runtimeSessionId: input.sessionKey,
+				updatedAt: new Date().toISOString(),
+		  };
+	const threadId = extractStringProperty(threadBinding, "threadId", "thread_id") ?? metadata.threadId ?? input.sessionKey;
+	writeFileSync(getThreadBindingPath(threadId), JSON.stringify(threadBinding, null, 2));
+
+	try {
+		const sessionEnvelope = buildConversationHistorySessionFromBackendSession({
+			sessionKey: input.sessionKey,
+			agentSessionId: fetched.agentSessionId ?? agentSessionId,
+			payload: fetched.body,
+			metadata,
+			requestedThreadId: input.requestedThreadId,
+		});
+		if (sessionEnvelope) {
+			const reconstructed = rebuildConversationHistoryFromPiJsonl({
+				piSessionJsonl: bundle.pi_session_jsonl,
+				session: sessionEnvelope,
+				metadata: bundle.astro_metadata_json,
+			});
+			writeConversationHistorySync({ sessionDir, sessionKey: input.sessionKey, snapshot: reconstructed });
+		}
+	} catch (error) {
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "read_endpoint_history_projection_failed",
+			message: "Astro hydrated local Pi files but could not rebuild chat history for a read endpoint.",
+			data: {
+				sessionId: input.sessionKey,
+				agentSessionId: fetched.agentSessionId ?? agentSessionId,
+				reason: input.reason,
+				error: error instanceof Error ? error.message : String(error),
+			},
+		});
+	}
+
+	logStructuredEvent({
+		severity: "INFO",
+		component: "astro-stream",
+		event: "read_endpoint_session_hydrated_from_checkpoint",
+		message: "Astro hydrated local session files from backend checkpoint for a read endpoint.",
+		data: {
+			sessionId: input.sessionKey,
+			agentSessionId: fetched.agentSessionId ?? agentSessionId,
+			reason: input.reason,
+			checkpointVersion: checkpoint.body.checkpoint_version,
+			bundleHash: checkpoint.body.bundle_hash,
+		},
+	});
+	return { ok: true, metadata };
+}
+
+async function prepareCheckpointBeforePiLaunch(
+	ctx: RequestContext,
+): Promise<{ ok: true } | { ok: false; errorEvent: Extract<StreamEvent, { type: "error" }> }> {
+	if (ctx.agentSessionId == null || !shouldRegisterAgents(process.env)) return { ok: true };
+
+	if (ctx.checkpointLease) {
+		const leaseExpiresAt = Date.parse(ctx.checkpointLease.leaseExpiresAt);
+		if (Number.isFinite(leaseExpiresAt) && leaseExpiresAt > Date.now() + 5000) {
+			logStructuredEvent({
+				severity: "INFO",
+				component: "astro-stream",
+				event: "checkpoint_lease_reused",
+				message: "Astro reused an active checkpoint lease for this runtime step.",
+				data: {
+					sessionKey: ctx.sessionKey,
+					threadId: ctx.threadId,
+					agentSessionId: ctx.agentSessionId,
+					holderId: ctx.checkpointLease.holderId,
+					leaseExpiresAt: ctx.checkpointLease.leaseExpiresAt,
+					checkpointVersion: ctx.checkpointLease.checkpointVersion,
+					bundleHash: ctx.checkpointLease.bundleHash,
+				},
+			});
+			return { ok: true };
+		}
+		stopCheckpointLeaseRenewal(ctx);
+		ctx.checkpointLease = null;
+	}
+
+	const finalizationState = readCheckpointLifecycleState(ctx.sessionKey);
+	if (finalizationState?.state === "finalizing_checkpoint") {
+		clearCheckpointLifecycleState(ctx.sessionKey);
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "checkpoint_launch_ignored_local_finalizing_state",
+			message: "Astro ignored a local checkpoint finalization state before runtime execution; backend lease acquisition is the authority.",
+			data: {
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId,
+				agentSessionId: ctx.agentSessionId,
+				finalizingState: finalizationState,
+			},
+		});
+	}
+
+	const client = new SessionCheckpointClient({
+		env: process.env,
+		log: (message) => console.log(`[astro-stream] ${message}`),
+	});
+	const holderId = resolveCheckpointHolderId();
+	const ttlSeconds = resolveCheckpointLeaseTtlSeconds();
+	const existingManifest = readCheckpointManifest(ctx.sessionKey);
+	let leaseAction: "renew" | "acquire" | "renew_then_acquire" = shouldRenewManifestLease(
+		existingManifest,
+		holderId,
+	)
+		? "renew"
+		: "acquire";
+	let leaseResult: Awaited<ReturnType<SessionCheckpointClient["acquireLease"]>>;
+	if (leaseAction === "renew") {
+		leaseResult = await client.renewLease({
+			agentSessionId: ctx.agentSessionId,
+			holderId,
+			leaseToken: existingManifest.lease_token,
+			ttlSeconds,
+			leasePurpose: "runtime_run",
+		});
+		if (leaseResult.ok === false && checkpointLeaseRenewCanFallbackToAcquire(leaseResult)) {
+			logStructuredEvent({
+				severity: "WARNING",
+				component: "astro-stream",
+				event: "checkpoint_lease_renew_stale_manifest",
+				message: "Checkpoint lease renew failed for a stale local manifest; trying a fresh lease acquire.",
+				data: {
+					sessionKey: ctx.sessionKey,
+					threadId: ctx.threadId,
+					agentSessionId: ctx.agentSessionId,
+					holderId,
+					...checkpointFailureDiagnostics(leaseResult),
+				},
+			});
+			leaseAction = "renew_then_acquire";
+			leaseResult = await client.acquireLease({
+				agentSessionId: ctx.agentSessionId,
+				holderId,
+				ttlSeconds,
+				leasePurpose: "runtime_run",
+			});
+		}
+	} else {
+		leaseResult = await client.acquireLease({
+			agentSessionId: ctx.agentSessionId,
+			holderId,
+			ttlSeconds,
+			leasePurpose: "runtime_run",
+		});
+	}
+
+	if (leaseResult.ok === false) {
+		logStructuredEvent({
+			severity: "ERROR",
+			component: "astro-stream",
+			event: "checkpoint_lease_failed",
+			message: "Checkpoint lease could not be acquired before runtime execution.",
+			data: {
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId,
+				agentSessionId: ctx.agentSessionId,
+				leaseAction,
+				holderId,
+				...checkpointFailureDiagnostics(leaseResult),
+			},
+		});
+		return {
+			ok: false,
+			errorEvent: buildBackendFailureErrorEvent("Checkpoint lease failed", leaseResult, "checkpoint"),
+		};
+	}
+
+	const lease = leaseResult.body;
+	ctx.checkpointLease = {
+		holderId,
+		leaseToken: lease.lease_token,
+		leaseExpiresAt: lease.lease_expires_at,
+		checkpointVersion: lease.checkpoint_version,
+		bundleHash: lease.bundle_hash,
+		renewTimer: null,
+	};
+	updateActiveStreamSession(ctx, {
+		checkpointVersion: lease.checkpoint_version,
+		bundleHash: lease.bundle_hash,
+	});
+	writeCheckpointLifecycleState(ctx.sessionKey, {
+		state: "running",
+		lease_holder_id: holderId,
+		lease_token: lease.lease_token,
+		checkpoint_version: lease.checkpoint_version,
+		bundle_hash: lease.bundle_hash,
+		reason: "launch",
+	});
+	logStructuredEvent({
+		severity: "INFO",
+		component: "astro-stream",
+		event: leaseAction === "renew" ? "checkpoint_lease_renewed" : "checkpoint_lease_acquired",
+		message:
+			leaseAction === "renew"
+				? "Checkpoint lease renewed before runtime execution."
+				: "Checkpoint lease acquired before runtime execution.",
+		data: {
+			sessionKey: ctx.sessionKey,
+			threadId: ctx.threadId,
+			agentSessionId: ctx.agentSessionId,
+			holderId,
+			leaseExpiresAt: lease.lease_expires_at,
+			checkpointVersion: lease.checkpoint_version,
+			bundleHash: lease.bundle_hash,
+		},
+	});
+
+	if (!checkpointManifestIsCurrent(existingManifest, lease, ctx.sessionKey)) {
+		logStructuredEvent({
+			severity: "INFO",
+			component: "astro-stream",
+			event: "checkpoint_restore_started",
+			message: "Restoring backend checkpoint bundle before runtime execution.",
+			data: {
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId,
+				agentSessionId: ctx.agentSessionId,
+				checkpointVersion: lease.checkpoint_version,
+				bundleHash: lease.bundle_hash,
+				manifestCheckpointVersion: existingManifest?.checkpoint_version ?? null,
+				manifestBundleHash: existingManifest?.bundle_hash ?? null,
+			},
+		});
+		const restoreResult = await client.restore({
+			agentSessionId: ctx.agentSessionId,
+			holderId,
+			leaseToken: lease.lease_token,
+		});
+		if (restoreResult.ok === false) {
+			logStructuredEvent({
+				severity: "ERROR",
+				component: "astro-stream",
+				event: "checkpoint_restore_failed",
+				message: "Backend checkpoint bundle could not be restored before runtime execution.",
+				data: {
+					sessionKey: ctx.sessionKey,
+					threadId: ctx.threadId,
+					agentSessionId: ctx.agentSessionId,
+					holderId,
+					...checkpointFailureDiagnostics(restoreResult),
+				},
+			});
+			const releaseResult = await client.releaseLease({
+				agentSessionId: ctx.agentSessionId,
+				holderId,
+				leaseToken: lease.lease_token,
+				reason: "restore_failed",
+			});
+			ctx.checkpointLease = null;
+			if (releaseResult.ok === false) {
+				writeCheckpointLifecycleState(ctx.sessionKey, {
+					state: "finalizing_checkpoint",
+					lease_holder_id: holderId,
+					lease_token: lease.lease_token,
+					checkpoint_version: lease.checkpoint_version,
+					bundle_hash: lease.bundle_hash,
+					reason: "restore_failed_release_pending",
+				});
+				logStructuredEvent({
+					severity: "WARNING",
+					component: "astro-stream",
+					event: "checkpoint_restore_failed_release_failed",
+					message: "Astro could not release checkpoint lease after restore failure.",
+					data: {
+						sessionKey: ctx.sessionKey,
+						threadId: ctx.threadId,
+						agentSessionId: ctx.agentSessionId,
+						holderId,
+						...checkpointFailureDiagnostics(releaseResult),
+					},
+				});
+			} else {
+				clearCheckpointLifecycleState(ctx.sessionKey);
+			}
+			return {
+				ok: false,
+				errorEvent: buildBackendFailureErrorEvent("Checkpoint restore failed", restoreResult, "checkpoint"),
+			};
+		}
+		materializeCheckpointBundle(ctx, restoreResult.body.bundle);
+		checkpointRestoreCount += 1;
+		logStructuredEvent({
+			severity: "INFO",
+			component: "astro-stream",
+			event: "checkpoint_restore_completed",
+			message: "Restored backend checkpoint bundle before runtime execution.",
+			data: {
+				sessionKey: ctx.sessionKey,
+				agentSessionId: ctx.agentSessionId,
+				checkpointVersion: restoreResult.body.checkpoint_version,
+				bundleHash: restoreResult.body.bundle_hash,
+				restoreCount: checkpointRestoreCount,
+			},
+		});
+		ctx.checkpointLease.checkpointVersion = restoreResult.body.checkpoint_version;
+		ctx.checkpointLease.bundleHash = restoreResult.body.bundle_hash;
+		writeCheckpointManifest(ctx.sessionKey, {
+			checkpointVersion: restoreResult.body.checkpoint_version,
+			bundleHash: restoreResult.body.bundle_hash,
+			holderId,
+			leaseToken: lease.lease_token,
+			leaseExpiresAt: lease.lease_expires_at,
+			restoredAt: new Date().toISOString(),
+		});
+	} else {
+		writeCheckpointManifest(ctx.sessionKey, {
+			checkpointVersion: lease.checkpoint_version,
+			bundleHash: lease.bundle_hash,
+			holderId,
+			leaseToken: lease.lease_token,
+			leaseExpiresAt: lease.lease_expires_at,
+		});
+		logStructuredEvent({
+			severity: "INFO",
+			component: "astro-stream",
+			event: "checkpoint_restore_skipped_current",
+			message: "Local checkpoint manifest is current; backend restore was not needed before runtime execution.",
+			data: {
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId,
+				agentSessionId: ctx.agentSessionId,
+				checkpointVersion: lease.checkpoint_version,
+				bundleHash: lease.bundle_hash,
+			},
+		});
+	}
+
+	startCheckpointLeaseRenewal(ctx, client, ttlSeconds);
+	return { ok: true };
+}
+
+function buildAgentSessionTerminalState(ctx: RequestContext, reason: "finish" | "error" | "cancel") {
+	if (reason === "finish") {
+		return {
+			status: "completed",
+			error_code: null,
+			error_detail: null,
+		};
+	}
+	if (reason === "cancel") {
+		return {
+			status: "cancelled",
+			error_code: "session_cancelled_by_user",
+			error_detail: "Session cancelled by user.",
+		};
+	}
+	return {
+		status: "error",
+		error_code: ctx.terminalError?.errorCode ?? null,
+		error_detail: ctx.terminalError?.errorDetail ?? "Runtime ended with an error.",
+	};
+}
+
+function writeCheckpointMarker(ctx: RequestContext, reason: "finish" | "error" | "cancel") {
+	if (!ctx.checkpointLease) {
+		logStructuredEvent({
+			severity: "INFO",
+			component: "astro-stream",
+			event: "checkpoint_marker_skipped_no_lease",
+			message: "Checkpoint marker was skipped because this stream has no active checkpoint lease.",
+			data: {
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId,
+				agentSessionId: ctx.agentSessionId,
+				reason,
+			},
+		});
+		return;
+	}
+	try {
+		mkdirSync(getCheckpointMarkerDir(), { recursive: true });
+		const checkpointLease = ctx.checkpointLease;
+		const marker = {
+			session_id: ctx.sessionKey,
+			agent_session_id: ctx.agentSessionId,
+			thread_id: ctx.threadId,
+			reason,
+			written_at: new Date().toISOString(),
+			lease_holder_id: checkpointLease.holderId,
+			lease_token: checkpointLease.leaseToken,
+			checkpoint_version: checkpointLease.checkpointVersion,
+			bundle_hash: checkpointLease.bundleHash,
+			agent_session_terminal_state: buildAgentSessionTerminalState(ctx, reason),
+		};
+		const markerPath = path.join(
+			getCheckpointMarkerDir(),
+			`${ctx.sessionKey}.${Date.now()}.${reason}.marker.json`,
+		);
+		const markerTempPath = `${markerPath}.${process.pid}.tmp`;
+		writeFileSync(markerTempPath, JSON.stringify(marker, null, 2));
+		renameSync(markerTempPath, markerPath);
+		writeCheckpointLifecycleState(ctx.sessionKey, {
+			state: "finalizing_checkpoint",
+			lease_holder_id: checkpointLease.holderId,
+			lease_token: checkpointLease.leaseToken,
+			checkpoint_version: checkpointLease.checkpointVersion,
+			bundle_hash: checkpointLease.bundleHash,
+			reason,
+			marker_file: path.basename(markerPath),
+		});
+		logStructuredEvent({
+			severity: "INFO",
+			component: "astro-stream",
+			event: "checkpoint_marker_written",
+			message: "Checkpoint marker written for sidecar flush.",
+			data: {
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId,
+				agentSessionId: ctx.agentSessionId,
+				reason,
+				markerFile: path.basename(markerPath),
+				checkpointVersion: checkpointLease.checkpointVersion,
+				bundleHash: checkpointLease.bundleHash,
+			},
+		});
+	} catch (error) {
+		logStructuredEvent({
+			severity: "ERROR",
+			component: "astro-stream",
+			event: "checkpoint_marker_write_failed",
+			message: "Failed to write checkpoint marker.",
+			data: {
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId,
+				reason,
+				error: error instanceof Error ? error.message : String(error),
+			},
+		});
+	}
 }
 
 function resolveSessionRepoRoot(sessionKey: string, metadata: SessionMetadata): string | null {
@@ -1678,34 +3445,45 @@ function writeThreadBinding(binding: ThreadSessionBinding) {
 	writeFileSync(getThreadBindingPath(binding.threadId), JSON.stringify(binding, null, 2));
 }
 
+type BackendRuntimeSessionCreationSuccess = {
+	ok: true;
+	agentId: number;
+	agentName: string;
+	agentUniqueId: string;
+	agentSessionId: number;
+	sessionKey: string;
+	threadId: string;
+	startedAt: string;
+};
+
+type BackendRuntimeSessionCreationFailure = {
+	ok: false;
+	error: string;
+	status: number | null;
+	body: unknown;
+	responseText: string | null;
+	url: string | null;
+};
+
+type BackendRuntimeSessionCreationResult =
+	| BackendRuntimeSessionCreationSuccess
+	| BackendRuntimeSessionCreationFailure;
+
 async function createBackendRuntimeSession(options: {
 	agentName: string;
 	userId: string;
 	threadId: string;
 	projectId: string | null;
 	cwd: string | null;
-	externalSessionId?: string;
 	sessionMetadata?: Record<string, unknown>;
 	pendingOnboarding?: boolean;
 	pendingRuntimeBootstrap?: boolean;
+	initialTask?: string | null;
 	switchSummary?: string | null;
 	projectRuntime?: ProjectRuntimeSnapshot | null;
 	sessionModelBinding?: SessionModelBinding | null;
 	sessionConfigOverrides?: SessionConfigOverrides | null;
-}): Promise<
-	| {
-			ok: true;
-			agentId: number;
-			agentUniqueId: string;
-			agentSessionId: number;
-			sessionKey: string;
-			startedAt: string;
-	  }
-	| {
-			ok: false;
-			error: string;
-	  }
-> {
+}): Promise<BackendRuntimeSessionCreationResult> {
 	const registration = await registerMainsequenceAgent({
 		agentName: options.agentName,
 		agentRole: options.agentName === "astro-orchestrator" ? "orchestrator" : "specialist",
@@ -1721,6 +3499,10 @@ async function createBackendRuntimeSession(options: {
 		return {
 			ok: false,
 			error: registration.stderr || "Failed to resolve backend agent id.",
+			status: registration.exitCode,
+			body: registration.body,
+			responseText: registration.responseText ?? null,
+			url: registration.url ?? null,
 		};
 	}
 
@@ -1738,36 +3520,31 @@ async function createBackendRuntimeSession(options: {
 		options.agentName === "mainsequence-project-coder" && options.cwd
 			? resolveGitRepoRoot(options.cwd)
 			: null;
-	const pendingRuntimeSessionId = buildPendingRuntimeSessionId(agentUniqueId, startedAt);
 	const runtimeConfig = buildRuntimeConfigSnapshot(options.sessionModelBinding ?? null);
 
-	const payload: Record<string, unknown> = {
-		status: "running",
-		started_at: startedAt,
-		ended_at: null,
-		created_by_user: options.userId,
-		llm_provider: resolveBackendLlmProvider(options.sessionModelBinding ?? null),
-		llm_model: resolveBackendLlmModel(options.sessionModelBinding ?? null),
-		engine_name: options.agentName === "astro-orchestrator" ? "astro_router_v1" : "astro_project_session_v1",
-		runtime_config_snapshot: runtimeConfig,
-		error_detail: "",
-		external_session_id: options.externalSessionId ?? "",
-		runtime_session_id: pendingRuntimeSessionId,
-		thread_id: options.threadId,
-		usage_summary: {
-			input_tokens: 0,
-			output_tokens: 0,
-			total_tokens: 0,
-			estimated_cost_usd: 0,
-		},
-		session_metadata: {
-			source: "frontend",
+		const payload: Record<string, unknown> = {
+			status: "running",
+			created_by_user: options.userId,
+			thread_id: options.threadId,
 			workflow_key: options.agentName,
+			llm_provider: resolveBackendLlmProvider(options.sessionModelBinding ?? null),
+			llm_model: resolveBackendLlmModel(options.sessionModelBinding ?? null),
+			engine_name: "astro",
+			runtime_config_snapshot: runtimeConfig,
+			session_metadata: {
+				source: "frontend",
+				workflow_key: options.agentName,
+				created_by_user: options.userId,
 			...(options.projectId ? { project_id: options.projectId } : {}),
 			...(options.cwd ? { project_cwd: options.cwd } : {}),
 			...(frozenRepoRoot ? { project_repo_root: frozenRepoRoot } : {}),
 			...(options.projectRuntime ? { project_runtime_snapshot: options.projectRuntime } : {}),
-			...(options.sessionModelBinding ? { session_model_binding: options.sessionModelBinding } : {}),
+			pending_onboarding: options.pendingOnboarding === true,
+			pending_runtime_bootstrap: options.pendingRuntimeBootstrap === true,
+			switch_summary: options.switchSummary ?? null,
+			initial_task: options.initialTask ?? null,
+			session_model_binding: options.sessionModelBinding ?? null,
+			session_config_overrides: options.sessionConfigOverrides ?? null,
 			...(options.sessionMetadata ?? {}),
 		},
 	};
@@ -1785,18 +3562,28 @@ async function createBackendRuntimeSession(options: {
 		return {
 			ok: false,
 			error: sessionStart.error || "Failed to start backend agent session.",
+			status: sessionStart.status,
+			body: sessionStart.body,
+			responseText: sessionStart.responseText ?? null,
+			url: sessionStart.url ?? null,
 		};
 	}
 
 	const agentSessionId = sessionStart.agentSessionId;
 	const sessionKey = buildBackendRuntimeSessionId(agentSessionId);
+	const sessionStartBody = isPlainObject(sessionStart.body) ? sessionStart.body : {};
+	const resolvedStartedAt = extractStringProperty(sessionStartBody, "started_at", "startedAt") ?? startedAt;
+	const resolvedAgentId = sessionStart.agentId ?? agentId;
+	const resolvedAgentName = sessionStart.agentName ?? options.agentName;
+	const resolvedAgentUniqueId = sessionStart.agentUniqueId ?? agentUniqueId;
+	const resolvedThreadId = sessionStart.threadId ?? options.threadId;
 	writeSessionMetadata(sessionKey, {
-		agentId,
-		agentUniqueId,
+		agentId: resolvedAgentId,
+		agentUniqueId: resolvedAgentUniqueId,
 		agentSessionId,
-		threadId: options.threadId,
-		startedAt,
-		agentName: options.agentName,
+		threadId: resolvedThreadId,
+		startedAt: resolvedStartedAt,
+		agentName: resolvedAgentName,
 		projectId: options.projectId,
 		cwd: options.cwd,
 		repoRoot: frozenRepoRoot,
@@ -1808,7 +3595,7 @@ async function createBackendRuntimeSession(options: {
 		sessionConfigOverrides: options.sessionConfigOverrides ?? null,
 	});
 	writeThreadBinding({
-		threadId: options.threadId,
+		threadId: resolvedThreadId,
 		runtimeSessionId: sessionKey,
 		updatedAt: startedAt,
 	});
@@ -1816,20 +3603,22 @@ async function createBackendRuntimeSession(options: {
 	createConversationStore({
 		sessionDir,
 		sessionKey,
-		threadId: options.threadId,
-		agentName: options.agentName,
-		agentId,
+		threadId: resolvedThreadId,
+		agentName: resolvedAgentName,
+		agentId: resolvedAgentId,
 		agentSessionId,
-		startedAt,
+		startedAt: resolvedStartedAt,
 	});
 
 	return {
 		ok: true,
-		agentId,
-		agentUniqueId,
+		agentId: resolvedAgentId,
+		agentName: resolvedAgentName,
+		agentUniqueId: resolvedAgentUniqueId,
 		agentSessionId,
 		sessionKey,
-		startedAt,
+		threadId: resolvedThreadId,
+		startedAt: resolvedStartedAt,
 	};
 }
 
@@ -1847,6 +3636,68 @@ function stringifyLogValue(value: unknown): string {
 	} catch {
 		return String(value);
 	}
+}
+
+function isNodeRuntimeWarningLine(line: string): boolean {
+	const trimmed = line.trim();
+	return /^\(node:\d+\)\s+[\w.]*Warning:/.test(trimmed);
+}
+
+function isNodeRuntimeWarningFollowupLine(line: string): boolean {
+	const trimmed = line.trim();
+	return (
+		trimmed.startsWith("(Use `node --trace-warnings") ||
+		trimmed.startsWith("Use `node --trace-warnings") ||
+		/^\s+at\s+/.test(line)
+	);
+}
+
+const streamErrorSources = new Set<StreamErrorSource>([
+	"astro",
+	"backend",
+	"checkpoint",
+	"client",
+	"pi",
+	"project_runtime",
+	"provider",
+	"tool",
+	"unknown",
+]);
+
+function normalizeStreamErrorSource(value: unknown): StreamErrorSource | null {
+	if (typeof value !== "string") return null;
+	const normalized = value.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_");
+	return streamErrorSources.has(normalized as StreamErrorSource)
+		? (normalized as StreamErrorSource)
+		: null;
+}
+
+function inferStreamErrorSource(chunk: Extract<StreamEvent, { type: "error" }>): StreamErrorSource {
+	const explicit = normalizeStreamErrorSource(chunk.error_source);
+	if (explicit) return explicit;
+
+	const errorCode = typeof chunk.error_code === "string" ? chunk.error_code.toLowerCase() : "";
+	if (errorCode.startsWith("client_")) return "client";
+	if (errorCode.includes("provider")) return "provider";
+	if (errorCode.startsWith("checkpoint_")) return "checkpoint";
+	if (chunk.forensics?.backend_request_url || chunk.forensics?.backend_response_body) return "backend";
+	return "astro";
+}
+
+function prefixStreamError(error: string, source: StreamErrorSource): string {
+	const trimmed = error.trim() || "Unknown stream error.";
+	if (/^\[[a-z][a-z0-9_-]*\]\s+/i.test(trimmed)) return trimmed;
+	return `[${source}] ${trimmed}`;
+}
+
+function normalizeStreamErrorChunk(chunk: StreamEvent): StreamEvent {
+	if (chunk.type !== "error") return chunk;
+	const errorSource = inferStreamErrorSource(chunk);
+	return {
+		...chunk,
+		error_source: errorSource,
+		error: prefixStreamError(chunk.error, errorSource),
+	};
 }
 
 function normalizeLogString(value: unknown): string | null {
@@ -2040,7 +3891,9 @@ function logReadableChunk(ctx: RequestContext, chunk: ReturnType<typeof attachAg
 		}
 		case "error":
 			flushPendingReadableLogs(ctx);
-			console.log(`${prefix}: error ${JSON.stringify(compactLogValue(chunk.error, 320))}`);
+			console.log(
+				`${prefix}: error source=${chunk.error_source ?? "unknown"} ${JSON.stringify(compactLogValue(chunk.error, 320))}`,
+			);
 			return;
 	}
 }
@@ -2050,6 +3903,7 @@ function abortStreamOnPersistenceFailure(ctx: RequestContext, error: unknown) {
 	console.error(
 		`[astro-stream] conversation persistence failed agent=${ctx.agentName} session=${ctx.sessionKey} thread=${ctx.threadId}: ${message}`,
 	);
+	clearActiveStreamSession(ctx);
 	ctx.finished = true;
 	ctx.res.destroy(error instanceof Error ? error : new Error(message));
 }
@@ -2057,20 +3911,165 @@ function abortStreamOnPersistenceFailure(ctx: RequestContext, error: unknown) {
 function writeChunkWithAgentId(ctx: RequestContext, chunk: StreamEvent, agentId: number | null) {
 	if (ctx.finished) return;
 	ctx.eventId += 1;
-	const enrichedChunk = attachAgentId(chunk, agentId);
+	const enrichedChunk = attachAgentId(normalizeStreamErrorChunk(chunk), agentId);
+	if (enrichedChunk.type === "error") {
+		ctx.terminalError = {
+			errorCode: enrichedChunk.error_code ?? null,
+			errorDetail: enrichedChunk.error_detail ?? enrichedChunk.error,
+		};
+	} else if (enrichedChunk.type === "finish") {
+		ctx.terminalError = null;
+	}
 	try {
 		ctx.conversationStore.recordStreamChunkSync(enrichedChunk);
 	} catch (error) {
 		abortStreamOnPersistenceFailure(ctx, error);
 		return;
 	}
-	const payload = serializeSse(ctx.eventId, enrichedChunk);
-	ctx.res.write(payload);
+	if (ctx.clientAttached && !ctx.res.writableEnded && !ctx.res.destroyed) {
+		const payload = serializeSse(ctx.eventId, enrichedChunk);
+		try {
+			ctx.res.write(payload);
+		} catch (error) {
+			ctx.clientAttached = false;
+			updateActiveStreamSession(ctx, { clientAttached: false });
+			logStructuredEvent({
+				severity: "WARNING",
+				component: "astro-stream",
+				event: "stream_client_write_failed",
+				message: "Astro could not write to the SSE response; the active Pi run will continue detached.",
+				data: {
+					sessionKey: ctx.sessionKey,
+					threadId: ctx.threadId,
+					agentSessionId: ctx.agentSessionId,
+					error: error instanceof Error ? error.message : String(error),
+				},
+			});
+		}
+	}
 	logReadableChunk(ctx, enrichedChunk);
+	if (enrichedChunk.type === "finish") {
+		finalizeOpenReasoningAnnotation(ctx);
+		writeCheckpointMarker(ctx, "finish");
+	} else if (enrichedChunk.type === "error") {
+		finalizeOpenReasoningAnnotation(ctx);
+		writeCheckpointMarker(
+			ctx,
+			enrichedChunk.error_code === "session_cancelled_by_user" ? "cancel" : "error",
+		);
+	}
 }
 
 function writeChunk(ctx: RequestContext, chunk: StreamEvent) {
 	writeChunkWithAgentId(ctx, chunk, ctx.agentId);
+}
+
+function getProjectedAssistantOrdinal(ctx: RequestContext): number {
+	const snapshot = ctx.conversationStore.getSnapshot();
+	let assistantCount = 0;
+	for (const message of snapshot.messages) {
+		if (message.role === "assistant") assistantCount += 1;
+	}
+	if (snapshot.inProgressMessage?.role === "assistant") assistantCount += 1;
+	return Math.max(assistantCount, 1);
+}
+
+function upsertReasoningAnnotation(
+	annotations: HistoryAnnotations,
+	annotation: HistoryAnnotation,
+): HistoryAnnotations {
+	const assistantMessages = [...annotations.assistant_messages];
+	const existingIndex = assistantMessages.findIndex(
+		(candidate) =>
+			candidate.assistant_ordinal === annotation.assistant_ordinal &&
+			(candidate.stream_message_id === annotation.stream_message_id ||
+				!candidate.stream_message_id ||
+				!annotation.stream_message_id),
+	);
+	if (existingIndex === -1) {
+		assistantMessages.push(annotation);
+		return {
+			version: 1,
+			assistant_messages: assistantMessages,
+		};
+	}
+
+	const existing = assistantMessages[existingIndex];
+	assistantMessages[existingIndex] = {
+		...existing,
+		...annotation,
+		pi_entry_id: annotation.pi_entry_id ?? existing.pi_entry_id,
+		stream_message_id: annotation.stream_message_id ?? existing.stream_message_id,
+		reasoning_text_persisted: existing.reasoning_text_persisted || annotation.reasoning_text_persisted,
+		reasoning_started_at: existing.reasoning_started_at ?? annotation.reasoning_started_at,
+		reasoning_completed_at: annotation.reasoning_completed_at ?? existing.reasoning_completed_at,
+	};
+	return {
+		version: 1,
+		assistant_messages: assistantMessages,
+	};
+}
+
+function logReasoningAnnotationPersistenceFailure(ctx: RequestContext, error: unknown) {
+	logStructuredEvent({
+		severity: "WARNING",
+		component: "astro-stream",
+		event: "history_reasoning_annotation_write_failed",
+		message: "Astro observed reasoning but could not persist the history annotation into local metadata.",
+		data: {
+			sessionKey: ctx.sessionKey,
+			threadId: ctx.threadId,
+			agentSessionId: ctx.agentSessionId,
+			error: error instanceof Error ? error.message : String(error),
+		},
+	});
+}
+
+function recordReasoningAnnotationStart(ctx: RequestContext) {
+	const assistantOrdinal = getProjectedAssistantOrdinal(ctx);
+	ctx.activeReasoningAnnotationOrdinal = assistantOrdinal;
+	const startedAt = new Date().toISOString();
+	try {
+		updateSessionHistoryAnnotations(ctx.sessionKey, (annotations) =>
+			upsertReasoningAnnotation(annotations, {
+				assistant_ordinal: assistantOrdinal,
+				pi_entry_id: null,
+				stream_message_id: ctx.messageId,
+				had_reasoning: true,
+				reasoning_text_persisted: false,
+				reasoning_started_at: startedAt,
+				reasoning_completed_at: null,
+			}),
+		);
+	} catch (error) {
+		logReasoningAnnotationPersistenceFailure(ctx, error);
+	}
+}
+
+function recordReasoningAnnotationEnd(ctx: RequestContext) {
+	const assistantOrdinal = ctx.activeReasoningAnnotationOrdinal ?? getProjectedAssistantOrdinal(ctx);
+	const completedAt = new Date().toISOString();
+	try {
+		updateSessionHistoryAnnotations(ctx.sessionKey, (annotations) =>
+			upsertReasoningAnnotation(annotations, {
+				assistant_ordinal: assistantOrdinal,
+				pi_entry_id: null,
+				stream_message_id: ctx.messageId,
+				had_reasoning: true,
+				reasoning_text_persisted: false,
+				reasoning_started_at: null,
+				reasoning_completed_at: completedAt,
+			}),
+		);
+		ctx.activeReasoningAnnotationOrdinal = null;
+	} catch (error) {
+		logReasoningAnnotationPersistenceFailure(ctx, error);
+	}
+}
+
+function finalizeOpenReasoningAnnotation(ctx: RequestContext) {
+	if (ctx.activeReasoningAnnotationOrdinal == null) return;
+	recordReasoningAnnotationEnd(ctx);
 }
 
 function emitAssistantText(ctx: RequestContext, text: string, agentId: number | null = ctx.agentId) {
@@ -2091,12 +4090,58 @@ function writeDone(ctx: RequestContext) {
 		abortStreamOnPersistenceFailure(ctx, error);
 		return;
 	}
-	ctx.res.write("data: [DONE]\n\n");
-	if (logTraffic) {
-		console.log(`${getOutgoingLogPrefix(ctx)}: [DONE]`);
+	stopCheckpointLeaseRenewal(ctx);
+	clearActiveStreamSession(ctx);
+	if (ctx.clientAttached && !ctx.res.writableEnded && !ctx.res.destroyed) {
+		try {
+			ctx.res.write("data: [DONE]\n\n");
+			if (logTraffic) {
+				console.log(`${getOutgoingLogPrefix(ctx)}: [DONE]`);
+			}
+			ctx.res.end();
+		} catch (error) {
+			ctx.clientAttached = false;
+			logStructuredEvent({
+				severity: "WARNING",
+				component: "astro-stream",
+				event: "stream_done_write_failed",
+				message: "Astro could not write the SSE done marker because the client detached.",
+				data: {
+					sessionKey: ctx.sessionKey,
+					threadId: ctx.threadId,
+					agentSessionId: ctx.agentSessionId,
+					error: error instanceof Error ? error.message : String(error),
+				},
+			});
+		}
+	} else if (logTraffic) {
+		console.log(`${getOutgoingLogPrefix(ctx)}: [DONE detached]`);
 	}
 	ctx.finished = true;
-	ctx.res.end();
+}
+
+function attachStreamAbortHandler(ctx: RequestContext) {
+	ctx.res.once("close", () => {
+		if (ctx.finished || ctx.res.writableEnded) return;
+		ctx.clientAttached = false;
+		updateActiveStreamSession(ctx, { clientAttached: false });
+		if (ctx.switching) {
+			return;
+		}
+		logStructuredEvent({
+			severity: "INFO",
+			component: "astro-stream",
+			event: "stream_client_detached",
+			message: "Client disconnected before the stream completed; the active Pi run will continue.",
+			data: {
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId,
+				agentSessionId: ctx.agentSessionId,
+				hasCheckpointLease: Boolean(ctx.checkpointLease),
+				hasPiProcess: Boolean(ctx.piProcess),
+			},
+		});
+	});
 }
 
 function extractText(content: any): string {
@@ -2171,6 +4216,34 @@ function buildCoderOnboardingInstruction(
 
 function isPlainObject(value: any): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+const ASTRO_SESSION_METADATA_RESERVED_KEYS = new Set([
+	"source",
+	"workflow_key",
+	"created_by_user",
+	"project_id",
+	"project_cwd",
+	"project_repo_root",
+	"project_runtime_snapshot",
+	"pending_onboarding",
+	"pending_runtime_bootstrap",
+	"switch_summary",
+	"switched_from_agent",
+	"switched_from_session_key",
+	"initial_task",
+	"session_model_binding",
+	"session_config_overrides",
+]);
+
+function sanitizeFrontendSessionMetadata(value: unknown): Record<string, unknown> {
+	if (!isPlainObject(value)) return {};
+	const sanitized: Record<string, unknown> = {};
+	for (const [key, metadataValue] of Object.entries(value)) {
+		if (ASTRO_SESSION_METADATA_RESERVED_KEYS.has(key)) continue;
+		sanitized[key] = metadataValue;
+	}
+	return sanitized;
 }
 
 function stringifyInline(value: unknown): string {
@@ -2464,12 +4537,17 @@ function createContinuationContextFromSwitch(
 			toolCallIds: new Map(),
 			switching: false,
 			piProcess: null,
+			cancelKillTimer: null,
+			cancellation: null,
+			clientAttached: parentCtx.clientAttached,
 			finished: false,
+			terminalError: null,
 			responseProvider: null,
 			responseModel: null,
 			piAssistantTextSeen: false,
 			lastAssistantFinishReason: null,
 			lastAssistantUsage: undefined,
+			checkpointLease: null,
 		};
 	} catch (error) {
 		console.error(
@@ -2482,6 +4560,8 @@ function createContinuationContextFromSwitch(
 }
 
 function stopActivePiProcess(ctx: RequestContext) {
+	stopCheckpointLeaseRenewal(ctx);
+	clearCancelKillTimer(ctx);
 	if (!ctx.piProcess) return;
 	try {
 		ctx.piProcess.kill("SIGTERM");
@@ -2489,6 +4569,107 @@ function stopActivePiProcess(ctx: RequestContext) {
 		// ignore process termination failures
 	}
 	ctx.piProcess = null;
+}
+
+function clearCancelKillTimer(ctx: RequestContext) {
+	if (!ctx.cancelKillTimer) return;
+	clearTimeout(ctx.cancelKillTimer);
+	ctx.cancelKillTimer = null;
+}
+
+function buildCancellationErrorEvent(): Extract<StreamEvent, { type: "error" }> {
+	return {
+		type: "error",
+		error: "Session cancelled by user.",
+		error_source: "runtime",
+		status: 499,
+		error_code: "session_cancelled_by_user",
+		error_detail: "Session cancelled by user.",
+		field_errors: null,
+	};
+}
+
+function beginActiveRunCancellation(
+	ctx: RequestContext,
+	input: {
+		cancellationId?: string | null;
+		requestedByUser?: string | null;
+		reason?: string | null;
+		message?: string | null;
+	},
+) {
+	if (ctx.finished) return;
+	if (!ctx.cancellation) {
+		ctx.cancellation = {
+			requested: true,
+			cancellationId: input.cancellationId ?? null,
+			requestedByUser: input.requestedByUser ?? null,
+			reason: input.reason ?? "user_requested",
+			message: input.message ?? null,
+		};
+	} else {
+		ctx.cancellation = {
+			...ctx.cancellation,
+			cancellationId: ctx.cancellation.cancellationId ?? input.cancellationId ?? null,
+			requestedByUser: ctx.cancellation.requestedByUser ?? input.requestedByUser ?? null,
+			reason: input.reason ?? ctx.cancellation.reason,
+			message: input.message ?? ctx.cancellation.message,
+		};
+	}
+	ctx.terminalError = {
+		errorCode: "session_cancelled_by_user",
+		errorDetail: "Session cancelled by user.",
+	};
+	updateActiveStreamSession(ctx, {
+		cancelling: true,
+		cancellationId: ctx.cancellation.cancellationId,
+	});
+	logStructuredEvent({
+		severity: "WARNING",
+		component: "astro-stream",
+		event: "session_cancellation_started",
+		message: "Astro is cancelling the active Pi run for this session.",
+		data: {
+			sessionKey: ctx.sessionKey,
+			threadId: ctx.threadId,
+			agentSessionId: ctx.agentSessionId,
+			cancellationId: ctx.cancellation.cancellationId,
+			reason: ctx.cancellation.reason,
+			hasPiProcess: Boolean(ctx.piProcess),
+		},
+	});
+	const child = ctx.piProcess;
+	if (!child) {
+		writeChunk(ctx, buildCancellationErrorEvent());
+		writeDone(ctx);
+		return;
+	}
+	try {
+		child.kill("SIGTERM");
+	} catch {
+		// ignore process termination failures
+	}
+	clearCancelKillTimer(ctx);
+	ctx.cancelKillTimer = setTimeout(() => {
+		if (ctx.piProcess !== child || ctx.finished) return;
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "session_cancellation_force_kill",
+			message: "Pi did not exit after cancellation SIGTERM; sending SIGKILL.",
+			data: {
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId,
+				agentSessionId: ctx.agentSessionId,
+				cancellationId: ctx.cancellation?.cancellationId ?? null,
+			},
+		});
+		try {
+			child.kill("SIGKILL");
+		} catch {
+			// ignore process termination failures
+		}
+	}, sessionCancelGraceMs);
 }
 
 async function handleProjectSessionSwitch(ctx: RequestContext, request: SessionSwitchRequest) {
@@ -2499,6 +4680,7 @@ async function handleProjectSessionSwitch(ctx: RequestContext, request: SessionS
 		writeChunk(ctx, {
 			type: "error",
 			error: `switch_project_session requires an existing checked-out project directory. Invalid cwd: ${request.cwd}`,
+			error_source: "tool",
 		});
 		writeDone(ctx);
 		stopActivePiProcess(ctx);
@@ -2511,24 +4693,20 @@ async function handleProjectSessionSwitch(ctx: RequestContext, request: SessionS
 		threadId: ctx.threadId,
 		projectId: request.projectId,
 		cwd: request.cwd,
-		externalSessionId: ctx.sessionKey,
 		sessionMetadata: {
 			switched_from_agent: ctx.agentName,
 			switched_from_session_key: ctx.sessionKey,
 		},
 		pendingOnboarding: !request.initialTask,
 		pendingRuntimeBootstrap: true,
+		initialTask: request.initialTask,
 		switchSummary: request.summary ?? null,
 		sessionModelBinding: ctx.sessionModelBinding,
 		sessionConfigOverrides: ctx.sessionConfigOverrides,
 	});
 
-	if (!created.ok) {
-		const errorMessage = "error" in created ? created.error : "Failed to create project session.";
-		writeChunk(ctx, {
-			type: "error",
-			error: errorMessage,
-		});
+	if (created.ok === false) {
+		writeChunk(ctx, buildBackendFailureErrorEvent("Project session creation failed", created));
 		writeDone(ctx);
 		stopActivePiProcess(ctx);
 		return;
@@ -2541,10 +4719,10 @@ async function handleProjectSessionSwitch(ctx: RequestContext, request: SessionS
 			type: "session_switch",
 			session_switch: {
 				from_agent_name: ctx.agentName,
-				to_agent_name: request.agentName,
+				to_agent_name: created.agentName,
 				project_id: request.projectId,
 				cwd: request.cwd,
-				thread_id: ctx.threadId,
+				thread_id: created.threadId,
 				agent_id: created.agentId,
 				agent_unique_id: created.agentUniqueId,
 				agent_session_id: created.agentSessionId,
@@ -2558,13 +4736,14 @@ async function handleProjectSessionSwitch(ctx: RequestContext, request: SessionS
 	);
 	stopActivePiProcess(ctx);
 	markConversationStoreCompleted(ctx);
+	clearActiveStreamSession(ctx);
 
 	const coderCtx = createContinuationContextFromSwitch(ctx, {
 		sessionKey: created.sessionKey,
 		agentId: created.agentId,
 		agentUniqueId: created.agentUniqueId,
 		agentSessionId: created.agentSessionId,
-		agentName: request.agentName,
+		agentName: created.agentName,
 		startedAt: created.startedAt,
 		initialTask: request.initialTask,
 	});
@@ -2573,10 +4752,12 @@ async function handleProjectSessionSwitch(ctx: RequestContext, request: SessionS
 		writeChunk(ctx, {
 			type: "error",
 			error: "Failed to initialize the project coding session after switching.",
+			error_source: "astro",
 		});
 		writeDone(ctx);
 		return;
 	}
+	markActiveStreamSession(coderCtx);
 
 	writeChunkWithAgentId(
 		coderCtx,
@@ -2585,14 +4766,22 @@ async function handleProjectSessionSwitch(ctx: RequestContext, request: SessionS
 			new_session: {
 				agent_session_id: created.agentSessionId,
 				session_key: created.sessionKey,
+				runtime_session_id: created.sessionKey,
+				agent_name: created.agentName,
 				agent_unique_id: created.agentUniqueId,
-				thread_id: ctx.threadId,
+				thread_id: created.threadId,
 				agent_id: created.agentId,
 			},
 		},
 		created.agentId,
 	);
 
+	const checkpointReady = await prepareCheckpointBeforePiLaunch(coderCtx);
+	if (checkpointReady.ok === false) {
+		writeChunk(coderCtx, checkpointReady.errorEvent);
+		writeDone(coderCtx);
+		return;
+	}
 	emitAssistantText(coderCtx, buildProjectRuntimeBootstrapAnnouncement(request.summary), created.agentId);
 	const runtimeBootstrapResult = runPendingProjectRuntimeBootstrap(coderCtx, {
 		cwd: request.cwd,
@@ -2601,19 +4790,20 @@ async function handleProjectSessionSwitch(ctx: RequestContext, request: SessionS
 		agentId: created.agentId,
 		agentUniqueId: created.agentUniqueId,
 		agentSessionId: created.agentSessionId,
-		threadId: ctx.threadId,
+		threadId: created.threadId,
 		startedAt: created.startedAt,
-		agentName: request.agentName,
-			projectId: request.projectId,
-			pendingOnboarding: !request.initialTask,
-			switchSummary: request.summary ?? null,
-			sessionModelBinding: coderCtx.sessionModelBinding,
-			sessionConfigOverrides: coderCtx.sessionConfigOverrides,
-		});
+		agentName: created.agentName,
+		projectId: request.projectId,
+		pendingOnboarding: !request.initialTask,
+		switchSummary: request.summary ?? null,
+		sessionModelBinding: coderCtx.sessionModelBinding,
+		sessionConfigOverrides: coderCtx.sessionConfigOverrides,
+	});
 	if (!runtimeBootstrapResult.ok) {
 		writeChunk(coderCtx, {
 			type: "error",
 			error: formatProjectRuntimeBootstrapError(runtimeBootstrapResult),
+			error_source: "project_runtime",
 		});
 		writeDone(coderCtx);
 		return;
@@ -2631,6 +4821,7 @@ async function handleProjectSessionSwitch(ctx: RequestContext, request: SessionS
 		writeChunk(coderCtx, {
 			type: "error",
 			error: "Could not load the mainsequence-project-coder specialist prompt after switching sessions.",
+			error_source: "astro",
 		});
 		writeDone(coderCtx);
 		return;
@@ -2647,7 +4838,7 @@ async function handleProjectSessionSwitch(ctx: RequestContext, request: SessionS
 			projectRuntimeSummary: formatProjectRuntimeSummary(projectRuntime),
 		},
 	);
-	runPiPrompt(prompt, coderCtx, {
+	void runPiPrompt(prompt, coderCtx, {
 		cwd: request.cwd,
 		projectId: request.projectId,
 		agentConfig,
@@ -2655,6 +4846,15 @@ async function handleProjectSessionSwitch(ctx: RequestContext, request: SessionS
 			projectId: request.projectId,
 			cwd: request.cwd,
 		}),
+	}).catch((error) => {
+		if (!coderCtx.finished) {
+			writeChunk(coderCtx, {
+				type: "error",
+				error: error instanceof Error ? error.message : String(error),
+				error_source: "pi",
+			});
+			writeDone(coderCtx);
+		}
 	});
 }
 
@@ -2665,6 +4865,7 @@ function handleAssistantDelta(ctx: RequestContext, evt: any) {
 			ctx.reasoningCounter += 1;
 			const id = `r${ctx.reasoningCounter}`;
 			writeChunk(ctx, { type: "reasoning-start", id });
+			recordReasoningAnnotationStart(ctx);
 			return;
 		}
 		case "thinking_delta":
@@ -2674,6 +4875,7 @@ function handleAssistantDelta(ctx: RequestContext, evt: any) {
 			return;
 		case "thinking_end":
 			writeChunk(ctx, { type: "reasoning-end" });
+			recordReasoningAnnotationEnd(ctx);
 			return;
 		case "text_start": {
 			ctx.piAssistantTextSeen = true;
@@ -2723,7 +4925,7 @@ function handleAssistantDelta(ctx: RequestContext, evt: any) {
 		}
 		case "error": {
 			const reason = evt.reason ?? "error";
-			writeChunk(ctx, { type: "error", error: reason });
+			writeChunk(ctx, { type: "error", error: reason, error_source: "pi" });
 			writeDone(ctx);
 			return;
 		}
@@ -2752,7 +4954,7 @@ function handleAssistantMessageEnd(ctx: RequestContext, message: unknown) {
 	emitAssistantText(ctx, text);
 }
 
-function runPiPrompt(
+async function runPiPrompt(
 	prompt: string,
 	ctx: RequestContext,
 	options: {
@@ -2767,17 +4969,170 @@ function runPiPrompt(
 	const args = ["--mode", "json", "--session", sessionPath];
 	let promptPath: string | null = null;
 	const boundModelArg = buildPiModelArgument(ctx.sessionModelBinding);
-	const scopedPiAgentDir = ensureSessionScopedPiAgentDir({
-		sessionKey: ctx.sessionKey,
-		sessionConfigOverrides: ctx.sessionConfigOverrides,
-		env: {
-			...process.env,
-			...(options.envOverrides ?? {}),
-		},
-	});
+	const piLaunchBaseEnv = {
+		...process.env,
+		...(options.envOverrides ?? {}),
+	};
+	let scopedPiAgentDir: string | null = null;
+	let scopedProviderCredentialProvider: string | null = null;
+	let activeProviderCredentialKey: string | null = null;
+	let providerCredentialFlushTimer: ReturnType<typeof setInterval> | null = null;
+	let providerCredentialFinalized = false;
 	ctx.piAssistantTextSeen = false;
 	ctx.lastAssistantFinishReason = null;
 	ctx.lastAssistantUsage = undefined;
+
+	try {
+		const checkpointReady = await prepareCheckpointBeforePiLaunch(ctx);
+		if (checkpointReady.ok === false) {
+			writeChunk(ctx, checkpointReady.errorEvent);
+			writeDone(ctx);
+			return;
+		}
+	} catch (error) {
+		writeChunk(ctx, {
+			type: "error",
+			error: error instanceof Error ? error.message : String(error),
+			error_source: "checkpoint",
+		});
+		writeDone(ctx);
+		return;
+	}
+
+	if (ctx.sessionModelBinding && resolveProviderDefinition(ctx.sessionModelBinding.provider)) {
+		const hydratedProviderCredentials = await hydrateScopedProviderCredentials({
+			createdByUser: ctx.userId,
+			agentSessionId: ctx.agentSessionId,
+			sessionKey: ctx.sessionKey,
+			provider: ctx.sessionModelBinding.provider,
+			holderId: `astro-pi-stream/${process.pid}/${ctx.sessionKey}`,
+			sessionConfigOverrides: ctx.sessionConfigOverrides,
+			env: piLaunchBaseEnv,
+			log: (message) => console.log(`[astro-stream] ${message}`),
+		});
+		if (hydratedProviderCredentials.ok === false) {
+			logStructuredEvent({
+				severity: "ERROR",
+				component: "astro-stream",
+				event: "provider_credentials_hydrate_failed",
+				message: "Astro could not hydrate scoped provider credentials before launching Pi.",
+				data: {
+					sessionId: ctx.sessionKey,
+					agentSessionId: ctx.agentSessionId,
+					provider: ctx.sessionModelBinding.provider,
+					error: hydratedProviderCredentials.error,
+					backendMessage: hydratedProviderCredentials.message,
+				},
+			});
+			writeChunk(
+				ctx,
+				buildBackendFailureErrorEvent(
+					"Provider credential hydrate failed",
+					hydratedProviderCredentials,
+					"provider",
+				),
+			);
+			writeDone(ctx);
+			return;
+		}
+		scopedPiAgentDir = hydratedProviderCredentials.value.scopedPiAgentDir;
+		scopedProviderCredentialProvider = ctx.sessionModelBinding.provider;
+		activeProviderCredentialKey = `${ctx.sessionKey}:${scopedProviderCredentialProvider}`;
+		activeScopedProviderCredentials.set(activeProviderCredentialKey, {
+			scopedPiAgentDir,
+			createdByUser: ctx.userId,
+			agentSessionId: ctx.agentSessionId,
+			provider: scopedProviderCredentialProvider,
+			sessionKey: ctx.sessionKey,
+			env: {
+				...piLaunchBaseEnv,
+				PI_CODING_AGENT_DIR: scopedPiAgentDir,
+			},
+		});
+		logStructuredEvent({
+			component: "astro-stream",
+			event: "provider_credentials_hydrated",
+			message: "Astro hydrated scoped provider credentials before launching Pi.",
+			data: {
+				sessionId: ctx.sessionKey,
+				agentSessionId: ctx.agentSessionId,
+				provider: scopedProviderCredentialProvider,
+				scopedPiAgentDir,
+			},
+		});
+	} else {
+		scopedPiAgentDir = ensureSessionScopedPiAgentDir({
+			sessionKey: ctx.sessionKey,
+			sessionConfigOverrides: ctx.sessionConfigOverrides,
+			env: piLaunchBaseEnv,
+		});
+	}
+
+	const flushProviderCredential = async (reason: string) => {
+		if (!scopedPiAgentDir || !scopedProviderCredentialProvider) return;
+		const flushed = await flushScopedProviderCredential({
+			scopedPiAgentDir,
+			createdByUser: ctx.userId,
+			agentSessionId: ctx.agentSessionId,
+			provider: scopedProviderCredentialProvider,
+			reason,
+			env: {
+				...piLaunchBaseEnv,
+				PI_CODING_AGENT_DIR: scopedPiAgentDir,
+			},
+			log: (message) => console.log(`[astro-stream] ${message}`),
+		});
+		if (flushed.ok === false) {
+			logStructuredEvent({
+				severity: "ERROR",
+				component: "astro-stream",
+				event: "provider_credentials_flush_failed",
+				message: "Astro could not flush scoped provider credentials to backend.",
+				data: {
+					sessionId: ctx.sessionKey,
+					agentSessionId: ctx.agentSessionId,
+					provider: scopedProviderCredentialProvider,
+					reason,
+					error: flushed.error,
+					backendMessage: flushed.message,
+				},
+			});
+			return;
+		}
+		if (!flushed.value.noop) {
+			logStructuredEvent({
+				component: "astro-stream",
+				event: "provider_credentials_flushed",
+				message: "Astro flushed scoped provider credentials to backend.",
+				data: {
+					sessionId: ctx.sessionKey,
+					agentSessionId: ctx.agentSessionId,
+					provider: scopedProviderCredentialProvider,
+					reason,
+					version: flushed.value.version,
+					credentialHash: flushed.value.credential_hash,
+				},
+			});
+		}
+	};
+
+	const finalizeProviderCredentials = async (reason: string) => {
+		if (providerCredentialFinalized) return;
+		providerCredentialFinalized = true;
+		if (providerCredentialFlushTimer) {
+			clearInterval(providerCredentialFlushTimer);
+			providerCredentialFlushTimer = null;
+		}
+		try {
+			await flushProviderCredential(reason);
+		} finally {
+			if (activeProviderCredentialKey) {
+				activeScopedProviderCredentials.delete(activeProviderCredentialKey);
+				activeProviderCredentialKey = null;
+			}
+			cleanupScopedPiAgentDir(scopedProviderCredentialProvider ? scopedPiAgentDir : null);
+		}
+	};
 
 	if (options.agentConfig) {
 		if (boundModelArg) {
@@ -2799,8 +5154,8 @@ function runPiPrompt(
 		env: buildMainsequenceStoredAuthEnv({
 			...process.env,
 			...buildSessionModelEnv(ctx.sessionModelBinding, process.env),
-			...(scopedPiAgentDir ? { PI_CODING_AGENT_DIR: scopedPiAgentDir } : {}),
 			...(options.envOverrides ?? {}),
+			...(scopedPiAgentDir ? { PI_CODING_AGENT_DIR: scopedPiAgentDir } : {}),
 			PWD: options.cwd,
 			ASTRO_TELEMETRY: "0",
 			ASTRO_MAINSEQUENCE_USER_ID: ctx.userId,
@@ -2815,6 +5170,11 @@ function runPiPrompt(
 		stdio: ["ignore", "pipe", "pipe"],
 	});
 	ctx.piProcess = child;
+	if (scopedProviderCredentialProvider) {
+		providerCredentialFlushTimer = setInterval(() => {
+			void flushProviderCredential("oauth_refresh");
+		}, providerCredentialFlushIntervalMs);
+	}
 
 	const stdout = createInterface({ input: child.stdout });
 	stdout.on("line", (line) => {
@@ -2831,6 +5191,7 @@ function runPiPrompt(
 		}
 
 		if (ctx.finished || ctx.switching) return;
+		updateActiveStreamSession(ctx, { lastPiEventAt: new Date().toISOString() });
 
 		if (parsed?.type === "message_start") {
 			if (parsed.message?.role !== "assistant") return;
@@ -2867,52 +5228,106 @@ function runPiPrompt(
 		}
 	});
 
+	const childStderrLines: string[] = [];
 	const stderr = createInterface({ input: child.stderr });
+	let nodeRuntimeWarningActive = false;
 	stderr.on("line", (line) => {
 		if (ctx.switching) return;
+		if (line.trim()) {
+			childStderrLines.push(line);
+			if (childStderrLines.length > 20) childStderrLines.shift();
+		}
 		if (logTraffic) {
 			console.log(
 				`[astro-stream] STDERR agent=${ctx.agentName} session=${ctx.sessionKey} thread=${ctx.threadId}: ${line}`,
 			);
 		}
-		if (!ctx.finished) {
-			writeChunk(ctx, { type: "error", error: line });
-			writeDone(ctx);
-		}
-	});
-
-	child.on("exit", (code, signal) => {
-		ctx.piProcess = null;
-		cleanupPromptFile(promptPath);
-		if (ctx.switching) return;
-		if (ctx.finished) return;
-		if (signal || (typeof code === "number" && code !== 0)) {
-			const reason = signal ? `Process exited with signal ${signal}.` : `Process exited with code ${code}.`;
+		if (isNodeRuntimeWarningLine(line)) {
+			nodeRuntimeWarningActive = true;
 			recordRuntimeHealthIssue({
-				source: "pi_child_exit",
-				severity: "error",
-				error: new Error(reason),
+				source: "pi_child_stderr_warning",
+				severity: "warning",
+				error: new Error(line),
 				context: {
 					agentName: ctx.agentName,
 					sessionKey: ctx.sessionKey,
 					threadId: ctx.threadId,
 				},
 			});
-			writeChunk(ctx, { type: "error", error: reason });
-			writeDone(ctx);
 			return;
 		}
-
-		writeChunk(ctx, {
-			type: "finish",
-			finishReason: ctx.lastAssistantFinishReason ?? "stop",
-			usage: ctx.lastAssistantUsage,
+		if (nodeRuntimeWarningActive && isNodeRuntimeWarningFollowupLine(line)) {
+			return;
+		}
+		nodeRuntimeWarningActive = false;
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "pi_child_stderr",
+			message: "Pi child process wrote to stderr; treating it as diagnostic output unless the child exits unsuccessfully.",
+			data: {
+				agentName: ctx.agentName,
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId,
+				line,
+			},
 		});
-		writeDone(ctx);
+	});
+
+	child.on("exit", (code, signal) => {
+		ctx.piProcess = null;
+		void (async () => {
+			clearCancelKillTimer(ctx);
+			cleanupPromptFile(promptPath);
+			const failed = Boolean(signal || (typeof code === "number" && code !== 0));
+			const terminalReason = ctx.cancellation?.requested
+				? "stream_cancelled"
+				: failed
+					? "stream_error"
+					: "stream_finish";
+			await finalizeProviderCredentials(terminalReason);
+			if (ctx.switching) return;
+			if (ctx.finished) return;
+			if (ctx.cancellation?.requested) {
+				writeChunk(ctx, buildCancellationErrorEvent());
+				writeDone(ctx);
+				return;
+			}
+			if (failed) {
+				const stderrSummary = childStderrLines.length
+					? ` Recent stderr:\n${childStderrLines.join("\n")}`
+					: "";
+				const reason = signal
+					? `Process exited with signal ${signal}.${stderrSummary}`
+					: `Process exited with code ${code}.${stderrSummary}`;
+				recordRuntimeHealthIssue({
+					source: "pi_child_exit",
+					severity: "error",
+					error: new Error(reason),
+					context: {
+						agentName: ctx.agentName,
+						sessionKey: ctx.sessionKey,
+						threadId: ctx.threadId,
+					},
+				});
+				writeChunk(ctx, { type: "error", error: reason, error_source: "pi" });
+				writeDone(ctx);
+				return;
+			}
+
+			writeChunk(ctx, {
+				type: "finish",
+				finishReason: ctx.lastAssistantFinishReason ?? "stop",
+				usage: ctx.lastAssistantUsage,
+			});
+			writeDone(ctx);
+		})();
 	});
 
 	child.on("error", (error) => {
 		ctx.piProcess = null;
+		clearCancelKillTimer(ctx);
+		void finalizeProviderCredentials(ctx.cancellation?.requested ? "stream_cancelled" : "stream_error");
 		cleanupPromptFile(promptPath);
 		recordRuntimeHealthIssue({
 			source: "pi_child_error",
@@ -2926,7 +5341,11 @@ function runPiPrompt(
 		});
 		if (ctx.switching) return;
 		if (!ctx.finished) {
-			writeChunk(ctx, { type: "error", error: error.message });
+			if (ctx.cancellation?.requested) {
+				writeChunk(ctx, buildCancellationErrorEvent());
+			} else {
+				writeChunk(ctx, { type: "error", error: error.message, error_source: "pi" });
+			}
 			writeDone(ctx);
 		}
 	});
@@ -2954,6 +5373,31 @@ const server = createServer((req, res) => {
 		}
 		res.destroy(error instanceof Error ? error : undefined);
 	});
+});
+
+let shutdownStarted = false;
+
+async function handleShutdownSignal(signal: "SIGINT" | "SIGTERM") {
+	if (shutdownStarted) return;
+	shutdownStarted = true;
+	try {
+		await flushActiveScopedProviderCredentialsForShutdown(signal);
+	} finally {
+		mainsequenceCredentialExchangeLoop?.stop();
+		const forcedExit = setTimeout(() => process.exit(0), 3000);
+		forcedExit.unref();
+		server.close(() => {
+			process.exit(0);
+		});
+	}
+}
+
+process.once("SIGINT", () => {
+	void handleShutdownSignal("SIGINT");
+});
+
+process.once("SIGTERM", () => {
+	void handleShutdownSignal("SIGTERM");
 });
 
 async function handleStreamRequest(
@@ -2986,7 +5430,10 @@ async function handleStreamRequest(
 
 	if (req.method === "GET" && url.pathname === "/api/chat/get_available_models") {
 		try {
-			const availableModels = await collectAvailableModels({ env: process.env });
+			const availableModels = await collectAvailableModels({
+				env: process.env,
+				userId: resolveUserIdFromRequest(req, url),
+			});
 			json(res, 200, availableModels);
 		} catch (error) {
 			const message =
@@ -3001,7 +5448,10 @@ async function handleStreamRequest(
 
 	if (req.method === "GET" && url.pathname === "/api/models/catalog") {
 		try {
-			const modelCatalog = collectModelCatalog({ env: process.env });
+			const modelCatalog = await collectModelCatalog({
+				env: process.env,
+				userId: resolveUserIdFromRequest(req, url),
+			});
 			json(res, 200, modelCatalog);
 		} catch (error) {
 			const message = error instanceof Error ? error.message : "Unknown model catalog failure.";
@@ -3014,20 +5464,54 @@ async function handleStreamRequest(
 	}
 
 	if (req.method === "GET" && url.pathname === "/api/model-providers") {
-		json(res, 200, getModelProviderAuthResponse(process.env));
-		return;
-	}
-
-	if (req.method === "GET" && url.pathname === "/api/storage/usage") {
-		try {
-			json(res, 200, readStorageUsage(process.env));
-		} catch (error) {
-			const message = error instanceof Error ? error.message : "Unknown storage usage failure.";
-			json(res, 500, {
-				error: "storage_usage_unavailable",
-				message,
+		const createdByUser = resolveUserIdFromRequest(req, url);
+		if (!createdByUser) {
+			logStructuredEvent({
+				component: "astro-stream",
+				event: "model_provider_user_id_missing",
+				message: "Model-provider status request is missing user identity.",
+				data: {
+					path: url.pathname,
+					acceptedSources: [
+						"userId",
+						"user_id",
+						"created_by_user",
+						"createdByUser",
+						"x-mainsequence-user-id",
+						"x-ms-user-id",
+						"x-user-id",
+						"authorization bearer jwt",
+					],
+				},
 			});
+			badRequest(
+				res,
+				"Missing or invalid userId for model-provider status. Pass userId, created_by_user, a supported user-id header, or a Bearer JWT with a user id claim.",
+			);
+			return;
 		}
+		const statuses = await listModelProviderAuthStatuses({
+			createdByUser,
+			env: process.env,
+		});
+		if (statuses.ok === false) {
+			json(res, statuses.statusCode || 503, {
+				error: statuses.error,
+				message: statuses.message,
+				backend_url: statuses.url ?? null,
+				backend_status: statuses.statusCode ?? null,
+				backend_response_text: statuses.responseText ?? null,
+				backend_response_body: statuses.body ?? null,
+			});
+			return;
+		}
+		json(res, 200, {
+			version: 1,
+			providers: statuses.value,
+			backendCredentialStatus: {
+				ok: true,
+			},
+		});
 		return;
 	}
 
@@ -3114,10 +5598,54 @@ async function handleStreamRequest(
 
 	const modelProviderAuthAction = req.method === "POST" ? matchModelProviderAuthActionPath(url.pathname) : null;
 	if (req.method === "POST" && modelProviderAuthAction) {
+		let body: Record<string, unknown>;
+		try {
+			const parsed = await parseJson(req);
+			body = isPlainObject(parsed) ? parsed : {};
+		} catch {
+			badRequest(res, "Invalid JSON body.");
+			return;
+		}
+		const createdByUser = resolveUserIdFromRequest(req, url, body);
+		if (!createdByUser) {
+			logStructuredEvent({
+				component: "astro-stream",
+				event: "model_provider_user_id_missing",
+				message: "Model-provider auth action is missing user identity.",
+				data: {
+					provider: modelProviderAuthAction.provider,
+					action: modelProviderAuthAction.action,
+					path: url.pathname,
+					acceptedSources: [
+						"userId",
+						"user_id",
+						"created_by_user",
+						"createdByUser",
+						"x-mainsequence-user-id",
+						"x-ms-user-id",
+						"x-user-id",
+						"authorization bearer jwt",
+					],
+				},
+			});
+			badRequest(
+				res,
+				"Missing or invalid userId for model-provider auth action. Pass userId, created_by_user, a supported user-id header, or a Bearer JWT with a user id claim.",
+			);
+			return;
+		}
+		const agentSessionId = resolveOptionalAgentSessionIdFromBodyOrSearch(body, url);
 		const result =
 			modelProviderAuthAction.action === "signin"
-				? startModelProviderSignIn(modelProviderAuthAction.provider, process.env)
-				: signOffModelProvider(modelProviderAuthAction.provider, process.env);
+				? await startModelProviderSignIn(modelProviderAuthAction.provider, {
+						createdByUser,
+						agentSessionId,
+						env: process.env,
+				  })
+				: await signOffModelProvider(modelProviderAuthAction.provider, {
+						createdByUser,
+						env: process.env,
+				  });
 		if (result.ok === false) {
 			json(res, result.statusCode, {
 				error: result.error,
@@ -3141,69 +5669,26 @@ async function handleStreamRequest(
 			return;
 		}
 
-		const metadata = readSessionMetadata(sessionKey);
+		let metadata = readSessionMetadata(sessionKey);
 		if (!metadata) {
-			json(res, 404, {
-				error: sessionExists(sessionKey) ? "session_metadata_missing" : "session_not_found",
-				message: sessionExists(sessionKey)
-					? "No session metadata is available for the provided session."
-					: "No local session found for the provided session id.",
+			const hydration = await hydrateLocalSessionFilesForRead({
+				sessionKey,
+				requestedThreadId: url.searchParams.get("thread_id") ?? url.searchParams.get("threadId"),
+				reason: "session_model",
 			});
-			return;
+			if (hydration.ok === false) {
+				json(res, hydration.statusCode, {
+					error: hydration.error,
+					message: hydration.message,
+				});
+				return;
+			}
+			metadata = hydration.metadata;
 		}
 
 		json(res, 200, {
 			sessionId: sessionKey,
 			model: metadata.sessionModelBinding,
-		});
-		return;
-	}
-
-	if (req.method === "GET" && url.pathname === "/api/chat/session-insights") {
-		const sessionKey = normalizeRuntimeSessionId(
-			url.searchParams.get("sessionId") ??
-				url.searchParams.get("runtime_session_id") ??
-				url.searchParams.get("runtimeSessionId"),
-		);
-		if (!sessionKey) {
-			badRequest(res, "Missing sessionId.");
-			return;
-		}
-
-		const metadata = readSessionMetadata(sessionKey);
-		if (!metadata) {
-			json(res, 404, {
-				error: sessionExists(sessionKey) ? "session_metadata_missing" : "session_not_found",
-				message: sessionExists(sessionKey)
-					? "No session metadata is available for the provided session."
-					: "No local session found for the provided session id.",
-			});
-			return;
-		}
-
-		const insights = readSessionInsights({
-			sessionDir,
-			sessionKey,
-			metadata,
-		});
-		if (!insights) {
-			json(res, 404, {
-				error: "session_insights_unavailable",
-				message: "No Pi session file is available for the provided session.",
-			});
-			return;
-		}
-
-		json(res, 200, {
-			version: 1,
-			session: insights.usage.session,
-			model: insights.context.model,
-			usage: insights.usage.usage,
-			context: insights.context.context,
-			lastTurn: insights.usage.lastTurn,
-			config: insights.config,
-			editable: insights.editable,
-			info: insights.info,
 		});
 		return;
 	}
@@ -3225,15 +5710,27 @@ async function handleStreamRequest(
 			return;
 		}
 
-		const metadata = readSessionMetadata(sessionKey);
+		let metadata = readSessionMetadata(sessionKey);
 		if (!metadata) {
-			json(res, 404, {
-				error: sessionExists(sessionKey) ? "session_metadata_missing" : "session_not_found",
-				message: sessionExists(sessionKey)
-					? "No session metadata is available for the provided session."
-					: "No local session found for the provided session id.",
+			const requestedThreadId =
+				typeof body?.thread_id === "string"
+					? body.thread_id
+					: typeof body?.threadId === "string"
+						? body.threadId
+						: null;
+			const hydration = await hydrateLocalSessionFilesForRead({
+				sessionKey,
+				requestedThreadId,
+				reason: "session_config",
 			});
-			return;
+			if (hydration.ok === false) {
+				json(res, hydration.statusCode, {
+					error: hydration.error,
+					message: hydration.message,
+				});
+				return;
+			}
+			metadata = hydration.metadata;
 		}
 
 		const runtimeLimits = resolveSessionRuntimeLimits(metadata.sessionModelBinding);
@@ -3264,6 +5761,115 @@ async function handleStreamRequest(
 		return;
 	}
 
+	if (req.method === "POST" && url.pathname === "/api/chat/session/cancel") {
+		let body: Record<string, unknown>;
+		try {
+			const parsed = await parseJson(req);
+			body = isPlainObject(parsed) ? parsed : {};
+		} catch {
+			badRequest(res, "Invalid JSON body.");
+			return;
+		}
+
+		const sessionKey = normalizeRuntimeSessionId(
+			body.runtime_session_id ?? body.runtimeSessionId ?? body.sessionId,
+		);
+		if (!sessionKey) {
+			badRequest(res, "Missing runtime_session_id.");
+			return;
+		}
+		const agentSessionId = normalizeNumericId(sessionKey);
+		if (agentSessionId == null) {
+			json(res, 400, {
+				error: "invalid_runtime_session_id",
+				message: "runtime_session_id must be the backend AgentSession id.",
+			});
+			return;
+		}
+		const requestedByUser = resolveUserIdFromRequest(req, url, body);
+		if (!requestedByUser) {
+			badRequest(res, "Missing or invalid userId.");
+			return;
+		}
+
+		const activeCtx = getActiveStreamContext(sessionKey, agentSessionId);
+		const requestedByHolderId = activeCtx?.checkpointLease?.holderId ?? resolveCheckpointHolderId();
+		const cancelMessage =
+			typeof body.message === "string" && body.message.trim() ? body.message.trim() : null;
+		const client = new SessionCheckpointClient({
+			env: process.env,
+			log: (message) => console.log(`[astro-stream] ${message}`),
+		});
+		const cancelResult = await client.requestRuntimeCancel({
+			agentSessionId,
+			requestedByUser,
+			requestedByHolderId,
+			reason: "user_requested",
+			message: cancelMessage,
+		});
+		if (cancelResult.ok === false) {
+			logStructuredEvent({
+				severity: "ERROR",
+				component: "astro-stream",
+				event: "session_cancel_request_failed",
+				message: "Backend rejected or failed the runtime cancellation request.",
+				data: {
+					sessionKey,
+					agentSessionId,
+					requestedByHolderId,
+					status: cancelResult.status,
+					error: cancelResult.error,
+					backendResponseText: cancelResult.responseText,
+					backendResponseBody: cancelResult.body,
+				},
+			});
+			json(res, cancelResult.status ?? 502, {
+				ok: false,
+				error: "session_cancel_request_failed",
+				message: cancelResult.error,
+				backend_status: cancelResult.status,
+				backend_response_text: cancelResult.responseText,
+				backend_response_body: cancelResult.body,
+			});
+			return;
+		}
+
+		if (activeCtx && cancelResult.body.cancel_state === "requested") {
+			beginActiveRunCancellation(activeCtx, {
+				cancellationId: cancelResult.body.cancellation_id,
+				requestedByUser,
+				reason: "user_requested",
+				message: cancelMessage,
+			});
+		}
+
+		const state = activeCtx && cancelResult.body.cancel_state === "requested"
+			? "cancelling"
+			: cancelResult.body.cancel_state === "requested"
+				? "cancel_requested"
+				: cancelResult.body.status === "cancelled"
+					? "cancelled"
+					: "not_running";
+
+		json(res, 200, {
+			ok: true,
+			session_id: sessionKey,
+			agent_session_id: agentSessionId,
+			state,
+			working: cancelResult.body.working,
+			cancellation_id: cancelResult.body.cancellation_id,
+			message:
+				state === "cancelling"
+					? "Cancellation requested and the active local runtime is stopping."
+					: state === "cancel_requested"
+						? "Cancellation requested. The active runtime holder will stop the session."
+						: state === "cancelled"
+							? "Session is already cancelled."
+							: "Session is not currently running.",
+		});
+		return;
+	}
+
 	if (req.method === "GET" && url.pathname === "/api/chat/history") {
 		const sessionKey = normalizeRuntimeSessionId(
 			url.searchParams.get("sessionId") ??
@@ -3275,18 +5881,259 @@ async function handleStreamRequest(
 			return;
 		}
 
-		const history = readConversationHistorySync({ sessionDir, sessionKey });
-		if (!history) {
-			json(res, 404, {
-				error: sessionExists(sessionKey) ? "history_not_available" : "session_not_found",
-				message: sessionExists(sessionKey)
-					? "No compact history snapshot is available for the provided session."
-					: "No local session found for the provided session id.",
+		const activeStream = getActiveStreamSession(sessionKey);
+		if (activeStream?.clientAttached) {
+			res.setHeader("X-Astro-Stream-Active", "1");
+			res.setHeader("Cache-Control", "no-store");
+			logStructuredEvent({
+				severity: "INFO",
+				component: "astro-stream",
+				event: "chat_history_blocked_during_active_stream",
+				message: "Astro blocked history hydration while a live stream is active for the same session.",
+				data: {
+					sessionId: sessionKey,
+					threadId: activeStream.threadId,
+					agentSessionId: activeStream.agentSessionId,
+					agentName: activeStream.agentName,
+					messageId: activeStream.messageId,
+					startedAt: activeStream.startedAt,
+				},
+			});
+			json(res, 409, {
+				error: "session_stream_active",
+				error_source: "client",
+				message: "A live stream is active for this session. Defer history hydration until the stream completes.",
+				sessionId: sessionKey,
+				threadId: activeStream.threadId,
+				agentSessionId: activeStream.agentSessionId,
+				messageId: activeStream.messageId,
+				startedAt: activeStream.startedAt,
 			});
 			return;
 		}
+		if (activeStream) {
+			res.setHeader("X-Astro-Stream-Active", "1");
+			res.setHeader("Cache-Control", "no-store");
+		}
 
-		json(res, 200, history);
+		const history = readConversationHistorySync({ sessionDir, sessionKey });
+		if (history && !historyHasTransientCheckpointError(history)) {
+			const annotatedHistory = applyReasoningAnnotationsToConversationHistorySnapshot(
+				history,
+				readJsonFileObject(getSessionMetadataPath(sessionKey)),
+			);
+			const sanitizedHistory = sanitizeConversationHistorySnapshot(annotatedHistory.snapshot);
+			if (annotatedHistory.changed || sanitizedHistory.changed) {
+				writeConversationHistorySync({
+					sessionDir,
+					sessionKey,
+					snapshot: sanitizedHistory.snapshot,
+				});
+			}
+			if (sanitizedHistory.changed) {
+				logStructuredEvent({
+					severity: "INFO",
+					component: "astro-stream",
+					event: "chat_history_sanitized_prompt_wrapper",
+					message: "Astro removed internal prompt wrapper text from cached chat history.",
+					data: {
+						sessionId: sessionKey,
+						messageCount: sanitizedHistory.snapshot.messages.length,
+					},
+				});
+			}
+			json(res, 200, sanitizedHistory.snapshot);
+			return;
+		}
+		if (history) {
+			logStructuredEvent({
+				severity: "WARNING",
+				component: "astro-stream",
+				event: "chat_history_ignored_transient_checkpoint_error_cache",
+				message: "Astro ignored cached frontend history because it only captured a transient checkpoint finalization error.",
+				data: {
+					sessionId: sessionKey,
+					messageCount: history.messages.length,
+					error: history.session.error,
+				},
+			});
+		}
+
+		const metadata = readSessionMetadata(sessionKey);
+		const backendAgentSessionId = metadata?.agentSessionId ?? normalizeNumericId(sessionKey);
+		let backendSessionExists = false;
+		if (shouldRegisterAgents(process.env) && backendAgentSessionId != null) {
+			const fetched = await fetchBackendAgentSession({
+				agentSessionId: backendAgentSessionId,
+				env: process.env,
+				log: (message) => console.log(`[astro-stream] ${message}`),
+			});
+			if (fetched.ok) {
+				backendSessionExists = true;
+				if (!isPlainObject(fetched.body)) {
+					json(res, 502, {
+						error: "backend_session_history_reconstruction_failed",
+						message: "Backend AgentSession response was not a JSON object.",
+					});
+					return;
+				}
+				const requestedThreadId =
+					url.searchParams.get("thread_id") ??
+					url.searchParams.get("threadId") ??
+					metadata?.threadId ??
+					null;
+				const sessionEnvelope = buildConversationHistorySessionFromBackendSession({
+					sessionKey,
+					agentSessionId: fetched.agentSessionId ?? backendAgentSessionId,
+					payload: fetched.body,
+					metadata,
+					requestedThreadId,
+				});
+				if (!sessionEnvelope) {
+					json(res, 404, {
+						error: "history_not_available",
+						message: "Backend AgentSession exists, but Astro could not reconstruct the frontend history envelope.",
+					});
+					return;
+				}
+
+				const latestCheckpoint = await fetchCheckpointForHistoryHydration({
+					agentSessionId: fetched.agentSessionId ?? backendAgentSessionId,
+					sessionKey,
+				});
+				if (latestCheckpoint.ok === false) {
+					logStructuredEvent({
+						severity: latestCheckpoint.status === 404 ? "WARNING" : "ERROR",
+						component: "astro-stream",
+						event: "chat_history_checkpoint_fetch_failed",
+						message: "Astro could not fetch the latest backend checkpoint for history hydration.",
+						data: {
+							sessionId: sessionKey,
+							agentSessionId: fetched.agentSessionId ?? backendAgentSessionId,
+							status: latestCheckpoint.status,
+							error: latestCheckpoint.error,
+							url: latestCheckpoint.url,
+							backendResponseText: latestCheckpoint.responseText,
+							backendResponseBody: latestCheckpoint.body,
+						},
+					});
+					const checkpointErrorCode = extractCheckpointErrorCode(latestCheckpoint.body);
+					if (latestCheckpoint.status === 404 && checkpointErrorCode === "checkpoint_not_found") {
+						json(res, 404, {
+							error: "history_not_available",
+							message: "Backend AgentSession exists, but no checkpoint exists for history reconstruction.",
+						});
+						return;
+					}
+					json(res, 502, {
+						error: "backend_session_history_reconstruction_failed",
+						message: latestCheckpoint.error ?? "Could not fetch backend checkpoint for history reconstruction.",
+						backend_status: latestCheckpoint.status,
+						backend_error_code: checkpointErrorCode,
+					});
+					return;
+				}
+
+				if (!isPlainObject(latestCheckpoint.body) || !isPlainObject(latestCheckpoint.body.bundle)) {
+					logStructuredEvent({
+						severity: "ERROR",
+						component: "astro-stream",
+						event: "chat_history_checkpoint_response_invalid",
+						message: "Backend checkpoint latest response was not shaped as expected.",
+						data: {
+							sessionId: sessionKey,
+							agentSessionId: fetched.agentSessionId ?? backendAgentSessionId,
+							checkpointResponse: latestCheckpoint.body,
+						},
+					});
+					json(res, 502, {
+						error: "backend_session_history_reconstruction_failed",
+						message: "Backend checkpoint latest response was not shaped as expected.",
+					});
+					return;
+				}
+
+				const piSessionJsonl = latestCheckpoint.body.bundle.pi_session_jsonl;
+				if (typeof piSessionJsonl !== "string") {
+					logStructuredEvent({
+						severity: "ERROR",
+						component: "astro-stream",
+						event: "chat_history_checkpoint_bundle_invalid",
+						message: "Backend checkpoint latest response did not contain bundle.pi_session_jsonl.",
+						data: {
+							sessionId: sessionKey,
+							agentSessionId: fetched.agentSessionId ?? backendAgentSessionId,
+							checkpointVersion: latestCheckpoint.body.checkpoint_version,
+							bundleHash: latestCheckpoint.body.bundle_hash,
+						},
+					});
+					json(res, 502, {
+						error: "backend_session_history_reconstruction_failed",
+						message: "Backend checkpoint latest response did not contain bundle.pi_session_jsonl.",
+					});
+					return;
+				}
+
+				try {
+					const reconstructed = rebuildConversationHistoryFromPiJsonl({
+						piSessionJsonl,
+						session: sessionEnvelope,
+						metadata: latestCheckpoint.body.bundle.astro_metadata_json,
+					});
+					writeConversationHistorySync({ sessionDir, sessionKey, snapshot: reconstructed });
+					logStructuredEvent({
+						severity: "INFO",
+						component: "astro-stream",
+						event: "chat_history_rebuilt_from_checkpoint",
+						message: "Astro rebuilt frontend chat history from the backend Pi checkpoint.",
+						data: {
+							sessionId: sessionKey,
+							agentSessionId: fetched.agentSessionId ?? backendAgentSessionId,
+							threadId: reconstructed.session.threadId,
+							checkpointVersion: latestCheckpoint.body.checkpoint_version,
+							bundleHash: latestCheckpoint.body.bundle_hash,
+							messageCount: reconstructed.messages.length,
+						},
+					});
+					json(res, 200, reconstructed);
+					return;
+				} catch (error) {
+					logStructuredEvent({
+						severity: "ERROR",
+						component: "astro-stream",
+						event: "chat_history_checkpoint_projection_failed",
+						message: "Astro could not project backend Pi JSONL into frontend chat history.",
+						data: {
+							sessionId: sessionKey,
+							agentSessionId: fetched.agentSessionId ?? backendAgentSessionId,
+							checkpointVersion: latestCheckpoint.body.checkpoint_version,
+							bundleHash: latestCheckpoint.body.bundle_hash,
+							error: error instanceof Error ? error.message : String(error),
+						},
+					});
+					json(res, 502, {
+						error: "backend_session_history_reconstruction_failed",
+						message: "Backend checkpoint Pi session JSONL could not be projected into chat history.",
+						projection_error: error instanceof Error ? error.message : String(error),
+					});
+					return;
+				}
+			}
+			if (!fetched.ok && !fetched.notFound) {
+				json(res, 502, {
+					error: "backend_session_history_reconstruction_failed",
+					message: fetched.error ?? "Could not fetch backend session information for history reconstruction.",
+				});
+				return;
+			}
+		}
+
+		json(res, 404, {
+			error: sessionExists(sessionKey) || backendSessionExists ? "history_not_available" : "session_not_found",
+			message: sessionExists(sessionKey) || backendSessionExists
+				? "No compact history snapshot is available for the provided session."
+				: "No local or backend session found for the provided session id.",
+		});
 		return;
 	}
 
@@ -3301,16 +6148,36 @@ async function handleStreamRequest(
 			return;
 		}
 
-		const metadata = readSessionMetadata(sessionKey);
+		let metadata = readSessionMetadata(sessionKey);
+		let hydrationFailure: Extract<
+			Awaited<ReturnType<typeof hydrateLocalSessionFilesForRead>>,
+			{ ok: false }
+		> | null = null;
+		if (!metadata) {
+			const hydration = await hydrateLocalSessionFilesForRead({
+				sessionKey,
+				requestedThreadId: url.searchParams.get("thread_id") ?? url.searchParams.get("threadId"),
+				reason: "session_tools",
+			});
+			if (hydration.ok === true) {
+				metadata = hydration.metadata;
+			} else {
+				hydrationFailure = hydration;
+			}
+		}
+
 		if (!metadata) {
 			logStructuredEvent({
-				severity: "DEBUG",
+				severity: "WARNING",
 				component: "astro-stream",
 				event: "session_tools_metadata_missing",
-				message: "Session tool discovery had no local metadata, so Astro returned an empty tool set.",
+				message: "Session tool discovery could not hydrate metadata, so Astro returned an empty tool set.",
 				data: {
 					sessionId: sessionKey,
 					localSessionExists: sessionExists(sessionKey),
+					hydrationStatusCode: hydrationFailure?.statusCode ?? null,
+					hydrationError: hydrationFailure?.error ?? null,
+					hydrationMessage: hydrationFailure?.message ?? null,
 				},
 			});
 			json(res, 200, {
@@ -3326,8 +6193,12 @@ async function handleStreamRequest(
 				available_tools: {},
 				warnings: [
 					{
-						code: sessionExists(sessionKey) ? "session_metadata_missing" : "session_not_found",
-						message: "No local session metadata is available yet, so no deterministic tools are advertised.",
+						code:
+							hydrationFailure?.error ??
+							(sessionExists(sessionKey) ? "session_metadata_unavailable" : "session_not_found"),
+						message:
+							hydrationFailure?.message ??
+							"No local session metadata is available yet, so no deterministic tools are advertised.",
 					},
 				],
 			});
@@ -3360,15 +6231,21 @@ async function handleStreamRequest(
 			return;
 		}
 
-		const metadata = readSessionMetadata(sessionKey);
+		let metadata = readSessionMetadata(sessionKey);
 		if (!metadata) {
-			json(res, 404, {
-				error: sessionExists(sessionKey) ? "session_metadata_missing" : "session_not_found",
-				message: sessionExists(sessionKey)
-					? "No session metadata is available for the provided session."
-					: "No local session found for the provided session id.",
+			const hydration = await hydrateLocalSessionFilesForRead({
+				sessionKey,
+				requestedThreadId: url.searchParams.get("thread_id") ?? url.searchParams.get("threadId"),
+				reason: "session_diff",
 			});
-			return;
+			if (hydration.ok === false) {
+				json(res, hydration.statusCode, {
+					error: hydration.error,
+					message: hydration.message,
+				});
+				return;
+			}
+			metadata = hydration.metadata;
 		}
 
 		if (metadata.agentName !== "mainsequence-project-coder") {
@@ -3519,7 +6396,8 @@ async function handleStreamRequest(
 	const registrationRequired = shouldRegisterAgents(process.env);
 	let hydratedBackendSession: HydratedBackendOrchestratorSession | null = null;
 	const localSessionExists = runtimeSessionId ? sessionExists(runtimeSessionId) : false;
-	if (runtimeSessionId && !localSessionExists) {
+	const localSessionMetadata = runtimeSessionId ? readSessionMetadata(runtimeSessionId) : null;
+	if (runtimeSessionId && (!localSessionExists || !localSessionMetadata)) {
 		if (!registrationRequired) {
 			logStructuredEvent({
 				severity: "ERROR",
@@ -3542,8 +6420,8 @@ async function handleStreamRequest(
 		}
 		logStructuredEvent({
 			component: "astro-stream",
-			event: "backend_session_hydration_local_session_missing",
-			message: "Local session files were missing, so Astro is asking the backend session authority.",
+			event: "backend_checkpoint_hydration_local_session_incomplete",
+			message: "Local session files were missing or incomplete, so Astro is hydrating from backend checkpoint state.",
 			data: {
 				runtimeSessionId,
 				agentName,
@@ -3551,31 +6429,59 @@ async function handleStreamRequest(
 				requestedThreadId,
 			},
 		});
-		const hydrationResult = await attachHydratedBackendSession({
-			runtimeSessionId,
-			userId,
+		const checkpointHydration = await hydrateLocalSessionFilesForRead({
+			sessionKey: runtimeSessionId,
 			requestedThreadId,
-			log: undefined,
+			reason: "session_config",
 		});
-		if (hydrationResult.ok === false) {
-			json(res, hydrationResult.statusCode, {
-				error: hydrationResult.error,
-				message: hydrationResult.message,
+		if (checkpointHydration.ok === false) {
+			if (!localSessionExists && agentName === "astro-orchestrator") {
+				const hydrationResult = await attachHydratedBackendSession({
+					runtimeSessionId,
+					userId,
+					requestedThreadId,
+					log: undefined,
+				});
+				if (hydrationResult.ok === false) {
+					json(res, hydrationResult.statusCode, {
+						error: hydrationResult.error,
+						message: hydrationResult.message,
+					});
+					return;
+				}
+				hydratedBackendSession = hydrationResult.hydrated;
+				logStructuredEvent({
+					component: "astro-stream",
+					event: "backend_session_hydration_attached",
+					message: "Astro attached the hydrated backend orchestrator session to the current request.",
+					data: {
+						runtimeSessionId,
+						threadId: hydratedBackendSession.metadata.threadId,
+						agentId: hydratedBackendSession.agentId,
+						agentSessionId: hydratedBackendSession.metadata.agentSessionId,
+					},
+				});
+			} else {
+				json(res, checkpointHydration.statusCode, {
+					error: checkpointHydration.error,
+					message: checkpointHydration.message,
+				});
+				return;
+			}
+		} else {
+			logStructuredEvent({
+				component: "astro-stream",
+				event: "backend_checkpoint_hydration_attached",
+				message: "Astro hydrated local session files from backend checkpoint state for resume.",
+				data: {
+					runtimeSessionId,
+					threadId: checkpointHydration.metadata.threadId,
+					agentName: checkpointHydration.metadata.agentName,
+					agentId: checkpointHydration.metadata.agentId,
+					agentSessionId: checkpointHydration.metadata.agentSessionId,
+				},
 			});
-			return;
 		}
-		hydratedBackendSession = hydrationResult.hydrated;
-		logStructuredEvent({
-			component: "astro-stream",
-			event: "backend_session_hydration_attached",
-			message: "Astro attached the hydrated backend orchestrator session to the current request.",
-			data: {
-				runtimeSessionId,
-				threadId: hydratedBackendSession.metadata.threadId,
-				agentId: hydratedBackendSession.agentId,
-				agentSessionId: hydratedBackendSession.metadata.agentSessionId,
-			},
-		});
 	}
 	let existingSessionMetadata = runtimeSessionId ? readSessionMetadata(runtimeSessionId) : null;
 	if (!existingSessionMetadata && hydratedBackendSession) {
@@ -3583,8 +6489,8 @@ async function handleStreamRequest(
 	}
 	if (!newChat && runtimeSessionId && !existingSessionMetadata) {
 		json(res, 409, {
-			error: "session_metadata_missing",
-			message: "No session metadata found for the provided runtime_session_id.",
+			error: "session_hydration_failed",
+			message: "Astro could not hydrate session metadata for the provided runtime_session_id.",
 		});
 		return;
 	}
@@ -3607,7 +6513,10 @@ async function handleStreamRequest(
 	if (body.model === null) {
 		sessionModelBinding = null;
 	} else if (isPlainObject(body.model)) {
-		const resolvedModelBinding = await resolveSessionModelBinding(body.model, { env: process.env });
+		const resolvedModelBinding = await resolveSessionModelBinding(body.model, {
+			env: process.env,
+			userId,
+		});
 		if (resolvedModelBinding.ok === false) {
 			json(res, resolvedModelBinding.statusCode, {
 				error: resolvedModelBinding.error,
@@ -3618,12 +6527,25 @@ async function handleStreamRequest(
 		sessionModelBinding = resolvedModelBinding.binding;
 	}
 
-	if (sessionModelBinding && !isProviderUsableForExecution(sessionModelBinding.provider, process.env)) {
-		json(res, 409, {
-			error: "provider_not_authenticated",
-			message: `The selected model provider "${sessionModelBinding.provider}" is not currently authenticated.`,
+	if (sessionModelBinding) {
+		const providerUsable = await isProviderUsableForExecution(sessionModelBinding.provider, {
+			createdByUser: userId,
+			env: process.env,
 		});
-		return;
+		if (providerUsable.ok === false) {
+			json(res, providerUsable.statusCode || 503, {
+				error: providerUsable.error,
+				message: providerUsable.message,
+			});
+			return;
+		}
+		if (!providerUsable.value) {
+			json(res, 409, {
+				error: "provider_not_authenticated",
+				message: `The selected model provider "${sessionModelBinding.provider}" is not currently authenticated.`,
+			});
+			return;
+		}
 	}
 
 	const requestedProjectId = normalizeProjectId(body.projectId);
@@ -3758,6 +6680,8 @@ async function handleStreamRequest(
 	let sessionKey: string;
 	let agentSessionId: number | null = null;
 	let startedAt: string | null = null;
+	let responseAgentName = agentName;
+	let responseThreadId = threadId;
 	const persistedCwd = agentName === "mainsequence-project-coder" ? agentCwd : null;
 	const frozenRepoRoot =
 		agentName === "mainsequence-project-coder"
@@ -3766,38 +6690,34 @@ async function handleStreamRequest(
 
 	if (newChat) {
 		startedAt = new Date().toISOString();
-		const pendingRuntimeSessionId = buildPendingRuntimeSessionId(agentUniqueId, startedAt);
-		const sessionMetadataInput = isPlainObject(body.sessionMetadata) ? body.sessionMetadata : {};
+		const sessionMetadataInput = sanitizeFrontendSessionMetadata(body.sessionMetadata);
 		const runtimeConfig = buildRuntimeConfigSnapshot(sessionModelBinding);
 
-		const payload: Record<string, unknown> = {
-			status: "running",
-			started_at: startedAt,
-			ended_at: null,
-			created_by_user: userId,
-			llm_provider: resolveBackendLlmProvider(sessionModelBinding),
-			llm_model: resolveBackendLlmModel(sessionModelBinding),
-			engine_name: agentName === "astro-orchestrator" ? "astro_router_v1" : "astro_project_session_v1",
-			runtime_config_snapshot: runtimeConfig,
-			error_detail: "",
-			external_session_id:
-				typeof body.external_session_id === "string" ? body.external_session_id : "",
-			runtime_session_id: pendingRuntimeSessionId,
-			thread_id: threadId,
-			usage_summary: {
-				input_tokens: 0,
-				output_tokens: 0,
-				total_tokens: 0,
-				estimated_cost_usd: 0,
-			},
-			session_metadata: {
-				source: "frontend",
+			const payload: Record<string, unknown> = {
+				status: "running",
+				created_by_user: userId,
+				thread_id: threadId,
 				workflow_key: agentName,
+				llm_provider: resolveBackendLlmProvider(sessionModelBinding),
+				llm_model: resolveBackendLlmModel(sessionModelBinding),
+				engine_name: "astro",
+				runtime_config_snapshot: runtimeConfig,
+				session_metadata: {
+					source: "frontend",
+					workflow_key: agentName,
+					created_by_user: userId,
 				...(projectId ? { project_id: projectId } : {}),
 				...(persistedCwd ? { project_cwd: persistedCwd } : {}),
 				...(frozenRepoRoot ? { project_repo_root: frozenRepoRoot } : {}),
 				...(projectRuntime ? { project_runtime_snapshot: projectRuntime } : {}),
-				...(sessionModelBinding ? { session_model_binding: sessionModelBinding } : {}),
+				pending_onboarding: false,
+				pending_runtime_bootstrap: agentName === "mainsequence-project-coder",
+				switch_summary: null,
+				switched_from_agent: null,
+				switched_from_session_key: null,
+				initial_task: null,
+				session_model_binding: sessionModelBinding,
+				session_config_overrides: null,
 				...sessionMetadataInput,
 			},
 		};
@@ -3821,13 +6741,19 @@ async function handleStreamRequest(
 
 		agentSessionId = sessionStart.agentSessionId;
 		sessionKey = buildBackendRuntimeSessionId(agentSessionId);
+		agentId = sessionStart.agentId ?? agentId;
+		agentUniqueId = sessionStart.agentUniqueId ?? agentUniqueId;
+		responseAgentName = sessionStart.agentName ?? agentName;
+		responseThreadId = sessionStart.threadId ?? threadId;
+		const sessionStartBody = isPlainObject(sessionStart.body) ? sessionStart.body : {};
+		startedAt = extractStringProperty(sessionStartBody, "started_at", "startedAt") ?? startedAt;
 		writeSessionMetadata(sessionKey, {
 			agentId,
 			agentUniqueId,
 			agentSessionId,
-			threadId,
+			threadId: responseThreadId,
 			startedAt,
-			agentName,
+			agentName: responseAgentName,
 			projectId,
 			cwd: persistedCwd,
 			repoRoot: frozenRepoRoot,
@@ -3875,8 +6801,42 @@ async function handleStreamRequest(
 		});
 	}
 
+	const activeRun = getActiveStreamSession(sessionKey, agentSessionId);
+	if (activeRun) {
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "session_run_already_active",
+			message: "Astro rejected a duplicate chat launch for a session with an active Pi run.",
+			data: {
+				sessionKey,
+				threadId: activeRun.threadId,
+				agentSessionId: activeRun.agentSessionId,
+				agentName: activeRun.agentName,
+				messageId: activeRun.messageId,
+				startedAt: activeRun.startedAt,
+				clientAttached: activeRun.clientAttached,
+			},
+		});
+		json(res, 409, {
+			type: "error",
+			error: "This session already has an active assistant run.",
+			error_source: "runtime",
+			status: 409,
+			error_code: "session_run_already_active",
+			error_detail: "Wait for the active run to finish, then retry.",
+			sessionId: sessionKey,
+			threadId: activeRun.threadId,
+			agentSessionId: activeRun.agentSessionId,
+			messageId: activeRun.messageId,
+			startedAt: activeRun.startedAt,
+			clientAttached: activeRun.clientAttached,
+		});
+		return;
+	}
+
 	writeThreadBinding({
-		threadId,
+		threadId: responseThreadId,
 		runtimeSessionId: sessionKey,
 		updatedAt: new Date().toISOString(),
 	});
@@ -3889,7 +6849,7 @@ async function handleStreamRequest(
 				sessionModelBinding,
 			}) ?? agentConfig?.model ?? null;
 		console.log(
-			`[astro-stream] SESSION agent=${agentName} session=${sessionKey} thread=${threadId} agent_id=${agentId} agent_session_id=${agentSessionId ?? "n/a"}${selectedModelForLog ? ` model=${selectedModelForLog}` : ""}`,
+			`[astro-stream] SESSION agent=${responseAgentName} session=${sessionKey} thread=${responseThreadId} agent_id=${agentId} agent_session_id=${agentSessionId ?? "n/a"}${selectedModelForLog ? ` model=${selectedModelForLog}` : ""}`,
 		);
 	}
 
@@ -3898,8 +6858,8 @@ async function handleStreamRequest(
 		conversationStore = createConversationStore({
 			sessionDir,
 			sessionKey,
-			threadId,
-			agentName,
+			threadId: responseThreadId,
+			agentName: responseAgentName,
 			agentId,
 			agentSessionId,
 			startedAt,
@@ -3919,10 +6879,10 @@ async function handleStreamRequest(
 	}
 
 	res.writeHead(200, {
-		"Content-Type": "text/event-stream",
-		"Cache-Control": "no-cache",
-		Connection: "keep-alive",
-		"X-Thread-Id": threadId,
+			"Content-Type": "text/event-stream",
+			"Cache-Control": "no-cache",
+			Connection: "keep-alive",
+			"X-Thread-Id": responseThreadId,
 		...(agentId != null ? { "X-Agent-Id": String(agentId) } : {}),
 		...(agentUniqueId ? { "X-Agent-Unique-Id": agentUniqueId } : {}),
 		...(agentSessionId != null ? { "X-Agent-Session-Id": String(agentSessionId) } : {}),
@@ -3935,9 +6895,9 @@ async function handleStreamRequest(
 
 	const messageId = `msg_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e6).toString(36)}`;
 	const ctx: RequestContext = {
-		res,
-		messageId,
-		threadId,
+			res,
+			messageId,
+			threadId: responseThreadId,
 		sessionKey,
 		agentId,
 		agentUniqueId,
@@ -3953,11 +6913,16 @@ async function handleStreamRequest(
 		eventId: 0,
 		textCounter: 0,
 		reasoningCounter: 0,
+		activeReasoningAnnotationOrdinal: null,
 		runtimeToolCounter: 0,
 		toolCallIds: new Map(),
 		switching: false,
 		piProcess: null,
+		cancelKillTimer: null,
+		cancellation: null,
+		clientAttached: true,
 		finished: false,
+		terminalError: null,
 		system,
 		uiContext: context,
 		uiTools: tools,
@@ -3968,7 +6933,10 @@ async function handleStreamRequest(
 		piAssistantTextSeen: false,
 		lastAssistantFinishReason: null,
 		lastAssistantUsage: undefined,
+		checkpointLease: null,
 	};
+	markActiveStreamSession(ctx);
+	attachStreamAbortHandler(ctx);
 
 	if (newChat && agentSessionId != null && agentUniqueId) {
 		writeChunk(ctx, {
@@ -3976,8 +6944,10 @@ async function handleStreamRequest(
 			new_session: {
 				agent_session_id: agentSessionId,
 				session_key: sessionKey,
+				runtime_session_id: sessionKey,
+				agent_name: responseAgentName,
 				agent_unique_id: agentUniqueId,
-				thread_id: threadId,
+				thread_id: responseThreadId,
 				agent_id: agentId ?? -1,
 			},
 		});
@@ -3986,6 +6956,12 @@ async function handleStreamRequest(
 	writeChunk(ctx, { type: "start", messageId });
 
 	if (pendingRuntimeBootstrap && agentName === "mainsequence-project-coder" && agentCwd && agentUniqueId) {
+		const checkpointReady = await prepareCheckpointBeforePiLaunch(ctx);
+		if (checkpointReady.ok === false) {
+			writeChunk(ctx, checkpointReady.errorEvent);
+			writeDone(ctx);
+			return;
+		}
 		emitAssistantText(ctx, buildProjectRuntimeBootstrapAnnouncement(switchSummary));
 		const runtimeBootstrapResult = runPendingProjectRuntimeBootstrap(ctx, {
 			cwd: agentCwd,
@@ -3996,7 +6972,7 @@ async function handleStreamRequest(
 			agentSessionId,
 			threadId,
 			startedAt,
-			agentName,
+			agentName: responseAgentName,
 			projectId,
 			pendingOnboarding: existingSessionMetadata?.pendingOnboarding ?? false,
 			switchSummary,
@@ -4007,6 +6983,7 @@ async function handleStreamRequest(
 			writeChunk(ctx, {
 				type: "error",
 				error: formatProjectRuntimeBootstrapError(runtimeBootstrapResult),
+				error_source: "project_runtime",
 			});
 			writeDone(ctx);
 			return;
@@ -4043,7 +7020,7 @@ async function handleStreamRequest(
 		});
 	}
 
-	runPiPrompt(prompt, ctx, {
+	void runPiPrompt(prompt, ctx, {
 		cwd: agentCwd ?? repoRoot,
 		projectId,
 		agentConfig,
@@ -4054,6 +7031,15 @@ async function handleStreamRequest(
 						cwd: agentCwd,
 				  })
 				: undefined,
+	}).catch((error) => {
+		if (!ctx.finished) {
+			writeChunk(ctx, {
+				type: "error",
+				error: error instanceof Error ? error.message : String(error),
+				error_source: "pi",
+			});
+			writeDone(ctx);
+		}
 	});
 }
 

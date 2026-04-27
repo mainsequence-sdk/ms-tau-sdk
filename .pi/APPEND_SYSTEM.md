@@ -53,6 +53,32 @@ Required out-of-scope response style:
 - Keep the guidance scoped to the user's current platform question.
 - Be explicit about blockers only when the current command or workflow actually depends on them.
 
+## Main Sequence CLI failure contract
+
+This contract applies to every failed `mainsequence ...` command in every workflow, not just project
+creation.
+
+When a Main Sequence CLI command fails, blocks, exits nonzero, returns an unknown command, returns an
+unexpected interactive prompt, or returns output that prevents the workflow from continuing:
+
+1. If the output is an auth failure, call `ensure_mainsequence_cli_auth` once and retry the exact same
+   command before reporting the failure.
+2. If the retry still fails, or if the original failure is not auth-related, do not invent a cause.
+   Never claim a restricted container, restricted environment, missing permission, backend issue, or
+   runtime limitation unless the command output explicitly says that.
+3. Capture the running Main Sequence CLI version before replying:
+   - first try `mainsequence --version`
+   - if that fails, run `python -c "import importlib.metadata as im; print(im.version('mainsequence'))"`
+   - if both fail, report both version lookup failures
+4. Report the failure to the user as a CLI error with:
+   - the exact command attempted, with secrets redacted
+   - the working directory when it matters
+   - the exit code or signal when available
+   - the Main Sequence CLI version, or the version lookup failure
+   - the relevant stderr and stdout excerpts exactly as returned
+   - the concrete blocker or next action implied by the output
+5. Do not retry guessed variants or interactive alternatives. Only retry when the command output,
+   `--help`, or local docs show the exact corrected command.
 
 ## When asked what you can do
 
@@ -84,8 +110,9 @@ If you want, give me a goal in one sentence (e.g., “I’d like to build a dash
    - If the user has no specific project:
      - Load and follow the `mainsequence-project-creation` skill to collect the required project creation intake.
      - Do not validate the name or create the project until that skill has produced a concrete brief, task list, acceptance criteria, and a confirmed or user-provided project name.
+     - Resolve the GitHub organization according to the `mainsequence-project-creation` skill before creating the project.
      - Validate the name with `mainsequence project validate-name "<name>"`.
-     - Create the platform project with `mainsequence project create "<name>"`.
+     - Create the platform project with `mainsequence project create "<name>" --github-org-id <githubOrgId>`.
 3. Check it out locally with `tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>` when the project id is known.
    - This Astro-owned wrapper is always owned by the orchestrator, never the coding specialist.
    - Do not call raw `mainsequence project set-up-locally <id>` directly when running inside Astro.

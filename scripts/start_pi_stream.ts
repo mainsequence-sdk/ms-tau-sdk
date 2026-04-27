@@ -12,6 +12,8 @@ try {
 			orchestratorRuntimeCwd: piAgentState.orchestratorRuntime?.runtimeCwd,
 			orchestratorProjectPiDir: piAgentState.orchestratorRuntime?.projectPiDir,
 			orchestratorProjectPiLink: piAgentState.orchestratorRuntime?.projectPiLink,
+			prunedProviderAuthEntries: piAgentState.prunedProviderAuthEntries ?? [],
+			prunedScopedProviderCredentialDir: piAgentState.prunedScopedProviderCredentialDir ?? null,
 		},
 	});
 } catch (error) {

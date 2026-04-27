@@ -15,9 +15,7 @@ The frontend needs to show:
 - the current context size
 - how many tokens remain before automatic compaction triggers
 
-The backend `AgentSession.usage_summary` is currently initialized with zeros when a session is
-created and is not updated afterward, so it cannot yet be treated as the source of truth for live
-usage displays.
+Backend session insights are the source of truth for live usage displays.
 
 Pi already has the necessary source data in the session file:
 
@@ -73,14 +71,13 @@ For context calculations, Astro follows Pi's semantics:
 ### Negative
 
 - the active HTTP API is only as accurate as the local session files
-- backend `usage_summary` remains stale until a later mirroring step is implemented
 - context is still an estimate when trailing messages exist after the last provider usage record
 - the payload is larger than a narrowly scoped single-purpose endpoint
 
 ## Follow-up
 
-- mirror the computed usage/context snapshot back to the backend session record after each assistant
-  turn
+- keep the computed usage/context snapshot mirrored to backend session insights after accepted
+  checkpoint flushes
 - extend stored model runtime limits if we later need provider-specific context windows instead of
   Pi defaults
 - if provisional split endpoints exist during implementation, do not treat them as the stable public
@@ -92,4 +89,4 @@ For context calculations, Astro follows Pi's semantics:
 - [x] Add `GET /api/chat/session-insights`.
 - [x] Return both `usage` and `context` in that endpoint.
 - [x] Include `tokensRemainingBeforeCompaction` in the `context` response.
-- [ ] Mirror local usage/context snapshots back to the backend `AgentSession`.
+- [x] Mirror local usage/context snapshots back to backend session insights.

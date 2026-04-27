@@ -1,0 +1,109 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: astro-pi-stream
+  labels:
+    app.kubernetes.io/name: astro-pi-stream
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: astro-pi-stream
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: astro-pi-stream
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: astro-pi-stream
+          image: europe-west1-docker.pkg.dev/PROJECT_ID/tsorm-images/astro/astro-pi-stream:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8787
+          envFrom:
+            - configMapRef:
+                name: astro-pi-stream-config
+            - secretRef:
+                name: astro-mainsequence-runtime-credentials
+          env:
+            - name: POD_UID
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.uid
+            - name: HOME
+              value: /home/appuser
+            - name: ASTRO_CONTAINER_DATA_DIR
+              value: /home/appuser/.astro-container-data
+            - name: ASTRO_MAINSEQUENCE_CONFIG_DIR
+              value: /home/appuser/.astro-container-data/.config/mainsequence
+            - name: PI_CODING_AGENT_DIR
+              value: /home/appuser/.astro-container-data/.pi/agent
+            - name: ASTRO_STREAM_HOST
+              value: 0.0.0.0
+            - name: ASTRO_STREAM_PORT
+              value: "8787"
+            - name: ASTRO_STREAM_SESSION_DIR
+              value: /session-state/sessions
+            - name: ASTRO_SESSION_OVERRIDES_DIR
+              value: /session-state/session-overrides
+            - name: ASTRO_CHECKPOINT_LEASE_TTL_SECONDS
+              value: "120"
+            - name: BUILD_AGENTS_IN_BACKEND
+              value: "1"
+          volumeMounts:
+            - name: session-state
+              mountPath: /session-state
+
+        - name: astro-session-checkpoint-sidecar
+          image: europe-west1-docker.pkg.dev/PROJECT_ID/tsorm-images/astro/astro-pi-stream:latest
+          imagePullPolicy: IfNotPresent
+          command:
+            - tsx
+            - scripts/session_checkpoint_sidecar.ts
+          envFrom:
+            - configMapRef:
+                name: astro-pi-stream-config
+            - secretRef:
+                name: astro-mainsequence-runtime-credentials
+          env:
+            - name: HOME
+              value: /home/appuser
+            - name: ASTRO_CONTAINER_DATA_DIR
+              value: /home/appuser/.astro-container-data
+            - name: ASTRO_MAINSEQUENCE_CONFIG_DIR
+              value: /home/appuser/.astro-container-data/.config/mainsequence
+            - name: PI_CODING_AGENT_DIR
+              value: /home/appuser/.astro-container-data/.pi/agent
+            - name: ASTRO_SESSION_STATE_DIR
+              value: /session-state
+            - name: ASTRO_STREAM_SESSION_DIR
+              value: /session-state/sessions
+            - name: ASTRO_SESSION_OVERRIDES_DIR
+              value: /session-state/session-overrides
+            - name: ASTRO_CHECKPOINT_SIDECAR_DEBOUNCE_MS
+              value: "1000"
+            - name: ASTRO_CHECKPOINT_SIDECAR_SCAN_INTERVAL_MS
+              value: "10000"
+            - name: ASTRO_CHECKPOINT_SIDECAR_PERIODIC_FLUSH_MS
+              value: "30000"
+            - name: ASTRO_CHECKPOINT_SIDECAR_METRICS_INTERVAL_MS
+              value: "60000"
+            - name: ASTRO_CHECKPOINT_SIDECAR_SHUTDOWN_TIMEOUT_MS
+              value: "25000"
+          lifecycle:
+            preStop:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - kill -TERM 1 || true; sleep 5
+          volumeMounts:
+            - name: session-state
+              mountPath: /session-state
+
+      volumes:
+        - name: session-state
+          emptyDir:
+            sizeLimit: 1Gi

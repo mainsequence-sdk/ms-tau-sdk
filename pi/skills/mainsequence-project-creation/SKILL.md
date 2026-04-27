@@ -31,18 +31,49 @@ Use the template in [references/project_blueprint_template.md](./references/proj
 4. Search the Main Sequence platform for reusable resources before proposing new ones.
 5. Map the intent into platform components.
 6. Only after the project blueprint is coherent should you create the project or start implementation.
-7. After creating the new project, set it locally with `tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>`, then query the project's details with the Main Sequence CLI and wait until `is_initialized=true`.
-8. Only after `is_initialized=true` may you copy `project_blueprint.md` to the root of that new project or hand the session off for implementation.
+7. Resolve the GitHub organization for the new project with the command contract below.
+8. Create the project with `mainsequence project create "<name>" --github-org-id <githubOrgId>`.
+9. After creating the new project, set it locally with `tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>`, then query the project's details with the Main Sequence CLI and wait until `is_initialized=true`.
+10. Only after `is_initialized=true` may you copy `project_blueprint.md` to the root of that new project or hand the session off for implementation.
 
 ## Operational rules
 
 - Never ask the user to run `mainsequence login` or any other manual auth command.
-- If a Main Sequence CLI command fails with auth during project creation, call `ensure_mainsequence_cli_auth` once and retry the blocked command before treating it as a runtime failure.
+- If a Main Sequence CLI command fails with auth during project creation, call `ensure_mainsequence_cli_auth` once and retry the blocked command before treating it as a runtime failure. Do not call `ensure_mainsequence_cli_auth` for non-auth failures.
+- For every non-auth Main Sequence CLI failure, follow the global Main Sequence CLI failure contract.
 - When running inside Astro, do not call raw `mainsequence project set-up-locally <id>` directly; use `tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>` so the persistent pod SSH runtime is prepared first.
 - Do not hand off to `mainsequence-project-coder`, and do not copy `project_blueprint.md` into the checked-out project, while the new platform project is still initializing.
 - Treat the CLI-reported project details as the source of truth for readiness and explicitly check `is_initialized` before continuing past local setup.
+- Do not retry project creation with guessed flags or alternate interactive paths after a non-auth failure. Stop and report the missing command, missing id, or exact backend/CLI error.
 
 Do not create the project first and ask questions later.
+
+## GitHub organization selection
+
+Before calling `mainsequence project create`, always run:
+
+```bash
+mainsequence organization github-organizations --json
+```
+
+Use the returned GitHub organization id for project creation:
+
+```bash
+mainsequence project create "<name>" --github-org-id <githubOrgId>
+```
+
+Rules:
+
+- If exactly one GitHub organization is returned, use that organization id without asking the user
+  for confirmation.
+- If more than one GitHub organization is returned, ask the user to choose which organization should
+  own the new project before creating it.
+- If no GitHub organization is returned, stop and report that project creation cannot continue
+  because no GitHub organization is available.
+- If `mainsequence organization github-organizations --json` is unavailable, exits nonzero, or returns
+  `No such command`, stop and report the failure using the global Main Sequence CLI failure contract.
+  Do not call `mainsequence project create`.
+- Do not call `mainsequence project create "<name>"` without `--github-org-id`.
 
 ## Discovery flow
 

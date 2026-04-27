@@ -33,23 +33,21 @@ The deployable Docker targets boot the same runtime by copying only:
 
 `docker-compose.yml` starts those same targets while bind-mounting only:
 
-- `./.astro` to `/app/.astro-migration-source` as a read-only migration source
-- `${HOME}/.pi/agent` to `/home/appuser/.pi/host-agent` as a read-only migration source for `auth.json`
-  and `sessions/`
-- named volume `astro_container_data` to `/home/appuser/.astro-container-data`
+- editable source paths such as `./.pi`, `./pi`, `./interface`, and `./scripts`
+- tmpfs-backed `astro_session_emptydir` volume at `/session-state` for pod-local session files
 
 For the HTTP stream service, compose also sets
 `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`,
 `PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`, and
-`ASTRO_STREAM_SESSION_DIR=/home/appuser/.astro-container-data/.astro/stream-sessions` so the named volume
-acts like the deployment-time PVC. Astro also materializes repo-local `/app/.pi` into
+`ASTRO_STREAM_SESSION_DIR=/session-state/sessions` so local Docker follows the emptyDir session model.
+Astro also materializes repo-local `/app/.pi` into
 `/home/appuser/.astro-container-data/.pi/project` and runs `astro-orchestrator` from
 `/home/appuser/.astro-container-data/astro-orchestrator-runtime`, where `.pi` points to that
 writable copy. This uses Pi's normal project settings mechanism: Pi reads project settings from
 the process cwd's `.pi/settings.json`.
 
-The stream/runtime contract uses `/home/appuser/.astro-container-data` as the single durable
-container path for Astro state.
+The stream/runtime contract uses `/home/appuser/.astro-container-data` for rebuildable container
+runtime state and `/session-state/sessions` for active session files.
 
 For the normal parent session, Pi also loads `.pi/APPEND_SYSTEM.md` through the writable runtime
 copy instead of locking `/app/.pi/settings.json`.

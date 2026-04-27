@@ -36,7 +36,7 @@ FROM astro-base AS astro-mainsequence
 ARG MAINSEQUENCE_PIP_SPEC=mainsequence
 ENV MAINSEQUENCE_PIP_SPEC=${MAINSEQUENCE_PIP_SPEC}
 
-RUN pip install --no-cache-dir "${MAINSEQUENCE_PIP_SPEC}"
+RUN pip install --no-cache-dir "${MAINSEQUENCE_PIP_SPEC}" uv
 
 FROM astro-mainsequence AS astro-runtime
 
@@ -47,7 +47,7 @@ ENV APP_USER=appuser \
     APP_HOME=/home/appuser \
     HOME=/home/appuser \
     ASTRO_CONTAINER_DATA_DIR=/home/appuser/.astro-container-data \
-    ASTRO_STREAM_SESSION_DIR=/home/appuser/.astro-container-data/.astro/stream-sessions \
+    ASTRO_STREAM_SESSION_DIR=/session-state/sessions \
     ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence \
     PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent
 
@@ -55,13 +55,14 @@ RUN groupadd --gid "${APP_GID}" "${APP_GROUP}" \
  && useradd --uid "${APP_UID}" --gid "${APP_GID}" --create-home --home-dir "${APP_HOME}" --shell /bin/bash "${APP_USER}" \
  && mkdir -p \
     "${APP_HOME}/.astro-container-data/.pi/agent/bin" \
-    "${APP_HOME}/.astro-container-data/.astro/stream-sessions" \
     "${APP_HOME}/.astro-container-data/.config/mainsequence" \
+    "/session-state/sessions" \
+    "/session-state/session-overrides" \
     "${APP_HOME}/.local/share" \
     "${APP_HOME}/.pi" \
     "${APP_HOME}/.config" \
     "${APP_HOME}/.astro" \
- && chown -R "${APP_USER}:${APP_GROUP}" "${APP_HOME}"
+ && chown -R "${APP_USER}:${APP_GROUP}" "${APP_HOME}" /session-state
 
 USER appuser
 
@@ -73,6 +74,10 @@ ENV ASTRO_STREAM_HOST=0.0.0.0 \
 EXPOSE 8787
 
 CMD ["tsx", "scripts/start_pi_stream.ts"]
+
+FROM astro-runtime AS astro-session-checkpoint-sidecar
+
+CMD ["tsx", "scripts/session_checkpoint_sidecar.ts"]
 
 FROM astro-runtime AS astro-pi
 

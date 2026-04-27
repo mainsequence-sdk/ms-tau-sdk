@@ -42,7 +42,6 @@ its final Docker layer, for example `mainsequence==0.1.2`.
 
 To use Docker Compose in live-mounted dev mode:
 
-- `./.astro` -> `/app/.astro-migration-source` (read-only, one-time migration source)
 - `./.pi` -> `/app/.pi`
 - `./pi` -> `/app/pi`
 - `./interface` -> `/app/interface`
@@ -52,17 +51,16 @@ To use Docker Compose in live-mounted dev mode:
 - `./package.json` -> `/app/package.json`
 - `./package-lock.json` -> `/app/package-lock.json`
 - `./tsconfig.json` -> `/app/tsconfig.json`
-- `${HOME}/.pi/agent` -> `/home/appuser/.pi/host-agent` (read-only migration source for `auth.json` and `sessions/`)
-- named volume `astro_container_data` -> `/home/appuser/.astro-container-data`
+- tmpfs-backed `astro_session_emptydir` volume -> `/session-state` for local session files
 
 ```bash
 docker compose run --rm astro-pi
 docker compose up astro-pi-stream
 ```
 
-`astro-pi` is behind the optional `pi-shell` profile, so a plain `docker compose up` now starts only
-the HTTP stream service. The standalone Pi container still works when you target it explicitly with
-`docker compose run --rm astro-pi`.
+`astro-pi` is behind the optional `pi-shell` profile, so a plain `docker compose up` starts the HTTP
+stream service and the local checkpoint sidecar simulation. The standalone Pi container still works
+when you target it explicitly with `docker compose run --rm astro-pi`.
 
 The compose file now bind-mounts the editable Astro source files into `/app`, so normal code
 changes do not require an image rebuild. It intentionally does not bind-mount the whole repo root,
@@ -73,19 +71,20 @@ edits:
 docker compose restart astro-pi-stream
 ```
 
-The compose file now treats the named volume as the canonical runtime state root:
+The compose file now keeps active session files in a shared tmpfs-backed `/session-state` volume and
+leaves container runtime state rebuildable:
 
 - `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`
 - `PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`
-- `ASTRO_STREAM_SESSION_DIR=/home/appuser/.astro-container-data/.astro/stream-sessions`
+- `ASTRO_STREAM_SESSION_DIR=/session-state/sessions`
 
-At startup, Astro performs a one-time migration from the read-only legacy mounts if the volume
-does not yet have the PVC-layout marker, then keeps all active runtime state inside the volume.
-The image now runs as non-root `appuser`, and the only valid durable runtime root is
-`/home/appuser/.astro-container-data`.
+At startup, Astro prepares only container-local runtime state. Provider auth, provider signin state,
+and stream session files have no host or repo-local source path in the container. Backend
+checkpoints are the durable source for session continuity. The image runs as non-root `appuser`;
+rebuildable runtime state lives under `/home/appuser/.astro-container-data`.
 
-That keeps Linux virtualenvs isolated from macOS host paths while still surviving container
-recreation, and it makes Docker behave much closer to a single-PVC Kubernetes deployment.
+That keeps Linux virtualenvs isolated from macOS host paths and makes Docker behave closer to the
+pod-local `emptyDir` session model.
 
 To launch only the coding specialist instead of the full orchestrator for an already selected and checked-out project:
 

@@ -5,16 +5,14 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
-const SAFE_HOST_ENTRIES = ["auth.json", "sessions"];
-const SAFE_LEGACY_REPO_PI_AGENT_ENTRIES = [
-	"settings.json",
-	"bin",
-	"astro-model-provider-signin.json",
-	"astro-model-provider-auth.json",
-];
 const RESOURCE_ARRAY_KEYS = ["extensions", "skills", "prompts", "themes"];
 const PATH_BASED_SETTINGS_KEYS = ["packages", ...RESOURCE_ARRAY_KEYS];
-const PVC_LAYOUT_MIGRATION_VERSION = "pvc-layout-v1";
+const CONTAINER_PROVIDER_AUTH_ENTRIES = [
+	"auth.json",
+	"sessions",
+	"astro-model-provider-auth.json",
+	"astro-model-provider-signin.json",
+];
 const ASTRO_ORCHESTRATOR_CWD_ENV = "ASTRO_ORCHESTRATOR_CWD";
 const ASTRO_ORCHESTRATOR_PROJECT_PI_DIR_ENV = "ASTRO_ORCHESTRATOR_PROJECT_PI_DIR";
 
@@ -205,42 +203,58 @@ function ensureArray(value) {
 	return Array.isArray(value) ? value : [];
 }
 
-function resolveOptionalPath(value) {
-	if (typeof value !== "string") return null;
-	const trimmed = value.trim();
-	if (!trimmed) return null;
-	return path.resolve(trimmed);
+function shouldPruneContainerProviderAuth(env = process.env) {
+	return Boolean(env.ASTRO_CONTAINER_DATA_DIR?.trim());
 }
 
-function resolveExistingPath(value) {
-	try {
-		return fs.realpathSync(value);
-	} catch {
-		return null;
+function pruneContainerProviderAuthState(targetDir, env = process.env) {
+	if (!shouldPruneContainerProviderAuth(env)) return [];
+
+	const prunedEntries = [];
+	for (const entry of CONTAINER_PROVIDER_AUTH_ENTRIES) {
+		const targetPath = path.join(targetDir, entry);
+		if (!fs.existsSync(targetPath)) continue;
+		removePath(targetPath);
+		prunedEntries.push(entry);
 	}
+	return prunedEntries;
 }
 
-function isSameOrNestedPath(parentPath, childPath) {
-	const relativePath = path.relative(parentPath, childPath);
-	return relativePath === "" || (!relativePath.startsWith("..") && !path.isAbsolute(relativePath));
+function resolveScopedProviderCredentialDir(env = process.env) {
+	const configured = env.ASTRO_PROVIDER_CREDENTIAL_DIR?.trim();
+	if (configured) return path.resolve(configured);
+
+	const sessionStateDir = env.ASTRO_SESSION_STATE_DIR?.trim();
+	if (sessionStateDir) return path.join(path.resolve(sessionStateDir), "pi-agent-auth");
+
+	const streamSessionDir = env.ASTRO_STREAM_SESSION_DIR?.trim();
+	if (streamSessionDir) return path.join(path.dirname(path.resolve(streamSessionDir)), "pi-agent-auth");
+
+	return null;
 }
 
-function ensureRuntimeSettings(targetDir, hostImportDir) {
+function pruneScopedProviderCredentialState(env = process.env) {
+	if (!shouldPruneContainerProviderAuth(env)) return null;
+	const scopedCredentialDir = resolveScopedProviderCredentialDir(env);
+	if (!scopedCredentialDir) return null;
+	removePath(scopedCredentialDir);
+	ensureDir(scopedCredentialDir);
+	return scopedCredentialDir;
+}
+
+function ensureRuntimeSettings(targetDir) {
 	const targetSettingsPath = path.join(targetDir, "settings.json");
 	const repoPiDir = path.join(repoRoot, ".pi");
 	const repoSettingsPath = path.join(repoPiDir, "settings.json");
-	const hostSettingsPath = hostImportDir ? path.join(hostImportDir, "settings.json") : null;
 
 	const runtimeSettings = omitPathBasedSettings(readJsonFile(targetSettingsPath));
-	const hostSettings = hostSettingsPath ? omitPathBasedSettings(readJsonFile(hostSettingsPath)) : {};
 	const repoSettings = relativizeSettingsForTarget(repoPiDir, targetDir, readJsonFile(repoSettingsPath));
 	const requiredPackages = [
 		relativizeResolvedPath(repoRoot, targetDir),
 		relativizeResolvedPath(path.join(repoRoot, "node_modules", "pi-web-access"), targetDir),
 	];
 
-	const mergedSettings = mergeSettings(hostSettings, runtimeSettings);
-	const finalSettings = mergeSettings(mergedSettings, repoSettings);
+	const finalSettings = mergeSettings(runtimeSettings, repoSettings);
 	finalSettings.packages = dedupeByJson([
 		...ensureArray(repoSettings.packages),
 		...requiredPackages,
@@ -334,7 +348,7 @@ function ensureOrchestratorRuntimeProject(options) {
 	};
 }
 
-function ensurePersistentDirectoryLink(sourceDir, targetPath) {
+function ensureRuntimeDirectoryLink(sourceDir, targetPath) {
 	ensureDir(sourceDir);
 	ensureDir(path.dirname(targetPath));
 
@@ -365,97 +379,6 @@ function ensurePersistentDirectoryLink(sourceDir, targetPath) {
 	};
 }
 
-function copyIntoIfExists(sourcePath, targetPath) {
-	if (!fs.existsSync(sourcePath)) return false;
-	const sourceLstat = fs.lstatSync(sourcePath);
-	const resolvedSourcePath = resolveExistingPath(sourcePath) ?? path.resolve(sourcePath);
-	const sourceStat = fs.statSync(resolvedSourcePath);
-	const resolvedTargetPath = resolveExistingPath(targetPath) ?? path.resolve(targetPath);
-
-	if (resolvedSourcePath === resolvedTargetPath) {
-		return false;
-	}
-	if (sourceStat.isDirectory() && isSameOrNestedPath(resolvedSourcePath, resolvedTargetPath)) {
-		return false;
-	}
-
-	ensureDir(path.dirname(targetPath));
-	if (sourceStat.isDirectory()) {
-		ensureDir(path.dirname(targetPath));
-		fs.cpSync(resolvedSourcePath, targetPath, { recursive: true, force: false, errorOnExist: false });
-		return true;
-	}
-	if (!fs.existsSync(targetPath)) {
-		const copySourcePath =
-			sourceLstat.isSymbolicLink() || resolvedSourcePath !== path.resolve(sourcePath)
-				? resolvedSourcePath
-				: sourcePath;
-		fs.cpSync(copySourcePath, targetPath, { force: false, errorOnExist: false });
-		return true;
-	}
-	return false;
-}
-
-function materializeLegacyHostEntry(targetDir, legacyHostPiAgentDir, entry) {
-	if (!legacyHostPiAgentDir) return false;
-
-	const sourcePath = path.join(legacyHostPiAgentDir, entry);
-	if (!fs.existsSync(sourcePath)) return false;
-
-	const targetPath = path.join(targetDir, entry);
-	try {
-		const targetLstat = fs.lstatSync(targetPath);
-		if (!targetLstat.isSymbolicLink()) {
-			return false;
-		}
-	} catch {
-		return false;
-	}
-
-	const resolvedSourcePath = resolveExistingPath(sourcePath) ?? path.resolve(sourcePath);
-	const resolvedTargetPath = resolveExistingPath(targetPath) ?? path.resolve(targetPath);
-	const shouldReplace =
-		resolvedTargetPath === resolvedSourcePath ||
-		isSameOrNestedPath(legacyHostPiAgentDir, resolvedTargetPath);
-
-	if (!shouldReplace) return false;
-
-	removePath(targetPath);
-	const sourceStat = fs.statSync(resolvedSourcePath);
-	if (sourceStat.isDirectory()) {
-		fs.cpSync(resolvedSourcePath, targetPath, { recursive: true, force: false, errorOnExist: false });
-		return true;
-	}
-
-	ensureDir(path.dirname(targetPath));
-	fs.cpSync(resolvedSourcePath, targetPath, { force: false, errorOnExist: false });
-	return true;
-}
-
-function materializeLegacyHostImports(targetDir, legacyHostPiAgentDir) {
-	if (!legacyHostPiAgentDir || !fs.existsSync(legacyHostPiAgentDir)) {
-		return [];
-	}
-
-	const materializedEntries = [];
-	for (const entry of SAFE_HOST_ENTRIES) {
-		if (materializeLegacyHostEntry(targetDir, legacyHostPiAgentDir, entry)) {
-			materializedEntries.push(entry);
-		}
-	}
-	return materializedEntries;
-}
-
-function resolveVolumeMigrationPaths(rootDir) {
-	if (!rootDir) return null;
-	return {
-		markerPath: path.join(rootDir, ".astro", "migrations", `${PVC_LAYOUT_MIGRATION_VERSION}.json`),
-		piAgentDir: path.join(rootDir, ".pi", "agent"),
-		mainsequenceConfigDir: path.join(rootDir, ".config", "mainsequence"),
-		streamSessionDir: path.join(rootDir, ".astro", "stream-sessions"),
-	};
-}
-
 function ensurePiAgentHomeLink(homeDir, configuredAgentDir) {
 	const targetPath = path.join(homeDir, ".pi", "agent");
 	const sourceDir = path.resolve(configuredAgentDir);
@@ -467,7 +390,7 @@ function ensurePiAgentHomeLink(homeDir, configuredAgentDir) {
 			migratedExistingState: false,
 		};
 	}
-	return ensurePersistentDirectoryLink(sourceDir, targetPath);
+	return ensureRuntimeDirectoryLink(sourceDir, targetPath);
 }
 
 function ensureAstroStreamSessions(homeDir) {
@@ -491,97 +414,8 @@ function ensureAstroStreamSessions(homeDir) {
 		};
 	}
 
-	const link = ensurePersistentDirectoryLink(sourceDir, targetPath);
+	const link = ensureRuntimeDirectoryLink(sourceDir, targetPath);
 	return link;
-}
-
-function performOneTimeVolumeMigration(options) {
-	const {
-		rootDir,
-		targetDir,
-		mainsequenceConfigDir,
-		streamSessionDir,
-		legacyRepoStateDir,
-		legacyHostPiAgentDir,
-	} = options;
-	const paths = resolveVolumeMigrationPaths(rootDir);
-	if (!paths) {
-		return {
-			performed: false,
-			markerPath: null,
-			importedEntries: [],
-			hostSettingsSourceDir: null,
-		};
-	}
-
-	if (fs.existsSync(paths.markerPath)) {
-		return {
-			performed: false,
-			markerPath: paths.markerPath,
-			importedEntries: [],
-			hostSettingsSourceDir: null,
-		};
-	}
-
-	const importedEntries = [];
-	const resolvedLegacyRepoStateDir = resolveOptionalPath(legacyRepoStateDir);
-	const resolvedLegacyHostPiAgentDir = resolveOptionalPath(legacyHostPiAgentDir);
-	const resolvedTargetDir = resolveExistingPath(targetDir) ?? path.resolve(targetDir);
-
-	if (resolvedLegacyRepoStateDir && fs.existsSync(resolvedLegacyRepoStateDir)) {
-		const legacyRepoPiAgentDir = path.join(resolvedLegacyRepoStateDir, "pi-agent-runtime");
-		for (const entry of SAFE_LEGACY_REPO_PI_AGENT_ENTRIES) {
-			if (copyIntoIfExists(path.join(legacyRepoPiAgentDir, entry), path.join(targetDir, entry))) {
-				importedEntries.push(`legacy_repo_pi_agent_${entry}`);
-			}
-		}
-		if (copyIntoIfExists(path.join(resolvedLegacyRepoStateDir, "mainsequence-config"), mainsequenceConfigDir)) {
-			importedEntries.push("legacy_repo_mainsequence_config");
-		}
-		if (copyIntoIfExists(path.join(resolvedLegacyRepoStateDir, "stream-sessions"), streamSessionDir)) {
-			importedEntries.push("legacy_repo_stream_sessions");
-		}
-	}
-
-	const resolvedLegacyHostPiAgentRealPath =
-		resolvedLegacyHostPiAgentDir && fs.existsSync(resolvedLegacyHostPiAgentDir)
-			? resolveExistingPath(resolvedLegacyHostPiAgentDir) ?? resolvedLegacyHostPiAgentDir
-			: null;
-
-	if (
-		resolvedLegacyHostPiAgentRealPath &&
-		fs.existsSync(resolvedLegacyHostPiAgentDir) &&
-		resolvedLegacyHostPiAgentRealPath !== resolvedTargetDir
-	) {
-		for (const entry of SAFE_HOST_ENTRIES) {
-			if (copyIntoIfExists(path.join(resolvedLegacyHostPiAgentDir, entry), path.join(targetDir, entry))) {
-				importedEntries.push(`legacy_host_pi_${entry}`);
-			}
-		}
-	}
-
-	writeJsonFile(paths.markerPath, {
-		version: PVC_LAYOUT_MIGRATION_VERSION,
-		performedAt: new Date().toISOString(),
-		importedEntries,
-		legacyRepoStateDir: resolvedLegacyRepoStateDir,
-		legacyHostPiAgentDir: resolvedLegacyHostPiAgentDir,
-		targets: {
-			piAgentDir: targetDir,
-			mainsequenceConfigDir,
-			streamSessionDir,
-		},
-	});
-
-	return {
-		performed: true,
-		markerPath: paths.markerPath,
-		importedEntries,
-		hostSettingsSourceDir:
-			resolvedLegacyHostPiAgentDir && fs.existsSync(resolvedLegacyHostPiAgentDir)
-				? resolvedLegacyHostPiAgentDir
-				: null,
-	};
 }
 
 function ensureMainsequenceCliConfig(homeDir) {
@@ -634,18 +468,18 @@ function ensureContainerDataRoots(homeDir) {
 	return {
 		rootDir,
 		links: [
-			ensurePersistentDirectoryLink(path.join(rootDir, ".ssh"), path.join(homeDir, ".ssh")),
-			ensurePersistentDirectoryLink(path.join(rootDir, "mainsequence"), path.join(homeDir, "mainsequence")),
-			ensurePersistentDirectoryLink(
+			ensureRuntimeDirectoryLink(path.join(rootDir, ".ssh"), path.join(homeDir, ".ssh")),
+			ensureRuntimeDirectoryLink(path.join(rootDir, "mainsequence"), path.join(homeDir, "mainsequence")),
+			ensureRuntimeDirectoryLink(
 				path.join(rootDir, "mainsequence-dev"),
 				path.join(homeDir, "mainsequence-dev"),
 			),
-			ensurePersistentDirectoryLink(path.join(rootDir, "uv"), path.join(homeDir, ".local", "share", "uv")),
+			ensureRuntimeDirectoryLink(path.join(rootDir, "uv"), path.join(homeDir, ".local", "share", "uv")),
 		],
 	};
 }
 
-function ensurePersistentSshRuntime(homeDir, rootDir) {
+function ensureRuntimeSshConfig(homeDir, rootDir) {
 	const sshDir = rootDir ? path.join(rootDir, ".ssh") : path.join(homeDir, ".ssh");
 	ensureDir(sshDir);
 
@@ -710,28 +544,13 @@ export function bootstrapPiAgentDir() {
 	const homeDir = process.env.HOME || os.homedir();
 	const targetDir = process.env.PI_CODING_AGENT_DIR || path.join(homeDir, ".pi", "agent");
 	const containerData = ensureContainerDataRoots(homeDir);
-	const configuredMainsequenceDir =
-		process.env.ASTRO_MAINSEQUENCE_CONFIG_DIR?.trim() || path.join(homeDir, ".config", "mainsequence");
-	const configuredStreamSessionDir =
-		process.env.ASTRO_STREAM_SESSION_DIR?.trim() || path.join(homeDir, ".astro", "stream-sessions");
-	const migration = performOneTimeVolumeMigration({
-		rootDir: containerData.rootDir,
-		targetDir: path.resolve(targetDir),
-		mainsequenceConfigDir: path.resolve(configuredMainsequenceDir),
-		streamSessionDir: path.resolve(configuredStreamSessionDir),
-		legacyRepoStateDir: process.env.ASTRO_LEGACY_REPO_STATE_DIR,
-		legacyHostPiAgentDir:
-			process.env.ASTRO_LEGACY_HOST_PI_AGENT_DIR ?? process.env.ASTRO_PI_HOST_AGENT_IMPORT_DIR,
-	});
 
 	ensureDir(targetDir);
-	const materializedLegacyHostEntries = materializeLegacyHostImports(
-		path.resolve(targetDir),
-		process.env.ASTRO_LEGACY_HOST_PI_AGENT_DIR ?? process.env.ASTRO_PI_HOST_AGENT_IMPORT_DIR ?? null,
-	);
+	const prunedProviderAuthEntries = pruneContainerProviderAuthState(path.resolve(targetDir));
+	const prunedScopedProviderCredentialDir = pruneScopedProviderCredentialState();
 	ensureDir(path.join(targetDir, "bin"));
 	const mainsequenceShimPath = ensureManagedMainsequenceShim(targetDir);
-	const runtimeSettingsPath = ensureRuntimeSettings(targetDir, migration.hostSettingsSourceDir);
+	const runtimeSettingsPath = ensureRuntimeSettings(targetDir);
 	const orchestratorRuntime = ensureOrchestratorRuntimeProject({
 		containerDataRoot: containerData.rootDir,
 		targetDir,
@@ -739,7 +558,7 @@ export function bootstrapPiAgentDir() {
 	const mainsequenceCliConfig = ensureMainsequenceCliConfig(homeDir);
 	const piAgentHomeLink = ensurePiAgentHomeLink(homeDir, targetDir);
 	const streamSessions = ensureAstroStreamSessions(homeDir);
-	const sshRuntime = ensurePersistentSshRuntime(homeDir, containerData.rootDir);
+	const sshRuntime = ensureRuntimeSshConfig(homeDir, containerData.rootDir);
 
 	return {
 		targetDir,
@@ -751,7 +570,7 @@ export function bootstrapPiAgentDir() {
 		streamSessions,
 		sshRuntime,
 		mainsequenceShimPath,
-		migration,
-		materializedLegacyHostEntries,
+		prunedProviderAuthEntries,
+		prunedScopedProviderCredentialDir,
 	};
 }

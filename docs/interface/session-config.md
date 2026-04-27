@@ -2,9 +2,9 @@
 
 `PATCH /api/chat/session-config` updates the editable subset of session-local config.
 
-This endpoint is intentionally narrow. The canonical read shape still comes from
-`GET /api/chat/session-insights`, which advertises both the current values and their editability
-metadata.
+This endpoint is intentionally narrow. The canonical read shape comes from the backend-owned
+session insights projection, which is produced by the checkpoint sidecar and advertises both the
+current values and their editability metadata.
 
 ## Request
 
@@ -38,7 +38,7 @@ Accepted session id fields:
 - `config.compaction.enabled`
 - `config.compaction.reserveTokens`
 
-All other fields shown in `session-insights` remain read-only.
+All other fields shown in backend session insights remain read-only.
 
 ## Response
 
@@ -58,6 +58,6 @@ Example success response:
 
 ## Notes
 
-- The frontend should refetch `GET /api/chat/session-insights` after a successful patch.
+- The frontend should refetch backend session insights after a successful patch.
 - Updates are persisted in session metadata and applied to future turns through a session-scoped Pi
   settings overlay, rather than mutating the shared global Pi settings file.

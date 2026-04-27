@@ -9,10 +9,15 @@ import {
 import path from "node:path";
 import type { StreamChunk } from "./protocol.js";
 
-export type ConversationMessagePart = {
-	type: "text";
-	text: string;
-};
+export type ConversationMessagePart =
+	| {
+			type: "text";
+			text: string;
+	  }
+	| {
+			type: "reasoning";
+			text: string;
+	  };
 
 export type ConversationMessage = {
 	id: string;
@@ -154,8 +159,27 @@ function ensureAssistantMessage(
 		id: nextMessageId(next, "assistant"),
 		role: "assistant",
 		createdAt: at,
-		content: [{ type: "text", text: "" }],
+		content: [],
 	};
+	return next;
+}
+
+function appendToInProgressPart(
+	snapshot: ConversationHistorySnapshot,
+	at: string,
+	partType: ConversationMessagePart["type"],
+	text: string,
+): ConversationHistorySnapshot {
+	let next = ensureAssistantMessage(snapshot, at);
+	if (!next.inProgressMessage) return next;
+
+	const lastPart = next.inProgressMessage.content[next.inProgressMessage.content.length - 1];
+	if (!lastPart || lastPart.type !== partType) {
+		next.inProgressMessage.content.push({ type: partType, text: "" });
+	}
+
+	const targetPart = next.inProgressMessage.content[next.inProgressMessage.content.length - 1];
+	targetPart.text += text;
 	return next;
 }
 
@@ -167,8 +191,11 @@ function finalizeInProgressMessage(
 
 	const next = cloneSnapshot(snapshot);
 	const finalized = cloneMessage(next.inProgressMessage);
+	finalized.content = finalized.content.filter((part) => part.text.length > 0);
 	finalized.completedAt = finalized.completedAt ?? at;
-	next.messages.push(finalized);
+	if (finalized.content.length > 0) {
+		next.messages.push(finalized);
+	}
 	next.inProgressMessage = null;
 	return next;
 }
@@ -205,22 +232,21 @@ function applyConversationEvent(
 				case "session_switch":
 					return next;
 				case "start":
-				case "reasoning-start":
-				case "reasoning-delta":
-				case "reasoning-end":
 				case "tool-call-start":
 				case "tool-call-delta":
 				case "tool-call-end":
 				case "tool-result":
 					return next;
-				case "text-start":
-					return ensureAssistantMessage(next, event.at);
-				case "text-delta": {
-					next = ensureAssistantMessage(next, event.at);
-					if (!next.inProgressMessage) return next;
-					const firstPart = next.inProgressMessage.content[0];
-					firstPart.text += chunk.textDelta;
+				case "reasoning-start":
+					return appendToInProgressPart(next, event.at, "reasoning", "");
+				case "reasoning-delta":
+					return appendToInProgressPart(next, event.at, "reasoning", chunk.delta);
+				case "reasoning-end":
 					return next;
+				case "text-start":
+					return appendToInProgressPart(next, event.at, "text", "");
+				case "text-delta": {
+					return appendToInProgressPart(next, event.at, "text", chunk.textDelta);
 				}
 				case "text-end":
 					return next;
@@ -268,6 +294,18 @@ export function readConversationHistorySync(input: {
 	} catch {
 		return null;
 	}
+}
+
+export function writeConversationHistorySync(input: {
+	sessionDir: string;
+	sessionKey: string;
+	snapshot: ConversationHistorySnapshot;
+}): void {
+	mkdirSync(input.sessionDir, { recursive: true });
+	const historyPath = getConversationHistoryPath(input.sessionDir, input.sessionKey);
+	const tempPath = `${historyPath}.${process.pid}.${Date.now()}.rebuild.tmp`;
+	writeFileSync(tempPath, JSON.stringify(input.snapshot, null, 2));
+	renameSync(tempPath, historyPath);
 }
 
 export function createConversationStore(metadata: ConversationStoreMetadata): ConversationStore {

@@ -6,9 +6,9 @@ Accepted
 
 ## Context
 
-Astro previously had a legacy Main Sequence authentication path. That behavior no longer matches
-the deployment auth contract. The deployed coding-agent service authenticates through runtime
-credentials:
+Astro previously accepted token-style Main Sequence authentication inputs. That behavior no longer
+matches the deployment auth contract. The deployed coding-agent service authenticates through
+runtime credentials:
 
 ```env
 MAINSEQUENCE_AUTH_MODE=runtime_credential
@@ -30,7 +30,7 @@ When `MAINSEQUENCE_AUTH_MODE=runtime_credential`:
   exchange the runtime credential and update the CLI auth store before verification
 - Astro must preserve runtime credential env vars for all child `pi`, specialist, and project setup
   processes
-- health/liveness behavior must not depend on legacy CLI auth
+- health/liveness behavior must not depend on preexisting CLI auth
 
 ## Implementation Impact
 
@@ -46,7 +46,7 @@ Required changes:
 - make `startMainsequenceCredentialExchangeLoop(...)` re-run runtime-credential exchange when runtime
   credential mode is active
 - keep `buildMainsequenceStoredAuthEnv(...)` from deleting or altering runtime credential env vars
-- scrub legacy Main Sequence auth env vars before spawning child processes
+- scrub token-style Main Sequence auth env vars before spawning child processes
 
 Implementation detail:
 
@@ -67,7 +67,7 @@ Required changes:
 - run the appropriate auth gate only for endpoints that need Main Sequence access, especially
   `POST /api/chat`
 - make startup failure messages auth-mode specific
-- ensure runtime credential failures do not mention missing legacy auth
+- ensure runtime credential failures do not mention missing token auth
 
 ### `pi/extensions/shared/agent-registration.ts`
 
@@ -134,7 +134,7 @@ Docs should present runtime credentials as the production auth contract.
 ## Verification Plan
 
 - run the stream image with only runtime credential env vars and confirm it starts
-- confirm `GET /health` works without legacy token env
+- confirm `GET /health` works without token auth env
 - confirm `POST /api/chat` runs the runtime credential auth gate
 - confirm `mainsequence user` or the chosen SDK auth check succeeds in runtime credential mode
 - confirm missing runtime credential id/secret produces a runtime-credential-specific error

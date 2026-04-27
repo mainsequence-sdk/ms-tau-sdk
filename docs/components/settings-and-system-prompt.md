@@ -27,6 +27,12 @@ It defines Astro's main role:
 - use the Main Sequence CLI
 - delegate implementation and review to specialists
 
+It also defines the global Main Sequence CLI failure contract. Any failed `mainsequence ...`
+command must be reported as a CLI error with the exact command, working directory when relevant,
+exit code or signal, CLI version or version lookup failure, stderr, stdout, and the concrete
+blocker or next action. Agents may retry auth failures once through `ensure_mainsequence_cli_auth`;
+for non-auth failures they must not invent causes or retry guessed command variants.
+
 The parent prompt is static on purpose. It is easier to inspect and reason about than generating parent policy dynamically every run.
 
 ## Child specialist policy

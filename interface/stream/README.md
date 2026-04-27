@@ -19,16 +19,20 @@ Environment overrides:
 - `ASTRO_STREAM_HOST`
 - `ASTRO_STREAM_PORT`
 - `ASTRO_STREAM_TRUSTED_ORIGINS` (comma-separated browser origins allowed for cross-origin requests)
-- `ASTRO_STREAM_SESSION_DIR` (default `<repo>/.astro/stream-sessions`)
+- `ASTRO_STREAM_SESSION_DIR` (default `<repo>/.astro/stream-sessions`; in containers use
+  `/session-state/sessions`)
 - `ASTRO_STREAM_LOG_REQUEST_BODIES` (`1` enables request payload debug logging)
 
 `ASTRO_STREAM_CORS_ORIGIN` is supported as a deprecated single-origin fallback, but the preferred
 configuration is `ASTRO_STREAM_TRUSTED_ORIGINS`.
 
-In `docker-compose.yml`, the stream service mounts the named volume `astro_container_data` to
-`/home/appuser/.astro-container-data`, points runtime env at volume-backed paths such as
-`/home/appuser/.astro-container-data/.pi/agent` and `/home/appuser/.astro-container-data/.astro/stream-sessions`,
-and uses read-only legacy mounts only for one-time migration. The image runs as non-root `appuser`.
+In `docker-compose.yml`, the stream service uses container-local runtime state under
+`/home/appuser/.astro-container-data` and mounts the shared tmpfs-backed `astro_session_emptydir`
+volume at `/session-state`. It sets `ASTRO_STREAM_SESSION_DIR=/session-state/sessions` so local
+Docker follows the emptyDir checkpoint storage model instead of durable local session storage. The
+checkpoint sidecar shares the same `/session-state` mount, uses the same
+`ASTRO_CHECKPOINT_HOLDER_ID`, and flushes complete checkpoint bundles to the backend. The image runs
+as non-root `appuser`.
 
 ## Endpoints
 
@@ -200,7 +204,11 @@ After that `session_switch`, the same SSE response may continue with
 ### `GET /api/chat/history?sessionId=<runtime_session_id>`
 
 Returns the compact JSON conversation snapshot for an existing session. This endpoint is intended
-for fast chat hydration and does not replay the live SSE stream.
+for fast chat hydration and does not replay the live SSE stream. Astro owns this response shape:
+it returns local `.history.json` when available, otherwise it fetches the backend `AgentSession`
+and latest checkpoint, projects `bundle.pi_session_jsonl` into frontend user/assistant messages,
+normalizes assistant thinking into structured `reasoning` content parts, and caches the rebuilt
+`.history.json` locally.
 
 ### `GET /api/chat/diff?sessionId=<runtime_session_id>`
 
@@ -219,76 +227,26 @@ still `200` with `available_tools: {}`.
 
 Returns the model binding stored for the runtime session.
 
-### `GET /api/chat/session-insights?sessionId=<runtime_session_id>`
-
-Returns one coherent runtime-session snapshot with:
-
-- `session`
-- `model`
-- `usage`
-- `context`
-- `config`
-- `editable`
-- `lastTurn`
-
-The `context` section includes both:
-
-- `tokensRemainingBeforeCompaction`
-- `tokensRemainingBeforeContextLimit`
-
-The response also includes `config`, which exposes the effective:
-
-- compaction policy
-- reserve tokens
-- compaction threshold
-- model limits and reasoning effort
-
-`editable` mirrors the writable subset of `config` and adds field-level editing metadata such as:
-
-- `editable`
-- `type`
-- numeric `min` / `max` / `step`
-- `unit`
-
 ### `PATCH /api/chat/session-config`
 
 Updates the editable subset of session-local config. The current read contract remains
-`GET /api/chat/session-insights`; this patch endpoint only accepts writable fields and returns a
-minimal acknowledgement.
+the backend-owned session insights projection; this patch endpoint only accepts writable fields and
+returns a minimal acknowledgement.
 
 Initial writable fields:
 
 - `config.compaction.enabled`
 - `config.compaction.reserveTokens`
 
-### `GET /api/model-providers`
+### `GET /api/model-providers?userId=<user_id>`
 
-Returns auth state for managed auth-backed model providers Astro currently exposes in the UI, such
-as `openai`, `anthropic`, `openai-codex`, and `github-copilot`.
-
-### `GET /api/storage/usage`
-
-Returns a global storage snapshot for Astro's durable runtime root.
-
-It reports:
-
-- total filesystem/PVC capacity
-- currently available bytes
-- Astro-managed consumed bytes
-- whether capacity is coming from the real filesystem or from `ASTRO_STORAGE_SIM_TOTAL_BYTES`
-- whether the scan was complete
-- per-directory `scanErrors` when a mounted path exists but is not readable by the stream user
-- a five-way bucket breakdown:
-  - `pi`
-  - `astro`
-  - `sessions`
-  - `mainsequence`
-  - `system`
+Returns backend-owned auth state for managed auth-backed model providers Astro currently exposes in
+the UI, such as `openai`, `anthropic`, `openai-codex`, and `github-copilot`.
 
 ### `POST /api/model-providers/:provider/signin`
 
 Starts provider signin. Immediate providers return `200`; interactive providers return `202` with
-an attempt object.
+an attempt object. The JSON body must include `userId` or one of Astro's accepted user-id aliases.
 
 ### `GET /api/model-providers/:provider/signin/:attemptId`
 
@@ -304,17 +262,18 @@ Cancels an active interactive signin attempt.
 
 ### `POST /api/model-providers/:provider/signoff`
 
-Signs a provider off from runtime auth state without changing the underlying environment variables.
+Revokes the provider credential in the backend for the requested user.
 
 ### `GET /api/models/catalog`
 
 Returns Astro's global model catalog from the Pi registry without runtime availability filtering,
-but still filtered to the providers Astro currently supports in-product.
+but still filtered to the providers Astro currently supports in-product. Pass `userId` to annotate
+auth-backed entries with user-scoped backend credential status.
 
 ### `GET /api/chat/get_available_models`
 
 Returns the models Astro can currently offer through its model collectors without sending a message
-to Pi.
+to Pi. Pass `userId` to evaluate auth-backed provider availability for that user.
 
 The response is grouped by `provider`, with each provider carrying its own `models` array.
 
@@ -338,8 +297,14 @@ Session files are stored at:
 
 `ASTRO_STREAM_SESSION_DIR/<agent_session_id>.jsonl`
 `ASTRO_STREAM_SESSION_DIR/<agent_session_id>.meta.json`
-`ASTRO_STREAM_SESSION_DIR/<agent_session_id>.conversation.jsonl`
-`ASTRO_STREAM_SESSION_DIR/<agent_session_id>.history.json`
+
+Frontend chat history shape is owned by Astro and keyed by `AgentSession.id` and `thread_id`.
+Local `.conversation.jsonl` and `.history.json` files are process-local cache. If the full local
+history snapshot is missing, `GET /api/chat/history` reconstructs the transcript from backend
+`AgentSession` fields plus the latest checkpoint `bundle.pi_session_jsonl`. The backend does not
+store Astro's frontend-history response blob. Pi `thinking` blocks and literal provider
+`<think>...</think>` text are returned as structured `reasoning` parts, not as normal assistant
+text.
 
 ### `GET /health`
 

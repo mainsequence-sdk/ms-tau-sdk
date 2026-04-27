@@ -1,21 +1,24 @@
-# Session Insights
+# Session Insights Snapshot
 
-`GET /api/chat/session-insights` returns one runtime-session snapshot derived from the local Pi
-session file.
+Session insights are a derived runtime-session snapshot computed by Astro from the Pi session file
+and persisted to the backend by the checkpoint sidecar. Astro no longer exposes a frontend-facing
+`GET /api/chat/session-insights` endpoint; the frontend should read the backend-owned
+`AgentSessionInsights` projection instead.
 
-Accepted query parameters:
+The sidecar updates the backend after an accepted checkpoint flush. The update is tied to the
+stored checkpoint:
 
-- `sessionId`
-- `runtime_session_id`
-- `runtimeSessionId`
-
-Canonical example:
-
-```http
-GET /api/chat/session-insights?sessionId=39
+```json
+{
+  "checkpoint_version": 46,
+  "bundle_hash": "sha256:...",
+  "computed_at": "2026-04-22T12:10:00.000Z",
+  "reason": "periodic",
+  "insights": {}
+}
 ```
 
-Example response:
+Example `insights` payload:
 
 ```json
 {
@@ -173,6 +176,9 @@ Notes:
 
 - `usage.tokens.total` is cumulative token usage across the runtime session.
 - `context.tokens` is the current estimated context occupancy.
+- When local session files are gone after pod/container restart, Astro restores
+  `<session>.jsonl`, `<session>.meta.json`, thread binding, and compact history from the backend
+  checkpoint before computing insights.
 - `config.compaction` exposes the effective compaction policy used for this session.
 - `config.model` exposes the effective model limits and reasoning setting used for this session.
 - `editable` describes which config fields are writable and how they may be edited.

@@ -14,7 +14,7 @@ Provide a compact review workflow for a checked-out project.
 ## Workflow summary
 
 1. inspect task, status, planning, or tracking files in the checked-out project
-2. use legacy `astro/` files only as supporting evidence
+2. use old `astro/` files only as supporting evidence
 3. summarize the current state with:
    - overall state
    - completed tasks

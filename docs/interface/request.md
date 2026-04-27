@@ -36,6 +36,7 @@ currently stored for that runtime session.
 - `projectId` (string | number; required for `mainsequence-project-coder` on `newChat: true`)
 - `cwd` (string; required for `mainsequence-project-coder` on `newChat: true`)
 - `model` (object | null; optional lightweight session model override)
+- `sessionMetadata` (object; optional non-reserved metadata only)
 
 ## Notes
 
@@ -63,6 +64,9 @@ currently stored for that runtime session.
 - `model.source` plus `model.model` must match one of the records from
   `GET /api/chat/get_available_models` under `providers[*].models[*]`.
 - `model: null` clears any previously stored session model binding.
+- `sessionMetadata` is stored only for non-reserved keys. Astro owns reserved metadata such as
+  `workflow_key`, `created_by_user`, `project_id`, `project_cwd`, `pending_runtime_bootstrap`,
+  `session_model_binding`, and handoff fields.
 - `GET /api/chat/diff` does not require the frontend to send `projectId` or `cwd`; the server
   resolves the frozen repo root from the stored coding-session metadata.
 - On a new `mainsequence-project-coder` session, the runtime prepares the checked-out project before

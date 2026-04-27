@@ -1,8 +1,11 @@
 # ADR: Remote Auth State for Model Providers
 
-Status: accepted
+Status: superseded by [`adr-backend-owned-provider-credentials.md`](./adr-backend-owned-provider-credentials.md)
 
 Date: 2026-04-15
+
+Note: references below to runtime auth state are historical. The current authority for durable
+user provider credentials is the backend credential store defined in the superseding ADR.
 
 ## Context
 
@@ -118,7 +121,7 @@ Recommended response shape:
       "authKind": "api_key",
       "signInAvailable": true,
       "authenticated": true,
-      "authSource": "runtime_store",
+      "authSource": "backend",
       "knownModelCount": 3,
       "usableModelCount": 3,
       "lastValidatedAt": "2026-04-15T10:00:00.000Z"

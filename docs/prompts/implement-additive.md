@@ -27,6 +27,10 @@ This is the main parent workflow for normal Main Sequence project work.
 
 - the orchestrator owns project selection and local setup
 - inside Astro, do not call raw `mainsequence project set-up-locally <id>` directly
+- new project creation must resolve a GitHub organization first and call
+  `mainsequence project create "<name>" --github-org-id <githubOrgId>`
+- if GitHub organization discovery or any other non-auth CLI step fails, report it using the global
+  Main Sequence CLI failure contract instead of retrying guessed commands
 - do not hand off or copy `project_blueprint.md` before the project details show `is_initialized=true`
 - do not delegate coding work without both `cwd` and `projectId`
 - do not claim a session switch without calling `switch_project_session`

@@ -40,6 +40,10 @@ Use when:
 Important rule:
 
 - it should treat the target project's `AGENTS.md` and `.agents/skills/mainsequence-project/SKILL.md` as canonical when they exist
+- it follows the same global Main Sequence CLI failure contract as the parent: failed
+  `mainsequence ...` commands are reported with the exact command, working directory when relevant,
+  exit code or signal, CLI version or version lookup failure, stderr, stdout, and the concrete
+  blocker or next action
 - before a new project-coder session starts, the runtime should deterministically run `mainsequence project sdk-status --path . --json`, `mainsequence project build_local_venv --path .`, `uv sync`, and then activate the checked-out project's `.venv`
 - when started without a concrete task, it should use that runtime bootstrap summary first, bootstrap missing `AGENTS.md` / agent skills automatically, and then establish project-local context, summarize readiness, and stay ready for the next project-local turn
 - when the first turn after project handoff is only incidental chat, the onboarding flow should still run before the normal reply

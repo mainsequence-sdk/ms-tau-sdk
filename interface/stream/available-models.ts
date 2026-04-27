@@ -1,11 +1,12 @@
-import { AuthStorage, ModelRegistry } from "../../node_modules/@mariozechner/pi-coding-agent/dist/index.js";
+import { ModelRegistry } from "../../node_modules/@mariozechner/pi-coding-agent/dist/index.js";
 import {
+	createUnauthenticatedPiRuntime,
 	getModelProviderAuthMetadata,
-	shouldExposeProviderModelsInAvailableList,
+	listModelProviderAuthStatuses,
+	type ModelProviderAuthStatus,
 	type ModelProviderAuthMetadata,
 } from "./model-provider-auth.js";
 import { shouldExposeAuthBackedProviderInAstroUi } from "./model-provider-definitions.js";
-import { createScopedPiRuntime } from "./model-provider-runtime.js";
 
 export const DEFAULT_OPENAI_PROVIDER = "openai";
 export const DEFAULT_OPENAI_MODEL = "gpt-5.4";
@@ -79,6 +80,7 @@ export type AvailableModelContext = {
 	fetchFn?: typeof fetch;
 	defaultOpenAiProvider?: string;
 	defaultOpenAiModel?: string;
+	userId?: string | null;
 };
 
 export type AvailableModelCollectionResult = {
@@ -241,46 +243,52 @@ function shouldExposePiRegistryProviderInAstroUi(provider: string): boolean {
 	return shouldExposeAuthBackedProviderInAstroUi(provider);
 }
 
+function metadataFromStatus(status: ModelProviderAuthStatus | null): ModelProviderAuthMetadata | null {
+	if (!status) return null;
+	return {
+		required: true,
+		authKind: status.authKind,
+		signInAvailable: status.signInAvailable,
+		authenticated: status.authenticated,
+		usable: status.authenticated,
+		authSource: status.authSource,
+	};
+}
+
 export class PiAvailableModelCollector implements AvailableModelCollector {
 	readonly source = "pi-model-registry";
 
 	async collect(context: Required<AvailableModelContext>): Promise<AvailableModelCollectionResult> {
-		const originalPiAgentDir = process.env.PI_CODING_AGENT_DIR;
-		const scopedPiAgentDir = context.env.PI_CODING_AGENT_DIR;
-		if (scopedPiAgentDir && scopedPiAgentDir !== originalPiAgentDir) {
-			process.env.PI_CODING_AGENT_DIR = scopedPiAgentDir;
-		}
-
-		let authStorage: AuthStorage;
-		let modelRegistry: ModelRegistry;
-		try {
-			authStorage = AuthStorage.create();
-			modelRegistry = new ModelRegistry(authStorage);
-		} finally {
-			if (scopedPiAgentDir && scopedPiAgentDir !== originalPiAgentDir) {
-				if (originalPiAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
-				else process.env.PI_CODING_AGENT_DIR = originalPiAgentDir;
-			}
-		}
+		const { modelRegistry } = createUnauthenticatedPiRuntime();
+		const authStatuses = await listModelProviderAuthStatuses({
+			createdByUser: context.userId,
+			env: context.env,
+			modelRegistry,
+		});
+		const statusByProvider = new Map(
+			authStatuses.ok ? authStatuses.value.map((entry) => [entry.provider, entry] as const) : [],
+		);
 
 		const allModels = modelRegistry.getAll();
-		const availableModels = allModels
-			.filter((model) => shouldExposePiRegistryProviderInAstroUi(model.provider))
-			.filter((model) =>
-				shouldExposeProviderModelsInAvailableList(model.provider, context.env, {
-					authStorage,
-					modelRegistry,
-				}),
-			)
-			.map((model) =>
-				buildAvailableModelFromPiRegistry(
-					model,
-					getModelProviderAuthMetadata(model.provider, context.env, {
-						authStorage,
-						modelRegistry,
+		const availableModels = (
+			await Promise.all(
+				allModels
+					.filter((model) => shouldExposePiRegistryProviderInAstroUi(model.provider))
+					.map(async (model) => {
+						if (statusByProvider.get(model.provider)?.authenticated !== true) return null;
+						return buildAvailableModelFromPiRegistry(
+							model,
+							metadataFromStatus(statusByProvider.get(model.provider) ?? null) ??
+								(await getModelProviderAuthMetadata(model.provider, {
+									createdByUser: context.userId,
+									env: context.env,
+									modelRegistry,
+								})),
+						);
 					}),
-				),
 			)
+		)
+			.filter((model): model is AvailableModel => Boolean(model))
 			.sort((left, right) => {
 				if (left.provider !== right.provider) return left.provider.localeCompare(right.provider);
 				return left.label.localeCompare(right.label);
@@ -292,9 +300,15 @@ export class PiAvailableModelCollector implements AvailableModelCollector {
 			ok: !loadError,
 			models: availableModels,
 			details: {
-				auth_providers: authStorage.list().sort((left, right) => left.localeCompare(right)),
+				auth_providers: authStatuses.ok
+					? authStatuses.value
+							.filter((entry) => entry.authenticated)
+							.map((entry) => entry.provider)
+							.sort((left, right) => left.localeCompare(right))
+					: [],
 				available_model_count: availableModels.length,
 				total_model_count: allModels.length,
+				...(authStatuses.ok === false ? { auth_status_error: authStatuses.message } : {}),
 			},
 			...(loadError ? { error: toErrorMessage(loadError) } : {}),
 		};
@@ -528,6 +542,7 @@ export async function collectAvailableModels(
 		fetchFn: context.fetchFn ?? fetch,
 		defaultOpenAiProvider: context.defaultOpenAiProvider ?? DEFAULT_OPENAI_PROVIDER,
 		defaultOpenAiModel: context.defaultOpenAiModel ?? DEFAULT_OPENAI_MODEL,
+		userId: context.userId ?? null,
 	};
 	const enabledCollectors = getEnabledAvailableModelCollectors(resolvedContext, collectors);
 
@@ -582,27 +597,42 @@ export async function collectAvailableModels(
 	};
 }
 
-export function collectModelCatalog(context: AvailableModelContext = {}): ModelCatalogResponse {
+export async function collectModelCatalog(context: AvailableModelContext = {}): Promise<ModelCatalogResponse> {
 	const resolvedContext: Required<AvailableModelContext> = {
 		env: context.env ?? process.env,
 		fetchFn: context.fetchFn ?? fetch,
 		defaultOpenAiProvider: context.defaultOpenAiProvider ?? DEFAULT_OPENAI_PROVIDER,
 		defaultOpenAiModel: context.defaultOpenAiModel ?? DEFAULT_OPENAI_MODEL,
+		userId: context.userId ?? null,
 	};
 
-	const { authStorage, modelRegistry } = createScopedPiRuntime(resolvedContext.env);
-	const allModels = modelRegistry
-		.getAll()
-		.filter((model) => shouldExposePiRegistryProviderInAstroUi(model.provider))
-		.map((model) =>
-			buildAvailableModelFromPiRegistry(
-				model,
-				getModelProviderAuthMetadata(model.provider, resolvedContext.env, {
-					authStorage,
-					modelRegistry,
-				}),
-			),
+	const { modelRegistry } = createUnauthenticatedPiRuntime();
+	const authStatuses = await listModelProviderAuthStatuses({
+		createdByUser: resolvedContext.userId,
+		env: resolvedContext.env,
+		modelRegistry,
+	});
+	const statusByProvider = new Map(
+		authStatuses.ok ? authStatuses.value.map((entry) => [entry.provider, entry] as const) : [],
+	);
+	const allModels = (
+		await Promise.all(
+			modelRegistry
+				.getAll()
+				.filter((model) => shouldExposePiRegistryProviderInAstroUi(model.provider))
+				.map(async (model) =>
+					buildAvailableModelFromPiRegistry(
+						model,
+						metadataFromStatus(statusByProvider.get(model.provider) ?? null) ??
+							(await getModelProviderAuthMetadata(model.provider, {
+								createdByUser: resolvedContext.userId,
+								env: resolvedContext.env,
+								modelRegistry,
+							})),
+					),
+				),
 		)
+	)
 		.sort((left, right) => {
 			if (left.provider !== right.provider) return left.provider.localeCompare(right.provider);
 			return left.label.localeCompare(right.label);
@@ -618,8 +648,14 @@ export function collectModelCatalog(context: AvailableModelContext = {}): ModelC
 				ok: !loadError,
 				count: allModels.length,
 				details: {
-					auth_providers: authStorage.list().sort((left, right) => left.localeCompare(right)),
+					auth_providers: authStatuses.ok
+						? authStatuses.value
+								.filter((entry) => entry.authenticated)
+								.map((entry) => entry.provider)
+								.sort((left, right) => left.localeCompare(right))
+						: [],
 					total_model_count: allModels.length,
+					...(authStatuses.ok === false ? { auth_status_error: authStatuses.message } : {}),
 				},
 				...(loadError ? { error: toErrorMessage(loadError) } : {}),
 			},

@@ -43,8 +43,8 @@ Project-local Pi settings, parent prompt, and specialist prompts.
 
 ### `.astro/`
 
-Legacy repo-local runtime state and migration input for containerized launches. This is no longer
-the active durable runtime location for containers once the PVC-style volume layout is enabled.
+Ignored repo-local scratch. It is not mounted into containers and is not an active session or
+provider-auth source.
 
 ### `pi/`
 
@@ -69,18 +69,14 @@ Optional app container base with Python 3.11 and Node 20 for running Pi and rela
 
 ## Deployed container layout
 
-When Astro runs in containers with the PVC-style storage layout, the active durable state is not
-the repo-local `.astro/` tree. It lives under the mounted runtime volume root:
+When Astro runs in containers, rebuildable runtime state is not the repo-local `.astro/` tree. It
+lives under the container runtime root, while active session files live under `/session-state`:
 
 ```text
 /home/appuser/.astro-container-data/
 ├── .pi/
 │   ├── agent/
-│   │   ├── auth.json
-│   │   ├── sessions/
 │   │   ├── settings.json
-│   │   ├── astro-model-provider-auth.json
-│   │   ├── astro-model-provider-signin.json
 │   │   └── bin/
 │   └── project/
 │       ├── APPEND_SYSTEM.md
@@ -94,19 +90,27 @@ the repo-local `.astro/` tree. It lives under the mounted runtime volume root:
 │       ├── auth.json
 │       ├── config.json
 │       └── session_overrides/
-├── .astro/
-│   ├── migrations/
-│   │   └── pvc-layout-v1.json
-│   └── stream-sessions/
 ├── mainsequence/
 ├── mainsequence-dev/
 └── uv/
 ```
 
+```text
+/session-state/
+├── sessions/
+├── session-overrides/
+├── pi-agent-auth/
+├── manifests/
+└── checkpoints/
+```
+
 So in deployment terms:
 
-- local Docker named volume `astro_container_data` simulates the PVC
-- GKE should mount the real PVC at `/home/appuser/.astro-container-data`
-- the volume root is the source of truth for all durable container runtime state
+- local Docker uses a shared tmpfs-backed `/session-state` volume for active session files
+- GKE should mount one shared `emptyDir` at `/session-state` into Astro and the checkpoint sidecar
+- backend checkpoints are the durable source of truth for session continuity
+- provider auth files live only in scoped `/session-state/pi-agent-auth` directories and are
+  hydrated from backend-owned credential storage
+- provider auth/signin files in `.pi/agent` are pruned during container startup
 - `astro-orchestrator` runs from the writable `astro-orchestrator-runtime` cwd so Pi lock files
   are never written into `/app/.pi`

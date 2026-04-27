@@ -1,20 +1,18 @@
-import type { AuthStorage, ModelRegistry } from "../../node_modules/@mariozechner/pi-coding-agent/dist/index.js";
+import { AuthStorage, ModelRegistry } from "../../node_modules/@mariozechner/pi-coding-agent/dist/index.js";
 import {
 	listAuthBackedProviderDefinitions,
 	resolveProviderDefinition,
 	shouldExposeAuthBackedProviderInAstroUi,
 	type AuthBackedProviderDefinition,
 } from "./model-provider-definitions.js";
+import { ModelProviderCredentialClient } from "./model-provider-credentials-client.js";
 import {
-	createScopedPiRuntime,
-	getSignedOffRecord,
-	readRuntimeAuthState,
-	setProviderSignedOff,
-	withScopedPiAgentDir,
-} from "./model-provider-runtime.js";
+	fetchBackendProviderCredentialStatus,
+	type ProviderCredentialOperationResult,
+} from "./model-provider-scoped-auth.js";
 import { cancelActiveProviderSignIn } from "./model-provider-signin.js";
 
-export type ModelProviderAuthSource = "runtime_store" | null;
+export type ModelProviderAuthSource = "backend" | null;
 
 export type ModelProviderAuthMetadata = {
 	required: true;
@@ -34,35 +32,46 @@ export type ModelProviderAuthStatus = {
 	knownModelCount: number;
 	usableModelCount: number;
 	lastValidatedAt: string;
+	version: number | null;
+	credentialHash: string | null;
+};
+
+export type ModelProviderAuthResponse = {
+	version: 1;
+	providers: ModelProviderAuthStatus[];
+	backendCredentialStatus?: {
+		ok: boolean;
+		error?: string;
+	};
 };
 
 function buildProviderAuthStatus(options: {
-	provider: string;
-	env: NodeJS.ProcessEnv;
-	authStorage: AuthStorage;
+	definition: AuthBackedProviderDefinition;
 	knownModelCount: number;
-}): ModelProviderAuthStatus | null {
-	const definition = resolveProviderDefinition(options.provider);
-	if (!definition || !definition.exposeInAstroUi) return null;
-
-	const runtimeCredentialPresent = options.authStorage.has(options.provider);
-	const signedOffRecord = getSignedOffRecord(options.provider, options.env);
-	const authenticated = !signedOffRecord && runtimeCredentialPresent;
+	backendStatus: {
+		status: "active" | "revoked";
+		version: number;
+		credential_hash: string;
+	} | null;
+	env: NodeJS.ProcessEnv;
+}): ModelProviderAuthStatus {
+	const authenticated = options.backendStatus?.status === "active";
 	const signInAvailable =
 		!authenticated &&
-		(definition.signInMode === "oauth" ||
-			(definition.signInMode === "api_key_sync" && definition.isConfiguredFromEnv(options.env)));
-	const authSource: ModelProviderAuthSource = authenticated ? "runtime_store" : null;
+		(options.definition.signInMode === "oauth" ||
+			(options.definition.signInMode === "api_key_sync" && options.definition.isConfiguredFromEnv(options.env)));
 
 	return {
-		provider: options.provider,
-		authKind: definition.authKind,
+		provider: options.definition.provider,
+		authKind: options.definition.authKind,
 		signInAvailable,
 		authenticated,
-		authSource,
+		authSource: authenticated ? "backend" : null,
 		knownModelCount: options.knownModelCount,
 		usableModelCount: authenticated ? options.knownModelCount : 0,
 		lastValidatedAt: new Date().toISOString(),
+		version: options.backendStatus?.version ?? null,
+		credentialHash: options.backendStatus?.credential_hash ?? null,
 	};
 }
 
@@ -77,13 +86,11 @@ function collectKnownModelCounts(modelRegistry: ModelRegistry): Map<string, numb
 function shouldIncludeProviderCandidate(options: {
 	definition: AuthBackedProviderDefinition;
 	knownModelCounts: Map<string, number>;
-	runtimeAuthProviders: Set<string>;
-	signedOffProviders: Set<string>;
+	hasBackendStatus: boolean;
 	env: NodeJS.ProcessEnv;
 }): boolean {
 	if ((options.knownModelCounts.get(options.definition.provider) ?? 0) > 0) return true;
-	if (options.runtimeAuthProviders.has(options.definition.provider)) return true;
-	if (options.signedOffProviders.has(options.definition.provider)) return true;
+	if (options.hasBackendStatus) return true;
 	if (options.definition.signInMode === "oauth") return true;
 	if (options.definition.signInMode === "api_key_sync" && options.definition.isConfiguredFromEnv(options.env)) {
 		return true;
@@ -91,53 +98,70 @@ function shouldIncludeProviderCandidate(options: {
 	return false;
 }
 
-export function listModelProviderAuthStatuses(
-	env: NodeJS.ProcessEnv = process.env,
-	options?: { authStorage?: AuthStorage; modelRegistry?: ModelRegistry },
-): ModelProviderAuthStatus[] {
-	const runtime = options?.authStorage && options?.modelRegistry ? options : createScopedPiRuntime(env);
-	const knownModelCounts = collectKnownModelCounts(runtime.modelRegistry);
-	const runtimeAuthProviders = new Set(runtime.authStorage.list());
-	const signedOffProviders = new Set(Object.keys(readRuntimeAuthState(env).providers ?? {}));
-	const candidateProviders = new Set<string>();
+export function createUnauthenticatedPiRuntime(): { authStorage: AuthStorage; modelRegistry: ModelRegistry } {
+	const authStorage = AuthStorage.inMemory();
+	const modelRegistry = new ModelRegistry(authStorage);
+	return { authStorage, modelRegistry };
+}
 
-	for (const provider of knownModelCounts.keys()) candidateProviders.add(provider);
-	for (const provider of runtimeAuthProviders) candidateProviders.add(provider);
-	for (const provider of signedOffProviders) candidateProviders.add(provider);
-	for (const definition of listAuthBackedProviderDefinitions()) {
-		if (!definition.exposeInAstroUi) continue;
-		if (
+export async function listModelProviderAuthStatuses(options: {
+	createdByUser: string | null;
+	env?: NodeJS.ProcessEnv;
+	modelRegistry?: ModelRegistry;
+}): Promise<ProviderCredentialOperationResult<ModelProviderAuthStatus[]>> {
+	const env = options.env ?? process.env;
+	const runtime = options.modelRegistry ? { modelRegistry: options.modelRegistry } : createUnauthenticatedPiRuntime();
+	const knownModelCounts = collectKnownModelCounts(runtime.modelRegistry);
+	const backendStatus =
+		options.createdByUser == null
+			? {
+					ok: true as const,
+					value: {
+						providers: {},
+					},
+			  }
+			: await fetchBackendProviderCredentialStatus({
+					createdByUser: options.createdByUser,
+					env,
+			  });
+	if (backendStatus.ok === false) {
+		return backendStatus;
+	}
+
+	const statuses = listAuthBackedProviderDefinitions()
+		.filter((definition) => definition.exposeInAstroUi)
+		.filter((definition) =>
 			shouldIncludeProviderCandidate({
 				definition,
 				knownModelCounts,
-				runtimeAuthProviders,
-				signedOffProviders,
+				hasBackendStatus: Boolean(backendStatus.value.providers[definition.provider]),
 				env,
-			})
-		) {
-			candidateProviders.add(definition.provider);
-		}
-	}
-
-	return [...candidateProviders]
-		.map((provider) =>
-			buildProviderAuthStatus({
-				provider,
-				env,
-				authStorage: runtime.authStorage,
-				knownModelCount: knownModelCounts.get(provider) ?? 0,
 			}),
 		)
-		.filter((entry): entry is ModelProviderAuthStatus => Boolean(entry))
+		.map((definition) =>
+			buildProviderAuthStatus({
+				definition,
+				knownModelCount: knownModelCounts.get(definition.provider) ?? 0,
+				backendStatus: backendStatus.value.providers[definition.provider] ?? null,
+				env,
+			}),
+		)
 		.sort((left, right) => left.provider.localeCompare(right.provider));
+
+	return { ok: true, value: statuses };
 }
 
-export function getModelProviderAuthMetadata(
+export async function getModelProviderAuthMetadata(
 	provider: string,
-	env: NodeJS.ProcessEnv = process.env,
-	options?: { authStorage?: AuthStorage; modelRegistry?: ModelRegistry },
-): ModelProviderAuthMetadata | null {
-	const status = listModelProviderAuthStatuses(env, options).find((entry) => entry.provider === provider);
+	options: {
+		createdByUser: string | null;
+		env?: NodeJS.ProcessEnv;
+		modelRegistry?: ModelRegistry;
+	},
+): Promise<ModelProviderAuthMetadata | null> {
+	const statuses = await listModelProviderAuthStatuses(options);
+	if (statuses.ok === false) return null;
+	const status = statuses.value.find((entry) => entry.provider === provider);
 	if (!status) return null;
 	return {
 		required: true,
@@ -149,44 +173,84 @@ export function getModelProviderAuthMetadata(
 	};
 }
 
-export function shouldExposeProviderModelsInAvailableList(
+export async function shouldExposeProviderModelsInAvailableList(
 	provider: string,
-	env: NodeJS.ProcessEnv = process.env,
-	options?: { authStorage?: AuthStorage; modelRegistry?: ModelRegistry },
-): boolean {
+	options: {
+		createdByUser: string | null;
+		env?: NodeJS.ProcessEnv;
+		modelRegistry?: ModelRegistry;
+	},
+): Promise<boolean> {
 	const definition = resolveProviderDefinition(provider);
 	if (definition && !definition.exposeInAstroUi) return false;
-	if (!definition) {
-		return false;
-	}
-	const status = listModelProviderAuthStatuses(env, options).find((entry) => entry.provider === provider);
+	if (!definition) return false;
+	const statuses = await listModelProviderAuthStatuses(options);
+	if (statuses.ok === false) return false;
+	const status = statuses.value.find((entry) => entry.provider === provider);
 	return status?.authenticated === true;
 }
 
-export function isProviderUsableForExecution(provider: string, env: NodeJS.ProcessEnv = process.env): boolean {
+export async function isProviderUsableForExecution(
+	provider: string,
+	options: {
+		createdByUser: string;
+		env?: NodeJS.ProcessEnv;
+	},
+): Promise<ProviderCredentialOperationResult<boolean>> {
 	const definition = resolveProviderDefinition(provider);
-	if (!definition) return true;
-	if (!shouldExposeAuthBackedProviderInAstroUi(provider)) return false;
-	const status = listModelProviderAuthStatuses(env).find((entry) => entry.provider === provider);
-	return status?.authenticated === true;
+	if (!definition) return { ok: true, value: true };
+	if (!shouldExposeAuthBackedProviderInAstroUi(provider)) return { ok: true, value: false };
+	const statuses = await listModelProviderAuthStatuses({
+		createdByUser: options.createdByUser,
+		env: options.env,
+	});
+	if (statuses.ok === false) return statuses;
+	const status = statuses.value.find((entry) => entry.provider === provider);
+	return { ok: true, value: status?.authenticated === true };
 }
 
-export function getModelProviderAuthResponse(env: NodeJS.ProcessEnv = process.env): {
-	version: 1;
-	providers: ModelProviderAuthStatus[];
-} {
+export async function getModelProviderAuthResponse(options: {
+	createdByUser: string | null;
+	env?: NodeJS.ProcessEnv;
+}): Promise<ModelProviderAuthResponse> {
+	const statuses = await listModelProviderAuthStatuses({
+		createdByUser: options.createdByUser,
+		env: options.env,
+	});
+	if (statuses.ok === false) {
+		const fallbackStatuses = await listModelProviderAuthStatuses({
+			createdByUser: null,
+			env: options.env,
+		});
+		return {
+			version: 1,
+			providers: fallbackStatuses.ok ? fallbackStatuses.value : [],
+			backendCredentialStatus: {
+				ok: false,
+				error: statuses.message,
+			},
+		};
+	}
 	return {
 		version: 1,
-		providers: listModelProviderAuthStatuses(env),
+		providers: statuses.value,
+		backendCredentialStatus: {
+			ok: true,
+		},
 	};
 }
 
-export function signOffModelProvider(
+export async function signOffModelProvider(
 	provider: string,
-	env: NodeJS.ProcessEnv = process.env,
+	options: {
+		createdByUser: string;
+		env?: NodeJS.ProcessEnv;
+	},
 ):
-	| { ok: true; statusCode: 200; provider: string; authenticated: false; updatedAt: string }
-	| { ok: false; statusCode: 404; error: string; message: string } {
+	Promise<
+		| { ok: true; statusCode: 200; provider: string; authenticated: false; updatedAt: string }
+		| { ok: false; statusCode: 404 | 503; error: string; message: string }
+	> {
 	const definition = resolveProviderDefinition(provider);
 	if (!definition) {
 		return {
@@ -197,15 +261,24 @@ export function signOffModelProvider(
 		};
 	}
 
-	cancelActiveProviderSignIn(provider, env, {
+	cancelActiveProviderSignIn(provider, options.env ?? process.env, {
 		reason: "Provider signed off during active signin.",
 		markAttemptCancelled: true,
 	});
-	withScopedPiAgentDir(env, () => {
-		const runtime = createScopedPiRuntime(env);
-		runtime.authStorage.logout(provider);
+	const client = new ModelProviderCredentialClient({ env: options.env });
+	const revoke = await client.revoke({
+		createdByUser: options.createdByUser,
+		provider,
+		reason: "user_signoff",
 	});
-	setProviderSignedOff(provider, true, env);
+	if (revoke.ok === false) {
+		return {
+			ok: false,
+			statusCode: revoke.status === 404 ? 404 : 503,
+			error: "provider_credential_revoke_failed",
+			message: revoke.error,
+		};
+	}
 
 	return {
 		ok: true,

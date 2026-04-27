@@ -114,9 +114,21 @@ export type SessionContextResponse = {
 	};
 };
 
-type SessionInsights = {
+export type SessionInsights = {
 	usage: SessionUsageResponse;
 	context: SessionContextResponse;
+	config: SessionInsightsConfig;
+	editable: SessionInsightsEditable;
+	info: Record<string, SessionInsightsInfoNode>;
+};
+
+export type SessionInsightsResponse = {
+	version: 1;
+	session: SessionUsageResponse["session"];
+	model: SessionContextResponse["model"];
+	usage: SessionUsageResponse["usage"];
+	context: SessionContextResponse["context"];
+	lastTurn: SessionUsageResponse["lastTurn"];
 	config: SessionInsightsConfig;
 	editable: SessionInsightsEditable;
 	info: Record<string, SessionInsightsInfoNode>;
@@ -487,5 +499,19 @@ export function readSessionInsights(options: {
 			branchEntries,
 			config,
 		}),
+	};
+}
+
+export function buildSessionInsightsResponse(insights: SessionInsights): SessionInsightsResponse {
+	return {
+		version: 1,
+		session: insights.usage.session,
+		model: insights.context.model,
+		usage: insights.usage.usage,
+		context: insights.context.context,
+		lastTurn: insights.usage.lastTurn,
+		config: insights.config,
+		editable: insights.editable,
+		info: insights.info,
 	};
 }

@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted
+Accepted for the initial attach path. Session continuity and history reconstruction are now
+completed through [`adr-emptydir-session-checkpoint-storage.md`](./adr-emptydir-session-checkpoint-storage.md).
 
 ## Context
 
@@ -264,7 +265,8 @@ when the backend session exists but could not be reconstructed safely.
 ## Follow-up
 
 - Add a backend read contract doc for the session fetch payload Astro expects.
-- Decide whether Astro should backfill local `.history.json` from backend message history.
+- Backend checkpoint projection now backfills local `.history.json` from `bundle.pi_session_jsonl`;
+  the backend does not store Astro's frontend history response shape.
 - Add a repair endpoint or admin flow for rehydrating corrupted local session state from backend.
 - Revisit whether thread binding should also be reconstructed from backend metadata during
   hydration.

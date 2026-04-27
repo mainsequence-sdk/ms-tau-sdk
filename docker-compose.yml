@@ -16,12 +16,13 @@ services:
       ASTRO_CONTAINER_DATA_DIR: /home/appuser/.astro-container-data
       ASTRO_MAINSEQUENCE_CONFIG_DIR: /home/appuser/.astro-container-data/.config/mainsequence
       PI_CODING_AGENT_DIR: /home/appuser/.astro-container-data/.pi/agent
-      ASTRO_STREAM_SESSION_DIR: /home/appuser/.astro-container-data/.astro/stream-sessions
-      ASTRO_LEGACY_REPO_STATE_DIR: /app/.astro-migration-source
-      ASTRO_LEGACY_HOST_PI_AGENT_DIR: /home/appuser/.pi/host-agent
+      ASTRO_SESSION_STATE_DIR: /session-state
+      ASTRO_STREAM_SESSION_DIR: /session-state/sessions
+      ASTRO_SESSION_OVERRIDES_DIR: /session-state/session-overrides
+      ASTRO_PROVIDER_CREDENTIAL_DIR: /session-state/pi-agent-auth
+      ASTRO_CHECKPOINT_HOLDER_ID: pod/local-compose-astro-pi-stream
       BUILD_AGENTS_IN_BACKEND: "0"
     volumes:
-      - ./.astro:/app/.astro-migration-source:ro
       - ./.pi:/app/.pi
       - ./pi:/app/pi
       - ./interface:/app/interface
@@ -31,8 +32,7 @@ services:
       - ./package.json:/app/package.json
       - ./package-lock.json:/app/package-lock.json
       - ./tsconfig.json:/app/tsconfig.json
-      - ${HOME}/.pi/agent:/home/appuser/.pi/host-agent:ro
-      - astro_container_data:/home/appuser/.astro-container-data
+      - astro_session_emptydir:/session-state
     stdin_open: true
     tty: true
 
@@ -53,12 +53,14 @@ services:
       PI_CODING_AGENT_DIR: /home/appuser/.astro-container-data/.pi/agent
       ASTRO_STREAM_HOST: 0.0.0.0
       ASTRO_STREAM_PORT: ${ASTRO_STREAM_PORT:-8787}
-      ASTRO_STREAM_SESSION_DIR: /home/appuser/.astro-container-data/.astro/stream-sessions
-      ASTRO_LEGACY_REPO_STATE_DIR: /app/.astro-migration-source
-      ASTRO_LEGACY_HOST_PI_AGENT_DIR: /home/appuser/.pi/host-agent
+      ASTRO_SESSION_STATE_DIR: /session-state
+      ASTRO_STREAM_SESSION_DIR: /session-state/sessions
+      ASTRO_SESSION_OVERRIDES_DIR: /session-state/session-overrides
+      ASTRO_PROVIDER_CREDENTIAL_DIR: /session-state/pi-agent-auth
+      ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS: ${ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS:-10000}
+      ASTRO_CHECKPOINT_HOLDER_ID: pod/local-compose-astro-pi-stream
       BUILD_AGENTS_IN_BACKEND: "1"
     volumes:
-      - ./.astro:/app/.astro-migration-source:ro
       - ./.pi:/app/.pi
       - ./pi:/app/pi
       - ./interface:/app/interface
@@ -68,10 +70,49 @@ services:
       - ./package.json:/app/package.json
       - ./package-lock.json:/app/package-lock.json
       - ./tsconfig.json:/app/tsconfig.json
-      - ${HOME}/.pi/agent:/home/appuser/.pi/host-agent:ro
-      - astro_container_data:/home/appuser/.astro-container-data
+      - astro_session_emptydir:/session-state
     ports:
       - "${ASTRO_STREAM_PORT:-8787}:8787"
 
+  astro-session-checkpoint-sidecar:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: astro-session-checkpoint-sidecar
+      args:
+        MAINSEQUENCE_PIP_SPEC: ${MAINSEQUENCE_PIP_SPEC:-mainsequence}
+    image: astro:session-checkpoint-sidecar
+    env_file:
+      - .env
+    environment:
+      HOME: /home/appuser
+      ASTRO_CONTAINER_DATA_DIR: /home/appuser/.astro-container-data
+      ASTRO_MAINSEQUENCE_CONFIG_DIR: /home/appuser/.astro-container-data/.config/mainsequence
+      PI_CODING_AGENT_DIR: /home/appuser/.astro-container-data/.pi/agent
+      ASTRO_SESSION_STATE_DIR: /session-state
+      ASTRO_STREAM_SESSION_DIR: /session-state/sessions
+      ASTRO_SESSION_OVERRIDES_DIR: /session-state/session-overrides
+      ASTRO_PROVIDER_CREDENTIAL_DIR: /session-state/pi-agent-auth
+      ASTRO_CHECKPOINT_HOLDER_ID: pod/local-compose-astro-pi-stream
+      ASTRO_CHECKPOINT_SIDECAR_DEBOUNCE_MS: ${ASTRO_CHECKPOINT_SIDECAR_DEBOUNCE_MS:-1000}
+      ASTRO_CHECKPOINT_SIDECAR_SCAN_INTERVAL_MS: ${ASTRO_CHECKPOINT_SIDECAR_SCAN_INTERVAL_MS:-10000}
+      ASTRO_CHECKPOINT_SIDECAR_PERIODIC_FLUSH_MS: ${ASTRO_CHECKPOINT_SIDECAR_PERIODIC_FLUSH_MS:-30000}
+      ASTRO_CHECKPOINT_SIDECAR_METRICS_INTERVAL_MS: ${ASTRO_CHECKPOINT_SIDECAR_METRICS_INTERVAL_MS:-60000}
+    volumes:
+      - ./pi:/app/pi
+      - ./interface:/app/interface
+      - ./scripts:/app/scripts
+      - ./package.json:/app/package.json
+      - ./package-lock.json:/app/package-lock.json
+      - ./tsconfig.json:/app/tsconfig.json
+      - astro_session_emptydir:/session-state
+    depends_on:
+      - astro-pi-stream
+
 volumes:
-  astro_container_data:
+  astro_session_emptydir:
+    driver: local
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: uid=10000,gid=10000,mode=1770,size=512m

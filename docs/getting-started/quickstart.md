@@ -21,8 +21,9 @@ The stream endpoint accepts assistant-ui compatible `ui-message-stream` requests
 A compact JSON snapshot for an old conversation can be fetched later with
 `GET /api/chat/history?sessionId=<runtime_session_id>`.
 
-Sessions are persisted per backend agent unique id plus a session suffix under `.astro/stream-sessions`
-when agent registration is enabled (fallback to `threadId` when disabled).
+When backend agent registration is enabled, `runtime_session_id` is the backend `AgentSession.id`.
+Active files live under the configured session directory, and durable continuity comes from backend
+checkpoints. When backend registration is disabled, the local fallback key is `threadId`.
 
 The request contract is latest-turn oriented:
 
@@ -91,13 +92,12 @@ docker compose up astro-pi-stream
 docker compose run --rm astro-pi
 ```
 
-`astro-pi` uses the optional `pi-shell` profile, so a plain `docker compose up` brings up only the
-stream service by default. The standalone Pi container remains available when you target it
-explicitly with `docker compose run --rm astro-pi`.
+`astro-pi` uses the optional `pi-shell` profile, so a plain `docker compose up` brings up the stream
+service plus the checkpoint sidecar by default. The standalone Pi container remains
+available when you target it explicitly with `docker compose run --rm astro-pi`.
 
 The compose file mounts:
 
-- `./.astro` -> `/app/.astro-migration-source` (read-only migration source)
 - `./.pi` -> `/app/.pi`
 - `./pi` -> `/app/pi`
 - `./interface` -> `/app/interface`
@@ -107,34 +107,36 @@ The compose file mounts:
 - `./package.json` -> `/app/package.json`
 - `./package-lock.json` -> `/app/package-lock.json`
 - `./tsconfig.json` -> `/app/tsconfig.json`
-- `${HOME}/.pi/agent` -> `/home/appuser/.pi/host-agent` (read-only migration source for `auth.json` and `sessions/`)
-- named volume `astro_container_data` -> `/home/appuser/.astro-container-data`
+- tmpfs-backed `astro_session_emptydir` volume -> `/session-state` for local session files
 
 It also sets:
 
 - `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`
 - `PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`
-- `ASTRO_STREAM_SESSION_DIR=/home/appuser/.astro-container-data/.astro/stream-sessions`
+- `ASTRO_STREAM_SESSION_DIR=/session-state/sessions`
+- `ASTRO_SESSION_OVERRIDES_DIR=/session-state/session-overrides`
+- `ASTRO_CHECKPOINT_HOLDER_ID=pod/local-compose-astro-pi-stream`
 - `ASTRO_CONTAINER_DATA_DIR=/home/appuser/.astro-container-data`
 
-At first boot, Astro migrates legacy repo-local runtime state into the volume once, then merges
-`auth.json` plus `sessions/` from the read-only host Pi source, and keeps using the volume as the
-only durable runtime source of truth.
+At boot, Astro prepares container-local runtime state. Provider auth, provider signin state, and
+stream session files have no host or repo-local source path in the container; backend-owned
+checkpoints are the durable session source of truth. Container startup also removes stale Pi
+provider auth/signin files from `PI_CODING_AGENT_DIR`.
 
-At runtime, Astro runs as non-root `appuser`, and the only valid durable runtime root is
-`/home/appuser/.astro-container-data`.
+At runtime, Astro runs as non-root `appuser`. Rebuildable runtime state lives under
+`/home/appuser/.astro-container-data`; active session files live under `/session-state/sessions` and
+are shared with the checkpoint sidecar.
 
 That means:
 
 - Astro code changes on the host are visible in the container without rebuilding the image
 - restart the service after code edits with `docker compose restart astro-pi-stream`
-- the active durable runtime state now lives inside the named volume instead of `./.astro`
 - Pi runtime state lives under `/home/appuser/.astro-container-data/.pi/agent`
 - the orchestrator project `.pi` copy lives under `/home/appuser/.astro-container-data/.pi/project`
 - the orchestrator runs from `/home/appuser/.astro-container-data/astro-orchestrator-runtime`, not `/app`
 - Main Sequence CLI auth lives under `/home/appuser/.astro-container-data/.config/mainsequence`
-- stream session artifacts live under `/home/appuser/.astro-container-data/.astro/stream-sessions`
-- the host mounts are used only as one-time migration sources
+- stream session artifacts live under `/session-state/sessions`
+- auth/session files have no host or repo-local source path into the container runtime
 - `node_modules` stay container-local and Linux-native
 - helper binaries such as `rg` persist under `/home/appuser/.astro-container-data/.pi/agent/bin`
 - those helper binaries remain container-managed and Linux-native instead of being reused from the

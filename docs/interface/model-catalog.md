@@ -1,6 +1,7 @@
 # Model Catalog
 
-`GET /api/models/catalog` returns Astro's global model catalog.
+`GET /api/models/catalog` returns Astro's global model catalog. Auth metadata is user-scoped when
+`userId=<user_id>` is passed.
 
 This is a control-plane endpoint.
 It is not the same as `GET /api/chat/get_available_models`.
@@ -11,7 +12,7 @@ when a provider is not currently signed in.
 ## What it includes
 
 The current implementation returns Pi registry models for Astro-supported providers and annotates
-auth-backed entries with provider auth metadata.
+auth-backed entries with backend-owned provider credential metadata.
 
 It does not use runtime availability filtering.
 That means models can appear here even when they are not executable right now.

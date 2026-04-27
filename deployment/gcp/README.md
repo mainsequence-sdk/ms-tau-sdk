@@ -2,20 +2,22 @@
 
 ## Recommendation
 
-This repo is not a purely stateless web container. The runtime expects durable local state under:
+The Astro stream container is stateless. Runtime files under:
 
 - `/home/appuser/.astro-container-data`
+- `/session-state`
 
-That state includes Main Sequence auth, Pi runtime state, stream sessions, SSH material, and other
-runtime artifacts. Because of that, the safest production target on GCP is:
+are rebuildable pod/container-local state. Session continuity is owned by backend `AgentSession`
+records and checkpoint storage, not by a PVC. The production target on GCP is:
 
 - `Cloud Build` for build/push
 - `Artifact Registry` for the image
-- the existing `GKE` workload for runtime
+- the existing `GKE` workload for runtime with `/session-state` mounted as `emptyDir`
 
 It also does not make Cloud Build deploy to GKE.
 Cloud Build should only publish the container image to Artifact Registry.
-The already-deployed GKE service remains responsible for runtime configuration and storage.
+The already-deployed GKE service remains responsible for runtime configuration, secrets, and
+`emptyDir` mounts.
 
 ## Planned GCP Files
 
@@ -105,9 +107,10 @@ service instead of varying per environment:
 - `ASTRO_CONTAINER_DATA_DIR=/home/appuser/.astro-container-data`
 - `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`
 - `PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`
-- `ASTRO_STREAM_SESSION_DIR=/home/appuser/.astro-container-data/.astro/stream-sessions`
+- `ASTRO_STREAM_SESSION_DIR=/session-state/sessions`
+- `ASTRO_SESSION_OVERRIDES_DIR=/session-state/session-overrides`
 
-These come directly from the Dockerfile, compose file, and persistent-state docs.
+These come directly from the Dockerfile, compose file, and stateless runtime storage docs.
 
 ### Values That Should Come From Secrets, Not Cloud Build Substitutions
 
@@ -211,16 +214,6 @@ Only the runtime credential env vars are required for Main Sequence auth.
 This Cloud Build file intentionally does not set `MAINSEQUENCE_PIP_SPEC`.
 The Dockerfile default `ARG MAINSEQUENCE_PIP_SPEC=mainsequence` is used so the build always pulls
 the latest available `mainsequence` release at build time.
-
-## Variables We Should Usually Omit At Runtime
-
-These are migration-oriented local-dev variables and should normally be left out of the GCP
-deployment:
-
-- `ASTRO_LEGACY_REPO_STATE_DIR`
-- `ASTRO_LEGACY_HOST_PI_AGENT_DIR`
-
-They only make sense if we are doing a one-time import from an older runtime layout.
 
 ## Proposed `cloudbuild.yaml` Shape
 
@@ -329,17 +322,16 @@ options:
 
 - `.env` is excluded by `.dockerignore`, which is good and should stay that way
 - the deploy target should use the `astro-pi-stream` Docker target, not `astro-pi`
-- the running service still depends on durable storage at `/home/appuser/.astro-container-data`
+- the running service still needs writable container runtime state at `/home/appuser/.astro-container-data`
 - rebuilding without bumping the Astro package version will repoint that `astro-<version>` tag to
   the newly built image
 - the extra `astro...-py...-node...-ms...` tag is still just another tag on the same built image,
   not a separate build
 - the published tags now point at the same final labeled image, while the unlabeled local build
   image is only an internal intermediate used during Cloud Build
-- if we want horizontal scaling later, we should think carefully about whether multiple replicas can
-  safely share the same writable runtime volume
-- if we need strict stateless deployment later, the app will need architectural changes around
-  session storage, auth persistence, and runtime filesystem assumptions
+- horizontal scaling should use pod-local session state plus backend checkpoint restore/flush
+- provider sign-in state must remain pod/container-local unless a future backend-owned auth store is
+  explicitly designed
 
 ## Next Step
 

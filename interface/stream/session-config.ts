@@ -10,6 +10,7 @@ import {
 import path from "node:path";
 import { SettingsManager } from "../../node_modules/@mariozechner/pi-coding-agent/dist/core/settings-manager.js";
 import { resolvePiAgentDir } from "./model-provider-runtime.js";
+import type { PiCredential } from "./model-provider-credentials-client.js";
 import type { SessionModelBinding } from "./session-model.js";
 
 export type SessionConfigOverrides = {
@@ -83,6 +84,13 @@ type SessionConfigPatchError = {
 };
 
 type SessionConfigPatchResult = SessionConfigPatchSuccess | SessionConfigPatchError;
+const SENSITIVE_PI_AGENT_ENTRIES = new Set([
+	"auth.json",
+	"oauth.json",
+	"sessions",
+	"astro-model-provider-auth.json",
+	"astro-model-provider-signin.json",
+]);
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -133,6 +141,27 @@ function readJsonObject(filePath: string): Record<string, unknown> {
 function hasOverrides(overrides: SessionConfigOverrides | null): boolean {
 	if (!overrides?.compaction) return false;
 	return overrides.compaction.enabled !== undefined || overrides.compaction.reserveTokens !== undefined;
+}
+
+function hasProviderCredentials(credentials: Record<string, PiCredential> | null | undefined): boolean {
+	return Boolean(credentials && Object.keys(credentials).length > 0);
+}
+
+function sanitizeScopeKey(value: string): string {
+	return value.trim().replace(/[^A-Za-z0-9_.:-]/g, "_");
+}
+
+function resolveProviderCredentialRoot(env: NodeJS.ProcessEnv): string {
+	const configured = env.ASTRO_PROVIDER_CREDENTIAL_DIR?.trim();
+	if (configured) return path.resolve(configured);
+
+	const sessionStateDir = env.ASTRO_SESSION_STATE_DIR?.trim();
+	if (sessionStateDir) return path.join(path.resolve(sessionStateDir), "pi-agent-auth");
+
+	const streamSessionDir = env.ASTRO_STREAM_SESSION_DIR?.trim();
+	if (streamSessionDir) return path.join(path.dirname(path.resolve(streamSessionDir)), "pi-agent-auth");
+
+	return path.join(resolvePiAgentDir(env), ".astro-provider-auth");
 }
 
 export function normalizeSessionConfigOverrides(value: unknown): SessionConfigOverrides | null {
@@ -412,13 +441,21 @@ export function validateSessionConfigPatch(input: {
 export function ensureSessionScopedPiAgentDir(options: {
 	sessionKey: string;
 	sessionConfigOverrides: SessionConfigOverrides | null;
+	providerCredentials?: Record<string, PiCredential> | null;
+	forceProviderAuthDir?: boolean;
 	env?: NodeJS.ProcessEnv;
 }): string | null {
-	if (!hasOverrides(options.sessionConfigOverrides)) return null;
+	const hasConfigOverrides = hasOverrides(options.sessionConfigOverrides);
+	const hasCredentials = hasProviderCredentials(options.providerCredentials);
+	const forceProviderAuthDir = options.forceProviderAuthDir === true;
+	if (!hasConfigOverrides && !hasCredentials && !forceProviderAuthDir) return null;
 
 	const env = options.env ?? process.env;
 	const baseAgentDir = resolvePiAgentDir(env);
-	const overlayDir = path.join(baseAgentDir, ".astro-session-overrides", options.sessionKey);
+	const overlayRoot = hasCredentials || forceProviderAuthDir
+		? resolveProviderCredentialRoot(env)
+		: env.ASTRO_SESSION_OVERRIDES_DIR?.trim() || path.join(baseAgentDir, ".astro-session-overrides");
+	const overlayDir = path.join(overlayRoot, sanitizeScopeKey(options.sessionKey));
 	const overlaySettingsPath = path.join(overlayDir, "settings.json");
 	const baseSettingsPath = path.join(baseAgentDir, "settings.json");
 
@@ -433,10 +470,24 @@ export function ensureSessionScopedPiAgentDir(options: {
 	}
 	const mergedSettings = deepMergeSettings(baseSettings, overrideSettings);
 	writeFileSync(overlaySettingsPath, `${JSON.stringify(mergedSettings, null, 2)}\n`, { mode: 0o600 });
+	if (hasCredentials) {
+		writeFileSync(
+			path.join(overlayDir, "auth.json"),
+			`${JSON.stringify(options.providerCredentials ?? {}, null, 2)}\n`,
+			{ mode: 0o600 },
+		);
+	}
 
 	if (existsSync(baseAgentDir)) {
 		for (const entry of readdirSync(baseAgentDir)) {
-			if (entry === "settings.json" || entry === ".astro-session-overrides") continue;
+			if (
+				entry === "settings.json" ||
+				entry === ".astro-session-overrides" ||
+				entry === ".astro-provider-auth" ||
+				SENSITIVE_PI_AGENT_ENTRIES.has(entry)
+			) {
+				continue;
+			}
 
 			const sourcePath = path.join(baseAgentDir, entry);
 			const targetPath = path.join(overlayDir, entry);

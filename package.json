@@ -23,6 +23,7 @@
     "mainsequence:project-setup": "tsx scripts/mainsequence_project_set_up_locally.ts",
     "pi": "node scripts/start_pi.mjs",
     "pi:stream": "tsx scripts/start_pi_stream.ts",
+    "checkpoint:sidecar": "tsx scripts/session_checkpoint_sidecar.ts",
     "specialist": "tsx scripts/run_specialist.ts"
   },
   "peerDependencies": {

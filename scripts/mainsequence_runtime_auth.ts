@@ -209,7 +209,7 @@ function repairMainsequenceCliPathConfig(env: NodeJS.ProcessEnv = process.env) {
 	});
 }
 
-function clearLegacyTokenEnv(env: NodeJS.ProcessEnv = process.env) {
+function clearMainsequenceTokenEnv(env: NodeJS.ProcessEnv = process.env) {
 	for (const key of Object.keys(env)) {
 		const normalized = key.toUpperCase();
 		const isMainsequenceToken =
@@ -267,7 +267,7 @@ export function buildMainsequenceStoredAuthEnv(
 ): NodeJS.ProcessEnv {
 	const runtimeEnv = { ...env };
 	const backendUrl = resolveBackendUrl(env);
-	clearLegacyTokenEnv(runtimeEnv);
+	clearMainsequenceTokenEnv(runtimeEnv);
 	runtimeEnv.MAINSEQUENCE_ENDPOINT = runtimeEnv.MAINSEQUENCE_ENDPOINT ?? backendUrl;
 	runtimeEnv.TDAG_ENDPOINT = runtimeEnv.TDAG_ENDPOINT ?? backendUrl;
 	runtimeEnv[MAINSEQUENCE_CLI_SESSION_ID_ENV] = resolveMainsequenceCliSessionId(env);
@@ -328,7 +328,7 @@ function runMainsequenceRuntimeCredentialLogin(
 	env: NodeJS.ProcessEnv = process.env,
 ): { ok: true } | { ok: false; error: string } {
 	repairMainsequenceCliPathConfig(env);
-	clearLegacyTokenEnv(env);
+	clearMainsequenceTokenEnv(env);
 	const loginResult = spawnSync("mainsequence", buildMainsequenceRuntimeCredentialLoginArgs(env), {
 		stdio: ["ignore", "pipe", "pipe"],
 		shell: false,
@@ -349,7 +349,7 @@ function runMainsequenceRuntimeCredentialLogin(
 		};
 	}
 
-	clearLegacyTokenEnv(env);
+	clearMainsequenceTokenEnv(env);
 	return { ok: true };
 }
 
@@ -376,7 +376,7 @@ function verifyMainsequenceCliAuthStore(
 	env: NodeJS.ProcessEnv = process.env,
 ): { ok: true } | { ok: false; error: string } {
 	repairMainsequenceCliPathConfig(env);
-	clearLegacyTokenEnv(env);
+	clearMainsequenceTokenEnv(env);
 	const verifyResult = spawnSync("mainsequence", ["user"], {
 		stdio: ["ignore", "pipe", "pipe"],
 		shell: false,
@@ -396,7 +396,7 @@ function verifyMainsequenceCliAuthStore(
 		};
 	}
 
-	clearLegacyTokenEnv(env);
+	clearMainsequenceTokenEnv(env);
 	return { ok: true };
 }
 
@@ -407,7 +407,7 @@ export async function bootstrapMainsequenceCliAuth(options: {
 	const env = options.env ?? process.env;
 	getMainsequenceAuthMode(env);
 	validateMainsequenceRuntimeCredentialEnv(env);
-	clearLegacyTokenEnv(env);
+	clearMainsequenceTokenEnv(env);
 	options.log?.("Using Main Sequence runtime credential auth.");
 	options.log?.("Exchanging runtime credential before CLI auth verification.");
 	const loginResult = runMainsequenceRuntimeCredentialLogin(env);
@@ -421,7 +421,7 @@ export async function bootstrapMainsequenceCliAuth(options: {
 	if ("error" in verifyResult) {
 		throw new Error(`Main Sequence runtime credential auth failed: ${verifyResult.error}`);
 	}
-	clearLegacyTokenEnv(env);
+	clearMainsequenceTokenEnv(env);
 	options.log?.("Main Sequence runtime credential auth is ready.");
 }
 
@@ -440,7 +440,7 @@ export function startMainsequenceCredentialExchangeLoop(options: {
 	const runLogin = (reason: string) => {
 		if (exchangeInFlight) return;
 		exchangeInFlight = true;
-		clearLegacyTokenEnv(env);
+		clearMainsequenceTokenEnv(env);
 		const loginResult = runMainsequenceRuntimeCredentialLogin(env);
 		if ("error" in loginResult) {
 			exchangeInFlight = false;
@@ -455,7 +455,7 @@ export function startMainsequenceCredentialExchangeLoop(options: {
 			);
 			return;
 		}
-		clearLegacyTokenEnv(env);
+		clearMainsequenceTokenEnv(env);
 	};
 
 	options.log?.(

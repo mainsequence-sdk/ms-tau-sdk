@@ -94,9 +94,12 @@ AGENTS --> CODER["mainsequence-project-coder"]
 ## Reference
 
 - [`reference/adr-custom-model-integration.md`](./reference/adr-custom-model-integration.md)
+- [`reference/adr-backend-owned-agent-session-allocation.md`](./reference/adr-backend-owned-agent-session-allocation.md)
+- [`reference/adr-backend-owned-provider-credentials.md`](./reference/adr-backend-owned-provider-credentials.md)
+- [`reference/adr-compaction-checkpoint-retention.md`](./reference/adr-compaction-checkpoint-retention.md)
+- [`reference/adr-emptydir-session-checkpoint-storage.md`](./reference/adr-emptydir-session-checkpoint-storage.md)
 - [`reference/adr-editable-session-config.md`](./reference/adr-editable-session-config.md)
 - [`reference/adr-interactive-provider-signin.md`](./reference/adr-interactive-provider-signin.md)
-- [`reference/adr-pvc-volume-layout.md`](./reference/adr-pvc-volume-layout.md)
 - [`reference/adr-remote-model-providers.md`](./reference/adr-remote-model-providers.md)
 - [`reference/adr-runtime-credential-auth.md`](./reference/adr-runtime-credential-auth.md)
 - [`reference/adr-session-usage-and-context.md`](./reference/adr-session-usage-and-context.md)

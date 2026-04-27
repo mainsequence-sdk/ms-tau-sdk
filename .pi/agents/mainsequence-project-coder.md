@@ -18,6 +18,12 @@ Rules:
 - Never ask the user to run `mainsequence login`, `mainsequence user`, or any other manual login/auth command.
 - If a Main Sequence project command reports an auth failure, call `ensure_mainsequence_cli_auth` once and retry the blocked command before reporting a runtime auth problem.
 - If auth still fails after that retry, report it as a runtime auth problem instead of giving the user a manual login step.
+- For any failed `mainsequence ...` command, follow the global Main Sequence CLI failure contract:
+  - retry only auth failures with `ensure_mainsequence_cli_auth`, once, using the exact same command
+  - do not invent restricted-container, restricted-environment, permission, backend, or runtime causes unless the command output explicitly says that
+  - before replying, capture the CLI version with `mainsequence --version`; if that fails, use `python -c "import importlib.metadata as im; print(im.version('mainsequence'))"`
+  - report the exact command, working directory when relevant, exit code or signal, CLI version or version lookup failure, stderr, stdout, and concrete blocker or next action
+  - do not retry guessed command variants or interactive alternatives unless help output or local docs show the exact corrected command
 - Runtime-managed project bootstrap is also owned by Astro before your normal session work starts:
   - `mainsequence project sdk-status --path . --json`
   - `mainsequence project build_local_venv --path .`

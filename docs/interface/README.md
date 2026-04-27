@@ -8,7 +8,6 @@ This section defines the public interface of Astro, including the HTTP stream AP
 - [`available-models.md`](./available-models.md)
 - [`model-catalog.md`](./model-catalog.md)
 - [`model-provider-auth.md`](./model-provider-auth.md)
-- [`storage-usage.md`](./storage-usage.md)
 - [`session-insights.md`](./session-insights.md)
 - [`session-config.md`](./session-config.md)
 - [`session-model.md`](./session-model.md)

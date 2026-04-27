@@ -19,8 +19,20 @@ Follow this workflow:
    - If the user wants to create a new project:
      - Load and follow the `mainsequence-project-creation` skill to collect the required project creation intake.
      - Do not validate the name or create the project until that skill has produced a concrete brief, task list, acceptance criteria, and a confirmed or user-provided project name.
+     - Before creating the project, resolve the GitHub organization with `mainsequence organization github-organizations --json`.
+       - If exactly one GitHub organization is returned, use its id without asking for confirmation.
+       - If more than one GitHub organization is returned, ask the user to choose which organization should own the new project.
+       - If no GitHub organization is returned, stop and report that project creation cannot continue because no GitHub organization is available.
+       - If the command is unavailable, exits nonzero, or returns `No such command`, stop and report that
+         failure using the global Main Sequence CLI failure contract. Do not call
+         `mainsequence project create`.
+       - Keep the selected GitHub organization id as `githubOrgId` for the create command.
      - Validate the name with `mainsequence project validate-name "<name>"`.
-     - Create the project with `mainsequence project create "<name>"`.
+     - Create the project with `mainsequence project create "<name>" --github-org-id <githubOrgId>`.
+     - Do not call `mainsequence project create "<name>"` without `--github-org-id`.
+     - Do not retry project creation with guessed flags or alternate interactive paths after a
+       non-auth failure.
+     - Report non-auth CLI failures using the global Main Sequence CLI failure contract.
 3. Set up the selected or created project locally with `tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>`.
    - The orchestrator always owns this step.
    - Do not call raw `mainsequence project set-up-locally <id>` directly when running inside Astro.

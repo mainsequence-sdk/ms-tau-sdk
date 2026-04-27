@@ -8,6 +8,9 @@ type RegistrationResult = {
 	exitCode: number | null;
 	stdout: string;
 	stderr: string;
+	body: unknown;
+	responseText?: string | null;
+	url?: string | null;
 	agentId: number | null;
 	agentUniqueId: string | null;
 	userId: string | null;
@@ -17,8 +20,15 @@ type AgentSessionResult = {
 	ok: boolean;
 	status: number | null;
 	body: unknown;
+	responseText?: string | null;
+	url?: string | null;
 	error: string | null;
 	agentSessionId: number | null;
+	agentId: number | null;
+	agentName: string | null;
+	agentUniqueId: string | null;
+	threadId: string | null;
+	startedAt: string | null;
 };
 
 export type BackendAgentSessionFetchResult = {
@@ -43,7 +53,7 @@ type RegistrationOptions = {
 
 const DEFAULT_BACKEND = "https://api.main-sequence.app";
 
-type BackendAuthHeaders = Record<string, string>;
+export type BackendAuthHeaders = Record<string, string>;
 
 export function shouldRegisterAgents(env: NodeJS.ProcessEnv = process.env): boolean {
 	return /^(1|true|yes|on)$/i.test(env.BUILD_AGENTS_IN_BACKEND ?? "");
@@ -63,7 +73,7 @@ function normalizeIdPart(value: unknown): string | null {
 	return null;
 }
 
-function resolveBackendUrl(env: NodeJS.ProcessEnv): string {
+export function resolveBackendUrl(env: NodeJS.ProcessEnv): string {
 	const raw =
 		env.MAINSEQUENCE_BACKEND ||
 		env.MAIN_SEQUENCE_BACKEND_URL ||
@@ -177,7 +187,7 @@ function resolveRuntimeCredentialAuthHeaders(
 	}
 }
 
-async function resolveBackendAuthHeaders(
+export async function resolveBackendAuthHeaders(
 	env: NodeJS.ProcessEnv,
 	log?: (message: string) => void,
 ): Promise<{ headers: BackendAuthHeaders | null; error: string | null }> {
@@ -189,7 +199,7 @@ async function postGetOrCreateAgent(options: {
 	authHeaders: BackendAuthHeaders;
 	payload: Record<string, unknown>;
 }): Promise<Response> {
-	return fetch(`${options.backendUrl}/orm/api/agents/v1/agents/get_or_create/`, {
+	return fetch(agentGetOrCreateEndpoint(options.backendUrl), {
 		method: "POST",
 		headers: {
 			...options.authHeaders,
@@ -205,7 +215,7 @@ async function postStartAgentSession(options: {
 	agentId: number;
 	payload: Record<string, unknown>;
 }): Promise<Response> {
-	return fetch(`${options.backendUrl}/orm/api/agents/v1/agents/${options.agentId}/start_new_session/`, {
+	return fetch(agentStartSessionEndpoint(options.backendUrl, options.agentId), {
 		method: "POST",
 		headers: {
 			...options.authHeaders,
@@ -213,6 +223,14 @@ async function postStartAgentSession(options: {
 		},
 		body: JSON.stringify(options.payload),
 	});
+}
+
+function agentGetOrCreateEndpoint(backendUrl: string): string {
+	return `${backendUrl}/orm/api/agents/v1/agents/get_or_create/`;
+}
+
+function agentStartSessionEndpoint(backendUrl: string, agentId: number): string {
+	return `${backendUrl}/orm/api/agents/v1/agents/${agentId}/start_new_session/`;
 }
 
 async function getAgentSessionByEndpoint(options: {
@@ -250,6 +268,34 @@ function parseAgentSessionId(payload: any): number | null {
 	return null;
 }
 
+function parseStringField(payload: any, ...keys: string[]): string | null {
+	for (const key of keys) {
+		const value = payload?.[key];
+		if (typeof value === "string" && value.trim()) return value;
+	}
+	return null;
+}
+
+function stringifyBackendErrorValue(value: unknown): string | null {
+	if (typeof value === "string" && value.trim()) return value.trim();
+	if (value === undefined || value === null) return null;
+	try {
+		return JSON.stringify(value);
+	} catch {
+		return String(value);
+	}
+}
+
+function extractBackendErrorMessage(body: any, responseText: string, fallback: string): string {
+	if (body && typeof body === "object" && !Array.isArray(body)) {
+		for (const key of ["error_detail", "errorDetail", "detail", "message", "error"]) {
+			const message = stringifyBackendErrorValue(body[key]);
+			if (message) return message;
+		}
+	}
+	return responseText || fallback;
+}
+
 function normalizeAgentSessionLookupId(value: unknown): number | null {
 	if (typeof value === "number" && Number.isFinite(value)) {
 		return Math.trunc(value);
@@ -273,12 +319,13 @@ export async function registerMainsequenceAgent(
 		log?.(`Agent registration failed for "${safeAgentName}": missing user id.`);
 		return {
 			ok: false,
-			exitCode: null,
-			stdout: "",
-			stderr: "Missing required user id for deterministic registration.",
-			agentId: null,
-			agentUniqueId: null,
-			userId: null,
+				exitCode: null,
+				stdout: "",
+				stderr: "Missing required user id for deterministic registration.",
+				body: null,
+				agentId: null,
+				agentUniqueId: null,
+				userId: null,
 		};
 	}
 
@@ -288,12 +335,13 @@ export async function registerMainsequenceAgent(
 		log?.(`Agent registration failed for "${safeAgentName}": missing project id.`);
 		return {
 			ok: false,
-			exitCode: null,
-			stdout: "",
-			stderr: "Missing required project id for deterministic registration.",
-			agentId: null,
-			agentUniqueId: null,
-			userId: resolvedUserId,
+				exitCode: null,
+				stdout: "",
+				stderr: "Missing required project id for deterministic registration.",
+				body: null,
+				agentId: null,
+				agentUniqueId: null,
+				userId: resolvedUserId,
 		};
 	}
 
@@ -303,6 +351,7 @@ export async function registerMainsequenceAgent(
 		projectId: resolvedProjectId,
 	});
 	const backendUrl = resolveBackendUrl(runtimeEnv);
+	const url = agentGetOrCreateEndpoint(backendUrl);
 
 	const authHeadersResult = await resolveBackendAuthHeaders(runtimeEnv, log);
 	if (!authHeadersResult.headers) {
@@ -313,12 +362,13 @@ export async function registerMainsequenceAgent(
 		);
 		return {
 			ok: false,
-			exitCode: null,
-			stdout: "",
-			stderr: authHeadersResult.error ?? "Missing backend auth headers for agent get_or_create.",
-			agentId: null,
-			agentUniqueId,
-			userId: resolvedUserId,
+				exitCode: null,
+				stdout: "",
+				stderr: authHeadersResult.error ?? "Missing backend auth headers for agent get_or_create.",
+				body: null,
+				agentId: null,
+				agentUniqueId,
+				userId: resolvedUserId,
 		};
 	}
 
@@ -353,18 +403,25 @@ export async function registerMainsequenceAgent(
 	}
 
 	if (!response.ok) {
-		const message = parsedBody?.detail || responseText || `Agent get_or_create failed with status ${response.status}.`;
+		const message = extractBackendErrorMessage(
+			parsedBody,
+			responseText,
+			`Agent get_or_create failed with status ${response.status}.`,
+		);
 		log?.(
 			`Agent registration failed (${response.status}) backend=${backendUrl} agent_unique_id=${agentUniqueId}: ${message}`,
 		);
-		return {
-			ok: false,
-			exitCode: response.status,
-			stdout: "",
-			stderr: String(message),
-			agentId: null,
-			agentUniqueId,
-			userId: resolvedUserId,
+			return {
+				ok: false,
+				exitCode: response.status,
+				stdout: "",
+				stderr: String(message),
+				body: parsedBody,
+				responseText,
+				url,
+				agentId: null,
+				agentUniqueId,
+				userId: resolvedUserId,
 		};
 	}
 
@@ -373,12 +430,15 @@ export async function registerMainsequenceAgent(
 		log?.("Agent get_or_create succeeded but no `id` was returned.");
 		return {
 			ok: false,
-			exitCode: response.status,
-			stdout: responseText,
-			stderr: "Agent get_or_create did not return an `id`.",
-			agentId: null,
-			agentUniqueId,
-			userId: resolvedUserId,
+				exitCode: response.status,
+				stdout: responseText,
+				stderr: "Agent get_or_create did not return an `id`.",
+				body: parsedBody,
+				responseText,
+				url,
+				agentId: null,
+				agentUniqueId,
+				userId: resolvedUserId,
 		};
 	}
 
@@ -387,12 +447,15 @@ export async function registerMainsequenceAgent(
 	);
 	return {
 		ok: true,
-		exitCode: response.status,
-		stdout: responseText,
-		stderr: "",
-		agentId,
-		agentUniqueId,
-		userId: resolvedUserId,
+			exitCode: response.status,
+			stdout: responseText,
+			stderr: "",
+			body: parsedBody,
+			responseText,
+			url,
+			agentId,
+			agentUniqueId,
+			userId: resolvedUserId,
 	};
 }
 
@@ -404,17 +467,25 @@ export async function startBackendAgentSession(options: {
 }): Promise<AgentSessionResult> {
 	const runtimeEnv = options.env ?? process.env;
 	const backendUrl = resolveBackendUrl(runtimeEnv);
+	const url = agentStartSessionEndpoint(backendUrl, options.agentId);
 	const authHeadersResult = await resolveBackendAuthHeaders(runtimeEnv, options.log);
 
 	if (!authHeadersResult.headers) {
-		return {
-			ok: false,
-			status: null,
-			body: null,
-			error: authHeadersResult.error ?? "Missing backend auth headers for agent session creation.",
-			agentSessionId: null,
-		};
-	}
+			return {
+				ok: false,
+				status: null,
+				body: null,
+				responseText: null,
+				url,
+				error: authHeadersResult.error ?? "Missing backend auth headers for agent session creation.",
+				agentSessionId: null,
+				agentId: null,
+				agentName: null,
+				agentUniqueId: null,
+				threadId: null,
+				startedAt: null,
+			};
+		}
 
 	let response = await postStartAgentSession({
 		backendUrl,
@@ -444,8 +515,11 @@ export async function startBackendAgentSession(options: {
 	}
 
 	if (!response.ok) {
-		const message =
-			parsedBody?.detail || responseText || `Agent session start failed with status ${response.status}.`;
+		const message = extractBackendErrorMessage(
+			parsedBody,
+			responseText,
+			`Agent session start failed with status ${response.status}.`,
+		);
 		options.log?.(
 			`Agent session start failed (${response.status}) backend=${backendUrl} agentId=${options.agentId}: ${message}`,
 		);
@@ -453,8 +527,15 @@ export async function startBackendAgentSession(options: {
 			ok: false,
 			status: response.status,
 			body: parsedBody,
+			responseText,
+			url,
 			error: String(message),
 			agentSessionId: null,
+			agentId: null,
+			agentName: null,
+			agentUniqueId: null,
+			threadId: null,
+			startedAt: null,
 		};
 	}
 
@@ -465,17 +546,32 @@ export async function startBackendAgentSession(options: {
 			ok: false,
 			status: response.status,
 			body: parsedBody,
+			responseText,
+			url,
 			error: "Agent session start did not return an `id`.",
 			agentSessionId: null,
+			agentId: null,
+			agentName: null,
+			agentUniqueId: null,
+			threadId: null,
+			startedAt: null,
 		};
 	}
 
+	const responseAgent = parsedBody && typeof parsedBody === "object" ? parsedBody.agent : null;
 	return {
 		ok: true,
 		status: response.status,
 		body: parsedBody,
+		responseText,
+		url,
 		error: null,
 		agentSessionId,
+		agentId: parseAgentId(responseAgent),
+		agentName: parseStringField(responseAgent, "name", "agent_name", "agentName"),
+		agentUniqueId: parseStringField(responseAgent, "agent_unique_id", "agentUniqueId"),
+		threadId: parseStringField(parsedBody, "thread_id", "threadId"),
+		startedAt: parseStringField(parsedBody, "started_at", "startedAt"),
 	};
 }
 
@@ -588,8 +684,11 @@ export async function fetchBackendAgentSession(options: {
 		}
 
 		if (!response.ok) {
-			const message =
-				parsedBody?.detail || responseText || `Backend session fetch failed with status ${response.status}.`;
+			const message = extractBackendErrorMessage(
+				parsedBody,
+				responseText,
+				`Backend session fetch failed with status ${response.status}.`,
+			);
 			lastNon404Error = {
 				ok: false,
 				status: response.status,

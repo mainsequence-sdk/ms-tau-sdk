@@ -122,7 +122,7 @@ function resolveMainsequenceCliSessionId(env = process.env) {
 	return `${DEFAULT_CLI_SESSION_ID_PREFIX}:${backend}:${projectsBase}`;
 }
 
-function clearLegacyTokenEnv(env = process.env) {
+function clearMainsequenceTokenEnv(env = process.env) {
 	for (const key of Object.keys(env)) {
 		const normalized = key.toUpperCase();
 		const isMainsequenceToken =
@@ -135,7 +135,7 @@ function clearLegacyTokenEnv(env = process.env) {
 function buildStoredAuthVerificationEnv() {
 	const verifyEnv = { ...process.env };
 	const backendUrl = resolveBackendUrl();
-	clearLegacyTokenEnv(verifyEnv);
+	clearMainsequenceTokenEnv(verifyEnv);
 	verifyEnv.MAINSEQUENCE_ENDPOINT = verifyEnv.MAINSEQUENCE_ENDPOINT ?? backendUrl;
 	verifyEnv.TDAG_ENDPOINT = verifyEnv.TDAG_ENDPOINT ?? backendUrl;
 	verifyEnv[MAINSEQUENCE_CLI_SESSION_ID_ENV] = resolveMainsequenceCliSessionId(process.env);
@@ -153,7 +153,7 @@ function buildMainsequenceRuntimeCredentialLoginArgs() {
 }
 
 function runMainsequenceRuntimeCredentialLogin() {
-	clearLegacyTokenEnv();
+	clearMainsequenceTokenEnv();
 	const loginResult = spawnSync("mainsequence", buildMainsequenceRuntimeCredentialLoginArgs(), {
 		cwd: repoRoot,
 		stdio: "inherit",
@@ -173,7 +173,7 @@ function runMainsequenceRuntimeCredentialLogin() {
 		};
 	}
 
-	clearLegacyTokenEnv();
+	clearMainsequenceTokenEnv();
 	return { ok: true };
 }
 
@@ -191,7 +191,7 @@ function summarizeSpawnSyncFailure(result) {
 }
 
 function verifyMainsequenceCliAuthStore() {
-	clearLegacyTokenEnv();
+	clearMainsequenceTokenEnv();
 	const verifyResult = spawnSync("mainsequence", ["user"], {
 		cwd: repoRoot,
 		stdio: ["ignore", "pipe", "pipe"],
@@ -211,21 +211,21 @@ function verifyMainsequenceCliAuthStore() {
 		};
 	}
 
-	clearLegacyTokenEnv();
+	clearMainsequenceTokenEnv();
 	return { ok: true };
 }
 
 async function ensureMainsequenceCliAuth() {
 	getMainsequenceAuthMode();
 	ensureMainsequenceRuntimeCredentialEnv();
-	clearLegacyTokenEnv();
+	clearMainsequenceTokenEnv();
 	console.log("[astro] Using Main Sequence runtime credential auth...");
 	console.log("[astro] Exchanging runtime credential before CLI auth verification...");
 	const loginResult = runMainsequenceRuntimeCredentialLogin();
 	if (!loginResult.ok) fail(`Main Sequence runtime credential auth failed: ${loginResult.error}`);
 	const verifyResult = verifyMainsequenceCliAuthStore();
 	if (!verifyResult.ok) fail(`Main Sequence runtime credential auth failed: ${verifyResult.error}`);
-	clearLegacyTokenEnv();
+	clearMainsequenceTokenEnv();
 	console.log("[astro] Main Sequence runtime credential auth is ready.");
 }
 
@@ -239,7 +239,7 @@ function startMainsequenceCredentialExchangeLoop() {
 	const runLogin = (reason) => {
 		if (exchangeInFlight) return;
 		exchangeInFlight = true;
-		clearLegacyTokenEnv();
+		clearMainsequenceTokenEnv();
 		const loginResult = runMainsequenceRuntimeCredentialLogin();
 		if (!loginResult.ok) {
 			exchangeInFlight = false;
@@ -256,7 +256,7 @@ function startMainsequenceCredentialExchangeLoop() {
 			);
 			return;
 		}
-		clearLegacyTokenEnv();
+		clearMainsequenceTokenEnv();
 	};
 
 	console.log(
@@ -314,14 +314,14 @@ async function main() {
 	}
 
 	ensurePiCli(piAgentState.orchestratorRuntime?.runtimeCwd ?? repoRoot);
-
-	if (piAgentState.hostImportDir) {
-		const importedText =
-			piAgentState.importedEntries.length > 0
-				? piAgentState.importedEntries.join(", ")
-				: "no reusable host Pi state";
+	if (piAgentState.prunedProviderAuthEntries?.length) {
 		console.log(
-			`[astro] Using container-local Pi agent dir at ${piAgentState.targetDir} (imported ${importedText} from ${piAgentState.hostImportDir}).`,
+			`[astro] Pruned container-local provider auth state: ${piAgentState.prunedProviderAuthEntries.join(", ")}.`,
+		);
+	}
+	if (piAgentState.prunedScopedProviderCredentialDir) {
+		console.log(
+			`[astro] Pruned scoped provider credential directory: ${piAgentState.prunedScopedProviderCredentialDir}.`,
 		);
 	}
 

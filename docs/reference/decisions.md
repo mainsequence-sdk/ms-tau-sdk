@@ -119,8 +119,8 @@ Implementation:
 Why:
 
 - users need live visibility into token consumption and remaining context budget before compaction
-- Astro already has the authoritative local Pi session file even though backend `usage_summary` is
-  still stale
+- Astro already has the authoritative local Pi session file and backend session insights are the
+  evolving usage source of truth
 - read-only session usage/context endpoints unblock the UI without waiting for backend mirroring
 
 ## 11. Expose auth-backed model providers as a dedicated remote control plane
@@ -149,21 +149,21 @@ Why:
   branching
 - signoff must remain provider-level even while a signin attempt is running
 
-## 13. Use one PVC-like volume as the container runtime source of truth
+## 13. Removed local durable runtime storage as a source of truth
 
 Implementation:
 
-- `reference/adr-pvc-volume-layout.md`
+- superseded by `reference/adr-emptydir-session-checkpoint-storage.md`
 
 Why:
 
-- local Docker should simulate a single-PVC deployment instead of mixing repo-local state, host Pi
-  auth/session state, and one named volume
-- Pi runtime state should live under a standard `.pi/agent` folder inside the durable volume
+- local Docker and Kubernetes must not depend on durable local session/auth storage
+- Pi runtime state may use local files while the container is alive, but continuity must come from
+  backend checkpoints and backend-owned session records
 - the `astro-orchestrator` process should use a writable runtime cwd with a materialized `.pi`
   copy, not `/app`, because Pi creates project settings lock files next to `.pi/settings.json`
-- legacy repo-local state should be migrated once, with host Pi `auth.json` and `sessions/` merged
-  once, then the volume should become the only runtime source of truth
+- provider auth/signin state is pruned on container startup and is not restored from host or
+  repo-local paths
 
 ## 14. Advertise editable session config through session-insights
 
@@ -205,7 +205,90 @@ Implementation:
 Why:
 
 - deployed coding-agent pods authenticate with runtime credentials
-- the stream runtime must not block startup on legacy auth when
+- the stream runtime must not block startup on token-style auth when
   `MAINSEQUENCE_AUTH_MODE=runtime_credential`
 - child `pi`, specialist, and project setup processes need the same runtime credential env as the
   parent process
+
+## 17. Replace shared runtime PVC session state with emptyDir checkpoints
+
+Implementation:
+
+- `reference/adr-emptydir-session-checkpoint-storage.md`
+
+Why:
+
+- Pi requires local session JSONL files, but shared writable PVC state prevents clean horizontal
+  scaling
+- Astro can restore a session bundle into pod-local `emptyDir` before launching each Pi child
+  process
+- a sidecar can continuously checkpoint local Pi/Astro session files back to the backend without
+  putting Postgres on every streamed chat chunk
+
+## 18. Make the backend authoritative for Astro AgentSession allocation
+
+Implementation:
+
+- `reference/adr-backend-owned-agent-session-allocation.md`
+
+Why:
+
+- checkpoint restore and leases need the backend to own the canonical session identity first
+- Astro should execute restored sessions, not duplicate backend Agent and AgentSession creation
+  rules
+- project handoff state should be visible in backend-owned session metadata from creation time
+
+## 19. Store user model-provider credentials in the backend
+
+Implementation:
+
+- `reference/adr-backend-owned-provider-credentials.md`
+
+Why:
+
+- provider sign-in should keep the same user-facing flow while durable storage moves out of pods
+- Pi expects provider credentials in `PI_CODING_AGENT_DIR/auth.json`, so Astro should hydrate a
+  scoped pod-local auth dir before provider-backed model use
+- OAuth providers can refresh credentials while Pi is running, so Astro needs an explicit
+  hydrate/flush cycle with backend version checks
+
+## 20. Treat Pi compaction as a backend checkpoint retention boundary
+
+Implementation:
+
+- `reference/adr-compaction-checkpoint-retention.md`
+
+Why:
+
+- Pi compaction changes model context but does not automatically delete old JSONL entries
+- backend-owned checkpoint storage must not retain the full pre-compaction conversation forever
+- accepted compaction flushes should normalize and prune the latest checkpoint bundle while keeping
+  Pi restore valid
+- frontend history hydration should render a compacted summary boundary instead of resurrecting
+  deleted turns
+
+## 21. Preserve reasoning presence as checkpoint metadata
+
+Implementation:
+
+- `reference/adr-checkpoint-reasoning-annotations.md`
+
+Why:
+
+- some Pi/provider paths stream reasoning live but do not persist it into Pi JSONL
+- storing full frontend history in the backend would create a second transcript authority
+- a lightweight checkpoint annotation lets Astro hydrate the thinking UI without duplicating the
+  conversation or storing raw reasoning text
+
+## 22. Detached browser clients do not cancel active session runs
+
+Implementation:
+
+- `reference/adr-detached-client-background-session-runs.md`
+
+Why:
+
+- browser close is a transport detach, not an agent-session cancellation
+- backend-backed sessions should keep Pi running until the assistant run finishes or fails
+- checkpoint lease renewal and runtime-state reporting let the backend know that a session is still
+  working even when no browser is connected

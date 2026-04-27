@@ -1,7 +1,8 @@
 # Available Models
 
 `GET /api/chat/get_available_models` returns the models Astro can currently offer without sending a
-chat message to Pi.
+chat message to Pi. Auth-backed provider availability is user-scoped; callers should pass
+`userId=<user_id>` so Astro reads backend-owned provider credential status for that user.
 
 This is a control-plane endpoint.
 It is separate from `POST /api/chat`, which remains the hot path for user text.
@@ -41,7 +42,7 @@ the Ollama failure appears in the `sources` list.
             "signInAvailable": false,
             "authenticated": true,
             "usable": true,
-            "authSource": "runtime_store"
+            "authSource": "backend"
           },
           "defaults": {
             "runConfig": {
@@ -121,7 +122,8 @@ the Ollama failure appears in the `sources` list.
 ## Notes
 
 - Pi-registry discovery now starts from Pi's registry of known models, filters that list to
-  Astro-supported providers, and then annotates auth-backed models with Astro runtime auth state
+  Astro-supported providers, and then annotates auth-backed models with backend-owned provider
+  credential status
 - auth-backed Pi models only appear here when they are actually usable right now
 - the endpoint does not synthesize a fake default provider/model entry when no auth-backed Pi model
   is available

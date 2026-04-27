@@ -76,6 +76,8 @@ The `new_session` chunk payload includes:
   "new_session": {
     "agent_session_id": 456,
     "session_key": "456",
+    "runtime_session_id": "456",
+    "agent_name": "astro-orchestrator",
     "agent_unique_id": "astro-orchestrator_user_123",
     "thread_id": "thread-001",
     "agent_id": 123
@@ -115,5 +117,39 @@ After that `session_switch`, the same response may continue with coder-session c
     "summary": "Hope 30 is checked out locally and ready for project-local work."
   },
   "agent_id": 456
+}
+```
+
+The `error` chunk keeps `error` as the human-readable field and includes `error_source` so the
+frontend can distinguish backend, provider, Pi, client, checkpoint, project-runtime, tool, and Astro
+failures. Astro prefixes the human-readable `error` string with `[<error_source>]` before streaming
+it. When a backend call returns `error_code`, `error_detail`, or `field_errors`, Astro passes those
+values through to the SSE chunk instead of replacing them with a generic message. Backend-origin
+stream errors also include `forensics` so the frontend can expose or log the backend
+request/response context that caused the stream failure.
+
+```json
+{
+  "type": "error",
+  "error": "[checkpoint] Checkpoint lease failed: Lease is already held by another runtime.",
+  "error_source": "checkpoint",
+  "status": 409,
+  "error_code": "checkpoint_lease_already_held",
+  "error_detail": "Lease is already held by another runtime.",
+  "field_errors": null,
+  "forensics": {
+    "backend_request_url": "http://backend/orm/api/agents/v1/sessions/52/checkpoint_lease/acquire/",
+    "backend_response_text": "{\"agent_session_id\":52,\"error_code\":\"checkpoint_lease_already_held\",\"error_detail\":\"Lease is already held by another runtime.\",\"checkpoint_version\":4,\"bundle_hash\":\"sha256:...\"}",
+    "backend_response_body": {
+      "agent_session_id": 52,
+      "error_code": "checkpoint_lease_already_held",
+      "error_detail": "Lease is already held by another runtime.",
+      "checkpoint_version": 4,
+      "bundle_hash": "sha256:..."
+    },
+    "backend_checkpoint_version": 4,
+    "backend_bundle_hash": "sha256:..."
+  },
+  "agent_id": 123
 }
 ```

@@ -4,8 +4,13 @@ import { randomUUID } from "node:crypto";
 import { AuthStorage } from "../../node_modules/@mariozechner/pi-coding-agent/dist/index.js";
 import { resolveProviderDefinition } from "./model-provider-definitions.js";
 import {
+	cleanupScopedPiAgentDir,
+	createScopedProviderAuthDir,
+	flushScopedProviderCredential,
+	removeScopedPiCredential,
+} from "./model-provider-scoped-auth.js";
+import {
 	resolvePiAgentDir,
-	setProviderSignedOff,
 	withScopedPiAgentDir,
 	withScopedPiAgentDirAsync,
 } from "./model-provider-runtime.js";
@@ -53,6 +58,10 @@ type ModelProviderSignInState = {
 type ActiveSignInAttempt = {
 	attemptId: string;
 	provider: string;
+	createdByUser: string;
+	agentSessionId: number | null;
+	env: NodeJS.ProcessEnv;
+	scopedPiAgentDir: string;
 	abortController: AbortController;
 	manualInputRequested: boolean;
 	pendingManualInput: string | null;
@@ -78,7 +87,7 @@ type StartImmediateSignInSuccess = {
 
 type SignInFailure = {
 	ok: false;
-	statusCode: 400 | 404 | 409 | 500;
+	statusCode: 400 | 404 | 409 | 500 | 503;
 	error: string;
 	message: string;
 	attempt?: ModelProviderSignInAttempt;
@@ -126,10 +135,33 @@ type CancelAttemptFailure = {
 
 const SIGNIN_STATE_FILE_NAME = "astro-model-provider-signin.json";
 const activeAttempts = new Map<string, ActiveSignInAttempt>();
+const attemptEnvs = new Map<string, NodeJS.ProcessEnv>();
 
 function toErrorMessage(error: unknown): string {
 	if (error instanceof Error && error.message.trim()) return error.message.trim();
 	return String(error);
+}
+
+function buildScopedAttemptEnv(env: NodeJS.ProcessEnv, scopedPiAgentDir: string): NodeJS.ProcessEnv {
+	return {
+		...env,
+		PI_CODING_AGENT_DIR: scopedPiAgentDir,
+	};
+}
+
+function resolveAttemptEnv(attemptId: string, env: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+	return activeAttempts.get(attemptId)?.env ?? attemptEnvs.get(attemptId) ?? env;
+}
+
+function createProviderCredentialSignInDir(input: {
+	provider: string;
+	scopeId: string;
+	env: NodeJS.ProcessEnv;
+}): string | null {
+	return createScopedProviderAuthDir({
+		scopeKey: `signin-${input.provider}-${input.scopeId}`,
+		env: input.env,
+	});
 }
 
 function isTerminalAttemptStatus(status: ModelProviderSignInAttemptStatus): boolean {
@@ -353,8 +385,8 @@ function createAwaitPromptInputHandler(
 async function runInteractiveSignIn(
 	attempt: ModelProviderSignInAttempt,
 	activeAttempt: ActiveSignInAttempt,
-	env: NodeJS.ProcessEnv,
 ) {
+	const env = activeAttempt.env;
 	try {
 		const definition = resolveProviderDefinition(attempt.provider);
 		await withScopedPiAgentDirAsync(env, async () => {
@@ -430,6 +462,7 @@ async function runInteractiveSignIn(
 		});
 
 		if (activeAttempt.cancelled) {
+			removeScopedPiCredential(activeAttempt.scopedPiAgentDir, attempt.provider);
 			setAttemptStatus(attempt.id, env, "cancelled", {
 				nextAction: { type: "none" },
 				error: "Signin attempt cancelled.",
@@ -439,14 +472,27 @@ async function runInteractiveSignIn(
 			return;
 		}
 
-		setProviderSignedOff(attempt.provider, false, env);
+		const flush = await flushScopedProviderCredential({
+			scopedPiAgentDir: activeAttempt.scopedPiAgentDir,
+			createdByUser: activeAttempt.createdByUser,
+			agentSessionId: activeAttempt.agentSessionId,
+			provider: attempt.provider,
+			reason: "signin_completed",
+			env,
+			log: (message) => console.log(`[astro-stream] ${message}`),
+		});
+		removeScopedPiCredential(activeAttempt.scopedPiAgentDir, attempt.provider);
+		if (flush.ok === false) {
+			throw new Error(`Backend credential flush failed: ${flush.message}`);
+		}
 		setAttemptStatus(attempt.id, env, "completed", {
 			nextAction: { type: "none" },
 			error: null,
-			appendProgress: "Provider signin completed.",
+			appendProgress: "Provider signin completed and stored in backend.",
 			markCompleted: true,
 		});
 	} catch (error) {
+		removeScopedPiCredential(activeAttempt.scopedPiAgentDir, attempt.provider);
 		if (activeAttempt.cancelled || activeAttempt.abortController.signal.aborted) {
 			setAttemptStatus(attempt.id, env, "cancelled", {
 				nextAction: { type: "none" },
@@ -468,10 +514,16 @@ async function runInteractiveSignIn(
 	}
 }
 
-export function startModelProviderSignIn(
+export async function startModelProviderSignIn(
 	provider: string,
-	env: NodeJS.ProcessEnv = process.env,
-): StartImmediateSignInSuccess | StartInteractiveSignInSuccess | SignInFailure {
+	options: {
+		createdByUser: string;
+		agentSessionId?: number | null;
+		env?: NodeJS.ProcessEnv;
+	},
+): Promise<StartImmediateSignInSuccess | StartInteractiveSignInSuccess | SignInFailure> {
+	const env = options.env ?? process.env;
+	const agentSessionId = options.agentSessionId ?? null;
 	const definition = resolveProviderDefinition(provider);
 	if (!definition) {
 		return {
@@ -489,22 +541,8 @@ export function startModelProviderSignIn(
 			statusCode: 409,
 			error: "provider_signin_in_progress",
 			message: `A signin attempt for ${provider} is already in progress.`,
-			attempt: materializeAttempt(existingActiveAttempt.attemptId, env) ?? undefined,
-		};
-	}
-
-	const alreadyAuthenticated = withScopedPiAgentDir(env, () => {
-		const authStorage = AuthStorage.create();
-		return authStorage.has(provider);
-	});
-	if (alreadyAuthenticated) {
-		setProviderSignedOff(provider, false, env);
-		return {
-			ok: true,
-			statusCode: 200,
-			provider,
-			authenticated: true,
-			updatedAt: new Date().toISOString(),
+			attempt:
+				materializeAttempt(existingActiveAttempt.attemptId, existingActiveAttempt.env) ?? undefined,
 		};
 	}
 
@@ -528,14 +566,47 @@ export function startModelProviderSignIn(
 			};
 		}
 
-		withScopedPiAgentDir(env, () => {
+		const scopedPiAgentDir = createProviderCredentialSignInDir({
+			provider,
+			scopeId: randomUUID(),
+			env,
+		});
+		if (!scopedPiAgentDir) {
+			return {
+				ok: false,
+				statusCode: 500,
+				error: "provider_signin_storage_unavailable",
+				message: "Astro could not create a scoped provider credential directory.",
+			};
+		}
+		const scopedEnv = buildScopedAttemptEnv(env, scopedPiAgentDir);
+
+		withScopedPiAgentDir(scopedEnv, () => {
 			const authStorage = AuthStorage.create();
 			authStorage.set(provider, {
 				type: "api_key",
 				key: credential,
 			});
 		});
-		setProviderSignedOff(provider, false, env);
+
+		const flush = await flushScopedProviderCredential({
+			scopedPiAgentDir,
+			createdByUser: options.createdByUser,
+			agentSessionId,
+			provider,
+			reason: "api_key_synced",
+			env: scopedEnv,
+			log: (message) => console.log(`[astro-stream] ${message}`),
+		});
+		cleanupScopedPiAgentDir(scopedPiAgentDir);
+		if (flush.ok === false) {
+			return {
+				ok: false,
+				statusCode: 503,
+				error: flush.error,
+				message: flush.message,
+			};
+		}
 
 		return {
 			ok: true,
@@ -564,11 +635,30 @@ export function startModelProviderSignIn(
 			message: "Starting provider signin flow.",
 		},
 	});
-	persistAttempt(attempt, env);
+	const scopedPiAgentDir = createProviderCredentialSignInDir({
+		provider,
+		scopeId: attempt.id,
+		env,
+	});
+	if (!scopedPiAgentDir) {
+		return {
+			ok: false,
+			statusCode: 500,
+			error: "provider_signin_storage_unavailable",
+			message: "Astro could not create a scoped provider credential directory.",
+		};
+	}
+	const scopedEnv = buildScopedAttemptEnv(env, scopedPiAgentDir);
+	attemptEnvs.set(attempt.id, scopedEnv);
+	persistAttempt(attempt, scopedEnv);
 
 	const activeAttempt: ActiveSignInAttempt = {
 		attemptId: attempt.id,
 		provider,
+		createdByUser: options.createdByUser,
+		agentSessionId,
+		env: scopedEnv,
+		scopedPiAgentDir,
 		abortController: new AbortController(),
 		manualInputRequested: false,
 		pendingManualInput: null,
@@ -578,13 +668,13 @@ export function startModelProviderSignIn(
 	};
 	activeAttempts.set(attempt.id, activeAttempt);
 
-	void runInteractiveSignIn(attempt, activeAttempt, env);
+	void runInteractiveSignIn(attempt, activeAttempt);
 
 	return {
 		ok: true,
 		statusCode: 202,
 		provider,
-		attempt: materializeAttempt(attempt.id, env) ?? attempt,
+		attempt: materializeAttempt(attempt.id, scopedEnv) ?? attempt,
 	};
 }
 
@@ -593,7 +683,8 @@ export function getModelProviderSignInAttempt(
 	attemptId: string,
 	env: NodeJS.ProcessEnv = process.env,
 ): AttemptLookupSuccess | AttemptLookupFailure {
-	const attempt = materializeAttempt(attemptId, env);
+	const attemptEnv = resolveAttemptEnv(attemptId, env);
+	const attempt = materializeAttempt(attemptId, attemptEnv);
 	if (!attempt || attempt.provider !== provider) {
 		return {
 			ok: false,
@@ -614,7 +705,8 @@ export function submitModelProviderSignInManualInput(
 	input: string,
 	env: NodeJS.ProcessEnv = process.env,
 ): ManualSubmitSuccess | ManualSubmitFailure {
-	const attempt = materializeAttempt(attemptId, env);
+	const attemptEnv = resolveAttemptEnv(attemptId, env);
+	const attempt = materializeAttempt(attemptId, attemptEnv);
 	if (!attempt || attempt.provider !== provider) {
 		return {
 			ok: false,
@@ -671,7 +763,7 @@ export function submitModelProviderSignInManualInput(
 		resolveManualInput(allowEmpty ? input : trimmedInput);
 	}
 
-	const nextAttempt = setAttemptStatus(attemptId, env, "running", {
+	const nextAttempt = setAttemptStatus(attemptId, attemptEnv, "running", {
 		nextAction: {
 			type: "wait",
 			message: "Manual input received. Waiting for provider confirmation.",
@@ -693,6 +785,7 @@ export function cancelActiveProviderSignIn(
 ): ModelProviderSignInAttempt | null {
 	const activeAttempt = findActiveAttemptByProvider(provider);
 	if (!activeAttempt) return null;
+	const attemptEnv = activeAttempt.env ?? env;
 
 	activeAttempt.cancelled = true;
 	activeAttempt.abortController.abort();
@@ -705,16 +798,16 @@ export function cancelActiveProviderSignIn(
 
 	if (options?.markAttemptCancelled) {
 		return (
-			setAttemptStatus(activeAttempt.attemptId, env, "cancelled", {
+			setAttemptStatus(activeAttempt.attemptId, attemptEnv, "cancelled", {
 				nextAction: { type: "none" },
 				error: options.reason ?? "Signin attempt cancelled.",
 				appendProgress: options.reason ?? "Signin attempt cancelled.",
 				markCompleted: true,
-			}) ?? materializeAttempt(activeAttempt.attemptId, env)
+			}) ?? materializeAttempt(activeAttempt.attemptId, attemptEnv)
 		);
 	}
 
-	return materializeAttempt(activeAttempt.attemptId, env);
+	return materializeAttempt(activeAttempt.attemptId, attemptEnv);
 }
 
 export function cancelModelProviderSignInAttempt(
@@ -722,7 +815,8 @@ export function cancelModelProviderSignInAttempt(
 	attemptId: string,
 	env: NodeJS.ProcessEnv = process.env,
 ): CancelAttemptSuccess | CancelAttemptFailure {
-	const attempt = materializeAttempt(attemptId, env);
+	const attemptEnv = resolveAttemptEnv(attemptId, env);
+	const attempt = materializeAttempt(attemptId, attemptEnv);
 	if (!attempt || attempt.provider !== provider) {
 		return {
 			ok: false,

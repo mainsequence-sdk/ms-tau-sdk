@@ -3,13 +3,26 @@
 Astro exposes auth-backed model-provider state separately from chat itself.
 
 These endpoints are for providers such as `openai`, `anthropic`, `openai-codex`, and `github-copilot` whose models
-depend on runtime auth state.
+depend on backend-owned user provider credential state.
 
-They do not accept raw secrets from the client.
+They do not accept raw secrets from the client. Provider status, sign-in, and sign-off are
+user-scoped, so callers must pass `userId` or one of the accepted aliases:
+`created_by_user`, `createdByUser`, or `user_id`.
+
+Astro resolves that user identity from, in order:
+
+- JSON body or query string: `userId`, `user_id`, `created_by_user`, or `createdByUser`
+- request headers: `x-mainsequence-user-id`, `x-ms-user-id`, `x-user-id`, or
+  `x-created-by-user`
+- Bearer JWT claims: `userId`, `user_id`, `created_by_user`, `createdByUser`,
+  `mainsequence_user_id`, or `sub`
+- `ASTRO_MAINSEQUENCE_USER_ID` when set in the runtime environment
+
+If no user identity can be resolved, provider status and provider auth actions return `400`.
 
 ## Endpoints
 
-### `GET /api/model-providers`
+### `GET /api/model-providers?userId=<user_id>`
 
 Returns provider-level auth state for managed auth-backed model providers Astro currently exposes in
 the UI.
@@ -28,7 +41,9 @@ Example response:
       "authSource": null,
       "knownModelCount": 8,
       "usableModelCount": 0,
-      "lastValidatedAt": "2026-04-15T12:00:00.000Z"
+      "lastValidatedAt": "2026-04-15T12:00:00.000Z",
+      "version": null,
+      "credentialHash": null
     },
     {
       "provider": "openai-codex",
@@ -38,7 +53,9 @@ Example response:
       "authSource": null,
       "knownModelCount": 8,
       "usableModelCount": 0,
-      "lastValidatedAt": "2026-04-15T12:00:00.000Z"
+      "lastValidatedAt": "2026-04-15T12:00:00.000Z",
+      "version": null,
+      "credentialHash": null
     },
     {
       "provider": "github-copilot",
@@ -48,9 +65,14 @@ Example response:
       "authSource": null,
       "knownModelCount": 20,
       "usableModelCount": 0,
-      "lastValidatedAt": "2026-04-15T12:00:00.000Z"
+      "lastValidatedAt": "2026-04-15T12:00:00.000Z",
+      "version": null,
+      "credentialHash": null
     }
-  ]
+  ],
+  "backendCredentialStatus": {
+    "ok": true
+  }
 }
 ```
 
@@ -58,8 +80,10 @@ Meaning:
 
 - `authKind`: the provider uses either API-key auth or OAuth-style runtime auth
 - `signInAvailable`: the frontend-friendly flag for whether `POST .../signin` can start right now
-- `authenticated`: Astro currently allows that provider to be used
-- `authSource`: where Astro is currently reading usable auth from
+- `authenticated`: Astro currently allows that provider to be used for this user
+- `authSource`: `backend` when the provider is backed by an active backend credential, otherwise `null`
+- `version`: backend credential version, or `null` when unauthenticated
+- `credentialHash`: backend credential hash, or `null` when unauthenticated
 - `knownModelCount`: how many models Astro knows for that provider
 - `usableModelCount`: how many of those models are executable right now
 - providers outside Astro's current supported surface are intentionally omitted from this endpoint
@@ -76,7 +100,9 @@ There are two successful response shapes:
 Immediate example:
 
 ```bash
-curl -X POST http://localhost:8787/api/model-providers/openai/signin
+curl -X POST http://localhost:8787/api/model-providers/openai/signin \\
+  -H 'Content-Type: application/json' \\
+  -d '{"userId":"123"}'
 ```
 
 ```json
@@ -92,7 +118,9 @@ curl -X POST http://localhost:8787/api/model-providers/openai/signin
 Interactive example:
 
 ```bash
-curl -X POST http://localhost:8787/api/model-providers/openai-codex/signin
+curl -X POST http://localhost:8787/api/model-providers/openai-codex/signin \\
+  -H 'Content-Type: application/json' \\
+  -d '{"userId":"123"}'
 ```
 
 ```json
@@ -249,7 +277,8 @@ Example response:
 
 ### `POST /api/model-providers/:provider/signoff`
 
-Signs the provider off from Astro/Pi runtime auth state without mutating environment variables.
+Revokes the provider credential in the backend and removes any scoped local credential for active
+Astro sign-in attempts.
 
 After signoff:
 
@@ -261,7 +290,9 @@ After signoff:
 Example:
 
 ```bash
-curl -X POST http://localhost:8787/api/model-providers/openai-codex/signoff
+curl -X POST http://localhost:8787/api/model-providers/openai-codex/signoff \\
+  -H 'Content-Type: application/json' \\
+  -d '{"userId":"123"}'
 ```
 
 ```json
@@ -312,10 +343,10 @@ When `nextAction.type = "prompt_input"`:
 
 ## Frontend Sequence
 
-1. Call `GET /api/model-providers`.
+1. Call `GET /api/model-providers?userId=<user_id>`.
 2. Call `GET /api/models/catalog`.
 3. If a provider shows `signInAvailable: true`, allow `Sign in`.
-4. `POST /api/model-providers/:provider/signin`.
+4. `POST /api/model-providers/:provider/signin` with `userId` in the JSON body.
 5. If response is `200`, refetch provider auth and model catalog.
 6. If response is `202`, open or render the returned `attempt.nextAction` and keep `attempt.authUrl`
    available as the primary "Open sign-in page" action.
@@ -326,7 +357,7 @@ When `nextAction.type = "prompt_input"`:
 
 ## Notes
 
-- provider auth is provider-level, not model-level
+- provider auth is user/provider-level, not model-level
 - signoff does not delete the provider from Astro's known model inventory
 - `openai-codex` now uses the interactive flow because Pi's built-in OAuth helper relies on a localhost callback and may require manual callback handoff in a remote Astro deployment
 - `github-copilot` now defaults its optional enterprise-domain prompt to blank, so the normal signin path should proceed directly to the verification URL on `github.com`
