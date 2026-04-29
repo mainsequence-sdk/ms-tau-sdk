@@ -238,6 +238,19 @@ Why:
   rules
 - project handoff state should be visible in backend-owned session metadata from creation time
 
+## 19. Make workspace analysis a first-class orchestrator capability
+
+Implementation:
+
+- `reference/adr-workspace-analysis-from-orchestrator.md`
+
+Why:
+
+- workspace analysis is a distinct orchestrator responsibility, not project implementation
+- the required Main Sequence analysis context should be prepared during deterministic startup, not
+  discovered lazily during the first chat turn
+- runtime readiness for that capability should be observable before Astro starts serving requests
+
 ## 19. Store user model-provider credentials in the backend
 
 Implementation:
