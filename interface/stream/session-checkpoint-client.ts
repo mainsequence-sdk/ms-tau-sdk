@@ -62,25 +62,35 @@ export type CheckpointLeasePurpose = "runtime_run" | "read_restore";
 export type CheckpointCancellation = {
 	cancellation_id: string;
 	requested_at?: string | null;
-	requested_by_user?: string | null;
+	requested_by_user_id?: number | null;
+	requested_by_username?: string | null;
 	reason?: string | null;
 	message?: string | null;
 };
 
 export type AgentSessionTerminalState = {
-	status: "completed" | "error" | "cancelled";
+	status: "completed" | "error" | "canceled";
 	error_code: string | null;
 	error_detail: string | null;
+};
+
+export type RuntimeCancelActiveLease = {
+	holder_id: string;
+	lease_purpose: string;
+	heartbeat_at: string | null;
+	expires_at: string;
+	expired: boolean;
 };
 
 export type RuntimeCancelResponse = {
 	agent_session_id: number;
 	status: string;
+	runtime_state: string;
 	working: boolean;
 	cancel_state: "not_running" | "requested" | string;
+	cancel_requested: boolean;
 	cancellation_id: string | null;
-	active_holder_id: string | null;
-	lease_expires_at: string | null;
+	active_lease: RuntimeCancelActiveLease | null;
 };
 
 export type SessionInsightsUpdateResponse = {
@@ -231,19 +241,17 @@ export class SessionCheckpointClient {
 
 	async requestRuntimeCancel(input: {
 		agentSessionId: number;
-		requestedByUser: string;
-		requestedByHolderId: string;
-		reason: string;
+		requestedByHolderId?: string | null;
+		reason?: string | null;
 		message?: string | null;
 	}): Promise<SessionCheckpointClientResult<RuntimeCancelResponse>> {
+		const payload: Record<string, unknown> = {};
+		if (input.requestedByHolderId) payload.requested_by_holder_id = input.requestedByHolderId;
+		if (input.reason) payload.reason = input.reason;
+		if (input.message !== undefined) payload.message = input.message;
 		return this.postJson<RuntimeCancelResponse>(
 			endpoint(this.backendUrl, input.agentSessionId, "runtime_cancel_request/"),
-			{
-				requested_by_user: input.requestedByUser,
-				requested_by_holder_id: input.requestedByHolderId,
-				reason: input.reason,
-				message: input.message ?? null,
-			},
+			payload,
 		);
 	}
 

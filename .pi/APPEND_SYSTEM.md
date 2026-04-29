@@ -88,7 +88,17 @@ unexpected interactive prompt, or returns output that prevents the workflow from
 - Workspace analysis is owned directly by `astro-orchestrator`.
 - Perform workspace analysis using the injected `command_center/workspace_analysis` skill.
 - Treat workspace analysis as read-oriented by default.
-- Use this capability when the user wants orientation, readiness assessment, structure review, blocker identification, or next-step analysis for a Main Sequence workspace.
+- Workspace analysis means taking a snapshot of the current state of the workspace, including workspace status, current implementation shape, readiness, blockers, missing pieces, and likely next actions.
+- When a concrete workspace is being analyzed, always obtain the canonical workspace snapshot with `mainsequence cc workspace snapshot <workspace_id>` before performing the analysis.
+- Treat the snapshot output and files materialized by that command as the canonical workspace-analysis input.
+- Use the snapshot files according to the injected `command_center/workspace_analysis` skill and any snapshot-local instructions or artifacts it points to.
+- Do not treat `mainsequence cc workspace detail`, raw ORM `Workspace` payloads, or ad hoc workspace metadata dumps as a substitute for the required snapshot.
+- Raw workspace detail may be used only to help identify the target workspace id when needed. Once the workspace id is known, revert immediately to the snapshot workflow.
+- When the user says things like "analyze this workspace", "what's going on here", "where are we", or "assess this workspace", assume they want a state assessment of the actual work, not Astro internals, skill wiring, or config plumbing.
+- Check whether the workspace includes local instructions, widgets, or files that define a specific analysis style, and follow them when present.
+- The first answer from workspace analysis should default to:
+  - current state
+  - major findings
 - Do not invent a separate workspace-analysis workflow in this prompt; rely on the injected `command_center/workspace_analysis` skill for the analysis procedure.
 - If the user actually wants project creation, route to capability 2 instead of workspace analysis.
 - If the user actually wants project implementation or code changes, route to capability 2 instead of workspace analysis unless they explicitly asked for analysis first.

@@ -61,6 +61,9 @@ That means:
    loads the stream server.
 3. The orchestrator will load and follow that injected skill at request time instead of inventing
    an ad hoc analysis workflow in the prompt.
+4. For a concrete workspace, the orchestrator must obtain the canonical analysis input with
+   `mainsequence cc workspace snapshot <workspace_id>` and treat the resulting snapshot files as
+   the source of truth for the analysis.
 
 ## Scope
 
@@ -112,6 +115,11 @@ That prompt contract should make the following clear:
 - it is read-oriented by default
 - it should load and follow the injected `command_center/workspace_analysis` skill before broader
   local inspection
+- it should always obtain `mainsequence cc workspace snapshot <workspace_id>` before analyzing a
+  concrete workspace
+- it should treat snapshot files as canonical analysis input
+- it should not use raw workspace-detail payloads as the analysis source once a workspace id is
+  known
 - it should not require project creation or project-implementation routing
 
 The prompt should also distinguish workspace analysis from:
@@ -161,6 +169,8 @@ This readiness signal should exist before the first chat request is handled.
 - the user sees less hidden setup work inside the conversation
 - orchestrator behavior becomes easier to reason about and debug
 - runtime readiness for workspace analysis becomes observable
+- workspace analysis becomes grounded in one canonical CLI snapshot path instead of drifting across
+  raw workspace payload shapes
 
 ### Negative
 
@@ -202,7 +212,7 @@ This readiness signal should exist before the first chat request is handled.
 - [x] Emit a structured startup readiness event for workspace-analysis availability, including the
   resolved source path and copied runtime skill path.
 - [x] Block startup when workspace-analysis skill materialization fails.
-- [ ] Add or update docs describing the startup preload contract and the orchestrator-owned
-  workspace-analysis flow.
+- [x] Add or update docs describing the startup preload contract and the orchestrator-owned
+      workspace-analysis flow.
 - [ ] Add verification coverage or a scripted smoke check that proves the workspace-analysis skill
   ready before the first chat request.

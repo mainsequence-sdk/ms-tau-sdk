@@ -26,7 +26,6 @@ import {
 type CheckpointReason =
 	| "stream_finish"
 	| "stream_error"
-	| "stream_cancelled"
 	| "periodic"
 	| "compaction"
 	| "shutdown";
@@ -123,7 +122,6 @@ const reasonPriority: Record<CheckpointReason, number> = {
 	periodic: 1,
 	stream_finish: 2,
 	stream_error: 3,
-	stream_cancelled: 3,
 	compaction: 4,
 	shutdown: 5,
 };
@@ -190,9 +188,13 @@ function normalizeOptionalString(value: unknown): string | null {
 function parseAgentSessionTerminalState(value: unknown): AgentSessionTerminalState | null {
 	if (!isPlainObject(value)) return null;
 	const status =
-		value.status === "completed" || value.status === "error" || value.status === "cancelled"
-			? value.status
-			: null;
+		value.status === "completed"
+			? "completed"
+			: value.status === "error"
+				? "error"
+				: value.status === "canceled" || value.status === "cancelled"
+					? "canceled"
+					: null;
 	if (!status) return null;
 	return {
 		status,
@@ -214,13 +216,6 @@ function defaultAgentSessionTerminalState(reason: CheckpointReason): AgentSessio
 			status: "error",
 			error_code: null,
 			error_detail: "Runtime ended with an error.",
-		};
-	}
-	if (reason === "stream_cancelled") {
-		return {
-			status: "cancelled",
-			error_code: "session_cancelled_by_user",
-			error_detail: "Session cancelled by user.",
 		};
 	}
 	return null;
@@ -629,7 +624,6 @@ function shouldReleaseLeaseAfterFlush(reason: CheckpointReason): boolean {
 	return (
 		reason === "stream_finish" ||
 		reason === "stream_error" ||
-		reason === "stream_cancelled" ||
 		reason === "shutdown"
 	);
 }
@@ -639,14 +633,19 @@ async function releaseCheckpointLeaseAfterFlush(input: {
 	agentSessionId: number;
 	manifest: CheckpointManifest;
 	reason: CheckpointReason;
+	marker: CheckpointMarker | null;
 }) {
 	if (!shouldReleaseLeaseAfterFlush(input.reason)) return;
+	const releaseReason =
+		input.reason === "shutdown" && input.marker?.agentSessionTerminalState?.status === "canceled"
+			? "runtime_canceled"
+			: input.reason;
 	for (let attempt = 1; attempt <= 3; attempt += 1) {
 		const result = await checkpointClient.releaseLease({
 			agentSessionId: input.agentSessionId,
 			holderId: input.manifest.lease_holder_id,
 			leaseToken: input.manifest.lease_token,
-			reason: input.reason,
+			reason: releaseReason,
 		});
 		if (result.ok === true) {
 			expireCheckpointManifestLease(input.sessionKey, input.manifest.lease_token);
@@ -654,6 +653,7 @@ async function releaseCheckpointLeaseAfterFlush(input: {
 			logEvent("checkpoint_lease_released", {
 				session_id: input.sessionKey,
 				reason: input.reason,
+				release_reason: releaseReason,
 				agent_session_id: input.agentSessionId,
 				released: result.body.released,
 				attempt,
@@ -663,6 +663,7 @@ async function releaseCheckpointLeaseAfterFlush(input: {
 		logEvent("checkpoint_lease_release_failed", {
 			session_id: input.sessionKey,
 			reason: input.reason,
+			release_reason: releaseReason,
 			agent_session_id: input.agentSessionId,
 			attempt,
 			status: result.status,
@@ -693,7 +694,6 @@ function isCheckpointReason(value: string): value is CheckpointReason {
 	return (
 		value === "stream_finish" ||
 		value === "stream_error" ||
-		value === "stream_cancelled" ||
 		value === "periodic" ||
 		value === "compaction" ||
 		value === "shutdown"
@@ -703,7 +703,9 @@ function isCheckpointReason(value: string): value is CheckpointReason {
 function normalizeMarkerReason(value: unknown): CheckpointReason {
 	if (value === "finish" || value === "stream_finish") return "stream_finish";
 	if (value === "error" || value === "stream_error") return "stream_error";
-	if (value === "cancel" || value === "cancelled" || value === "stream_cancelled") return "stream_cancelled";
+	if (value === "cancel" || value === "canceled" || value === "cancelled" || value === "stream_cancelled") {
+		return "shutdown";
+	}
 	if (value === "compaction") return "compaction";
 	if (value === "shutdown") return "shutdown";
 	return "periodic";
@@ -913,8 +915,9 @@ function leaseIsExpired(manifest: CheckpointManifest): boolean {
 	return Number.isFinite(expiresAt) && expiresAt <= Date.now();
 }
 
-function reasonRequiresMarkerLease(reason: CheckpointReason): boolean {
-	return reason === "stream_finish" || reason === "stream_error" || reason === "stream_cancelled";
+function reasonRequiresMarkerLease(reason: CheckpointReason, marker: CheckpointMarker | null): boolean {
+	if (reason === "stream_finish" || reason === "stream_error") return true;
+	return reason === "shutdown" && marker != null;
 }
 
 function markerMatchesManifest(marker: CheckpointMarker, manifest: CheckpointManifest): boolean {
@@ -964,7 +967,7 @@ async function flushSession(sessionKey: string, reason: CheckpointReason) {
 			return;
 		}
 
-		if (reasonRequiresMarkerLease(reason)) {
+		if (reasonRequiresMarkerLease(reason, marker)) {
 			if (!marker?.leaseToken || !marker.leaseHolderId) {
 				localValidationRejectCount += 1;
 				logEvent("checkpoint_flush_skipped_marker_missing_lease", {
@@ -1046,7 +1049,7 @@ async function flushSession(sessionKey: string, reason: CheckpointReason) {
 			bundleHash: built.bundleHash,
 			bundle: built.bundle,
 			agentSessionTerminalState:
-				reason === "stream_finish" || reason === "stream_error" || reason === "stream_cancelled"
+				reason === "stream_finish" || reason === "stream_error" || (reason === "shutdown" && marker != null)
 					? marker?.agentSessionTerminalState ?? defaultAgentSessionTerminalState(reason)
 					: null,
 		});
@@ -1082,6 +1085,7 @@ async function flushSession(sessionKey: string, reason: CheckpointReason) {
 			agentSessionId: built.agentSessionId,
 			manifest: built.manifest,
 			reason,
+			marker,
 		});
 	} catch (error) {
 		flushRejectedCount += 1;

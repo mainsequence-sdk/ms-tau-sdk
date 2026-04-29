@@ -3,7 +3,8 @@ FROM python:3.11-slim AS astro-base
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/app/node_modules/.bin:${PATH}"
+    PATH="/app/node_modules/.bin:${PATH}" \
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -36,7 +37,8 @@ FROM astro-base AS astro-mainsequence
 ARG MAINSEQUENCE_PIP_SPEC=mainsequence
 ENV MAINSEQUENCE_PIP_SPEC=${MAINSEQUENCE_PIP_SPEC}
 
-RUN pip install --no-cache-dir "${MAINSEQUENCE_PIP_SPEC}" uv
+RUN pip install --no-cache-dir "${MAINSEQUENCE_PIP_SPEC}" uv playwright \
+ && playwright install --with-deps chromium
 
 FROM astro-mainsequence AS astro-runtime
 
@@ -58,11 +60,12 @@ RUN groupadd --gid "${APP_GID}" "${APP_GROUP}" \
     "${APP_HOME}/.astro-container-data/.config/mainsequence" \
     "/session-state/sessions" \
     "/session-state/session-overrides" \
+    "/ms-playwright" \
     "${APP_HOME}/.local/share" \
     "${APP_HOME}/.pi" \
     "${APP_HOME}/.config" \
     "${APP_HOME}/.astro" \
- && chown -R "${APP_USER}:${APP_GROUP}" "${APP_HOME}" /session-state
+ && chown -R "${APP_USER}:${APP_GROUP}" "${APP_HOME}" /session-state /ms-playwright
 
 USER appuser
 

@@ -272,7 +272,7 @@ For terminal flushes:
 terminal_flush_reasons = {
     "stream_finish": "completed",
     "stream_error": "error",
-    "stream_cancelled": "cancelled",
+    "shutdown": "canceled",
 }
 ```
 
@@ -342,7 +342,7 @@ session can receive another user message later.
 `AgentSession.status = "error"` means the latest assistant run failed. The session may still be
 resumed later by starting a new run.
 
-`AgentSession.status = "cancelled"` means the latest assistant run was manually stopped by a user
+`AgentSession.status = "canceled"` means the latest assistant run was manually stopped by a user
 or operator. The session may still be resumed later by starting a new run.
 
 ### Impact of `AgentSession.status`
@@ -356,13 +356,13 @@ Impact:
   Astro successfully acquires a `runtime_run` lease.
 - A session can move from `"error"` back to `"running"` when the user retries or continues the same
   session and Astro successfully acquires a `runtime_run` lease.
-- A session can move from `"cancelled"` back to `"running"` when the user continues the same session
+- A session can move from `"canceled"` back to `"running"` when the user continues the same session
   and Astro successfully acquires a `runtime_run` lease.
 - `"completed"` means "the latest run completed", not "this chat is closed forever".
 - `"error"` means "the latest run failed", not "this session id can never be used again".
-- `"cancelled"` means "the latest run was intentionally stopped", not "this session id can never be
+- `"canceled"` means "the latest run was intentionally stopped", not "this session id can never be
   used again".
-- `ended_at` is the end time of the latest completed, failed, or cancelled run. It is cleared when a
+- `ended_at` is the end time of the latest completed, failed, or canceled run. It is cleared when a
   new `runtime_run` starts on the same session.
 - `error_detail` is the latest run error or cancellation detail. It is cleared when a new
   `runtime_run` starts.
@@ -444,7 +444,7 @@ checkpoint_lease_response = {
     "lease_expires_at": str,
     "checkpoint_version": int,
     "bundle_hash": str,
-    "agent_session_status": "running" | "completed" | "error" | "cancelled" | str,
+    "agent_session_status": "running" | "completed" | "error" | "canceled" | str,
     "working": bool,
 }
 ```
@@ -466,7 +466,7 @@ checkpoint_flush_request = {
     "holder_id": str,
     "lease_token": str,
     "expected_checkpoint_version": int,
-    "reason": "stream_finish" | "stream_error" | "stream_cancelled" | "periodic" | "compaction" | "shutdown",
+    "reason": "stream_finish" | "stream_error" | "periodic" | "compaction" | "shutdown",
     "bundle_hash": "sha256:<submitted_bundle_hash>",
     "bundle": {
         "pi_session_jsonl": str,
@@ -475,7 +475,7 @@ checkpoint_flush_request = {
         "session_overrides_json": dict | None,
     },
     "agent_session_terminal_state": {
-        "status": "completed" | "error" | "cancelled",
+        "status": "completed" | "error" | "canceled",
         "error_code": str | None,
         "error_detail": str | None,
     } | None,
@@ -504,20 +504,21 @@ Value rules:
   }
   ```
 
-- For `reason = "stream_cancelled"`, Astro/sidecar must send:
+- For cancellation finalization, Astro/sidecar must send the normal shutdown flush with:
 
   ```python
+  reason = "shutdown"
   agent_session_terminal_state = {
-      "status": "cancelled",
+      "status": "canceled",
       "error_code": "session_cancelled_by_user",
-      "error_detail": "Session cancelled by user.",
+      "error_detail": "Session canceled by user.",
   }
   ```
 
 - For `reason = "periodic"` or `reason = "compaction"`, `agent_session_terminal_state` must be
   `None`.
 - For `reason = "shutdown"`, `agent_session_terminal_state` must be `None` unless Astro has already
-  determined the Pi run actually ended with success or error.
+  determined the Pi run actually ended with success, error, or user cancellation.
 - Browser detach alone must never produce `agent_session_terminal_state`.
 
 Accepted terminal flush behavior:
@@ -556,13 +557,22 @@ Response body:
 agent_session_runtime_state_response = {
     "agent_session_id": int,
     "thread_id": str,
-    "status": "running" | "completed" | "error" | "cancelled" | str,
+    "status": "running" | "completed" | "error" | "canceled" | str,
     "working": bool,
     "active_lease": {
         "holder_id": str,
         "heartbeat_at": str,
         "expires_at": str,
         "expired": bool,
+    } | None,
+    "cancel_requested": bool,
+    "cancellation": {
+        "cancellation_id": str,
+        "requested_at": str,
+        "requested_by_user_id": int | None,
+        "requested_by_username": str | None,
+        "reason": str,
+        "message": str | None,
     } | None,
     "checkpoint": {
         "checkpoint_version": int | None,
@@ -715,20 +725,20 @@ checkpoint_marker_on_cancel = {
     "checkpoint_version": int,
     "bundle_hash": str,
     "agent_session_terminal_state": {
-        "status": "cancelled",
+        "status": "canceled",
         "error_code": "session_cancelled_by_user",
-        "error_detail": "Session cancelled by user.",
+        "error_detail": "Session canceled by user.",
     },
 }
 ```
 
-The sidecar maps marker reasons to backend flush reasons:
+The sidecar uses the existing backend shutdown flush for this marker:
 
 ```python
 checkpoint_marker_reason_map = {
     "finish": "stream_finish",
     "error": "stream_error",
-    "cancel": "stream_cancelled",
+    "cancel": "shutdown",
 }
 ```
 
@@ -775,8 +785,7 @@ Content-Type: application/json
 cancel_session_request = {
     "runtime_session_id": str,
     "thread_id": str | None,
-    "userId": str,
-    "reason": "user_requested",
+    "reason": "user_requested" | None,
     "message": str | None,
 }
 ```
@@ -791,7 +800,7 @@ cancel_session_response = {
     "ok": True,
     "session_id": str,
     "agent_session_id": int,
-    "state": "cancelling" | "cancel_requested" | "not_running" | "cancelled",
+    "state": "cancelling" | "cancel_requested" | "not_running",
     "working": bool,
     "cancellation_id": str | None,
     "message": str,
@@ -811,24 +820,33 @@ Content-Type: application/json
 
 ```python
 backend_runtime_cancel_request = {
-    "requested_by_user": str,
-    "requested_by_holder_id": str,
-    "reason": "user_requested",
+    "requested_by_holder_id": str | None,
+    "reason": "user_requested" | str | None,
     "message": str | None,
 }
 ```
+
+`requested_by_holder_id`, `reason`, and `message` are optional. Astro must not send
+`requested_by_user`; the backend derives the requester from the authenticated user.
 
 Backend response:
 
 ```python
 backend_runtime_cancel_response = {
     "agent_session_id": int,
-    "status": "running" | "completed" | "error" | "cancelled" | str,
+    "status": "running" | "completed" | "error" | "canceled" | str,
+    "runtime_state": "working" | "stale" | str,
     "working": bool,
     "cancel_state": "not_running" | "requested",
+    "cancel_requested": bool,
     "cancellation_id": str | None,
-    "active_holder_id": str | None,
-    "lease_expires_at": str | None,
+    "active_lease": {
+        "holder_id": str,
+        "lease_purpose": "runtime_run" | str,
+        "heartbeat_at": str | None,
+        "expires_at": str,
+        "expired": bool,
+    } | None,
 }
 ```
 
@@ -838,7 +856,8 @@ Backend behavior:
 2. If `working = False`, return `cancel_state = "not_running"` and do not mutate
    `AgentSession.status`.
 3. If `working = True`, store cancellation intent on the active checkpoint lease row.
-4. Do not set `AgentSession.status = "cancelled"` in this endpoint.
+4. Repeated cancel requests on the same active lease must return the same `cancellation_id`.
+5. Do not set `AgentSession.status = "canceled"` in this endpoint.
 
 Cancellation intent belongs to the active lease row:
 
@@ -846,7 +865,8 @@ Cancellation intent belongs to the active lease row:
 agent_session_lease_cancellation_fields = {
     "cancel_requested": bool,
     "cancel_requested_at": datetime | None,
-    "cancel_requested_by_user": str,
+    "cancel_requested_by_user_id": int | None,
+    "cancel_requested_by_username": str | None,
     "cancel_reason": "user_requested" | str,
     "cancel_message": str,
     "cancellation_id": str,
@@ -862,7 +882,8 @@ checkpoint_lease_renew_response = {
     "cancellation": {
         "cancellation_id": str,
         "requested_at": str,
-        "requested_by_user": str,
+        "requested_by_user_id": int | None,
+        "requested_by_username": str | None,
         "reason": str,
         "message": str | None,
     } | None,
@@ -877,7 +898,8 @@ runtime_state_cancellation = {
     "cancellation": {
         "cancellation_id": str,
         "requested_at": str,
-        "requested_by_user": str,
+        "requested_by_user_id": int | None,
+        "requested_by_username": str | None,
         "reason": str,
         "message": str | None,
     } | None,
@@ -897,11 +919,12 @@ If the cancel request hits the active holder:
 5. If Pi does not exit within the configured grace period, Astro sends `SIGKILL`.
 6. Astro records a terminal cancellation event locally.
 7. Astro writes a checkpoint marker with local reason `cancel`.
-8. Sidecar maps marker reason `cancel` to backend flush reason `stream_cancelled`.
-9. Sidecar sends `agent_session_terminal_state.status = "cancelled"` in the flush request.
-10. Backend accepts the terminal flush, stores the latest checkpoint, sets
-    `AgentSession.status = "cancelled"`, sets `ended_at = now()`, stores
-    `error_detail = "Session cancelled by user."`, and then the sidecar releases the lease.
+8. Sidecar sends the normal checkpoint flush with `reason = "shutdown"`.
+9. Sidecar sends `agent_session_terminal_state.status = "canceled"` in the shutdown flush.
+10. Backend accepts the shutdown terminal flush, stores the latest checkpoint, sets
+    `AgentSession.status = "canceled"`, sets `ended_at = now()`, stores
+    `error_detail = "Session canceled by user."`, and then the sidecar releases the lease with
+    release reason `runtime_canceled`.
 
 If the cancel request does not hit the active holder:
 
@@ -918,18 +941,18 @@ If the browser is still attached when cancellation completes, Astro sends a term
 chunk for compatibility with the current stream protocol:
 
 ```python
-cancelled_stream_event = {
+canceled_stream_event = {
     "type": "error",
-    "error": "Session cancelled by user.",
+    "error": "Session canceled by user.",
     "error_source": "runtime",
     "status": 499,
     "error_code": "session_cancelled_by_user",
-    "error_detail": "Session cancelled by user.",
+    "error_detail": "Session canceled by user.",
 }
 ```
 
 This SSE shape is only a transport compatibility detail. The backend terminal session state is
-`cancelled`, not `error`.
+`canceled`, not `error`.
 
 ## Failure Boundaries
 
@@ -991,14 +1014,14 @@ this ADR.
 - [x] Do not apply terminal `AgentSession` updates when the checkpoint flush is rejected.
 - [x] Add `GET /orm/api/agents/v1/sessions/{agent_session_id}/runtime_state/`.
 - [x] Ensure the runtime-state endpoint never returns `lease_token`.
-- [ ] Add `AgentSession.status = "cancelled"` if the backend enum does not already support it.
-- [ ] Add cancellation intent fields to the active checkpoint lease row.
-- [ ] Add `POST /orm/api/agents/v1/sessions/{agent_session_id}/runtime_cancel_request/`.
-- [ ] Ensure `runtime_cancel_request/` never directly sets terminal `AgentSession.status`.
-- [ ] Include cancellation intent in successful `runtime_run` lease renew responses.
-- [ ] Include cancellation intent in `runtime_state/`.
-- [ ] Accept checkpoint flush `reason = "stream_cancelled"`.
-- [ ] On accepted `stream_cancelled` terminal flush, set `AgentSession.status = "cancelled"`,
+- [x] Add `AgentSession.status = "canceled"` if the backend enum does not already support it.
+- [x] Add cancellation intent fields to the active checkpoint lease row.
+- [x] Add `POST /orm/api/agents/v1/sessions/{agent_session_id}/runtime_cancel_request/`.
+- [x] Ensure `runtime_cancel_request/` never directly sets terminal `AgentSession.status`.
+- [x] Include cancellation intent in successful `runtime_run` lease renew responses.
+- [x] Include cancellation intent in `runtime_state/`.
+- [x] Finalize user cancellation through the existing shutdown checkpoint flush path.
+- [x] On accepted shutdown terminal flush with `status = "canceled"`, set `AgentSession.status = "canceled"`,
       `ended_at = now()`, and persist the cancellation detail.
 
 ## Astro Tasks
@@ -1020,11 +1043,11 @@ this ADR.
 - [x] Make the Astro cancel endpoint call backend `runtime_cancel_request/` before stopping Pi.
 - [x] Track cancellation state in the active-run registry.
 - [x] Stop Pi on local active-holder cancellation without releasing the checkpoint lease early.
-- [x] Add SIGTERM grace timeout followed by SIGKILL for cancelled Pi children.
+- [x] Add SIGTERM grace timeout followed by SIGKILL for canceled Pi children.
 - [x] Make lease renewal react to backend `cancel_requested = True`.
 - [x] Write local checkpoint marker reason `cancel` for manual cancellation.
-- [x] Update the sidecar to map marker reason `cancel` to flush reason `stream_cancelled`.
-- [x] Send `agent_session_terminal_state.status = "cancelled"` for cancellation flushes.
+- [x] Update the sidecar to finalize cancellation through the backend `shutdown` checkpoint flush.
+- [x] Send `agent_session_terminal_state.status = "canceled"` for cancellation finalization flushes.
 - [x] Return `state = "cancel_requested"` when the cancel request is recorded but the active holder
       is another Astro runtime.
 - [ ] Verify browser close mid-response lets Pi finish and sidecar flush `stream_finish`.
@@ -1032,7 +1055,8 @@ this ADR.
       still running.
 - [ ] Verify reopened history shows the completed assistant response and no browser-disconnect
       error.
-- [ ] Verify manual cancellation stops an active local run, flushes `stream_cancelled`, releases the
+- [ ] Verify manual cancellation stops an active local run, flushes `shutdown` with terminal state
+      `canceled`, releases the
       lease, and unblocks the session for the next user message.
 - [ ] Verify cross-replica cancellation is observed through lease renew and then finalized by the
       active holder.

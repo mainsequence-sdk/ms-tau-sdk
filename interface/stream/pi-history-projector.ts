@@ -22,6 +22,19 @@ type HistoryAnnotation = {
 	hadReasoning: boolean;
 	reasoningTextPersisted: boolean;
 };
+export type PiSessionJsonlRepair =
+	| {
+			kind: "synthetic_tool_call";
+			orphanedEntryId: string;
+			syntheticEntryId: string;
+			toolCallId: string;
+			toolName: string;
+	  }
+	| {
+			kind: "missing_parent_root_rewire";
+			entryId: string;
+			missingParentId: string;
+	  };
 const LATEST_USER_MESSAGE_MARKER = "Latest user message:";
 const ACTIVE_SESSION_CONTEXT_INSTRUCTION =
 	"Use the active session for prior conversation context when the same backend agent session is reused.";
@@ -97,6 +110,282 @@ function isVisibleMessageEntry(entry: SessionEntry): entry is SessionMessageEntr
 	if (entry.type !== "message") return false;
 	const role = (entry.message as { role?: unknown } | undefined)?.role;
 	return role === "user" || role === "assistant";
+}
+
+function extractAssistantToolCallIds(content: unknown): string[] {
+	if (!Array.isArray(content)) return [];
+	const toolCallIds: string[] = [];
+	for (const part of content) {
+		if (!isRecord(part) || part.type !== "toolCall") continue;
+		if (typeof part.id !== "string" || !part.id.trim()) {
+			throw new Error("invalid_pi_session_tool_call_missing_id");
+		}
+		toolCallIds.push(part.id.trim());
+	}
+	return toolCallIds;
+}
+
+function createZeroUsage() {
+	return {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		cost: {
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			total: 0,
+		},
+	};
+}
+
+function deriveSyntheticTimestamps(entry: SessionEntry): { entryTimestamp: string; messageTimestamp: number } {
+	const message = isRecord(entry) && isRecord((entry as { message?: unknown }).message)
+		? ((entry as { message: Record<string, unknown> }).message)
+		: null;
+	const messageTimestamp =
+		typeof message?.timestamp === "number" && Number.isFinite(message.timestamp)
+			? Math.max(0, message.timestamp - 1)
+			: Date.now();
+	const parsedEntryTimestamp =
+		typeof entry.timestamp === "string" && entry.timestamp.trim()
+			? Date.parse(entry.timestamp)
+			: typeof entry.timestamp === "number" && Number.isFinite(entry.timestamp)
+				? (entry.timestamp < 10_000_000_000 ? entry.timestamp * 1000 : entry.timestamp)
+				: Number.NaN;
+	const entryMillis = Number.isFinite(parsedEntryTimestamp)
+		? Math.max(0, parsedEntryTimestamp - 1)
+		: messageTimestamp;
+	return {
+		entryTimestamp: new Date(entryMillis).toISOString(),
+		messageTimestamp,
+	};
+}
+
+function generateSyntheticEntryId(existingIds: Set<string>, orphanedEntryId: string): string {
+	let candidate = `repair_${orphanedEntryId}`;
+	let suffix = 1;
+	while (existingIds.has(candidate)) {
+		candidate = `repair_${orphanedEntryId}_${suffix}`;
+		suffix += 1;
+	}
+	existingIds.add(candidate);
+	return candidate;
+}
+
+function buildSyntheticAssistantToolCallEntry(input: {
+	orphanedEntry: SessionEntry;
+	syntheticEntryId: string;
+	toolCallId: string;
+	toolName: string;
+}): SessionEntry {
+	const timestamps = deriveSyntheticTimestamps(input.orphanedEntry);
+	return {
+		type: "message",
+		id: input.syntheticEntryId,
+		parentId: input.orphanedEntry.parentId ?? null,
+		timestamp: timestamps.entryTimestamp,
+		message: {
+			role: "assistant",
+			content: [
+				{
+					type: "toolCall",
+					id: input.toolCallId,
+					name: input.toolName,
+					arguments: {},
+				},
+			],
+			api: "astro-session-repair",
+			provider: "astro-session-repair",
+			model: "synthetic-tool-call",
+			usage: createZeroUsage(),
+			stopReason: "toolUse",
+			timestamp: timestamps.messageTimestamp,
+		},
+	} as SessionEntry;
+}
+
+function stringifyPiSessionEntries(entries: FileEntry[]): string {
+	if (entries.length === 0) return "";
+	return `${entries.map((entry) => JSON.stringify(entry)).join("\n")}\n`;
+}
+
+function extractMissingParentId(error: unknown): string | null {
+	const raw = error instanceof Error ? error.message : String(error);
+	if (!raw.startsWith("missing_pi_session_parent:")) return null;
+	return raw.slice("missing_pi_session_parent:".length) || null;
+}
+
+function repairCurrentBranchOrphanedToolResults(entries: FileEntry[]): PiSessionJsonlRepair[] {
+	let currentBranch: SessionEntry[];
+	try {
+		currentBranch = getCurrentBranch(entries);
+	} catch (error) {
+		if (!extractMissingParentId(error)) throw error;
+		const parentRepairs = repairCurrentBranchMissingParent(entries);
+		if (parentRepairs.length === 0) throw error;
+		return [...parentRepairs, ...repairCurrentBranchOrphanedToolResults(entries)];
+	}
+	const seenToolCallIds = new Set<string>();
+	const orphanedRepairs = new Map<
+		string,
+		{
+			toolCallId: string;
+			toolName: string;
+			orphanedEntryId: string;
+			syntheticEntryId: string;
+		}
+	>();
+
+	for (const entry of currentBranch) {
+		if (entry.type !== "message") continue;
+		if (!isRecord(entry.message)) continue;
+
+		const role = entry.message.role;
+		if (role === "assistant") {
+			for (const toolCallId of extractAssistantToolCallIds(entry.message.content)) {
+				if (!seenToolCallIds.has(toolCallId)) {
+					seenToolCallIds.add(toolCallId);
+				}
+			}
+			continue;
+		}
+
+		if (role !== "toolResult") continue;
+		const toolCallId =
+			typeof entry.message.toolCallId === "string" && entry.message.toolCallId.trim()
+				? entry.message.toolCallId.trim()
+				: null;
+		if (!toolCallId || seenToolCallIds.has(toolCallId)) continue;
+		orphanedRepairs.set(entry.id, {
+			toolCallId,
+			toolName:
+				typeof entry.message.toolName === "string" && entry.message.toolName.trim()
+					? entry.message.toolName.trim()
+					: "unknown",
+			orphanedEntryId: entry.id,
+			syntheticEntryId: "",
+		});
+		seenToolCallIds.add(toolCallId);
+	}
+
+	if (orphanedRepairs.size === 0) return [];
+
+	const existingIds = new Set(entries.filter(isSessionEntry).map((entry) => entry.id));
+	const repairedEntries: FileEntry[] = [];
+	const appliedRepairs: PiSessionJsonlRepair[] = [];
+
+	for (const fileEntry of entries) {
+		if (!isSessionEntry(fileEntry)) {
+			repairedEntries.push(fileEntry);
+			continue;
+		}
+
+		const repair = orphanedRepairs.get(fileEntry.id);
+		if (!repair) {
+			repairedEntries.push(fileEntry);
+			continue;
+		}
+
+		const syntheticEntryId = generateSyntheticEntryId(existingIds, repair.orphanedEntryId);
+		repair.syntheticEntryId = syntheticEntryId;
+		repairedEntries.push(
+			buildSyntheticAssistantToolCallEntry({
+				orphanedEntry: fileEntry,
+				syntheticEntryId,
+				toolCallId: repair.toolCallId,
+				toolName: repair.toolName,
+			}),
+		);
+		repairedEntries.push({
+			...fileEntry,
+			parentId: syntheticEntryId,
+		} as SessionEntry);
+		appliedRepairs.push({
+			kind: "synthetic_tool_call",
+			orphanedEntryId: repair.orphanedEntryId,
+			syntheticEntryId,
+			toolCallId: repair.toolCallId,
+			toolName: repair.toolName,
+		});
+	}
+
+	entries.splice(0, entries.length, ...repairedEntries);
+	return appliedRepairs;
+}
+
+function repairCurrentBranchMissingParent(entries: FileEntry[]): PiSessionJsonlRepair[] {
+	const sessionEntries = entries.filter(isSessionEntry);
+	if (sessionEntries.length === 0) return [];
+
+	const byId = new Map<string, SessionEntry>();
+	for (const entry of sessionEntries) {
+		if (byId.has(entry.id)) {
+			throw new Error(`duplicate_pi_session_entry_id:${entry.id}`);
+		}
+		byId.set(entry.id, entry);
+	}
+
+	const seen = new Set<string>();
+	let current: SessionEntry | undefined = sessionEntries[sessionEntries.length - 1];
+	while (current) {
+		if (seen.has(current.id)) {
+			throw new Error(`cyclic_pi_session_branch:${current.id}`);
+		}
+		seen.add(current.id);
+		if (!current.parentId) return [];
+		const parentId = current.parentId;
+		const parent = byId.get(parentId);
+		if (parent) {
+			current = parent;
+			continue;
+		}
+		current.parentId = null;
+		return [
+			{
+				kind: "missing_parent_root_rewire",
+				entryId: current.id,
+				missingParentId: parentId,
+			},
+		];
+	}
+
+	return [];
+}
+
+function validateCurrentBranchToolCallConsistency(entries: SessionEntry[]): void {
+	const seenToolCallIds = new Set<string>();
+
+	for (const entry of entries) {
+		if (entry.type !== "message") continue;
+		if (!isRecord(entry.message)) continue;
+
+		const role = entry.message.role;
+		if (role === "assistant") {
+			for (const toolCallId of extractAssistantToolCallIds(entry.message.content)) {
+				if (seenToolCallIds.has(toolCallId)) {
+					throw new Error(`duplicate_pi_session_tool_call_id:${toolCallId}`);
+				}
+				seenToolCallIds.add(toolCallId);
+			}
+			continue;
+		}
+
+		if (role !== "toolResult") continue;
+		const toolCallId =
+			typeof entry.message.toolCallId === "string" && entry.message.toolCallId.trim()
+				? entry.message.toolCallId.trim()
+				: null;
+		if (!toolCallId) {
+			throw new Error(`invalid_pi_session_tool_result_missing_tool_call_id:${entry.id}`);
+		}
+		if (!seenToolCallIds.has(toolCallId)) {
+			throw new Error(`orphaned_pi_session_tool_result:${entry.id}:${toolCallId}`);
+		}
+	}
 }
 
 function isCompactionEntry(entry: SessionEntry): entry is CompactionEntry {
@@ -441,10 +730,12 @@ export function rebuildConversationHistoryFromPiJsonl(input: {
 	session: HistorySessionEnvelope;
 	metadata?: unknown;
 }): ConversationHistorySnapshot {
-	const entries = parsePiJsonl(input.piSessionJsonl);
+	const repaired = repairPiSessionJsonlCurrentBranch(input.piSessionJsonl);
+	const entries = parsePiJsonl(repaired.piSessionJsonl);
 	migrateSessionEntries(entries);
 
 	const currentBranch = getCurrentBranch(entries);
+	validateCurrentBranchToolCallConsistency(currentBranch);
 	const messages = applyHistoryAnnotations(projectMessages(currentBranch), input.metadata, {
 		allowOrdinalFallback: !currentBranch.some(isCompactionEntry),
 	});
@@ -463,5 +754,36 @@ export function rebuildConversationHistoryFromPiJsonl(input: {
 		},
 		messages,
 		inProgressMessage: null,
+	};
+}
+
+export function validatePiSessionJsonlCurrentBranch(piSessionJsonl: string): void {
+	const entries = parsePiJsonl(piSessionJsonl);
+	migrateSessionEntries(entries);
+	validateCurrentBranchToolCallConsistency(getCurrentBranch(entries));
+}
+
+export function repairPiSessionJsonlCurrentBranch(piSessionJsonl: string): {
+	piSessionJsonl: string;
+	repairs: PiSessionJsonlRepair[];
+	changed: boolean;
+} {
+	const entries = parsePiJsonl(piSessionJsonl);
+	migrateSessionEntries(entries);
+	const repairs = [
+		...repairCurrentBranchMissingParent(entries),
+		...repairCurrentBranchOrphanedToolResults(entries),
+	];
+	if (repairs.length === 0) {
+		return {
+			piSessionJsonl,
+			repairs,
+			changed: false,
+		};
+	}
+	return {
+		piSessionJsonl: stringifyPiSessionEntries(entries),
+		repairs,
+		changed: true,
 	};
 }

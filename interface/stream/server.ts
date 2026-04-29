@@ -29,9 +29,12 @@ import {
 	type ConversationHistorySnapshot,
 } from "./conversation-store.js";
 import {
+	repairPiSessionJsonlCurrentBranch,
 	applyReasoningAnnotationsToConversationHistorySnapshot,
 	rebuildConversationHistoryFromPiJsonl,
 	sanitizeConversationHistorySnapshot,
+	validatePiSessionJsonlCurrentBranch,
+	type PiSessionJsonlRepair,
 } from "./pi-history-projector.js";
 import {
 	SessionCheckpointClient,
@@ -508,6 +511,7 @@ type RequestContext = {
 	responseModel: string | null;
 	piAssistantTextSeen: boolean;
 	lastAssistantFinishReason: string | null;
+	lastAssistantErrorMessage: string | null;
 	lastAssistantUsage: { inputTokens?: number; outputTokens?: number } | undefined;
 	checkpointLease: CheckpointLeaseState | null;
 };
@@ -515,7 +519,6 @@ type RequestContext = {
 type ActiveRunCancellation = {
 	requested: true;
 	cancellationId: string | null;
-	requestedByUser: string | null;
 	reason: string;
 	message: string | null;
 };
@@ -2403,6 +2406,100 @@ function materializeCheckpointBundle(ctx: RequestContext, bundle: CheckpointBund
 	}
 }
 
+function logPiSessionRepairs(input: {
+	sessionKey: string;
+	threadId: string;
+	agentSessionId: number | null;
+	phase: string;
+	source: StreamErrorSource;
+	repairs: PiSessionJsonlRepair[];
+}) {
+	if (input.repairs.length === 0) return;
+	logStructuredEvent({
+		severity: "WARNING",
+		component: "astro-stream",
+		event: "pi_session_history_repaired",
+		message: "Astro repaired replayable Pi session history corruption before continuing.",
+		data: {
+			sessionKey: input.sessionKey,
+			threadId: input.threadId,
+			agentSessionId: input.agentSessionId,
+			phase: input.phase,
+			errorSource: input.source,
+			repairCount: input.repairs.length,
+			repairs: input.repairs.map((repair) =>
+				repair.kind === "synthetic_tool_call"
+					? {
+							kind: repair.kind,
+							orphanedEntryId: repair.orphanedEntryId,
+							syntheticEntryId: repair.syntheticEntryId,
+							toolCallId: repair.toolCallId,
+							toolName: repair.toolName,
+					  }
+					: {
+							kind: repair.kind,
+							entryId: repair.entryId,
+							missingParentId: repair.missingParentId,
+					  },
+			),
+		},
+	});
+}
+
+function normalizePiSessionJsonlForRuntime(input: {
+	sessionKey: string;
+	threadId: string;
+	agentSessionId: number | null;
+	phase: string;
+	piSessionJsonl: string;
+	source: StreamErrorSource;
+}):
+	| { ok: true; piSessionJsonl: string; repairs: PiSessionJsonlRepair[]; changed: boolean }
+	| { ok: false; errorEvent: Extract<StreamEvent, { type: "error" }> } {
+	try {
+		const repaired = repairPiSessionJsonlCurrentBranch(input.piSessionJsonl);
+		logPiSessionRepairs({
+			sessionKey: input.sessionKey,
+			threadId: input.threadId,
+			agentSessionId: input.agentSessionId,
+			phase: input.phase,
+			source: input.source,
+			repairs: repaired.repairs,
+		});
+		validatePiSessionJsonlCurrentBranch(repaired.piSessionJsonl);
+		return {
+			ok: true,
+			piSessionJsonl: repaired.piSessionJsonl,
+			repairs: repaired.repairs,
+			changed: repaired.changed,
+		};
+	} catch (error) {
+		const formatted = formatPiSessionValidationFailure(error);
+		logStructuredEvent({
+			severity: "ERROR",
+			component: "astro-stream",
+			event: "pi_session_validation_failed",
+			message: "Astro rejected a corrupt Pi session history branch.",
+			data: {
+				sessionKey: input.sessionKey,
+				threadId: input.threadId,
+				agentSessionId: input.agentSessionId,
+				phase: input.phase,
+				error: formatted.raw,
+				errorDetail: formatted.detail,
+				errorSource: input.source,
+				corruptionKind: formatted.kind,
+				corruptedEntryId: formatted.entryId,
+				corruptedToolCallId: formatted.toolCallId,
+			},
+		});
+		return {
+			ok: false,
+			errorEvent: buildCorruptPiSessionHistoryErrorEvent(error, input.source),
+		};
+	}
+}
+
 function stopCheckpointLeaseRenewal(ctx: RequestContext) {
 	if (ctx.checkpointLease?.renewTimer) {
 		clearInterval(ctx.checkpointLease.renewTimer);
@@ -2477,7 +2574,6 @@ function startCheckpointLeaseRenewal(ctx: RequestContext, client: SessionCheckpo
 				if (result.body.cancel_requested === true) {
 					beginActiveRunCancellation(ctx, {
 						cancellationId: result.body.cancellation?.cancellation_id ?? null,
-						requestedByUser: result.body.cancellation?.requested_by_user ?? null,
 						reason: result.body.cancellation?.reason ?? "user_requested",
 						message: result.body.cancellation?.message ?? null,
 					});
@@ -2795,7 +2891,7 @@ async function hydrateLocalSessionFilesForRead(input: {
 	reason: "session_model" | "session_tools" | "session_config" | "session_diff";
 }): Promise<
 	| { ok: true; metadata: SessionMetadata }
-	| { ok: false; statusCode: number; error: string; message: string }
+	| { ok: false; statusCode: number; error: string; message: string; errorDetail?: string | null }
 > {
 	const agentSessionId = normalizeNumericId(input.sessionKey);
 	if (agentSessionId == null || !shouldRegisterAgents(process.env)) {
@@ -2871,8 +2967,26 @@ async function hydrateLocalSessionFilesForRead(input: {
 		};
 	}
 
+	const normalized = normalizePiSessionJsonlForRuntime({
+		sessionKey: input.sessionKey,
+		threadId: input.requestedThreadId ?? input.sessionKey,
+		agentSessionId: fetched.agentSessionId ?? agentSessionId,
+		phase: `read_hydration:${input.reason}`,
+		piSessionJsonl: bundle.pi_session_jsonl,
+		source: "checkpoint",
+	});
+	if (normalized.ok === false) {
+		return {
+			ok: false,
+			statusCode: 409,
+			error: "corrupt_session_history",
+			message: normalized.errorEvent.error,
+			errorDetail: normalized.errorEvent.error_detail ?? normalized.errorEvent.error,
+		};
+	}
+
 	mkdirSync(sessionDir, { recursive: true });
-	writeFileSync(getSessionPath(input.sessionKey), bundle.pi_session_jsonl);
+	writeFileSync(getSessionPath(input.sessionKey), normalized.piSessionJsonl);
 	const metadata = buildSessionMetadataFromBackendCheckpoint({
 		sessionKey: input.sessionKey,
 		agentSessionId: fetched.agentSessionId ?? agentSessionId,
@@ -2901,7 +3015,7 @@ async function hydrateLocalSessionFilesForRead(input: {
 		});
 		if (sessionEnvelope) {
 			const reconstructed = rebuildConversationHistoryFromPiJsonl({
-				piSessionJsonl: bundle.pi_session_jsonl,
+				piSessionJsonl: normalized.piSessionJsonl,
 				session: sessionEnvelope,
 				metadata: bundle.astro_metadata_json,
 			});
@@ -3170,7 +3284,56 @@ async function prepareCheckpointBeforePiLaunch(
 				errorEvent: buildBackendFailureErrorEvent("Checkpoint restore failed", restoreResult, "checkpoint"),
 			};
 		}
-		materializeCheckpointBundle(ctx, restoreResult.body.bundle);
+		const normalizedRestore = normalizePiSessionJsonlForRuntime({
+			sessionKey: ctx.sessionKey,
+			threadId: ctx.threadId,
+			agentSessionId: ctx.agentSessionId,
+			phase: "prelaunch_restore",
+			piSessionJsonl: restoreResult.body.bundle.pi_session_jsonl,
+			source: "checkpoint",
+		});
+		if (normalizedRestore.ok === false) {
+			const releaseResult = await client.releaseLease({
+				agentSessionId: ctx.agentSessionId,
+				holderId,
+				leaseToken: lease.lease_token,
+				reason: "restore_invalid_history",
+			});
+			ctx.checkpointLease = null;
+			if (releaseResult.ok === false) {
+				writeCheckpointLifecycleState(ctx.sessionKey, {
+					state: "finalizing_checkpoint",
+					lease_holder_id: holderId,
+					lease_token: lease.lease_token,
+					checkpoint_version: lease.checkpoint_version,
+					bundle_hash: lease.bundle_hash,
+					reason: "restore_invalid_history_release_pending",
+				});
+				logStructuredEvent({
+					severity: "WARNING",
+					component: "astro-stream",
+					event: "checkpoint_restore_invalid_history_release_failed",
+					message: "Astro could not release checkpoint lease after rejecting a corrupt restored history bundle.",
+					data: {
+						sessionKey: ctx.sessionKey,
+						threadId: ctx.threadId,
+						agentSessionId: ctx.agentSessionId,
+						holderId,
+						...checkpointFailureDiagnostics(releaseResult),
+					},
+				});
+			} else {
+				clearCheckpointLifecycleState(ctx.sessionKey);
+			}
+			return {
+				ok: false,
+				errorEvent: normalizedRestore.errorEvent,
+			};
+		}
+		materializeCheckpointBundle(ctx, {
+			...restoreResult.body.bundle,
+			pi_session_jsonl: normalizedRestore.piSessionJsonl,
+		});
 		checkpointRestoreCount += 1;
 		logStructuredEvent({
 			severity: "INFO",
@@ -3218,6 +3381,91 @@ async function prepareCheckpointBeforePiLaunch(
 		});
 	}
 
+	let localPiSessionJsonl: string;
+	try {
+		localPiSessionJsonl = readFileSync(getSessionPath(ctx.sessionKey), "utf8");
+	} catch (error) {
+		const releaseResult = await client.releaseLease({
+			agentSessionId: ctx.agentSessionId,
+			holderId,
+			leaseToken: lease.lease_token,
+			reason: "prelaunch_session_read_failed",
+		});
+		ctx.checkpointLease = null;
+		if (releaseResult.ok === false) {
+			writeCheckpointLifecycleState(ctx.sessionKey, {
+				state: "finalizing_checkpoint",
+				lease_holder_id: holderId,
+				lease_token: lease.lease_token,
+				checkpoint_version: lease.checkpoint_version,
+				bundle_hash: lease.bundle_hash,
+				reason: "prelaunch_session_read_failed_release_pending",
+			});
+		} else {
+			clearCheckpointLifecycleState(ctx.sessionKey);
+		}
+		return {
+			ok: false,
+			errorEvent: {
+				type: "error",
+				error: "Astro could not read the active Pi session history before execution.",
+				error_source: "runtime",
+				error_code: "session_history_read_failed",
+				error_detail: error instanceof Error ? error.message : String(error),
+			},
+		};
+	}
+
+	const normalizedLocal = normalizePiSessionJsonlForRuntime({
+		sessionKey: ctx.sessionKey,
+		threadId: ctx.threadId,
+		agentSessionId: ctx.agentSessionId,
+		phase: "prelaunch_local",
+		piSessionJsonl: localPiSessionJsonl,
+		source: "runtime",
+	});
+	if (normalizedLocal.ok === false) {
+		const releaseResult = await client.releaseLease({
+			agentSessionId: ctx.agentSessionId,
+			holderId,
+			leaseToken: lease.lease_token,
+			reason: "prelaunch_invalid_history",
+		});
+		ctx.checkpointLease = null;
+		if (releaseResult.ok === false) {
+			writeCheckpointLifecycleState(ctx.sessionKey, {
+				state: "finalizing_checkpoint",
+				lease_holder_id: holderId,
+				lease_token: lease.lease_token,
+				checkpoint_version: lease.checkpoint_version,
+				bundle_hash: lease.bundle_hash,
+				reason: "prelaunch_invalid_history_release_pending",
+			});
+			logStructuredEvent({
+				severity: "WARNING",
+				component: "astro-stream",
+				event: "checkpoint_prelaunch_invalid_history_release_failed",
+				message: "Astro could not release checkpoint lease after rejecting corrupt local session history.",
+				data: {
+					sessionKey: ctx.sessionKey,
+					threadId: ctx.threadId,
+					agentSessionId: ctx.agentSessionId,
+					holderId,
+					...checkpointFailureDiagnostics(releaseResult),
+				},
+			});
+		} else {
+			clearCheckpointLifecycleState(ctx.sessionKey);
+		}
+		return {
+			ok: false,
+			errorEvent: normalizedLocal.errorEvent,
+		};
+	}
+	if (normalizedLocal.changed) {
+		writeFileSync(getSessionPath(ctx.sessionKey), normalizedLocal.piSessionJsonl);
+	}
+
 	startCheckpointLeaseRenewal(ctx, client, ttlSeconds);
 	return { ok: true };
 }
@@ -3232,9 +3480,9 @@ function buildAgentSessionTerminalState(ctx: RequestContext, reason: "finish" | 
 	}
 	if (reason === "cancel") {
 		return {
-			status: "cancelled",
+			status: "canceled",
 			error_code: "session_cancelled_by_user",
-			error_detail: "Session cancelled by user.",
+			error_detail: "Session canceled by user.",
 		};
 	}
 	return {
@@ -3734,6 +3982,118 @@ function mapUsageSummary(usage: unknown): { inputTokens?: number; outputTokens?:
 	return {
 		...(inputTokens != null ? { inputTokens } : {}),
 		...(outputTokens != null ? { outputTokens } : {}),
+	};
+}
+
+function formatPiSessionValidationFailure(error: unknown): {
+	message: string;
+	detail: string;
+	raw: string;
+	kind: string;
+	entryId: string | null;
+	toolCallId: string | null;
+} {
+	const raw = error instanceof Error ? error.message : String(error);
+
+	if (raw.startsWith("orphaned_pi_session_tool_result:")) {
+		const [, entryId = "unknown", toolCallId = "unknown"] = raw.split(":", 3);
+		return {
+			message: "Corrupt session history blocks execution because a tool result references a missing tool call.",
+			detail: `Tool result entry "${entryId}" references missing tool call "${toolCallId}".`,
+			raw,
+			kind: "orphaned_tool_result",
+			entryId,
+			toolCallId,
+		};
+	}
+
+	if (raw.startsWith("duplicate_pi_session_tool_call_id:")) {
+		const toolCallId = raw.slice("duplicate_pi_session_tool_call_id:".length) || "unknown";
+		return {
+			message: "Corrupt session history blocks execution because the same tool call id appears more than once.",
+			detail: `Duplicate tool call id "${toolCallId}" was found on the active Pi session branch.`,
+			raw,
+			kind: "duplicate_tool_call_id",
+			entryId: null,
+			toolCallId,
+		};
+	}
+
+	if (raw.startsWith("missing_pi_session_parent:")) {
+		const missingParentId = raw.slice("missing_pi_session_parent:".length) || "unknown";
+		return {
+			message: "Corrupt session history blocks execution because the active branch references a missing parent entry.",
+			detail: `The active Pi session branch references missing parent entry "${missingParentId}".`,
+			raw,
+			kind: "missing_parent",
+			entryId: null,
+			toolCallId: missingParentId,
+		};
+	}
+
+	if (raw.startsWith("invalid_pi_session_tool_result_missing_tool_call_id:")) {
+		const entryId = raw.slice("invalid_pi_session_tool_result_missing_tool_call_id:".length) || "unknown";
+		return {
+			message: "Corrupt session history blocks execution because a tool result is missing its tool call id.",
+			detail: `Tool result entry "${entryId}" does not include a valid toolCallId.`,
+			raw,
+			kind: "missing_tool_result_tool_call_id",
+			entryId,
+			toolCallId: null,
+		};
+	}
+
+	if (raw === "invalid_pi_session_tool_call_missing_id") {
+		return {
+			message: "Corrupt session history blocks execution because a tool call is missing its id.",
+			detail: "An assistant tool-call entry on the active Pi session branch does not include a valid id.",
+			raw,
+			kind: "missing_tool_call_id",
+			entryId: null,
+			toolCallId: null,
+		};
+	}
+
+	return {
+		message: "Corrupt session history blocks execution because the active Pi session JSONL is invalid.",
+		detail: raw,
+		raw,
+		kind: "invalid_session_jsonl",
+		entryId: null,
+		toolCallId: null,
+	};
+}
+
+function buildCorruptPiSessionHistoryErrorEvent(
+	error: unknown,
+	source: StreamErrorSource,
+): Extract<StreamEvent, { type: "error" }> {
+	const formatted = formatPiSessionValidationFailure(error);
+	return {
+		type: "error",
+		error: formatted.message,
+		error_source: source,
+		error_code: "corrupt_session_history",
+		error_detail: formatted.detail,
+	};
+}
+
+function extractAssistantErrorMessage(message: unknown): string | null {
+	if (!message || typeof message !== "object") return null;
+	return normalizeLogString((message as { errorMessage?: unknown }).errorMessage);
+}
+
+function buildProviderResponseErrorEvent(errorMessage: string | null): Extract<StreamEvent, { type: "error" }> {
+	return {
+		type: "error",
+		error:
+			errorMessage ??
+			"The model provider returned an error response before Astro could complete the turn.",
+		error_source: "provider",
+		error_code: "provider_response_error",
+		error_detail:
+			errorMessage ??
+			"The assistant stop reason was \"error\", but no provider errorMessage was included.",
 	};
 }
 
@@ -4546,6 +4906,7 @@ function createContinuationContextFromSwitch(
 			responseModel: null,
 			piAssistantTextSeen: false,
 			lastAssistantFinishReason: null,
+			lastAssistantErrorMessage: null,
 			lastAssistantUsage: undefined,
 			checkpointLease: null,
 		};
@@ -4580,11 +4941,11 @@ function clearCancelKillTimer(ctx: RequestContext) {
 function buildCancellationErrorEvent(): Extract<StreamEvent, { type: "error" }> {
 	return {
 		type: "error",
-		error: "Session cancelled by user.",
+		error: "Session canceled by user.",
 		error_source: "runtime",
 		status: 499,
 		error_code: "session_cancelled_by_user",
-		error_detail: "Session cancelled by user.",
+		error_detail: "Session canceled by user.",
 		field_errors: null,
 	};
 }
@@ -4593,7 +4954,6 @@ function beginActiveRunCancellation(
 	ctx: RequestContext,
 	input: {
 		cancellationId?: string | null;
-		requestedByUser?: string | null;
 		reason?: string | null;
 		message?: string | null;
 	},
@@ -4603,7 +4963,6 @@ function beginActiveRunCancellation(
 		ctx.cancellation = {
 			requested: true,
 			cancellationId: input.cancellationId ?? null,
-			requestedByUser: input.requestedByUser ?? null,
 			reason: input.reason ?? "user_requested",
 			message: input.message ?? null,
 		};
@@ -4611,14 +4970,13 @@ function beginActiveRunCancellation(
 		ctx.cancellation = {
 			...ctx.cancellation,
 			cancellationId: ctx.cancellation.cancellationId ?? input.cancellationId ?? null,
-			requestedByUser: ctx.cancellation.requestedByUser ?? input.requestedByUser ?? null,
 			reason: input.reason ?? ctx.cancellation.reason,
 			message: input.message ?? ctx.cancellation.message,
 		};
 	}
 	ctx.terminalError = {
 		errorCode: "session_cancelled_by_user",
-		errorDetail: "Session cancelled by user.",
+		errorDetail: "Session canceled by user.",
 	};
 	updateActiveStreamSession(ctx, {
 		cancelling: true,
@@ -4919,6 +5277,15 @@ function handleAssistantDelta(ctx: RequestContext, evt: any) {
 		case "done": {
 			const finishReason = evt.reason ?? "stop";
 			const mappedUsage = mapUsageSummary(evt.message?.usage ?? evt.partial?.usage) ?? ctx.lastAssistantUsage;
+			const providerErrorMessage = extractAssistantErrorMessage(evt.message ?? evt.partial) ?? ctx.lastAssistantErrorMessage;
+			if (finishReason === "error") {
+				ctx.lastAssistantFinishReason = "error";
+				ctx.lastAssistantErrorMessage = providerErrorMessage;
+				ctx.lastAssistantUsage = mappedUsage;
+				writeChunk(ctx, buildProviderResponseErrorEvent(providerErrorMessage));
+				writeDone(ctx);
+				return;
+			}
 			writeChunk(ctx, { type: "finish", finishReason, usage: mappedUsage });
 			writeDone(ctx);
 			return;
@@ -4942,6 +5309,8 @@ function handleAssistantMessageEnd(ctx: RequestContext, message: unknown) {
 
 	const stopReason = normalizeLogString((message as { stopReason?: unknown }).stopReason);
 	if (stopReason) ctx.lastAssistantFinishReason = stopReason;
+	const errorMessage = extractAssistantErrorMessage(message);
+	if (errorMessage) ctx.lastAssistantErrorMessage = errorMessage;
 
 	const usage = mapUsageSummary((message as { usage?: unknown }).usage);
 	if (usage) ctx.lastAssistantUsage = usage;
@@ -5196,6 +5565,7 @@ async function runPiPrompt(
 		if (parsed?.type === "message_start") {
 			if (parsed.message?.role !== "assistant") return;
 			ctx.piAssistantTextSeen = false;
+			ctx.lastAssistantErrorMessage = null;
 			updateResponseModelFromMessage(ctx, parsed.message);
 			return;
 		}
@@ -5281,7 +5651,7 @@ async function runPiPrompt(
 			cleanupPromptFile(promptPath);
 			const failed = Boolean(signal || (typeof code === "number" && code !== 0));
 			const terminalReason = ctx.cancellation?.requested
-				? "stream_cancelled"
+				? "shutdown"
 				: failed
 					? "stream_error"
 					: "stream_finish";
@@ -5315,6 +5685,12 @@ async function runPiPrompt(
 				return;
 			}
 
+			if (ctx.lastAssistantFinishReason === "error") {
+				writeChunk(ctx, buildProviderResponseErrorEvent(ctx.lastAssistantErrorMessage));
+				writeDone(ctx);
+				return;
+			}
+
 			writeChunk(ctx, {
 				type: "finish",
 				finishReason: ctx.lastAssistantFinishReason ?? "stop",
@@ -5327,7 +5703,7 @@ async function runPiPrompt(
 	child.on("error", (error) => {
 		ctx.piProcess = null;
 		clearCancelKillTimer(ctx);
-		void finalizeProviderCredentials(ctx.cancellation?.requested ? "stream_cancelled" : "stream_error");
+		void finalizeProviderCredentials(ctx.cancellation?.requested ? "shutdown" : "stream_error");
 		cleanupPromptFile(promptPath);
 		recordRuntimeHealthIssue({
 			source: "pi_child_error",
@@ -5676,13 +6052,14 @@ async function handleStreamRequest(
 				requestedThreadId: url.searchParams.get("thread_id") ?? url.searchParams.get("threadId"),
 				reason: "session_model",
 			});
-			if (hydration.ok === false) {
-				json(res, hydration.statusCode, {
-					error: hydration.error,
-					message: hydration.message,
-				});
-				return;
-			}
+				if (hydration.ok === false) {
+					json(res, hydration.statusCode, {
+						error: hydration.error,
+						message: hydration.message,
+						...(hydration.errorDetail ? { error_detail: hydration.errorDetail } : {}),
+					});
+					return;
+				}
 			metadata = hydration.metadata;
 		}
 
@@ -5723,13 +6100,14 @@ async function handleStreamRequest(
 				requestedThreadId,
 				reason: "session_config",
 			});
-			if (hydration.ok === false) {
-				json(res, hydration.statusCode, {
-					error: hydration.error,
-					message: hydration.message,
-				});
-				return;
-			}
+				if (hydration.ok === false) {
+					json(res, hydration.statusCode, {
+						error: hydration.error,
+						message: hydration.message,
+						...(hydration.errorDetail ? { error_detail: hydration.errorDetail } : {}),
+					});
+					return;
+				}
 			metadata = hydration.metadata;
 		}
 
@@ -5786,12 +6164,6 @@ async function handleStreamRequest(
 			});
 			return;
 		}
-		const requestedByUser = resolveUserIdFromRequest(req, url, body);
-		if (!requestedByUser) {
-			badRequest(res, "Missing or invalid userId.");
-			return;
-		}
-
 		const activeCtx = getActiveStreamContext(sessionKey, agentSessionId);
 		const requestedByHolderId = activeCtx?.checkpointLease?.holderId ?? resolveCheckpointHolderId();
 		const cancelMessage =
@@ -5802,7 +6174,6 @@ async function handleStreamRequest(
 		});
 		const cancelResult = await client.requestRuntimeCancel({
 			agentSessionId,
-			requestedByUser,
 			requestedByHolderId,
 			reason: "user_requested",
 			message: cancelMessage,
@@ -5837,7 +6208,6 @@ async function handleStreamRequest(
 		if (activeCtx && cancelResult.body.cancel_state === "requested") {
 			beginActiveRunCancellation(activeCtx, {
 				cancellationId: cancelResult.body.cancellation_id,
-				requestedByUser,
 				reason: "user_requested",
 				message: cancelMessage,
 			});
@@ -5847,9 +6217,7 @@ async function handleStreamRequest(
 			? "cancelling"
 			: cancelResult.body.cancel_state === "requested"
 				? "cancel_requested"
-				: cancelResult.body.status === "cancelled"
-					? "cancelled"
-					: "not_running";
+				: "not_running";
 
 		json(res, 200, {
 			ok: true,
@@ -5863,9 +6231,7 @@ async function handleStreamRequest(
 					? "Cancellation requested and the active local runtime is stopping."
 					: state === "cancel_requested"
 						? "Cancellation requested. The active runtime holder will stop the session."
-						: state === "cancelled"
-							? "Session is already cancelled."
-							: "Session is not currently running.",
+						: "Session is not currently running.",
 		});
 		return;
 	}
@@ -6074,9 +6440,29 @@ async function handleStreamRequest(
 					return;
 				}
 
+				const normalized = normalizePiSessionJsonlForRuntime({
+					sessionKey,
+					threadId: sessionEnvelope.threadId,
+					agentSessionId: fetched.agentSessionId ?? backendAgentSessionId,
+					phase: "history_checkpoint_rebuild",
+					piSessionJsonl,
+					source: "checkpoint",
+				});
+				if (normalized.ok === false) {
+					json(res, 409, {
+						error: normalized.errorEvent.error_code ?? "corrupt_session_history",
+						error_source: normalized.errorEvent.error_source ?? "checkpoint",
+						message: normalized.errorEvent.error,
+						error_detail: normalized.errorEvent.error_detail ?? normalized.errorEvent.error,
+						checkpoint_version: latestCheckpoint.body.checkpoint_version,
+						bundle_hash: latestCheckpoint.body.bundle_hash,
+					});
+					return;
+				}
+
 				try {
 					const reconstructed = rebuildConversationHistoryFromPiJsonl({
-						piSessionJsonl,
+						piSessionJsonl: normalized.piSessionJsonl,
 						session: sessionEnvelope,
 						metadata: latestCheckpoint.body.bundle.astro_metadata_json,
 					});
@@ -6098,23 +6484,31 @@ async function handleStreamRequest(
 					json(res, 200, reconstructed);
 					return;
 				} catch (error) {
+					const formatted = formatPiSessionValidationFailure(error);
 					logStructuredEvent({
 						severity: "ERROR",
 						component: "astro-stream",
-						event: "chat_history_checkpoint_projection_failed",
-						message: "Astro could not project backend Pi JSONL into frontend chat history.",
+						event: "chat_history_checkpoint_invalid_session_history",
+						message: "Astro rejected corrupt backend checkpoint history while rebuilding chat history.",
 						data: {
 							sessionId: sessionKey,
 							agentSessionId: fetched.agentSessionId ?? backendAgentSessionId,
 							checkpointVersion: latestCheckpoint.body.checkpoint_version,
 							bundleHash: latestCheckpoint.body.bundle_hash,
-							error: error instanceof Error ? error.message : String(error),
+							error: formatted.raw,
+							errorDetail: formatted.detail,
+							corruptionKind: formatted.kind,
+							corruptedEntryId: formatted.entryId,
+							corruptedToolCallId: formatted.toolCallId,
 						},
 					});
-					json(res, 502, {
-						error: "backend_session_history_reconstruction_failed",
-						message: "Backend checkpoint Pi session JSONL could not be projected into chat history.",
-						projection_error: error instanceof Error ? error.message : String(error),
+					json(res, 409, {
+						error: "corrupt_session_history",
+						error_source: "checkpoint",
+						message: formatted.message,
+						error_detail: formatted.detail,
+						checkpoint_version: latestCheckpoint.body.checkpoint_version,
+						bundle_hash: latestCheckpoint.body.bundle_hash,
 					});
 					return;
 				}
@@ -6238,13 +6632,14 @@ async function handleStreamRequest(
 				requestedThreadId: url.searchParams.get("thread_id") ?? url.searchParams.get("threadId"),
 				reason: "session_diff",
 			});
-			if (hydration.ok === false) {
-				json(res, hydration.statusCode, {
-					error: hydration.error,
-					message: hydration.message,
-				});
-				return;
-			}
+				if (hydration.ok === false) {
+					json(res, hydration.statusCode, {
+						error: hydration.error,
+						message: hydration.message,
+						...(hydration.errorDetail ? { error_detail: hydration.errorDetail } : {}),
+					});
+					return;
+				}
 			metadata = hydration.metadata;
 		}
 
@@ -6461,13 +6856,14 @@ async function handleStreamRequest(
 						agentSessionId: hydratedBackendSession.metadata.agentSessionId,
 					},
 				});
-			} else {
-				json(res, checkpointHydration.statusCode, {
-					error: checkpointHydration.error,
-					message: checkpointHydration.message,
-				});
-				return;
-			}
+				} else {
+					json(res, checkpointHydration.statusCode, {
+						error: checkpointHydration.error,
+						message: checkpointHydration.message,
+						...(checkpointHydration.errorDetail ? { error_detail: checkpointHydration.errorDetail } : {}),
+					});
+					return;
+				}
 		} else {
 			logStructuredEvent({
 				component: "astro-stream",
@@ -6932,6 +7328,7 @@ async function handleStreamRequest(
 		responseModel: null,
 		piAssistantTextSeen: false,
 		lastAssistantFinishReason: null,
+		lastAssistantErrorMessage: null,
 		lastAssistantUsage: undefined,
 		checkpointLease: null,
 	};
