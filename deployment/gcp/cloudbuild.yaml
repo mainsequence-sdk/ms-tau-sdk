@@ -1,4 +1,12 @@
 steps:
+  # Upload the Dockerfile (OVerwrite the object on each build)
+  - id: "upload-fixed-repo-dockerfile"
+    name: "gcr.io/cloud-builders/gsutil"
+    args:
+      - "cp"
+      - "Dockerfile.remote-worker"
+      - "gs://${PROJECT_ID}/pod-dockerfiles/astro-remote-worker/Dockerfile"
+
   - id: "build-image-and-detect-mainsequence-version"
     name: "gcr.io/cloud-builders/docker"
     entrypoint: "bash"

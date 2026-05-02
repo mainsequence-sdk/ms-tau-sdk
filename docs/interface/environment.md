@@ -18,6 +18,11 @@
 - `ASTRO_CONTAINER_DATA_DIR` (container-local rebuildable runtime root; in containers use `/home/appuser/.astro-container-data`)
 - `ASTRO_ORCHESTRATOR_CWD` (optional writable cwd override for `astro-orchestrator`; defaults to `<ASTRO_CONTAINER_DATA_DIR>/astro-orchestrator-runtime`)
 - `ASTRO_ORCHESTRATOR_PROJECT_PI_DIR` (optional writable project `.pi` override for `astro-orchestrator`; defaults to `<ASTRO_CONTAINER_DATA_DIR>/.pi/project`)
+- `ASTRO_EXECUTION_MODE` (optional runtime mode; set `remote_project_worker` for image-backed project executor pods)
+- `ASTRO_FIXED_AGENT_NAME` (optional fixed agent name for pinned runtimes, for example `mainsequence-project-executor`)
+- `ASTRO_FIXED_PROJECT_ID` (optional fixed project id for pinned project-worker runtimes)
+- `ASTRO_FIXED_PROJECT_CWD` (optional fixed project cwd for pinned project-worker runtimes)
+- `ASTRO_PROJECT_IMAGE_REF` (optional image reference or digest recorded into project-session metadata for image-backed workers)
 - `BUILD_AGENTS_IN_BACKEND` (enable backend agent registration)
 - `OLLAMA_HOST` (optional Ollama host used by `GET /api/chat/get_available_models`, for example `http://localhost:11434`)
 

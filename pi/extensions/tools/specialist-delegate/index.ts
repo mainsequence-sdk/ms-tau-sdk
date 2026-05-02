@@ -73,19 +73,24 @@ function validateCoderTarget(options: {
 	cwd?: string;
 	projectId?: string;
 }): string | null {
-	if (options.agentName !== "mainsequence-project-coder") return null;
+	if (
+		options.agentName !== "mainsequence-project-coder" &&
+		options.agentName !== "mainsequence-project-executor"
+	) {
+		return null;
+	}
 
 	if (!options.projectId?.trim()) {
-		return "mainsequence-project-coder requires `projectId`. Do not delegate coding work without the selected Main Sequence project id.";
+		return `${options.agentName} requires \`projectId\`. Do not delegate coding work without the selected Main Sequence project id.`;
 	}
 
 	if (!options.cwd?.trim()) {
-		return "mainsequence-project-coder requires `cwd`. Do not delegate coding work without the checked-out target project path.";
+		return `${options.agentName} requires \`cwd\`. Do not delegate coding work without the checked-out target project path.`;
 	}
 
 	const resolvedCwd = path.resolve(options.cwd);
 	if (!isDirectory(resolvedCwd)) {
-		return `mainsequence-project-coder requires a valid checked-out project directory. Invalid cwd: ${resolvedCwd}`;
+		return `${options.agentName} requires a valid checked-out project directory. Invalid cwd: ${resolvedCwd}`;
 	}
 
 	return null;
@@ -129,11 +134,11 @@ export default function (pi: ExtensionAPI) {
 		name: "delegate_specialist",
 		label: "Delegate Specialist",
 		description:
-			"Delegate coding work to Astro's repo-local specialists with isolated child pi processes. Use mainsequence-project-coder as the coding subagent in a checked-out project folder. Supports single-step and sequential chain execution.",
+			"Delegate coding work to Astro's repo-local specialists with isolated child pi processes. Use mainsequence-project-coder or mainsequence-project-executor with a checked-out project folder and project id. Supports single-step and sequential chain execution.",
 		promptSnippet:
 			"delegate_specialist: delegate coding work to a project-local specialist in .pi/agents",
 		promptGuidelines: [
-			"Use mainsequence-project-coder only with both cwd and projectId set to the checked-out Main Sequence project.",
+			"Use mainsequence-project-coder or mainsequence-project-executor only with both cwd and projectId set to the checked-out Main Sequence project.",
 			"Prefer project-local specialists for this repo unless there is a clear reason to use user-level specialists.",
 		],
 		parameters: DelegateParams,

@@ -105,20 +105,20 @@ async function main() {
 		fail(`Unknown specialist "${agentName}". Available project specialists: ${known}`);
 	}
 
-	if (agentName === "mainsequence-project-coder") {
+	if (agentName === "mainsequence-project-coder" || agentName === "mainsequence-project-executor") {
 		if (!cwd) {
-			fail("mainsequence-project-coder requires --cwd pointing to the checked-out target project.");
+			fail(`${agentName} requires --cwd pointing to the checked-out target project.`);
 		}
 		if (!projectId) {
-			fail("mainsequence-project-coder requires --project-id.");
+			fail(`${agentName} requires --project-id.`);
 		}
 		const resolvedCwd = path.resolve(cwd);
 		try {
 			if (!fs.statSync(resolvedCwd).isDirectory()) {
-				fail("mainsequence-project-coder requires --cwd pointing to an existing checked-out target project directory.");
+				fail(`${agentName} requires --cwd pointing to an existing checked-out target project directory.`);
 			}
 		} catch {
-			fail("mainsequence-project-coder requires --cwd pointing to an existing checked-out target project directory.");
+			fail(`${agentName} requires --cwd pointing to an existing checked-out target project directory.`);
 		}
 	}
 

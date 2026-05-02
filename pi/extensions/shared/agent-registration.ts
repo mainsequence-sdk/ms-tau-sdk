@@ -329,7 +329,8 @@ export async function registerMainsequenceAgent(
 		};
 	}
 
-	const isProjectCoder = agentName === "mainsequence-project-coder";
+	const isProjectCoder =
+		agentName === "mainsequence-project-coder" || agentName === "mainsequence-project-executor";
 	const resolvedProjectId = normalizeIdPart(projectId ?? runtimeEnv.ASTRO_TARGET_PROJECT_ID);
 	if (isProjectCoder && !resolvedProjectId) {
 		log?.(`Agent registration failed for "${safeAgentName}": missing project id.`);

@@ -109,7 +109,16 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..", "..");
-const ALLOWED_AGENTS = new Set(["astro-orchestrator", "mainsequence-project-coder"]);
+const ASTRO_EXECUTION_MODE_ENV = "ASTRO_EXECUTION_MODE";
+const ASTRO_FIXED_AGENT_NAME_ENV = "ASTRO_FIXED_AGENT_NAME";
+const ASTRO_FIXED_PROJECT_ID_ENV = "ASTRO_FIXED_PROJECT_ID";
+const ASTRO_FIXED_PROJECT_CWD_ENV = "ASTRO_FIXED_PROJECT_CWD";
+const ASTRO_PROJECT_IMAGE_REF_ENV = "ASTRO_PROJECT_IMAGE_REF";
+const PROJECT_SESSION_AGENT_NAMES = new Set([
+	"mainsequence-project-coder",
+	"mainsequence-project-executor",
+]);
+const ALLOWED_AGENTS = new Set(["astro-orchestrator", ...PROJECT_SESSION_AGENT_NAMES]);
 const PI_BUILT_IN_TOOL_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
 
 loadEnvFile(repoRoot);
@@ -617,6 +626,7 @@ type SessionMetadata = {
 	projectId: string | null;
 	cwd: string | null;
 	repoRoot: string | null;
+	projectImageRef?: string | null;
 	pendingOnboarding: boolean;
 	pendingRuntimeBootstrap: boolean;
 	switchSummary: string | null;
@@ -985,6 +995,10 @@ function resolveBackendLlmModel(sessionModelBinding: SessionModelBinding | null)
 async function ensureRequestCliAuth(
 	res: import("node:http").ServerResponse,
 ): Promise<{ ok: true } | { ok: false }> {
+	if (isRemoteProjectWorkerMode()) {
+		return { ok: true };
+	}
+
 	try {
 		await ensureMainsequenceCliAuthReady();
 		return { ok: true };
@@ -1040,6 +1054,26 @@ function normalizeAgentName(value: unknown): string | null {
 	if (typeof value !== "string") return null;
 	const trimmed = value.trim();
 	return trimmed ? trimmed : null;
+}
+
+function isProjectSessionAgentName(agentName: string | null | undefined): boolean {
+	return typeof agentName === "string" && PROJECT_SESSION_AGENT_NAMES.has(agentName);
+}
+
+function isImageBackedProjectExecutor(agentName: string | null | undefined): boolean {
+	return agentName === "mainsequence-project-executor";
+}
+
+function shouldBootstrapProjectRuntimeForAgent(agentName: string | null | undefined): boolean {
+	return isProjectSessionAgentName(agentName) && !isImageBackedProjectExecutor(agentName);
+}
+
+function isRemoteProjectWorkerMode(env: NodeJS.ProcessEnv = process.env): boolean {
+	return env[ASTRO_EXECUTION_MODE_ENV]?.trim() === "remote_project_worker";
+}
+
+function resolveFixedAgentName(env: NodeJS.ProcessEnv = process.env): string | null {
+	return normalizeAgentName(env[ASTRO_FIXED_AGENT_NAME_ENV]);
 }
 
 function normalizeRuntimeSessionId(value: unknown): string | null {
@@ -1159,10 +1193,28 @@ function normalizeProjectId(value: unknown): string | null {
 	return null;
 }
 
+function normalizeProjectImageRef(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const trimmed = value.trim();
+	return trimmed ? trimmed : null;
+}
+
 function normalizeProjectCwd(value: unknown): string | null {
 	if (typeof value !== "string") return null;
 	const trimmed = value.trim();
 	return trimmed ? path.resolve(trimmed) : null;
+}
+
+function resolveFixedProjectId(env: NodeJS.ProcessEnv = process.env): string | null {
+	return normalizeProjectId(env[ASTRO_FIXED_PROJECT_ID_ENV]);
+}
+
+function resolveFixedProjectCwd(env: NodeJS.ProcessEnv = process.env): string | null {
+	return normalizeProjectCwd(env[ASTRO_FIXED_PROJECT_CWD_ENV]);
+}
+
+function resolveConfiguredProjectImageRef(env: NodeJS.ProcessEnv = process.env): string | null {
+	return normalizeProjectImageRef(env[ASTRO_PROJECT_IMAGE_REF_ENV]);
 }
 
 function normalizeRepoRoot(value: unknown): string | null {
@@ -1928,6 +1980,7 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 		const rawProjectId = (parsed as { projectId?: unknown }).projectId;
 		const rawCwd = (parsed as { cwd?: unknown }).cwd;
 		const rawRepoRoot = (parsed as { repoRoot?: unknown }).repoRoot;
+		const rawProjectImageRef = (parsed as { projectImageRef?: unknown }).projectImageRef;
 		const rawPendingOnboarding = (parsed as { pendingOnboarding?: unknown }).pendingOnboarding;
 		const rawPendingRuntimeBootstrap = (parsed as { pendingRuntimeBootstrap?: unknown }).pendingRuntimeBootstrap;
 		const rawSwitchSummary = (parsed as { switchSummary?: unknown }).switchSummary;
@@ -1960,6 +2013,7 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 		const normalizedProjectId = normalizeProjectId(rawProjectId);
 		const normalizedCwd = normalizeProjectCwd(rawCwd);
 		const normalizedRepoRoot = normalizeRepoRoot(rawRepoRoot);
+		const normalizedProjectImageRef = normalizeProjectImageRef(rawProjectImageRef);
 		const normalizedPendingOnboarding = rawPendingOnboarding === true;
 		const normalizedPendingRuntimeBootstrap = rawPendingRuntimeBootstrap === true;
 		const normalizedSwitchSummary =
@@ -1983,6 +2037,7 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 			projectId: normalizedProjectId,
 			cwd: normalizedCwd,
 			repoRoot: normalizedRepoRoot,
+			projectImageRef: normalizedProjectImageRef,
 			pendingOnboarding: normalizedPendingOnboarding,
 			pendingRuntimeBootstrap: normalizedPendingRuntimeBootstrap,
 			switchSummary: normalizedSwitchSummary,
@@ -2868,6 +2923,9 @@ function buildSessionMetadataFromBackendCheckpoint(input: {
 		projectId: normalizeProjectId(bundleMetadata.projectId ?? sessionMetadata?.project_id),
 		cwd: normalizeProjectCwd(bundleMetadata.cwd ?? sessionMetadata?.project_cwd),
 		repoRoot: normalizeRepoRoot(bundleMetadata.repoRoot ?? sessionMetadata?.project_repo_root),
+		projectImageRef: normalizeProjectImageRef(
+			bundleMetadata.projectImageRef ?? bundleMetadata.project_image_ref ?? sessionMetadata?.project_image_ref,
+		),
 		pendingOnboarding: bundleMetadata.pendingOnboarding === true || sessionMetadata?.pending_onboarding === true,
 		pendingRuntimeBootstrap:
 			bundleMetadata.pendingRuntimeBootstrap === true || sessionMetadata?.pending_runtime_bootstrap === true,
@@ -3591,7 +3649,7 @@ function buildSessionToolUrl(pathname: string, sessionKey: string): string {
 function buildAvailableSessionTools(sessionKey: string, metadata: SessionMetadata): SessionAvailableTools {
 	const tools: SessionAvailableTools = {};
 
-	if (metadata.agentName === "mainsequence-project-coder") {
+	if (isProjectSessionAgentName(metadata.agentName)) {
 		const resolvedRepoRoot = resolveSessionRepoRoot(sessionKey, metadata);
 		if (resolvedRepoRoot && isExistingDirectory(resolvedRepoRoot)) {
 			tools.repo_diff = {
@@ -3723,6 +3781,7 @@ async function createBackendRuntimeSession(options: {
 	threadId: string;
 	projectId: string | null;
 	cwd: string | null;
+	projectImageRef?: string | null;
 	sessionMetadata?: Record<string, unknown>;
 	pendingOnboarding?: boolean;
 	pendingRuntimeBootstrap?: boolean;
@@ -3765,27 +3824,28 @@ async function createBackendRuntimeSession(options: {
 
 	const startedAt = new Date().toISOString();
 	const frozenRepoRoot =
-		options.agentName === "mainsequence-project-coder" && options.cwd
+		isProjectSessionAgentName(options.agentName) && options.cwd
 			? resolveGitRepoRoot(options.cwd)
 			: null;
 	const runtimeConfig = buildRuntimeConfigSnapshot(options.sessionModelBinding ?? null);
 
-		const payload: Record<string, unknown> = {
-			status: "running",
-			created_by_user: options.userId,
-			thread_id: options.threadId,
+	const payload: Record<string, unknown> = {
+		status: "running",
+		created_by_user: options.userId,
+		thread_id: options.threadId,
+		workflow_key: options.agentName,
+		llm_provider: resolveBackendLlmProvider(options.sessionModelBinding ?? null),
+		llm_model: resolveBackendLlmModel(options.sessionModelBinding ?? null),
+		engine_name: "astro",
+		runtime_config_snapshot: runtimeConfig,
+		session_metadata: {
+			source: "frontend",
 			workflow_key: options.agentName,
-			llm_provider: resolveBackendLlmProvider(options.sessionModelBinding ?? null),
-			llm_model: resolveBackendLlmModel(options.sessionModelBinding ?? null),
-			engine_name: "astro",
-			runtime_config_snapshot: runtimeConfig,
-			session_metadata: {
-				source: "frontend",
-				workflow_key: options.agentName,
-				created_by_user: options.userId,
+			created_by_user: options.userId,
 			...(options.projectId ? { project_id: options.projectId } : {}),
 			...(options.cwd ? { project_cwd: options.cwd } : {}),
 			...(frozenRepoRoot ? { project_repo_root: frozenRepoRoot } : {}),
+			...(options.projectImageRef ? { project_image_ref: options.projectImageRef } : {}),
 			...(options.projectRuntime ? { project_runtime_snapshot: options.projectRuntime } : {}),
 			pending_onboarding: options.pendingOnboarding === true,
 			pending_runtime_bootstrap: options.pendingRuntimeBootstrap === true,
@@ -3835,6 +3895,7 @@ async function createBackendRuntimeSession(options: {
 		projectId: options.projectId,
 		cwd: options.cwd,
 		repoRoot: frozenRepoRoot,
+		projectImageRef: options.projectImageRef ?? null,
 		pendingOnboarding: options.pendingOnboarding === true,
 		pendingRuntimeBootstrap: options.pendingRuntimeBootstrap === true,
 		switchSummary: options.switchSummary ?? null,
@@ -4585,6 +4646,7 @@ const ASTRO_SESSION_METADATA_RESERVED_KEYS = new Set([
 	"project_id",
 	"project_cwd",
 	"project_repo_root",
+	"project_image_ref",
 	"project_runtime_snapshot",
 	"pending_onboarding",
 	"pending_runtime_bootstrap",
@@ -4786,6 +4848,7 @@ function runPendingProjectRuntimeBootstrap(
 	options: {
 		cwd: string;
 		repoRoot: string | null;
+		projectImageRef?: string | null;
 		sessionKey: string;
 		agentId: number;
 		agentUniqueId: string;
@@ -4827,6 +4890,7 @@ function runPendingProjectRuntimeBootstrap(
 			projectId: options.projectId,
 			cwd: options.cwd,
 			repoRoot: options.repoRoot,
+			projectImageRef: options.projectImageRef ?? null,
 			pendingOnboarding: options.pendingOnboarding,
 			pendingRuntimeBootstrap: false,
 			switchSummary: options.switchSummary,
@@ -6643,10 +6707,10 @@ async function handleStreamRequest(
 			metadata = hydration.metadata;
 		}
 
-		if (metadata.agentName !== "mainsequence-project-coder") {
+		if (!isProjectSessionAgentName(metadata.agentName)) {
 			json(res, 409, {
 				error: "diff_not_available",
-				message: "Repo diff snapshots are only available for mainsequence-project-coder sessions.",
+				message: "Repo diff snapshots are only available for project-scoped coding sessions.",
 			});
 			return;
 		}
@@ -6752,7 +6816,16 @@ async function handleStreamRequest(
 		return;
 	}
 
-	const requestedAgentName = normalizeAgentName(body.agentName);
+	const fixedAgentName = resolveFixedAgentName();
+	const rawRequestedAgentName = normalizeAgentName(body.agentName);
+	if (fixedAgentName && rawRequestedAgentName && rawRequestedAgentName !== fixedAgentName) {
+		json(res, 409, {
+			error: "fixed_agent_mismatch",
+			message: `This runtime is pinned to agent "${fixedAgentName}".`,
+		});
+		return;
+	}
+	const requestedAgentName = rawRequestedAgentName ?? fixedAgentName;
 	if (!requestedAgentName) {
 		badRequest(res, "Missing agentName.");
 		return;
@@ -6763,11 +6836,11 @@ async function handleStreamRequest(
 	}
 	let agentName = requestedAgentName;
 
-		const userId = resolveUserId(body.userId);
-		if (!userId) {
-			badRequest(res, "Missing or invalid userId.");
-			return;
-		}
+	const userId = resolveUserId(body.userId);
+	if (!userId) {
+		badRequest(res, "Missing or invalid userId.");
+		return;
+	}
 	let newChat = body.newChat === true;
 	if (body.newChat !== undefined && typeof body.newChat !== "boolean") {
 		badRequest(res, "`newChat` must be a boolean.");
@@ -6944,14 +7017,33 @@ async function handleStreamRequest(
 		}
 	}
 
+	const fixedProjectId = resolveFixedProjectId();
+	const fixedProjectCwd = resolveFixedProjectCwd();
 	const requestedProjectId = normalizeProjectId(body.projectId);
 	const requestedCwd = normalizeProjectCwd(body.cwd);
+	if (fixedProjectId && requestedProjectId && requestedProjectId !== fixedProjectId) {
+		json(res, 409, {
+			error: "fixed_project_mismatch",
+			message: `This runtime is pinned to projectId "${fixedProjectId}".`,
+		});
+		return;
+	}
+	if (fixedProjectCwd && requestedCwd && requestedCwd !== fixedProjectCwd) {
+		json(res, 409, {
+			error: "fixed_project_cwd_mismatch",
+			message: `This runtime is pinned to cwd "${fixedProjectCwd}".`,
+		});
+		return;
+	}
+	const effectiveRequestedProjectId = requestedProjectId ?? fixedProjectId;
+	const effectiveRequestedCwd = requestedCwd ?? fixedProjectCwd;
+	const configuredProjectImageRef = resolveConfiguredProjectImageRef();
 	if (
 		!newChat &&
-		agentName === "mainsequence-project-coder" &&
+		isProjectSessionAgentName(agentName) &&
 		existingSessionMetadata?.projectId &&
-		requestedProjectId &&
-		requestedProjectId !== existingSessionMetadata.projectId
+		effectiveRequestedProjectId &&
+		effectiveRequestedProjectId !== existingSessionMetadata.projectId
 	) {
 		json(res, 409, {
 			error: "session_mismatch",
@@ -6961,10 +7053,10 @@ async function handleStreamRequest(
 	}
 	if (
 		!newChat &&
-		agentName === "mainsequence-project-coder" &&
+		isProjectSessionAgentName(agentName) &&
 		existingSessionMetadata?.cwd &&
-		requestedCwd &&
-		requestedCwd !== existingSessionMetadata.cwd
+		effectiveRequestedCwd &&
+		effectiveRequestedCwd !== existingSessionMetadata.cwd
 	) {
 		json(res, 409, {
 			error: "session_mismatch",
@@ -6974,40 +7066,44 @@ async function handleStreamRequest(
 	}
 
 	const projectId =
-		agentName === "mainsequence-project-coder"
-			? requestedProjectId ?? existingSessionMetadata?.projectId ?? null
+		isProjectSessionAgentName(agentName)
+			? effectiveRequestedProjectId ?? existingSessionMetadata?.projectId ?? null
 			: null;
 	const agentCwd =
-		agentName === "mainsequence-project-coder"
-			? requestedCwd ?? existingSessionMetadata?.cwd ?? null
+		isProjectSessionAgentName(agentName)
+			? effectiveRequestedCwd ?? existingSessionMetadata?.cwd ?? null
 			: resolveOrchestratorRuntimeCwd();
-	const agentConfig = agentName === "mainsequence-project-coder" ? loadSpecialistAgent(agentName) : null;
-	if (agentName === "mainsequence-project-coder") {
+	const agentConfig = isProjectSessionAgentName(agentName) ? loadSpecialistAgent(agentName) : null;
+	const projectImageRef =
+		isProjectSessionAgentName(agentName)
+			? configuredProjectImageRef ?? existingSessionMetadata?.projectImageRef ?? null
+			: null;
+	if (isProjectSessionAgentName(agentName)) {
 		if (!projectId) {
 			json(res, newChat ? 400 : 409, {
 				error: "missing_project_id",
-				message: "mainsequence-project-coder requires projectId.",
+				message: `${agentName} requires projectId.`,
 			});
 			return;
 		}
 		if (!agentCwd) {
 			json(res, newChat ? 400 : 409, {
 				error: "missing_cwd",
-				message: "mainsequence-project-coder requires cwd.",
+				message: `${agentName} requires cwd.`,
 			});
 			return;
 		}
 		if (!isExistingDirectory(agentCwd)) {
 			json(res, newChat ? 400 : 409, {
 				error: "invalid_cwd",
-				message: "mainsequence-project-coder requires cwd to be an existing project directory.",
+				message: `${agentName} requires cwd to be an existing project directory.`,
 			});
 			return;
 		}
 		if (!agentConfig) {
 			json(res, 500, {
 				error: "agent_prompt_not_found",
-				message: "Could not load the mainsequence-project-coder specialist prompt.",
+				message: `Could not load the ${agentName} specialist prompt.`,
 			});
 			return;
 		}
@@ -7018,7 +7114,7 @@ async function handleStreamRequest(
 	const shouldRunPendingOnboarding =
 		agentName === "mainsequence-project-coder" && existingSessionMetadata?.pendingOnboarding === true;
 	let pendingRuntimeBootstrap =
-		agentName === "mainsequence-project-coder" &&
+		shouldBootstrapProjectRuntimeForAgent(agentName) &&
 		(newChat || existingSessionMetadata?.pendingRuntimeBootstrap === true);
 	const switchSummary = existingSessionMetadata?.switchSummary ?? null;
 
@@ -7078,9 +7174,9 @@ async function handleStreamRequest(
 	let startedAt: string | null = null;
 	let responseAgentName = agentName;
 	let responseThreadId = threadId;
-	const persistedCwd = agentName === "mainsequence-project-coder" ? agentCwd : null;
+	const persistedCwd = isProjectSessionAgentName(agentName) ? agentCwd : null;
 	const frozenRepoRoot =
-		agentName === "mainsequence-project-coder"
+		isProjectSessionAgentName(agentName)
 			? existingSessionMetadata?.repoRoot ?? (agentCwd ? resolveGitRepoRoot(agentCwd) : null)
 			: null;
 
@@ -7089,25 +7185,26 @@ async function handleStreamRequest(
 		const sessionMetadataInput = sanitizeFrontendSessionMetadata(body.sessionMetadata);
 		const runtimeConfig = buildRuntimeConfigSnapshot(sessionModelBinding);
 
-			const payload: Record<string, unknown> = {
-				status: "running",
-				created_by_user: userId,
-				thread_id: threadId,
+		const payload: Record<string, unknown> = {
+			status: "running",
+			created_by_user: userId,
+			thread_id: threadId,
+			workflow_key: agentName,
+			llm_provider: resolveBackendLlmProvider(sessionModelBinding),
+			llm_model: resolveBackendLlmModel(sessionModelBinding),
+			engine_name: "astro",
+			runtime_config_snapshot: runtimeConfig,
+			session_metadata: {
+				source: "frontend",
 				workflow_key: agentName,
-				llm_provider: resolveBackendLlmProvider(sessionModelBinding),
-				llm_model: resolveBackendLlmModel(sessionModelBinding),
-				engine_name: "astro",
-				runtime_config_snapshot: runtimeConfig,
-				session_metadata: {
-					source: "frontend",
-					workflow_key: agentName,
-					created_by_user: userId,
+				created_by_user: userId,
 				...(projectId ? { project_id: projectId } : {}),
 				...(persistedCwd ? { project_cwd: persistedCwd } : {}),
 				...(frozenRepoRoot ? { project_repo_root: frozenRepoRoot } : {}),
+				...(projectImageRef ? { project_image_ref: projectImageRef } : {}),
 				...(projectRuntime ? { project_runtime_snapshot: projectRuntime } : {}),
 				pending_onboarding: false,
-				pending_runtime_bootstrap: agentName === "mainsequence-project-coder",
+				pending_runtime_bootstrap: shouldBootstrapProjectRuntimeForAgent(agentName),
 				switch_summary: null,
 				switched_from_agent: null,
 				switched_from_session_key: null,
@@ -7153,8 +7250,9 @@ async function handleStreamRequest(
 			projectId,
 			cwd: persistedCwd,
 			repoRoot: frozenRepoRoot,
+			projectImageRef,
 			pendingOnboarding: false,
-			pendingRuntimeBootstrap: agentName === "mainsequence-project-coder",
+			pendingRuntimeBootstrap: shouldBootstrapProjectRuntimeForAgent(agentName),
 			switchSummary: null,
 			projectRuntime: null,
 			sessionModelBinding,
@@ -7188,6 +7286,7 @@ async function handleStreamRequest(
 			projectId,
 			cwd: persistedCwd,
 			repoRoot: frozenRepoRoot,
+			projectImageRef,
 			pendingOnboarding: existingSessionMetadata?.pendingOnboarding ?? false,
 			pendingRuntimeBootstrap,
 			switchSummary: existingSessionMetadata?.switchSummary ?? null,
@@ -7352,7 +7451,7 @@ async function handleStreamRequest(
 
 	writeChunk(ctx, { type: "start", messageId });
 
-	if (pendingRuntimeBootstrap && agentName === "mainsequence-project-coder" && agentCwd && agentUniqueId) {
+	if (pendingRuntimeBootstrap && shouldBootstrapProjectRuntimeForAgent(agentName) && agentCwd && agentUniqueId) {
 		const checkpointReady = await prepareCheckpointBeforePiLaunch(ctx);
 		if (checkpointReady.ok === false) {
 			writeChunk(ctx, checkpointReady.errorEvent);
@@ -7371,6 +7470,7 @@ async function handleStreamRequest(
 			startedAt,
 			agentName: responseAgentName,
 			projectId,
+			projectImageRef,
 			pendingOnboarding: existingSessionMetadata?.pendingOnboarding ?? false,
 			switchSummary,
 			sessionModelBinding,
@@ -7397,7 +7497,7 @@ async function handleStreamRequest(
 		projectRuntimeSummary: projectRuntime ? formatProjectRuntimeSummary(projectRuntime) : null,
 	});
 
-	if (agentName === "mainsequence-project-coder") {
+	if (isProjectSessionAgentName(agentName)) {
 		writeSessionMetadata(sessionKey, {
 			agentId,
 			agentUniqueId,
@@ -7408,6 +7508,7 @@ async function handleStreamRequest(
 			projectId,
 			cwd: persistedCwd,
 			repoRoot: frozenRepoRoot,
+			projectImageRef,
 			pendingOnboarding: shouldRunPendingOnboarding ? false : (existingSessionMetadata?.pendingOnboarding ?? false),
 			pendingRuntimeBootstrap,
 			switchSummary,
@@ -7422,7 +7523,7 @@ async function handleStreamRequest(
 		projectId,
 		agentConfig,
 		envOverrides:
-			agentName === "mainsequence-project-coder"
+			shouldBootstrapProjectRuntimeForAgent(agentName)
 				? buildActivatedProjectEnv(process.env, projectRuntime, {
 						projectId,
 						cwd: agentCwd,
