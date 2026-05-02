@@ -1,4 +1,6 @@
 import { spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { logStructuredEvent } from "./structured-logging.js";
 
 type AgentRole = "orchestrator" | "specialist";
@@ -107,9 +109,62 @@ export function buildAgentUniqueId(options: {
 	userId: string;
 	projectId?: string | number | null;
 }): string {
-	const safeAgentName = sanitizeId(options.agentName);
 	const projectId = normalizeIdPart(options.projectId);
+	if (options.agentName === "mainsequence-project-executor") {
+		return projectId ? `project-executor-${projectId}` : "project-executor";
+	}
+	const safeAgentName = sanitizeId(options.agentName);
 	return projectId ? `${safeAgentName}_${options.userId}_${projectId}` : `${safeAgentName}_${options.userId}`;
+}
+
+function parseDotEnvValue(rawValue: string): string {
+	const trimmed = rawValue.trim();
+	if (
+		(trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
+		(trimmed.startsWith("'") && trimmed.endsWith("'"))
+	) {
+		return trimmed.slice(1, -1);
+	}
+	return trimmed;
+}
+
+function readProjectEnvValue(projectCwd: string, keys: string[]): string | null {
+	const envPath = path.join(path.resolve(projectCwd), ".env");
+	if (!existsSync(envPath)) return null;
+	const contents = readFileSync(envPath, "utf8");
+	for (const rawLine of contents.split(/\r?\n/)) {
+		const line = rawLine.trim();
+		if (!line || line.startsWith("#")) continue;
+		const equalsIndex = line.indexOf("=");
+		if (equalsIndex === -1) continue;
+		const key = line.slice(0, equalsIndex).trim().replace(/^export\s+/, "");
+		if (!keys.includes(key)) continue;
+		const value = parseDotEnvValue(line.slice(equalsIndex + 1));
+		if (value) return value;
+	}
+	return null;
+}
+
+export function resolveProjectExecutorProjectId(options: {
+	cwd?: string | null;
+	projectId?: unknown;
+	env?: NodeJS.ProcessEnv;
+}): string | null {
+	const runtimeEnv = options.env ?? process.env;
+	const fromProjectEnv = options.cwd
+		? normalizeIdPart(readProjectEnvValue(options.cwd, ["MAINSEQUENCE_PROJECT_ID", "MAIN_SEQUENCE_PROJECT_ID"]))
+		: null;
+	if (fromProjectEnv) return fromProjectEnv;
+	return normalizeIdPart(
+		runtimeEnv.MAINSEQUENCE_PROJECT_ID ??
+			runtimeEnv.MAIN_SEQUENCE_PROJECT_ID ??
+			options.projectId ??
+			runtimeEnv.ASTRO_TARGET_PROJECT_ID,
+	);
+}
+
+function resolveRegisteredAgentName(agentName: string): string {
+	return agentName === "mainsequence-project-executor" ? "project-executor" : sanitizeId(agentName);
 }
 
 function buildMainsequenceSdkEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -313,6 +368,7 @@ export async function registerMainsequenceAgent(
 	const { agentName, agentRole, projectId, userId, env, log } = options;
 	const runtimeEnv = env ?? process.env;
 	const safeAgentName = sanitizeId(agentName);
+	const registeredAgentName = resolveRegisteredAgentName(agentName);
 	const resolvedUserId = resolveMainsequenceUserId({ userId, env: runtimeEnv, log });
 
 	if (!resolvedUserId) {
@@ -329,9 +385,16 @@ export async function registerMainsequenceAgent(
 		};
 	}
 
+	const isProjectExecutor = agentName === "mainsequence-project-executor";
 	const isProjectCoder =
-		agentName === "mainsequence-project-coder" || agentName === "mainsequence-project-executor";
-	const resolvedProjectId = normalizeIdPart(projectId ?? runtimeEnv.ASTRO_TARGET_PROJECT_ID);
+		agentName === "mainsequence-project-coder" || isProjectExecutor;
+	const resolvedProjectId = isProjectExecutor
+		? resolveProjectExecutorProjectId({
+				cwd: options.cwd,
+				projectId,
+				env: runtimeEnv,
+		  })
+		: normalizeIdPart(projectId ?? runtimeEnv.ASTRO_TARGET_PROJECT_ID);
 	if (isProjectCoder && !resolvedProjectId) {
 		log?.(`Agent registration failed for "${safeAgentName}": missing project id.`);
 		return {
@@ -374,7 +437,7 @@ export async function registerMainsequenceAgent(
 	}
 
 	const payload: Record<string, unknown> = {
-		name: safeAgentName,
+		name: registeredAgentName,
 		agent_unique_id: agentUniqueId,
 	};
 

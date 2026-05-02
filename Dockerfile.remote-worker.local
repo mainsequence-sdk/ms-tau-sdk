@@ -1,4 +1,4 @@
-FROM python:3.11-slim AS astro-base
+FROM python:3.11-slim AS astro-remote-worker-local
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -6,7 +6,11 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PATH="/app/node_modules/.bin:${PATH}" \
     PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 
+# =============================================================================
+# [ASTRO] Install container dependencies for the local mounted-project executor
+# =============================================================================
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
     ca-certificates \
     curl \
     git \
@@ -32,16 +36,18 @@ COPY scripts ./scripts
 
 RUN npm run check
 
-FROM astro-base AS astro-mainsequence
-
+# =============================================================================
+# [ASTRO] Install the Python-side runtime expected by Astro and project tools
+# =============================================================================
 ARG MAINSEQUENCE_PIP_SPEC=mainsequence
 ENV MAINSEQUENCE_PIP_SPEC=${MAINSEQUENCE_PIP_SPEC}
 
 RUN pip install --no-cache-dir "${MAINSEQUENCE_PIP_SPEC}" uv playwright \
  && playwright install --with-deps chromium
 
-FROM astro-mainsequence AS astro-runtime
-
+# =============================================================================
+# [ASTRO] Create the local executor runtime layout
+# =============================================================================
 ENV APP_USER=appuser \
     APP_GROUP=appuser \
     APP_UID=10000 \
@@ -49,39 +55,37 @@ ENV APP_USER=appuser \
     APP_HOME=/home/appuser \
     HOME=/home/appuser \
     ASTRO_CONTAINER_DATA_DIR=/home/appuser/.astro-container-data \
+    ASTRO_STREAM_HOST=0.0.0.0 \
+    ASTRO_STREAM_PORT=8787 \
     ASTRO_STREAM_SESSION_DIR=/session-state/sessions \
+    ASTRO_SESSION_OVERRIDES_DIR=/session-state/session-overrides \
     ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence \
-    PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent
+    PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent \
+    ASTRO_EXECUTION_MODE=remote_project_worker \
+    ASTRO_FIXED_AGENT_NAME=mainsequence-project-executor \
+    ASTRO_FIXED_PROJECT_CWD=/workspace/project \
+    ASTRO_PROJECT_IMAGE_REF=local-mounted-project
 
 RUN groupadd --gid "${APP_GID}" "${APP_GROUP}" \
  && useradd --uid "${APP_UID}" --gid "${APP_GID}" --create-home --home-dir "${APP_HOME}" --shell /bin/bash "${APP_USER}" \
  && mkdir -p \
     "${APP_HOME}/.astro-container-data/.pi/agent/bin" \
     "${APP_HOME}/.astro-container-data/.config/mainsequence" \
-    "/session-state/sessions" \
-    "/session-state/session-overrides" \
-    "/ms-playwright" \
     "${APP_HOME}/.local/share" \
     "${APP_HOME}/.pi" \
     "${APP_HOME}/.config" \
     "${APP_HOME}/.astro" \
- && chown -R "${APP_USER}:${APP_GROUP}" "${APP_HOME}" /session-state /ms-playwright
+    "/session-state/sessions" \
+    "/session-state/session-overrides" \
+    "/session-state/pi-agent-auth" \
+    "/ms-playwright" \
+    "/workspace/project" \
+ && chown -R "${APP_USER}:${APP_GROUP}" "${APP_HOME}" /session-state /ms-playwright /workspace/project /app
 
 USER appuser
 
-FROM astro-runtime AS astro-pi-stream
-
-ENV ASTRO_STREAM_HOST=0.0.0.0 \
-    ASTRO_STREAM_PORT=8787
+WORKDIR /workspace/project
 
 EXPOSE 8787
 
-CMD ["/app/node_modules/.bin/tsx", "scripts/start_pi_stream.ts"]
-
-FROM astro-runtime AS astro-session-checkpoint-sidecar
-
-CMD ["/app/node_modules/.bin/tsx", "scripts/session_checkpoint_sidecar.ts"]
-
-FROM astro-runtime AS astro-pi
-
-CMD ["node", "scripts/start_pi.mjs"]
+CMD ["/app/node_modules/.bin/tsx", "/app/scripts/start_pi_stream.ts"]

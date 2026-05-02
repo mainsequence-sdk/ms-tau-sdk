@@ -535,7 +535,7 @@ fi
 
 if [ "\${1:-}" = "project" ] && [ "\${2:-}" = "set-up-locally" ]; then
   shift 2
-  exec tsx "/app/scripts/mainsequence_project_set_up_locally.ts" "$@"
+  exec /app/node_modules/.bin/tsx "/app/scripts/mainsequence_project_set_up_locally.ts" "$@"
 fi
 
 exec "$REAL_MAINSEQUENCE" "$@"

@@ -201,6 +201,40 @@ After that `session_switch`, the same SSE response may continue with
 - deterministic bootstrap tool events such as `runtime_mainsequence_project_sdk_status`
 - either a ready message or continued coder output
 
+### `POST /api/a2a/chat`
+
+Receives machine-facing A2A requests on the Astro streamer and returns the response on the same SSE
+connection.
+
+This endpoint normalizes an A2A JSON request into the normal stream pipeline while deterministically
+injecting A2A execution context. At minimum, the injected contract tells the target runtime:
+
+- this is agent-to-agent communication
+- this is not a human-facing chat request
+- the requested response format must be followed exactly
+
+Current request fields accepted by Astro include:
+
+```json
+{
+  "newChat": true,
+  "userId": "user_123",
+  "agentName": "mainsequence-project-executor",
+  "task": "Inspect the prepared project and summarize the next implementation step.",
+  "response_format": "Return a concise machine-facing status summary with blockers and next actions.",
+  "caller": {
+    "agent_name": "astro-orchestrator"
+  }
+}
+```
+
+Astro also accepts task aliases such as `message`, `input`, `prompt`, or `request`.
+
+### `POST /api/a2a/cancel`
+
+Requests cancellation of an active A2A-backed runtime session. This is an out-of-band control path,
+not part of the streamed `POST /api/a2a/chat` response itself.
+
 ### `GET /api/chat/history?sessionId=<runtime_session_id>`
 
 Returns the compact JSON conversation snapshot for an existing session. This endpoint is intended

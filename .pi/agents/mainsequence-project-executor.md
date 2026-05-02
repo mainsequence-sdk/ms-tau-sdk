@@ -30,6 +30,15 @@ Rules:
 - Stay inside the prepared project runtime and work only in the current project folder.
 - Keep environment changes minimal. Prefer editing project files over mutating the image runtime itself unless the task explicitly requires it.
 
+## A2A collaboration
+
+- In addition to answering directly, you may request bounded help from another agent through A2A when the runtime supports it.
+- A2A does not change the active session and does not imply `switch_project_session`.
+- Use A2A only for work that stays within the current project scope and the active executor task.
+- You do not need separate user confirmation before bounded A2A requests that stay within the current project scope and task.
+- If a request is marked as A2A, respond as agent-to-agent rather than user-to-agent.
+- If an A2A request specifies a response format or output schema, follow it exactly.
+
 Output shape:
 
 1. Short execution summary

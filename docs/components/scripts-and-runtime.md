@@ -87,6 +87,11 @@ The wrapper:
 
 The repo root `Dockerfile` is the deployable app image definition.
 
+For the image-backed project executor runtime, this repo also ships
+[`Dockerfile.remote-worker`](./remote-worker-image.md). That image keeps the project runtime from
+the existing project scaffold and overlays Astro into `/app` so a remote pod can run
+`mainsequence-project-executor` against the already-prepared project image.
+
 The shared `astro-base` stage includes:
 
 - Python 3.11
@@ -165,4 +170,5 @@ The image intentionally does not copy `docs/`, `tutorial/`, or `.env`; provide e
 ## Related pages
 
 - [`knowledge.md`](./knowledge.md)
+- [`remote-worker-image.md`](./remote-worker-image.md)
 - [`../getting-started/quickstart.md`](../getting-started/quickstart.md)

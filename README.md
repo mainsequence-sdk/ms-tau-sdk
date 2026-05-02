@@ -86,6 +86,22 @@ rebuildable runtime state lives under `/home/appuser/.astro-container-data`.
 That keeps Linux virtualenvs isolated from macOS host paths and makes Docker behave closer to the
 pod-local `emptyDir` session model.
 
+To run the mounted-project local executor harness, set a host project path and launch the executor
+service from the normal compose file:
+
+```bash
+export A2A_DEV_PROJECT=/Users/jose/mainsequence-dev/main-sequence-workbench/projects/hope-30-81
+export ASTRO_EXECUTOR_PROJECT_ID=hope-30-81
+docker compose up astro-project-executor
+```
+
+That local executor harness:
+
+- starts Astro directly in `mainsequence-project-executor` mode
+- mounts `A2A_DEV_PROJECT` into `/workspace/project`
+- lives in the normal `docker-compose.yml` stack
+- keeps the orchestrator and executor as separate runtimes
+
 To launch only the coding specialist instead of the full orchestrator for an already selected and checked-out project:
 
 ```bash
@@ -112,6 +128,7 @@ npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to
 - [`docs/components/skills.md`](./docs/components/skills.md)
 - [`docs/components/knowledge.md`](./docs/components/knowledge.md)
 - [`docs/components/scripts-and-runtime.md`](./docs/components/scripts-and-runtime.md)
+- [`docs/components/remote-worker-image.md`](./docs/components/remote-worker-image.md)
 
 ## Generated context
 

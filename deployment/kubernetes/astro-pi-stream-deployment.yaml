@@ -60,7 +60,7 @@ spec:
           image: europe-west1-docker.pkg.dev/PROJECT_ID/tsorm-images/astro/astro-pi-stream:latest
           imagePullPolicy: IfNotPresent
           command:
-            - tsx
+            - /app/node_modules/.bin/tsx
             - scripts/session_checkpoint_sidecar.ts
           envFrom:
             - configMapRef:

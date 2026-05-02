@@ -86,6 +86,8 @@ AGENTS --> CODER["mainsequence-project-coder"]
   - why `knowledge/` was removed and what replaces it
 - [`components/scripts-and-runtime.md`](./components/scripts-and-runtime.md)
   - scripts, TypeScript runtime, and Docker-backed Python path
+- [`components/remote-worker-image.md`](./components/remote-worker-image.md)
+  - `Dockerfile.remote-worker`, image-backed executor pods, and required runtime env
 
 ## Interface
 

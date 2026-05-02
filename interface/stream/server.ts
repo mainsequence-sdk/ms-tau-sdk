@@ -87,9 +87,14 @@ import {
 	fetchBackendAgentSession,
 	registerMainsequenceAgent,
 	resolveMainsequenceUserId,
+	resolveProjectExecutorProjectId,
 	startBackendAgentSession,
 	shouldRegisterAgents,
 } from "../../pi/extensions/shared/agent-registration.js";
+import {
+	buildA2ASystemInstruction,
+	normalizeA2AResponseFormat,
+} from "../../pi/extensions/shared/a2a.js";
 import { logStructuredEvent } from "../../pi/extensions/shared/structured-logging.js";
 import {
 	buildMainsequenceStoredAuthEnv,
@@ -1072,6 +1077,19 @@ function isRemoteProjectWorkerMode(env: NodeJS.ProcessEnv = process.env): boolea
 	return env[ASTRO_EXECUTION_MODE_ENV]?.trim() === "remote_project_worker";
 }
 
+function resolveBackendWorkflowKeyForAgent(agentName: string): string {
+	return agentName === "mainsequence-project-executor" ? "mainsequence-project-coder" : agentName;
+}
+
+function resolveRuntimeAgentNameAfterBackendSession(
+	requestedAgentName: string,
+	backendAgentName: string | null,
+): string {
+	return requestedAgentName === "mainsequence-project-executor"
+		? requestedAgentName
+		: (backendAgentName ?? requestedAgentName);
+}
+
 function resolveFixedAgentName(env: NodeJS.ProcessEnv = process.env): string | null {
 	return normalizeAgentName(env[ASTRO_FIXED_AGENT_NAME_ENV]);
 }
@@ -1261,6 +1279,78 @@ function extractNumericProperty(record: Record<string, unknown>, ...keys: string
 		if (value != null) return value;
 	}
 	return null;
+}
+
+function mergeSystemPrompt(base: string | undefined, injected: string): string {
+	const parts = [typeof base === "string" ? base.trim() : "", injected.trim()].filter(Boolean);
+	return parts.join("\n\n");
+}
+
+function normalizeA2AChatRequestBody(
+	body: Record<string, unknown>,
+): { ok: true; body: Record<string, unknown> } | { ok: false; statusCode: number; error: string; message: string } {
+	const task = extractStringProperty(body, "task", "message", "input", "prompt", "request");
+	if (!task) {
+		return {
+			ok: false,
+			statusCode: 400,
+			error: "missing_a2a_task",
+			message: "A2A chat requests require a non-empty task, message, input, prompt, or request field.",
+		};
+	}
+
+	const caller =
+		extractObjectPropertyRecord(body, "caller", "caller_metadata", "callerMetadata") ?? {};
+	const callerAgentName =
+		extractStringProperty(caller, "agent_name", "agentName", "name") ?? "unknown-agent";
+	const responseFormat = normalizeA2AResponseFormat(body.response_format ?? body.responseFormat);
+	const context = extractObjectPropertyRecord(body, "context") ?? {};
+	const userId =
+		extractStringProperty(body, "userId", "user_id", "created_by_user", "createdByUser") ??
+		extractStringProperty(context, "userId");
+	const mergedContext: Record<string, unknown> = {
+		...context,
+		surfaceId: "a2a",
+		surfaceTitle: "Agent-to-Agent",
+		surfaceContextSource: "a2a",
+		...(userId ? { userId } : {}),
+		a2a: {
+			enabled: true,
+			caller,
+			responseFormat,
+		},
+	};
+
+	const injectedSystem = buildA2ASystemInstruction({
+		callerAgentName,
+		responseFormat,
+		callerMetadata: caller,
+	});
+
+	return {
+		ok: true,
+		body: {
+			...body,
+			newChat: body.newChat === false ? false : true,
+			system: mergeSystemPrompt(
+				typeof body.system === "string" ? body.system : undefined,
+				injectedSystem,
+			),
+			context: mergedContext,
+			tools: {},
+			messages: [
+				{
+					role: "user",
+					content: [
+						{
+							type: "text",
+							text: task,
+						},
+					],
+				},
+			],
+		},
+	};
 }
 
 function extractBackendSessionAgentId(payload: Record<string, unknown>): number | null {
@@ -3828,19 +3918,21 @@ async function createBackendRuntimeSession(options: {
 			? resolveGitRepoRoot(options.cwd)
 			: null;
 	const runtimeConfig = buildRuntimeConfigSnapshot(options.sessionModelBinding ?? null);
+	const backendWorkflowKey = resolveBackendWorkflowKeyForAgent(options.agentName);
 
 	const payload: Record<string, unknown> = {
 		status: "running",
 		created_by_user: options.userId,
 		thread_id: options.threadId,
-		workflow_key: options.agentName,
+		workflow_key: backendWorkflowKey,
 		llm_provider: resolveBackendLlmProvider(options.sessionModelBinding ?? null),
 		llm_model: resolveBackendLlmModel(options.sessionModelBinding ?? null),
 		engine_name: "astro",
 		runtime_config_snapshot: runtimeConfig,
 		session_metadata: {
 			source: "frontend",
-			workflow_key: options.agentName,
+			workflow_key: backendWorkflowKey,
+			runtime_agent_name: options.agentName,
 			created_by_user: options.userId,
 			...(options.projectId ? { project_id: options.projectId } : {}),
 			...(options.cwd ? { project_cwd: options.cwd } : {}),
@@ -3882,7 +3974,10 @@ async function createBackendRuntimeSession(options: {
 	const sessionStartBody = isPlainObject(sessionStart.body) ? sessionStart.body : {};
 	const resolvedStartedAt = extractStringProperty(sessionStartBody, "started_at", "startedAt") ?? startedAt;
 	const resolvedAgentId = sessionStart.agentId ?? agentId;
-	const resolvedAgentName = sessionStart.agentName ?? options.agentName;
+	const resolvedAgentName = resolveRuntimeAgentNameAfterBackendSession(
+		options.agentName,
+		sessionStart.agentName ?? null,
+	);
 	const resolvedAgentUniqueId = sessionStart.agentUniqueId ?? agentUniqueId;
 	const resolvedThreadId = sessionStart.threadId ?? options.threadId;
 	writeSessionMetadata(sessionKey, {
@@ -6203,7 +6298,10 @@ async function handleStreamRequest(
 		return;
 	}
 
-	if (req.method === "POST" && url.pathname === "/api/chat/session/cancel") {
+	if (
+		req.method === "POST" &&
+		(url.pathname === "/api/chat/session/cancel" || url.pathname === "/api/a2a/cancel")
+	) {
 		let body: Record<string, unknown>;
 		try {
 			const parsed = await parseJson(req);
@@ -6761,7 +6859,10 @@ async function handleStreamRequest(
 		return;
 	}
 
-	if (req.method !== "POST" || url.pathname !== "/api/chat") {
+	const isHumanChatRequest = url.pathname === "/api/chat";
+	const isA2AChatRequest = url.pathname === "/api/a2a/chat";
+
+	if (req.method !== "POST" || (!isHumanChatRequest && !isA2AChatRequest)) {
 		notFound(res);
 		return;
 	}
@@ -6776,6 +6877,18 @@ async function handleStreamRequest(
 
 	if (logRequestBodies) {
 		console.log(`[astro-stream] IN ${url.pathname}: ${JSON.stringify(body)}`);
+	}
+
+	if (isA2AChatRequest) {
+		const normalizedA2ARequest = normalizeA2AChatRequestBody(isPlainObject(body) ? body : {});
+		if (normalizedA2ARequest.ok === false) {
+			json(res, normalizedA2ARequest.statusCode, {
+				error: normalizedA2ARequest.error,
+				message: normalizedA2ARequest.message,
+			});
+			return;
+		}
+		body = normalizedA2ARequest.body;
 	}
 
 	const messages = Array.isArray(body.messages) ? body.messages : [];
@@ -6815,6 +6928,8 @@ async function handleStreamRequest(
 		badRequest(res, "`context` must be an object.");
 		return;
 	}
+	const a2aContext = extractObjectPropertyRecord(context, "a2a") ?? {};
+	const a2aCaller = extractObjectPropertyRecord(a2aContext, "caller") ?? {};
 
 	const fixedAgentName = resolveFixedAgentName();
 	const rawRequestedAgentName = normalizeAgentName(body.agentName);
@@ -7017,10 +7132,20 @@ async function handleStreamRequest(
 		}
 	}
 
-	const fixedProjectId = resolveFixedProjectId();
 	const fixedProjectCwd = resolveFixedProjectCwd();
 	const requestedProjectId = normalizeProjectId(body.projectId);
 	const requestedCwd = normalizeProjectCwd(body.cwd);
+	const executorProjectId =
+		isImageBackedProjectExecutor(agentName)
+			? resolveProjectExecutorProjectId({
+					cwd: requestedCwd ?? fixedProjectCwd ?? existingSessionMetadata?.cwd ?? null,
+					projectId: requestedProjectId ?? existingSessionMetadata?.projectId ?? resolveFixedProjectId(),
+					env: process.env,
+			  })
+			: null;
+	const fixedProjectId = isImageBackedProjectExecutor(agentName)
+		? executorProjectId ?? resolveFixedProjectId()
+		: resolveFixedProjectId();
 	if (fixedProjectId && requestedProjectId && requestedProjectId !== fixedProjectId) {
 		json(res, 409, {
 			error: "fixed_project_mismatch",
@@ -7067,7 +7192,7 @@ async function handleStreamRequest(
 
 	const projectId =
 		isProjectSessionAgentName(agentName)
-			? effectiveRequestedProjectId ?? existingSessionMetadata?.projectId ?? null
+			? executorProjectId ?? effectiveRequestedProjectId ?? existingSessionMetadata?.projectId ?? null
 			: null;
 	const agentCwd =
 		isProjectSessionAgentName(agentName)
@@ -7184,80 +7309,85 @@ async function handleStreamRequest(
 		startedAt = new Date().toISOString();
 		const sessionMetadataInput = sanitizeFrontendSessionMetadata(body.sessionMetadata);
 		const runtimeConfig = buildRuntimeConfigSnapshot(sessionModelBinding);
+		const backendWorkflowKey = resolveBackendWorkflowKeyForAgent(agentName);
 
-		const payload: Record<string, unknown> = {
-			status: "running",
-			created_by_user: userId,
-			thread_id: threadId,
-			workflow_key: agentName,
-			llm_provider: resolveBackendLlmProvider(sessionModelBinding),
-			llm_model: resolveBackendLlmModel(sessionModelBinding),
-			engine_name: "astro",
-			runtime_config_snapshot: runtimeConfig,
-			session_metadata: {
-				source: "frontend",
-				workflow_key: agentName,
+			const payload: Record<string, unknown> = {
+				status: "running",
 				created_by_user: userId,
-				...(projectId ? { project_id: projectId } : {}),
-				...(persistedCwd ? { project_cwd: persistedCwd } : {}),
-				...(frozenRepoRoot ? { project_repo_root: frozenRepoRoot } : {}),
-				...(projectImageRef ? { project_image_ref: projectImageRef } : {}),
-				...(projectRuntime ? { project_runtime_snapshot: projectRuntime } : {}),
-				pending_onboarding: false,
-				pending_runtime_bootstrap: shouldBootstrapProjectRuntimeForAgent(agentName),
-				switch_summary: null,
-				switched_from_agent: null,
-				switched_from_session_key: null,
-				initial_task: null,
-				session_model_binding: sessionModelBinding,
-				session_config_overrides: null,
-				...sessionMetadataInput,
-			},
-		};
+				thread_id: threadId,
+				workflow_key: backendWorkflowKey,
+				llm_provider: resolveBackendLlmProvider(sessionModelBinding),
+				llm_model: resolveBackendLlmModel(sessionModelBinding),
+				engine_name: "astro",
+				runtime_config_snapshot: runtimeConfig,
+				session_metadata: {
+					source: "frontend",
+					workflow_key: backendWorkflowKey,
+					runtime_agent_name: agentName,
+					created_by_user: userId,
+					...(projectId ? { project_id: projectId } : {}),
+					...(persistedCwd ? { project_cwd: persistedCwd } : {}),
+					...(frozenRepoRoot ? { project_repo_root: frozenRepoRoot } : {}),
+					...(projectImageRef ? { project_image_ref: projectImageRef } : {}),
+					...(projectRuntime ? { project_runtime_snapshot: projectRuntime } : {}),
+					pending_onboarding: false,
+					pending_runtime_bootstrap: shouldBootstrapProjectRuntimeForAgent(agentName),
+					switch_summary: null,
+					switched_from_agent: null,
+					switched_from_session_key: null,
+					initial_task: null,
+					session_model_binding: sessionModelBinding,
+					session_config_overrides: null,
+					...sessionMetadataInput,
+				},
+			};
 
-		const sessionStart = await startBackendAgentSession({
-			agentId,
-			payload,
-			env: process.env,
-			log: (message) => {
-				console.log(`[astro-stream] ${message}`);
-			},
-		});
-
-		if (!sessionStart.ok || !sessionStart.agentSessionId) {
-			json(res, 502, {
-				error: "agent_session_start_failed",
-				message: sessionStart.error || "Failed to start backend agent session.",
+			const sessionStart = await startBackendAgentSession({
+				agentId,
+				payload,
+				env: process.env,
+				log: (message) => {
+					console.log(`[astro-stream] ${message}`);
+				},
 			});
-			return;
-		}
 
-		agentSessionId = sessionStart.agentSessionId;
-		sessionKey = buildBackendRuntimeSessionId(agentSessionId);
-		agentId = sessionStart.agentId ?? agentId;
-		agentUniqueId = sessionStart.agentUniqueId ?? agentUniqueId;
-		responseAgentName = sessionStart.agentName ?? agentName;
-		responseThreadId = sessionStart.threadId ?? threadId;
-		const sessionStartBody = isPlainObject(sessionStart.body) ? sessionStart.body : {};
-		startedAt = extractStringProperty(sessionStartBody, "started_at", "startedAt") ?? startedAt;
-		writeSessionMetadata(sessionKey, {
-			agentId,
-			agentUniqueId,
-			agentSessionId,
-			threadId: responseThreadId,
-			startedAt,
-			agentName: responseAgentName,
-			projectId,
-			cwd: persistedCwd,
-			repoRoot: frozenRepoRoot,
-			projectImageRef,
-			pendingOnboarding: false,
-			pendingRuntimeBootstrap: shouldBootstrapProjectRuntimeForAgent(agentName),
-			switchSummary: null,
-			projectRuntime: null,
-			sessionModelBinding,
-			sessionConfigOverrides: null,
-		});
+			if (!sessionStart.ok || !sessionStart.agentSessionId) {
+				json(res, 502, {
+					error: "agent_session_start_failed",
+					message: sessionStart.error || "Failed to start backend agent session.",
+				});
+				return;
+			}
+
+			agentSessionId = sessionStart.agentSessionId;
+			sessionKey = buildBackendRuntimeSessionId(agentSessionId);
+			agentId = sessionStart.agentId ?? agentId;
+			agentUniqueId = sessionStart.agentUniqueId ?? agentUniqueId;
+			responseAgentName = resolveRuntimeAgentNameAfterBackendSession(
+				agentName,
+				sessionStart.agentName ?? null,
+			);
+			responseThreadId = sessionStart.threadId ?? threadId;
+			const sessionStartBody = isPlainObject(sessionStart.body) ? sessionStart.body : {};
+			startedAt = extractStringProperty(sessionStartBody, "started_at", "startedAt") ?? startedAt;
+			writeSessionMetadata(sessionKey, {
+				agentId,
+				agentUniqueId,
+				agentSessionId,
+				threadId: responseThreadId,
+				startedAt,
+				agentName: responseAgentName,
+				projectId,
+				cwd: persistedCwd,
+				repoRoot: frozenRepoRoot,
+				projectImageRef,
+				pendingOnboarding: false,
+				pendingRuntimeBootstrap: shouldBootstrapProjectRuntimeForAgent(agentName),
+				switchSummary: null,
+				projectRuntime: null,
+				sessionModelBinding,
+				sessionConfigOverrides: null,
+			});
 	} else {
 		if (!runtimeSessionId) {
 			json(res, 400, {
@@ -7575,5 +7705,5 @@ server.on("error", (error) => {
 
 server.listen(port, host, () => {
 	console.log(`[astro-stream] Listening on http://${host}:${port}`);
-	console.log("[astro-stream] POST /api/chat to start a data-stream response");
+	console.log("[astro-stream] POST /api/chat or POST /api/a2a/chat to start a data-stream response");
 });

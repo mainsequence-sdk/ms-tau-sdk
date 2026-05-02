@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSy
 import { homedir } from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 
 export const MAINSEQUENCE_RUNTIME_CREDENTIAL_EXCHANGE_INTERVAL_ENV =
 	"MAINSEQUENCE_RUNTIME_CREDENTIAL_EXCHANGE_INTERVAL_SECONDS";
@@ -17,6 +18,8 @@ export const MAINSEQUENCE_RUNTIME_CREDENTIAL_REQUIRED_ENV = [
 
 const DEFAULT_BACKEND = "https://api.main-sequence.app";
 const DEFAULT_CLI_SESSION_ID_PREFIX = "astro-mainsequence-cli";
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const REPO_NODE_BIN_DIR = path.join(REPO_ROOT, "node_modules", ".bin");
 
 export type MainsequenceAuthMode = "runtime_credential";
 
@@ -278,6 +281,10 @@ export function buildMainsequenceStoredAuthEnv(
 			runtimeEnv.ASTRO_REAL_MAINSEQUENCE ?? resolveExecutableOnPath("mainsequence", existingPath, shimBinDir) ?? "mainsequence";
 		runtimeEnv.PATH = [shimBinDir, existingPath].filter(Boolean).join(path.delimiter);
 	}
+	if (existsSync(REPO_NODE_BIN_DIR)) {
+		const existingPath = runtimeEnv.PATH ?? "";
+		runtimeEnv.PATH = [REPO_NODE_BIN_DIR, existingPath].filter(Boolean).join(path.delimiter);
+	}
 	return runtimeEnv;
 }
 
@@ -372,34 +379,6 @@ function summarizeSpawnSyncFailure(result: {
 	return details.join("; ") || "no output";
 }
 
-function verifyMainsequenceCliAuthStore(
-	env: NodeJS.ProcessEnv = process.env,
-): { ok: true } | { ok: false; error: string } {
-	repairMainsequenceCliPathConfig(env);
-	clearMainsequenceTokenEnv(env);
-	const verifyResult = spawnSync("mainsequence", ["user"], {
-		stdio: ["ignore", "pipe", "pipe"],
-		shell: false,
-		env: buildMainsequenceStoredAuthEnv(env),
-		encoding: "utf8",
-	});
-	if (verifyResult.error) {
-		if ((verifyResult.error as NodeJS.ErrnoException).code === "ENOENT") {
-			return { ok: false, error: "Missing required command: mainsequence" };
-		}
-		return { ok: false, error: verifyResult.error.message };
-	}
-	if (verifyResult.status !== 0) {
-		return {
-			ok: false,
-			error: `Main Sequence CLI auth verification failed (${summarizeSpawnSyncFailure(verifyResult)}).`,
-		};
-	}
-
-	clearMainsequenceTokenEnv(env);
-	return { ok: true };
-}
-
 export async function bootstrapMainsequenceCliAuth(options: {
 	env?: NodeJS.ProcessEnv;
 	log?: (message: string) => void;
@@ -409,17 +388,13 @@ export async function bootstrapMainsequenceCliAuth(options: {
 	validateMainsequenceRuntimeCredentialEnv(env);
 	clearMainsequenceTokenEnv(env);
 	options.log?.("Using Main Sequence runtime credential auth.");
-	options.log?.("Exchanging runtime credential before CLI auth verification.");
+	options.log?.("Exchanging runtime credential for Main Sequence CLI auth.");
 	const loginResult = runMainsequenceRuntimeCredentialLogin(env);
 	if ("error" in loginResult) {
 		const detail = await diagnoseRuntimeCredentialExchangeFailure(env);
 		throw new Error(
 			`Main Sequence runtime credential auth failed: ${loginResult.error}${detail ? ` ${detail}` : ""}`,
 		);
-	}
-	const verifyResult = verifyMainsequenceCliAuthStore(env);
-	if ("error" in verifyResult) {
-		throw new Error(`Main Sequence runtime credential auth failed: ${verifyResult.error}`);
 	}
 	clearMainsequenceTokenEnv(env);
 	options.log?.("Main Sequence runtime credential auth is ready.");
@@ -447,14 +422,7 @@ export function startMainsequenceCredentialExchangeLoop(options: {
 			options.log?.(`Main Sequence runtime credential exchange failed (${reason}): ${loginResult.error}`);
 			return;
 		}
-		const verifyResult = verifyMainsequenceCliAuthStore(env);
 		exchangeInFlight = false;
-		if ("error" in verifyResult) {
-			options.log?.(
-				`persisted Main Sequence runtime credential auth verification failed (${reason}): ${verifyResult.error}`,
-			);
-			return;
-		}
 		clearMainsequenceTokenEnv(env);
 	};
 

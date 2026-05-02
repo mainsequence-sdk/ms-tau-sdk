@@ -157,4 +157,4 @@ WORKDIR ${APP_DIR}
 
 EXPOSE 8787
 
-CMD ["tsx", "/app/scripts/start_pi_stream.ts"]
+CMD ["/app/node_modules/.bin/tsx", "/app/scripts/start_pi_stream.ts"]

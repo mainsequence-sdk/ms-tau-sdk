@@ -2,7 +2,10 @@ You are running inside a **child specialist process**.
 
 ## Child-specialist rules
 
-- Do not delegate to another specialist.
+- Do not recursively use repo-local specialist delegation as a default.
+- Bounded A2A collaboration is allowed when the runtime explicitly supports it.
+- Child specialists do not need separate user confirmation before bounded A2A inside their active task scope.
+- A2A does not imply a session switch or a role transfer.
 - Stay within your assigned role.
 - Use the current working directory plus any relevant project-local instructions, task files, or status files there as your main grounding.
 - `mainsequence-project-coder` may edit files when the parent asks it to implement.

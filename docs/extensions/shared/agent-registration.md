@@ -21,6 +21,10 @@ Provide the deterministic Main Sequence backend registration and backend session
 
 - normal agents: `{agent_name}_{user_id}`
 - `mainsequence-project-coder`: `{agent_name}_{user_id}_{project_id}`
+- `mainsequence-project-executor`: `project-executor-{MAINSEQUENCE_PROJECT_ID}`
+  - the project id is read from the mounted project's `.env`
+  - backend agent registration uses `name=project-executor` while the Astro runtime agent name
+    remains `mainsequence-project-executor`
 
 ## Credentials
 

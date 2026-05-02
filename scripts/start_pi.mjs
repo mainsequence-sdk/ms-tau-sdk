@@ -7,6 +7,7 @@ import { bootstrapPiAgentDir } from "./bootstrap_pi_agent_dir.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
+const repoNodeBinDir = path.join(repoRoot, "node_modules", ".bin");
 const MAINSEQUENCE_RUNTIME_CREDENTIAL_EXCHANGE_INTERVAL_ENV =
 	"MAINSEQUENCE_RUNTIME_CREDENTIAL_EXCHANGE_INTERVAL_SECONDS";
 const MAINSEQUENCE_CLI_SESSION_ID_ENV = "MAINSEQUENCE_CLI_SESSION_ID";
@@ -139,6 +140,10 @@ function buildStoredAuthVerificationEnv() {
 	verifyEnv.MAINSEQUENCE_ENDPOINT = verifyEnv.MAINSEQUENCE_ENDPOINT ?? backendUrl;
 	verifyEnv.TDAG_ENDPOINT = verifyEnv.TDAG_ENDPOINT ?? backendUrl;
 	verifyEnv[MAINSEQUENCE_CLI_SESSION_ID_ENV] = resolveMainsequenceCliSessionId(process.env);
+	if (existsSync(repoNodeBinDir)) {
+		const existingPath = verifyEnv.PATH ?? "";
+		verifyEnv.PATH = [repoNodeBinDir, existingPath].filter(Boolean).join(path.delimiter);
+	}
 	return verifyEnv;
 }
 

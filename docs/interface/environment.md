@@ -18,13 +18,48 @@
 - `ASTRO_CONTAINER_DATA_DIR` (container-local rebuildable runtime root; in containers use `/home/appuser/.astro-container-data`)
 - `ASTRO_ORCHESTRATOR_CWD` (optional writable cwd override for `astro-orchestrator`; defaults to `<ASTRO_CONTAINER_DATA_DIR>/astro-orchestrator-runtime`)
 - `ASTRO_ORCHESTRATOR_PROJECT_PI_DIR` (optional writable project `.pi` override for `astro-orchestrator`; defaults to `<ASTRO_CONTAINER_DATA_DIR>/.pi/project`)
-- `ASTRO_EXECUTION_MODE` (optional runtime mode; set `remote_project_worker` for image-backed project executor pods)
-- `ASTRO_FIXED_AGENT_NAME` (optional fixed agent name for pinned runtimes, for example `mainsequence-project-executor`)
-- `ASTRO_FIXED_PROJECT_ID` (optional fixed project id for pinned project-worker runtimes)
-- `ASTRO_FIXED_PROJECT_CWD` (optional fixed project cwd for pinned project-worker runtimes)
-- `ASTRO_PROJECT_IMAGE_REF` (optional image reference or digest recorded into project-session metadata for image-backed workers)
 - `BUILD_AGENTS_IN_BACKEND` (enable backend agent registration)
 - `OLLAMA_HOST` (optional Ollama host used by `GET /api/chat/get_available_models`, for example `http://localhost:11434`)
+
+## Remote project worker mode
+
+These env vars are used by image-backed `mainsequence-project-executor` pods:
+
+- `ASTRO_EXECUTION_MODE`
+  - set this to `remote_project_worker` for image-backed executor pods
+- `ASTRO_FIXED_AGENT_NAME`
+  - recommended value: `mainsequence-project-executor`
+- `ASTRO_FIXED_PROJECT_CWD`
+  - fixed project path inside the image, for example `/home/${NB_USER}/app`
+  - Astro reads `${ASTRO_FIXED_PROJECT_CWD}/.env` to resolve `MAINSEQUENCE_PROJECT_ID` for
+    executor registration
+- `ASTRO_PROJECT_IMAGE_REF`
+  - optional image reference or digest persisted into project-session metadata
+
+For the full worker-image layout and pod contract, see
+[`../components/remote-worker-image.md`](../components/remote-worker-image.md).
+
+## Local mounted-project executor harness
+
+These env vars are used by the `astro-project-executor` service in
+[`docker-compose.yml`](../../docker-compose.yml):
+
+- `A2A_DEV_PROJECT`
+  - required for the local executor harness and local A2A debug mode
+  - host path to mount into `/workspace/project` for the executor
+  - Astro also uses the mounted project to read `.agents/agent_card.json` during local A2A discovery
+- `ASTRO_EXECUTOR_STREAM_PORT`
+  - optional host port for the local executor HTTP stream
+  - defaults to `8790`
+
+## Local A2A debug mode
+
+- `A2A_DEV_PROJECT`
+  - enables local A2A debug mode when set
+  - in containers, Astro reads the mounted project path selected by `A2A_DEV_PROJECT` to mock A2A discovery from `.agents/agent_card.json`
+- `A2A_DEV_BASE_URL`
+  - optional direct base URL override for local A2A communication
+  - when unset, Astro tries the local executor service URL and then `http://127.0.0.1:${ASTRO_EXECUTOR_STREAM_PORT:-8790}`
 
 Auth-backed model providers also rely on their normal upstream env vars, for example:
 

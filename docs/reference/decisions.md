@@ -305,3 +305,30 @@ Why:
 - backend-backed sessions should keep Pi running until the assistant run finishes or fails
 - checkpoint lease renewal and runtime-state reporting let the backend know that a session is still
   working even when no browser is connected
+
+## 23. Treat project executors as backend-mediated runtimes
+
+Implementation:
+
+- `reference/adr-23-backend-mediated-project-executor-runtimes.md`
+
+Why:
+
+- `mainsequence-project-executor` is a separate execution runtime, not a normal orchestrator
+  specialist
+- local development needs a mounted-project executor harness without changing the backend control
+  plane shape
+- the backend should be the only component that knows how to launch and route work to project
+  executors
+
+## 24. Treat A2A discovery as a shared prompt-layer collaboration rule
+
+Implementation:
+
+- `reference/adr-24-a2a-discovery-and-collaboration.md`
+
+Why:
+
+- A2A should be a collaboration modality, not a session-switch substitute
+- the orchestrator needs explicit user-confirmed discovery behavior before A2A initiation
+- project-scoped agents need bounded A2A without broadening their core roles
