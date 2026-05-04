@@ -7,85 +7,23 @@ FROM europe-west1-docker.pkg.dev/mainsequence-development/tsorm-images/project-e
 
 
 # =============================================================================
-# [EXISTING] Stage 1: Main Sequence project scaffold
+# [EXISTING] Stage 1: Start from the already-built project image
 # Purpose:
-#   - Start from your existing BASE_IMAGE
-#   - Clone the project repo
-#   - Install the project's Python dependencies
-#   - Preserve APP_DIR / SKEL_APP_DIR / NB_* exactly as they work today
+#   - Reuse the project runtime exactly as prepared by BASE_IMAGE
+#   - Preserve the existing APP_DIR / NB_* contract from that image
 # =============================================================================
 FROM ${BASE_IMAGE}
 
-SHELL ["/bin/bash", "-lc"]
-
 ARG BASE_IMAGE
-
-# Build args from your dynamic step
-ARG GIT_URL
-ARG GIT_BRANCH
-ARG GIT_HASH
-
-# Paths
-ENV APP_DIR=/home/${NB_USER}/app \
-    SKEL_DIR=/usr/local/share/user-skel \
-    SKEL_APP_DIR=/usr/local/share/user-skel/app \
-    PIP_DISABLE_PIP_VERSION_CHECK=1 \
-    PIP_NO_CACHE_DIR=1
-
-USER root
-RUN mkdir -p "${APP_DIR}" "${SKEL_APP_DIR}" \
- && chown -R ${NB_UID}:${NB_GID} "${APP_DIR}" "${SKEL_DIR}" \
- && chmod -R a+rX "${SKEL_DIR}"
-RUN pip install --no-cache-dir uv || true
-
-USER ${NB_USER}
-WORKDIR ${SKEL_APP_DIR}
-
-# --- Clone using SSH private key provided as a BuildKit secret ---
-# Build step must pass: --secret id=ssh_private,src=/workspace/_ssh_private
-RUN --mount=type=secret,id=ssh_private,uid=1000,gid=100,mode=0400 \
-    set -euo pipefail; \
-    mkdir -p /tmp/ssh && \
-    ssh-keyscan -t rsa,ecdsa,ed25519 github.com > /tmp/ssh/known_hosts && \
-    ssh-keygen -y -f /run/secrets/ssh_private >/dev/null 2>&1 || { echo 'Invalid SSH private key' >&2; exit 1; } && \
-    CLEAN_GIT_URL=$(echo -n "${GIT_URL}" | tr -dc '[:print:]') && \
-    export GIT_SSH_COMMAND="ssh -i /run/secrets/ssh_private \
-                         -o IdentitiesOnly=yes \
-                         -o StrictHostKeyChecking=yes \
-                         -o UserKnownHostsFile=/tmp/ssh/known_hosts" && \
-    git clone --filter=blob:none --single-branch --branch "${GIT_BRANCH}" "${CLEAN_GIT_URL}" . && \
-    git checkout -B "${GIT_BRANCH}" "${GIT_HASH}" && \
-    git branch -M "${GIT_BRANCH}" && \
-    git rev-parse --short HEAD | tee "${SKEL_APP_DIR}/.app_git_rev" && \
-    rm -rf /tmp/ssh
-
-
-# --- Install dependencies if present ---
-RUN set -euo pipefail; \
-    if [ -f requirements.txt ]; then \
-        uv pip install -r requirements.txt; \
-    elif [ -f pyproject.toml ]; then \
-        uv pip install -e . || pip install -e .; \
-    else \
-        echo "[deps] nothing to install"; \
-    fi
-
-# --- Runtime env ---
-ENV TDAG_CONFIG_PATH=/home/${NB_USER}/tdag/default_config.yml \
-    TDAG_RAY_CLUSTER_ADDRESS=ray://localhost:10001 \
-    TDAG_RAY_API_ADDRESS=http://localhost:8265 \
-    TDAG_RAY_SERVE_HOST=0.0.0.0 \
-    TDAG_RAY_SERVE_PORT=8003 \
-    MLFLOW_ENDPOINT=http://localhost:5000
 
 
 # =============================================================================
-# [ASTRO] Stage 2: Overlay Astro into the already-built project image
+# [ASTRO] Stage 2: Overlay Astro onto the built project runtime
 # Purpose:
-#   - Keep the project runtime exactly as-is
-#   - Add Astro alongside it
+#   - Keep the project image's runtime exactly as-is
+#   - Add the published project-executor Astro bundle under /app
 # Key path split:
-#   - ${APP_DIR} = project code/runtime
+#   - ${APP_DIR} = project code/runtime from BASE_IMAGE
 #   - /app       = Astro runtime
 # =============================================================================
 USER root

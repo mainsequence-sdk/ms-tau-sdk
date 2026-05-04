@@ -18,7 +18,7 @@ project root the executor should work against.
 It exists for the separate runtime where:
 
 - the backend already chose a project image
-- that image already knows how to clone or materialize the project repository
+- that image already contains the project repository at `${APP_DIR}`
 - that image already installs the project's Python dependencies
 - Astro should be layered on top so the pod can run `mainsequence-project-executor`
 
@@ -61,30 +61,18 @@ executor:
 This is what lets the downstream project-executor build work without checking out the Astro repo as
 its Docker build context.
 
-### 2. Existing project scaffold
+### 2. Existing project image
 
-The second stage preserves the existing project-image behavior and variable names:
+The second stage starts directly from `BASE_IMAGE`.
 
-- `BASE_IMAGE`
-- `GIT_URL`
-- `GIT_BRANCH`
-- `GIT_HASH`
-- `APP_DIR`
-- `SKEL_DIR`
-- `SKEL_APP_DIR`
-- `NB_USER`
-- `NB_UID`
-- `NB_GID`
+That image is expected to have already done the project-specific work:
 
-That stage:
+- clone or materialize the target repo
+- install the project's dependencies
+- expose the final runtime project directory at `${APP_DIR}`
+- preserve the existing user contract such as `NB_USER`, `NB_UID`, and `NB_GID`
 
-- starts from `BASE_IMAGE`
-- clones the target repo
-- checks out `GIT_HASH`
-- installs project Python dependencies
-- keeps the runtime rooted at `${APP_DIR}`
-
-This is the part that should stay aligned with the existing project image contract.
+`Dockerfile.remote-worker` does not repeat any of that work.
 
 ### 3. Astro overlay
 
@@ -107,24 +95,12 @@ tsx /app/scripts/start_pi_stream.ts
 
 - `BASE_IMAGE`
   - required
-  - the existing project image or notebook-style base image used by your scaffold
+  - the already-built project image that contains the prepared project runtime
 - `ASTRO_EXECUTOR_BUNDLE_REF`
   - optional
   - defaults to `latest`
   - selects the published tag from
     `europe-west1-docker.pkg.dev/mainsequence-development/tsorm-images/project-executor-bundle`
-- `GIT_URL`
-  - required by the project scaffold
-- `GIT_BRANCH`
-  - required by the project scaffold
-- `GIT_HASH`
-  - required by the project scaffold
-
-It also expects the same BuildKit secret used by the existing scaffold:
-
-```bash
---secret id=ssh_private,src=/workspace/_ssh_private
-```
 
 ## Runtime environment variables
 
@@ -210,6 +186,11 @@ At pod launch time, the backend should provide at least:
 
 The backend should treat the worker image digest as the durable runtime artifact and reuse that
 image for resume or replay of the same executor session.
+
+At build time, the downstream system only needs:
+
+- `BASE_IMAGE`
+- optionally `ASTRO_EXECUTOR_BUNDLE_REF`
 
 ## Cloud Build object upload
 
