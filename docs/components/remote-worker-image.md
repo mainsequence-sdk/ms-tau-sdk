@@ -39,22 +39,27 @@ under `/app`, while project execution should happen inside `${APP_DIR}`.
 
 `Dockerfile.remote-worker` has three logical parts.
 
-### 1. Astro runtime bundle
+### 1. Published Astro executor bundle
 
-The first stage builds a Node bundle from this repo:
+The first stage pulls a published `project-executor-bundle` image from Artifact Registry:
 
-- installs npm dependencies
-- copies:
-  - `package.json`
-  - `package-lock.json`
-  - `tsconfig.json`
-  - `.pi/`
-  - `pi/`
-  - `interface/`
-  - `scripts/`
-- runs `npm run check`
+- `europe-west1-docker.pkg.dev/mainsequence-development/tsorm-images/project-executor-bundle`
+- the Dockerfile only varies the bundle tag via `ASTRO_EXECUTOR_BUNDLE_REF`
 
-This stage produces a self-contained Astro runtime tree that can be copied into another image.
+That bundle is built from the Astro repo itself and carries the `/app` runtime tree needed by the
+executor:
+
+- `package.json`
+- `package-lock.json`
+- `tsconfig.json`
+- `.pi/`
+- `pi/`
+- `interface/`
+- `scripts/`
+- `node_modules/`
+
+This is what lets the downstream project-executor build work without checking out the Astro repo as
+its Docker build context.
 
 ### 2. Existing project scaffold
 
@@ -103,6 +108,11 @@ tsx /app/scripts/start_pi_stream.ts
 - `BASE_IMAGE`
   - required
   - the existing project image or notebook-style base image used by your scaffold
+- `ASTRO_EXECUTOR_BUNDLE_REF`
+  - optional
+  - defaults to `latest`
+  - selects the published tag from
+    `europe-west1-docker.pkg.dev/mainsequence-development/tsorm-images/project-executor-bundle`
 - `GIT_URL`
   - required by the project scaffold
 - `GIT_BRANCH`
@@ -211,6 +221,19 @@ gs://${PROJECT_ID}/pod-dockerfiles/project_executor/Dockerfile
 
 That object is overwritten on each build and is intended for downstream systems that build or
 consume the remote worker image definition from Cloud Storage.
+
+## Published bundle image
+
+This repo's Cloud Build also publishes the executor bundle image to:
+
+```text
+${_AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/project-executor-bundle
+```
+
+It pushes:
+
+- `:latest`
+- `:astro-<astro-version>`
 
 ## Related pages
 

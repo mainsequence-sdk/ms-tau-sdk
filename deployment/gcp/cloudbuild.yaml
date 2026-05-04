@@ -17,11 +17,18 @@ steps:
 
         LOCAL_IMAGE="astro-pi-stream:build-${BUILD_ID}"
         LABELED_IMAGE="astro-pi-stream:labeled-${BUILD_ID}"
+        LOCAL_BUNDLE_IMAGE="project-executor-bundle:build-${BUILD_ID}"
 
         docker build \
           -f Dockerfile \
           --target "${_DOCKER_TARGET}" \
           -t "$${LOCAL_IMAGE}" \
+          .
+
+        docker build \
+          -f Dockerfile \
+          --target "project-executor-bundle" \
+          -t "$${LOCAL_BUNDLE_IMAGE}" \
           .
 
         ASTRO_VERSION="$$(docker run --rm --entrypoint node "$${LOCAL_IMAGE}" \
@@ -39,9 +46,11 @@ steps:
 
         VERSION_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}"
         DESCRIPTIVE_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}-py$${PYTHON_VERSION_TAG}-node$${NODE_VERSION_TAG}-ms$${MAINSEQUENCE_VERSION}"
+        BUNDLE_VERSION_IMAGE="${_BUNDLE_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}"
 
         printf '%s' "$${VERSION_IMAGE}" > /workspace/version_image.txt
         printf '%s' "$${DESCRIPTIVE_IMAGE}" > /workspace/descriptive_image.txt
+        printf '%s' "$${BUNDLE_VERSION_IMAGE}" > /workspace/bundle_version_image.txt
 
         CONTAINER_ID="$$(docker create "$${LOCAL_IMAGE}")"
         trap 'docker rm -f "$${CONTAINER_ID}" >/dev/null 2>&1 || true' EXIT
@@ -59,6 +68,8 @@ steps:
         docker tag "$${LABELED_IMAGE}" "$${VERSION_IMAGE}"
         docker tag "$${LABELED_IMAGE}" "$${DESCRIPTIVE_IMAGE}"
         docker tag "$${LABELED_IMAGE}" "${_LATEST_IMAGE}"
+        docker tag "$${LOCAL_BUNDLE_IMAGE}" "$${BUNDLE_VERSION_IMAGE}"
+        docker tag "$${LOCAL_BUNDLE_IMAGE}" "${_BUNDLE_LATEST_IMAGE}"
 
         docker rm -f "$${CONTAINER_ID}" >/dev/null 2>&1 || true
         trap - EXIT
@@ -95,13 +106,36 @@ steps:
         DESCRIPTIVE_IMAGE="$$(cat /workspace/descriptive_image.txt)"
         docker push "$${DESCRIPTIVE_IMAGE}"
 
+  - id: "push-project-executor-bundle-version-image"
+    waitFor:
+      - "build-image-and-detect-mainsequence-version"
+    name: "gcr.io/cloud-builders/docker"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        set -euo pipefail
+        BUNDLE_VERSION_IMAGE="$$(cat /workspace/bundle_version_image.txt)"
+        docker push "$${BUNDLE_VERSION_IMAGE}"
+
+  - id: "push-project-executor-bundle-latest-image"
+    waitFor:
+      - "build-image-and-detect-mainsequence-version"
+    name: "gcr.io/cloud-builders/docker"
+    args:
+      - "push"
+      - "${_BUNDLE_LATEST_IMAGE}"
+
 substitutions:
   _AR_REGION: "europe-west1"
   _AR_REPO: "tsorm-images"
   _IMAGE_NAME: "astro/astro-pi-stream"
+  _BUNDLE_IMAGE_NAME: "project-executor-bundle"
   _DOCKER_TARGET: "astro-pi-stream"
   _IMAGE_PREFIX: "${_AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE_NAME}"
+  _BUNDLE_IMAGE_PREFIX: "${_AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_BUNDLE_IMAGE_NAME}"
   _LATEST_IMAGE: "${_IMAGE_PREFIX}:latest"
+  _BUNDLE_LATEST_IMAGE: "${_BUNDLE_IMAGE_PREFIX}:latest"
 
 options:
   dynamicSubstitutions: true

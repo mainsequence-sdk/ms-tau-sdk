@@ -69,6 +69,10 @@ RUN groupadd --gid "${APP_GID}" "${APP_GROUP}" \
 
 USER appuser
 
+FROM scratch AS project-executor-bundle
+
+COPY --from=astro-base /app /app
+
 FROM astro-runtime AS astro-pi-stream
 
 ENV ASTRO_STREAM_HOST=0.0.0.0 \
