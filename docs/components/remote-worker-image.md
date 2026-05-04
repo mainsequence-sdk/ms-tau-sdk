@@ -206,7 +206,7 @@ image for resume or replay of the same executor session.
 This repo's Cloud Build now uploads `Dockerfile.remote-worker` to:
 
 ```text
-gs://${PROJECT_ID}/pod-dockerfiles/astro-remote-worker/Dockerfile
+gs://${PROJECT_ID}/pod-dockerfiles/project_executor/Dockerfile
 ```
 
 That object is overwritten on each build and is intended for downstream systems that build or

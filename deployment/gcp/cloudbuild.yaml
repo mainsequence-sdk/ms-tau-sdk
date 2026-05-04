@@ -5,7 +5,7 @@ steps:
     args:
       - "cp"
       - "Dockerfile.remote-worker"
-      - "gs://${PROJECT_ID}/pod-dockerfiles/astro-remote-worker/Dockerfile"
+      - "gs://${PROJECT_ID}/pod-dockerfiles/project_executor/Dockerfile"
 
   - id: "build-image-and-detect-mainsequence-version"
     name: "gcr.io/cloud-builders/docker"
