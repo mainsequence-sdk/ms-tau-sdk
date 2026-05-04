@@ -1,5 +1,7 @@
 # syntax=docker/dockerfile:1.4
 
+ARG BASE_IMAGE
+
 # =============================================================================
 # [ASTRO] Stage 1: Build the Astro runtime bundle
 # Purpose:
@@ -29,7 +31,6 @@ RUN npm run check
 #   - Install the project's Python dependencies
 #   - Preserve APP_DIR / SKEL_APP_DIR / NB_* exactly as they work today
 # =============================================================================
-ARG BASE_IMAGE
 FROM ${BASE_IMAGE}
 
 SHELL ["/bin/bash", "-lc"]
