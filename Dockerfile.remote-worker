@@ -67,6 +67,7 @@ RUN mkdir -p \
     /home/${NB_USER}/.astro \
     /session-state/sessions \
     /session-state/session-overrides \
+ && chown 10000:10000 /home/${NB_USER} \
  && chmod 755 /home/${NB_USER} \
  && chown -R 10000:10000 \
     ${APP_DIR} \

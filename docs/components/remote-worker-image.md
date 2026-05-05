@@ -142,6 +142,7 @@ To support that, the image:
 
 - starts from `WORKDIR /app` instead of the Jupyter project directory
 - keeps the real project path at `ASTRO_FIXED_PROJECT_CWD=/home/jovyan/app`
+- makes `/home/jovyan` itself owned by uid/gid `10000` so bootstrap can create runtime links there
 - makes the project tree and Astro runtime state directories writable by uid/gid `10000`
 - does not require `/app` ownership changes for runtime execution
 
