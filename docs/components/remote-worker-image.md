@@ -130,6 +130,21 @@ executor mode without extra image edits.
 - `ASTRO_PROJECT_IMAGE_REF=${BASE_IMAGE}`
   - records the image reference into project-session metadata
 
+### Deployed security contract
+
+The remote worker image is intended to run under the platform security context:
+
+- `runAsUser: 10000`
+- `runAsGroup: 10000`
+- `fsGroup: 10000` when needed for mounted volumes
+
+To support that, the image:
+
+- starts from `WORKDIR /app` instead of the Jupyter project directory
+- keeps the real project path at `ASTRO_FIXED_PROJECT_CWD=/home/jovyan/app`
+- makes the project tree and Astro runtime state directories writable by uid/gid `10000`
+- does not require `/app` ownership changes for runtime execution
+
 ### Env vars that are usually injected at pod launch
 
 These are not baked into the Dockerfile because they depend on the specific backend session:

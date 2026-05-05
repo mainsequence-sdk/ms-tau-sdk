@@ -25,6 +25,9 @@ ARG BASE_IMAGE
 # Key path split:
 #   - ${APP_DIR} = project code/runtime from BASE_IMAGE
 #   - /app       = Astro runtime
+# Deployment contract:
+#   - the executor pod runs as uid/gid 10000
+#   - startup must not rely on the inherited jovyan uid from BASE_IMAGE
 # =============================================================================
 USER root
 
@@ -64,17 +67,18 @@ RUN mkdir -p \
     /home/${NB_USER}/.astro \
     /session-state/sessions \
     /session-state/session-overrides \
- && chown -R ${NB_UID}:${NB_GID} \
+ && chmod 755 /home/${NB_USER} \
+ && chown -R 10000:10000 \
+    ${APP_DIR} \
     /home/${NB_USER}/.astro-container-data \
     /home/${NB_USER}/.local \
     /home/${NB_USER}/.pi \
     /home/${NB_USER}/.config \
     /home/${NB_USER}/.astro \
-    /session-state \
-    /app
+    /session-state
 
-USER ${NB_USER}
-WORKDIR ${APP_DIR}
+USER 10000:10000
+WORKDIR /app
 
 EXPOSE 8787
 

@@ -36,6 +36,17 @@ These env vars are used by image-backed `mainsequence-project-executor` pods:
 - `ASTRO_PROJECT_IMAGE_REF`
   - optional image reference or digest persisted into project-session metadata
 
+For the deployed Jupyter-based executor image, the effective runtime contract is:
+
+- `HOME=/home/jovyan`
+- `ASTRO_CONTAINER_DATA_DIR=/home/jovyan/.astro-container-data`
+- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/jovyan/.astro-container-data/.config/mainsequence`
+- `PI_CODING_AGENT_DIR=/home/jovyan/.astro-container-data/.pi/agent`
+- `ASTRO_FIXED_PROJECT_CWD=/home/jovyan/app`
+
+The executor image is built to start under Kubernetes `runAsUser: 10000` / `runAsGroup: 10000`,
+with `/app` as the process startup directory and `/home/jovyan/app` kept as the real project cwd.
+
 For the full worker-image layout and pod contract, see
 [`../components/remote-worker-image.md`](../components/remote-worker-image.md).
 
