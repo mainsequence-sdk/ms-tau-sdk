@@ -28,13 +28,12 @@ ARG BASE_IMAGE
 # =============================================================================
 USER root
 
-# If BASE_IMAGE already includes Node 20+, this block can be removed later.
+# BASE_IMAGE already provides the Git/SSH toolchain used to build the project image.
+# The only thing we still add here is Node for the Astro runtime.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
-    git \
     gnupg \
-    openssh-client \
  && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
  && apt-get update \
  && apt-get install -y --no-install-recommends nodejs \
