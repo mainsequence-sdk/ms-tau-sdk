@@ -170,6 +170,7 @@ If you want, give me a goal in one sentence (e.g., “I’d like to build a dash
 ## When to use which capability
 
 - When running Main Sequence CLI commands, you may append `--json` to request structured output.
+- Use `get_runtime_info` when the user asks which Astro release, installed Main Sequence SDK version, Python version, Node version, or runtime mode is currently running.
 - Use `switch_project_session` to move the active conversation into a project-scoped `mainsequence-project-coder` session.
 - Use `delegate_specialist` for bounded specialist work that should not replace the active session.
 - Use `a2a_discover_agents` when the user asks which executor or A2A-capable agents are available.

@@ -45,6 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=astro-executor-bundle /app /app
 
 ENV PATH="/app/node_modules/.bin:${PATH}" \
+    ASTRO_RELEASE_VERSION=${ASTRO_EXECUTOR_BUNDLE_REF} \
     HOME=/home/${NB_USER} \
     ASTRO_CONTAINER_DATA_DIR=/home/${NB_USER}/.astro-container-data \
     ASTRO_STREAM_HOST=0.0.0.0 \

@@ -11,7 +11,11 @@
   provider credentials; in containers use `/session-state/pi-agent-auth`)
 - `ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS` (default `10000`; periodic safety flush interval
   for scoped provider credentials while Pi is running)
+- `ASTRO_RELEASE_VERSION` (the Astro release/build version baked into the image and exposed for
+  runtime debugging)
 - `ASTRO_STREAM_LOG_TRAFFIC` (`0` disables logging)
+- `ASTRO_STREAM_LOG_HEALTH_TRAFFIC` (`1` enables `GET /health` access logs; health probe access
+  lines are suppressed by default)
 - `ASTRO_STREAM_LOG_REQUEST_BODIES` (`1` enables request payload debug logging)
 - `ASTRO_MAINSEQUENCE_CONFIG_DIR` (container-local Main Sequence CLI config; in containers use `/home/appuser/.astro-container-data/.config/mainsequence`)
 - `PI_CODING_AGENT_DIR` (container-local Pi runtime state directory; in containers use `/home/appuser/.astro-container-data/.pi/agent`)
@@ -46,6 +50,11 @@ For the deployed Jupyter-based executor image, the effective runtime contract is
 
 The executor image is built to start under Kubernetes `runAsUser: 10000` / `runAsGroup: 10000`,
 with `/app` as the process startup directory and `/home/jovyan/app` kept as the real project cwd.
+
+For `mainsequence-project-executor`, incoming `/api/chat` and `/api/a2a/chat` requests do not need
+to provide `projectId`. The streamer no longer tries to resolve `projectId` from the request path
+for executor-mode requests and continues using the fixed project runtime even when request-side
+`projectId` is absent.
 
 For the full worker-image layout and pod contract, see
 [`../components/remote-worker-image.md`](../components/remote-worker-image.md).

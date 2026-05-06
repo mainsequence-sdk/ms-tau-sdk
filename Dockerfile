@@ -1,10 +1,13 @@
 FROM python:3.11-slim AS astro-base
 
+ARG ASTRO_RELEASE_VERSION=dev
+
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/app/node_modules/.bin:${PATH}" \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
+    ASTRO_RELEASE_VERSION=${ASTRO_RELEASE_VERSION}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \

@@ -15,6 +15,12 @@ steps:
       - |
         set -euo pipefail
 
+        ASTRO_RELEASE_VERSION="$$(sed -n 's/  \"version\": \"\\([^\"]*\\)\",/\\1/p' package.json | head -n1)"
+        if [ -z "$${ASTRO_RELEASE_VERSION}" ]; then
+          echo "Could not resolve ASTRO_RELEASE_VERSION from package.json" >&2
+          exit 1
+        fi
+
         LOCAL_IMAGE="astro-pi-stream:build-${BUILD_ID}"
         LABELED_IMAGE="astro-pi-stream:labeled-${BUILD_ID}"
         LOCAL_BUNDLE_IMAGE="project-executor-bundle:build-${BUILD_ID}"
@@ -22,12 +28,14 @@ steps:
         docker build \
           -f Dockerfile \
           --target "${_DOCKER_TARGET}" \
+          --build-arg "ASTRO_RELEASE_VERSION=$${ASTRO_RELEASE_VERSION}" \
           -t "$${LOCAL_IMAGE}" \
           .
 
         docker build \
           -f Dockerfile \
           --target "project-executor-bundle" \
+          --build-arg "ASTRO_RELEASE_VERSION=$${ASTRO_RELEASE_VERSION}" \
           -t "$${LOCAL_BUNDLE_IMAGE}" \
           .
 

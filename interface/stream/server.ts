@@ -87,7 +87,6 @@ import {
 	fetchBackendAgentSession,
 	registerMainsequenceAgent,
 	resolveMainsequenceUserId,
-	resolveProjectExecutorProjectId,
 	startBackendAgentSession,
 	shouldRegisterAgents,
 } from "../../pi/extensions/shared/agent-registration.js";
@@ -132,6 +131,7 @@ const host = process.env.ASTRO_STREAM_HOST ?? "0.0.0.0";
 const configuredPort = Number(process.env.ASTRO_STREAM_PORT ?? "8787");
 const port = Number.isFinite(configuredPort) && configuredPort > 0 ? configuredPort : 8787;
 const logTraffic = process.env.ASTRO_STREAM_LOG_TRAFFIC !== "0";
+const logHealthTraffic = process.env.ASTRO_STREAM_LOG_HEALTH_TRAFFIC === "1";
 const logRequestBodies = process.env.ASTRO_STREAM_LOG_REQUEST_BODIES === "1";
 const sessionDir =
 	process.env.ASTRO_STREAM_SESSION_DIR ?? path.join(repoRoot, ".astro", "stream-sessions");
@@ -914,6 +914,7 @@ function registerHttpAccessLog(
 	url: URL,
 ) {
 	if (!logTraffic) return;
+	if (!logHealthTraffic && req.method === "GET" && url.pathname === "/health") return;
 
 	const startedAt = process.hrtime.bigint();
 	const remoteAddress = getRequestRemoteAddress(req) ?? "-";
@@ -7135,17 +7136,7 @@ async function handleStreamRequest(
 	const fixedProjectCwd = resolveFixedProjectCwd();
 	const requestedProjectId = normalizeProjectId(body.projectId);
 	const requestedCwd = normalizeProjectCwd(body.cwd);
-	const executorProjectId =
-		isImageBackedProjectExecutor(agentName)
-			? resolveProjectExecutorProjectId({
-					cwd: requestedCwd ?? fixedProjectCwd ?? existingSessionMetadata?.cwd ?? null,
-					projectId: requestedProjectId ?? existingSessionMetadata?.projectId ?? resolveFixedProjectId(),
-					env: process.env,
-			  })
-			: null;
-	const fixedProjectId = isImageBackedProjectExecutor(agentName)
-		? executorProjectId ?? resolveFixedProjectId()
-		: resolveFixedProjectId();
+	const fixedProjectId = isImageBackedProjectExecutor(agentName) ? null : resolveFixedProjectId();
 	if (fixedProjectId && requestedProjectId && requestedProjectId !== fixedProjectId) {
 		json(res, 409, {
 			error: "fixed_project_mismatch",
@@ -7166,6 +7157,7 @@ async function handleStreamRequest(
 	if (
 		!newChat &&
 		isProjectSessionAgentName(agentName) &&
+		!isImageBackedProjectExecutor(agentName) &&
 		existingSessionMetadata?.projectId &&
 		effectiveRequestedProjectId &&
 		effectiveRequestedProjectId !== existingSessionMetadata.projectId
@@ -7192,7 +7184,9 @@ async function handleStreamRequest(
 
 	const projectId =
 		isProjectSessionAgentName(agentName)
-			? executorProjectId ?? effectiveRequestedProjectId ?? existingSessionMetadata?.projectId ?? null
+			? isImageBackedProjectExecutor(agentName)
+				? requestedProjectId ?? existingSessionMetadata?.projectId ?? null
+				: effectiveRequestedProjectId ?? existingSessionMetadata?.projectId ?? null
 			: null;
 	const agentCwd =
 		isProjectSessionAgentName(agentName)
@@ -7204,7 +7198,7 @@ async function handleStreamRequest(
 			? configuredProjectImageRef ?? existingSessionMetadata?.projectImageRef ?? null
 			: null;
 	if (isProjectSessionAgentName(agentName)) {
-		if (!projectId) {
+		if (!projectId && !isImageBackedProjectExecutor(agentName)) {
 			json(res, newChat ? 400 : 409, {
 				error: "missing_project_id",
 				message: `${agentName} requires projectId.`,
