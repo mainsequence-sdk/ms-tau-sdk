@@ -15,7 +15,7 @@ steps:
       - |
         set -euo pipefail
 
-        ASTRO_RELEASE_VERSION="$$(sed -n 's/  \"version\": \"\\([^\"]*\\)\",/\\1/p' package.json | head -n1)"
+        ASTRO_RELEASE_VERSION="$$(awk -F'\"' '/\"version\"[[:space:]]*:/ { print $$4; exit }' package.json)"
         if [ -z "$${ASTRO_RELEASE_VERSION}" ]; then
           echo "Could not resolve ASTRO_RELEASE_VERSION from package.json" >&2
           exit 1
