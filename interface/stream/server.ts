@@ -48,6 +48,7 @@ import {
 	collectModelCatalog,
 	DEFAULT_OPENAI_MODEL,
 	DEFAULT_OPENAI_PROVIDER,
+	type AvailableModelsResponse,
 	type RunConfigReasoningEffort,
 } from "./available-models.js";
 import {
@@ -948,6 +949,63 @@ function notFound(res: import("node:http").ServerResponse) {
 
 function badRequest(res: import("node:http").ServerResponse, message: string) {
 	json(res, 400, { error: "bad_request", message });
+}
+
+function summarizeAvailableModelsForLog(availableModels: AvailableModelsResponse): {
+	providerCount: number;
+	modelCount: number;
+	sourceSummaries: Array<{
+		source: string;
+		ok: boolean;
+		count: number;
+		error: string | null;
+		authProviderCount: number | null;
+		authStatusError: string | null;
+		totalModelCount: number | null;
+		availableModelCount: number | null;
+	}>;
+	piModelRegistrySource: {
+		ok: boolean;
+		count: number;
+		error: string | null;
+		authProviderCount: number | null;
+		authStatusError: string | null;
+		totalModelCount: number | null;
+		availableModelCount: number | null;
+	} | null;
+} {
+	const sourceSummaries = availableModels.sources.map((source) => {
+		const details = source.details ?? {};
+		const authProviders = Array.isArray(details.auth_providers) ? details.auth_providers : null;
+		return {
+			source: source.source,
+			ok: source.ok,
+			count: source.count,
+			error: typeof source.error === "string" && source.error.trim() ? source.error.trim() : null,
+			authProviderCount: authProviders ? authProviders.length : null,
+			authStatusError:
+				typeof details.auth_status_error === "string" && details.auth_status_error.trim()
+					? details.auth_status_error.trim()
+					: null,
+			totalModelCount:
+				typeof details.total_model_count === "number" && Number.isFinite(details.total_model_count)
+					? details.total_model_count
+					: null,
+			availableModelCount:
+				typeof details.available_model_count === "number" &&
+				Number.isFinite(details.available_model_count)
+					? details.available_model_count
+					: null,
+		};
+	});
+	const piModelRegistrySource =
+		sourceSummaries.find((source) => source.source === "pi-model-registry") ?? null;
+	return {
+		providerCount: availableModels.providers.length,
+		modelCount: availableModels.providers.reduce((total, group) => total + group.models.length, 0),
+		sourceSummaries,
+		piModelRegistrySource,
+	};
 }
 
 function matchModelProviderAuthActionPath(pathname: string):
@@ -5505,6 +5563,45 @@ async function runPiPrompt(
 	ctx.piAssistantTextSeen = false;
 	ctx.lastAssistantFinishReason = null;
 	ctx.lastAssistantUsage = undefined;
+	if (boundModelArg || options.agentConfig?.model) {
+		logStructuredEvent({
+			component: "astro-stream",
+			event: "pi_launch_model_ready",
+			message: "Pi launch has a resolved model configuration.",
+			data: {
+				agentName: ctx.agentName,
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId ?? null,
+				userId: ctx.userId,
+				agentSessionId: ctx.agentSessionId,
+				cwd: options.cwd,
+				boundModelArg: boundModelArg ?? null,
+				sessionModelBindingProvider: ctx.sessionModelBinding?.provider ?? null,
+				sessionModelBindingModel: ctx.sessionModelBinding?.model ?? null,
+				sessionModelBindingReasoningEffort:
+					ctx.sessionModelBinding?.runConfig.reasoning_effort ?? null,
+				agentConfigModel: options.agentConfig?.model ?? null,
+			},
+		});
+	} else {
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "pi_launch_without_model",
+			message:
+				"Pi is launching without a bound model argument or agent-config model; execution may fail with no available models.",
+			data: {
+				agentName: ctx.agentName,
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId ?? null,
+				userId: ctx.userId,
+				agentSessionId: ctx.agentSessionId,
+				cwd: options.cwd,
+				sessionModelBindingPresent: Boolean(ctx.sessionModelBinding),
+				agentConfigModel: options.agentConfig?.model ?? null,
+			},
+		});
+	}
 
 	try {
 		const checkpointReady = await prepareCheckpointBeforePiLaunch(ctx);
@@ -5960,15 +6057,92 @@ async function handleStreamRequest(
 	}
 
 	if (req.method === "GET" && url.pathname === "/api/chat/get_available_models") {
+		const userId = resolveUserIdFromRequest(req, url);
+		logStructuredEvent({
+			component: "astro-stream",
+			event: "available_models_request_started",
+			message: "Available-model discovery request started.",
+			data: {
+				path: url.pathname,
+				userId,
+				executionMode: process.env.ASTRO_EXECUTION_MODE ?? null,
+				fixedAgentName: process.env.ASTRO_FIXED_AGENT_NAME ?? null,
+			},
+		});
+		if (!userId) {
+			logStructuredEvent({
+				severity: "WARNING",
+				component: "astro-stream",
+				event: "available_models_user_id_missing",
+				message:
+					"Available-model discovery request is missing user identity; auth-backed providers may be filtered out.",
+				data: {
+					path: url.pathname,
+					acceptedSources: [
+						"userId",
+						"user_id",
+						"created_by_user",
+						"createdByUser",
+						"x-mainsequence-user-id",
+						"x-ms-user-id",
+						"x-user-id",
+						"authorization bearer jwt",
+					],
+				},
+			});
+		}
 		try {
 			const availableModels = await collectAvailableModels({
 				env: process.env,
-				userId: resolveUserIdFromRequest(req, url),
+				userId,
 			});
+			const availableModelSummary = summarizeAvailableModelsForLog(availableModels);
+			logStructuredEvent({
+				component: "astro-stream",
+				event: "available_models_request_succeeded",
+				message: "Available-model discovery completed.",
+				data: {
+					path: url.pathname,
+					userId,
+					providerCount: availableModelSummary.providerCount,
+					modelCount: availableModelSummary.modelCount,
+					sourceSummaries: availableModelSummary.sourceSummaries,
+				},
+			});
+			const piModelRegistrySource = availableModelSummary.piModelRegistrySource;
+			if (
+				piModelRegistrySource &&
+				((piModelRegistrySource.totalModelCount ?? 0) > 0 &&
+					(piModelRegistrySource.availableModelCount ?? piModelRegistrySource.count) === 0)
+			) {
+				logStructuredEvent({
+					severity: "WARNING",
+					component: "astro-stream",
+					event: "available_models_pi_registry_filtered_out",
+					message:
+						"Pi model registry reported models, but none were exposed as available in this runtime.",
+					data: {
+						path: url.pathname,
+						userId,
+						piModelRegistrySource,
+					},
+				});
+			}
 			json(res, 200, availableModels);
 		} catch (error) {
 			const message =
 				error instanceof Error ? error.message : "Unknown available-model discovery failure.";
+			logStructuredEvent({
+				severity: "ERROR",
+				component: "astro-stream",
+				event: "available_models_request_failed",
+				message: "Available-model discovery failed.",
+				data: {
+					path: url.pathname,
+					userId,
+					error: message,
+				},
+			});
 			json(res, 500, {
 				error: "available_models_unavailable",
 				message,
@@ -7098,6 +7272,27 @@ async function handleStreamRequest(
 			userId,
 		});
 		if (resolvedModelBinding.ok === false) {
+			logStructuredEvent({
+				severity: "WARNING",
+				component: "astro-stream",
+				event: "session_model_binding_resolution_failed",
+				message: "Astro could not resolve the requested session model binding.",
+				data: {
+					agentName,
+					userId,
+					threadId: existingSessionMetadata?.threadId ?? requestedThreadId ?? null,
+					runtimeSessionId,
+					requestedModelSource:
+						typeof body.model.source === "string" ? body.model.source.trim() || null : null,
+					requestedModelProvider:
+						typeof body.model.provider === "string" ? body.model.provider.trim() || null : null,
+					requestedModelId:
+						typeof body.model.model === "string" ? body.model.model.trim() || null : null,
+					error: resolvedModelBinding.error,
+					statusCode: resolvedModelBinding.statusCode,
+					message: resolvedModelBinding.message,
+				},
+			});
 			json(res, resolvedModelBinding.statusCode, {
 				error: resolvedModelBinding.error,
 				message: resolvedModelBinding.message,
@@ -7105,6 +7300,46 @@ async function handleStreamRequest(
 			return;
 		}
 		sessionModelBinding = resolvedModelBinding.binding;
+	}
+	const requestModelSource =
+		body.model === null
+			? "cleared_by_request"
+			: isPlainObject(body.model)
+				? "request_payload"
+				: existingSessionMetadata?.sessionModelBinding
+					? hydratedBackendSession ? "session_metadata_from_backend_hydration" : "session_metadata"
+					: "none";
+	const sessionModelBindingLogData = {
+		agentName,
+		userId,
+		threadId: existingSessionMetadata?.threadId ?? requestedThreadId ?? null,
+		runtimeSessionId,
+		newChat,
+		requestModelSource,
+		hasRequestModelObject: isPlainObject(body.model),
+		requestClearedModel: body.model === null,
+		existingSessionHadModelBinding: Boolean(existingSessionMetadata?.sessionModelBinding),
+		hydratedBackendSessionAttached: Boolean(hydratedBackendSession),
+		effectiveProvider: sessionModelBinding?.provider ?? null,
+		effectiveModel: sessionModelBinding?.model ?? null,
+		effectiveReasoningEffort: sessionModelBinding?.runConfig.reasoning_effort ?? null,
+	};
+	if (sessionModelBinding) {
+		logStructuredEvent({
+			component: "astro-stream",
+			event: "session_model_binding_resolved",
+			message: "Astro resolved a session model binding for the request.",
+			data: sessionModelBindingLogData,
+		});
+	} else {
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "session_model_binding_missing",
+			message:
+				"No session model binding is available for this request; Pi may launch without a model unless runtime state provides one.",
+			data: sessionModelBindingLogData,
+		});
 	}
 
 	if (sessionModelBinding) {
