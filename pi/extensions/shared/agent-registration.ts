@@ -1,22 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import path from "node:path";
 import { logStructuredEvent } from "./structured-logging.js";
-
-type AgentRole = "orchestrator" | "specialist";
-
-type RegistrationResult = {
-	ok: boolean;
-	exitCode: number | null;
-	stdout: string;
-	stderr: string;
-	body: unknown;
-	responseText?: string | null;
-	url?: string | null;
-	agentId: number | null;
-	agentUniqueId: string | null;
-	userId: string | null;
-};
 
 type AgentSessionResult = {
 	ok: boolean;
@@ -41,16 +24,6 @@ export type BackendAgentSessionFetchResult = {
 	agentSessionId: number | null;
 	notFound: boolean;
 	endpoint: string | null;
-};
-
-type RegistrationOptions = {
-	agentName: string;
-	agentRole: AgentRole;
-	cwd: string;
-	projectId?: unknown;
-	userId?: unknown;
-	env?: NodeJS.ProcessEnv;
-	log?: (message: string) => void;
 };
 
 const DEFAULT_BACKEND = "https://api.main-sequence.app";
@@ -109,62 +82,12 @@ export function buildAgentUniqueId(options: {
 	userId: string;
 	projectId?: string | number | null;
 }): string {
-	const projectId = normalizeIdPart(options.projectId);
 	if (options.agentName === "mainsequence-project-executor") {
-		return projectId ? `project-executor-${projectId}` : "project-executor";
+		return "project-executor";
 	}
+	const projectId = normalizeIdPart(options.projectId);
 	const safeAgentName = sanitizeId(options.agentName);
 	return projectId ? `${safeAgentName}_${options.userId}_${projectId}` : `${safeAgentName}_${options.userId}`;
-}
-
-function parseDotEnvValue(rawValue: string): string {
-	const trimmed = rawValue.trim();
-	if (
-		(trimmed.startsWith("\"") && trimmed.endsWith("\"")) ||
-		(trimmed.startsWith("'") && trimmed.endsWith("'"))
-	) {
-		return trimmed.slice(1, -1);
-	}
-	return trimmed;
-}
-
-function readProjectEnvValue(projectCwd: string, keys: string[]): string | null {
-	const envPath = path.join(path.resolve(projectCwd), ".env");
-	if (!existsSync(envPath)) return null;
-	const contents = readFileSync(envPath, "utf8");
-	for (const rawLine of contents.split(/\r?\n/)) {
-		const line = rawLine.trim();
-		if (!line || line.startsWith("#")) continue;
-		const equalsIndex = line.indexOf("=");
-		if (equalsIndex === -1) continue;
-		const key = line.slice(0, equalsIndex).trim().replace(/^export\s+/, "");
-		if (!keys.includes(key)) continue;
-		const value = parseDotEnvValue(line.slice(equalsIndex + 1));
-		if (value) return value;
-	}
-	return null;
-}
-
-export function resolveProjectExecutorProjectId(options: {
-	cwd?: string | null;
-	projectId?: unknown;
-	env?: NodeJS.ProcessEnv;
-}): string | null {
-	const runtimeEnv = options.env ?? process.env;
-	const fromProjectEnv = options.cwd
-		? normalizeIdPart(readProjectEnvValue(options.cwd, ["MAINSEQUENCE_PROJECT_ID", "MAIN_SEQUENCE_PROJECT_ID"]))
-		: null;
-	if (fromProjectEnv) return fromProjectEnv;
-	return normalizeIdPart(
-		runtimeEnv.MAINSEQUENCE_PROJECT_ID ??
-			runtimeEnv.MAIN_SEQUENCE_PROJECT_ID ??
-			options.projectId ??
-			runtimeEnv.ASTRO_TARGET_PROJECT_ID,
-	);
-}
-
-function resolveRegisteredAgentName(agentName: string): string {
-	return agentName === "mainsequence-project-executor" ? "project-executor" : sanitizeId(agentName);
 }
 
 function buildMainsequenceSdkEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -249,21 +172,6 @@ export async function resolveBackendAuthHeaders(
 	return resolveRuntimeCredentialAuthHeaders(env, log);
 }
 
-async function postGetOrCreateAgent(options: {
-	backendUrl: string;
-	authHeaders: BackendAuthHeaders;
-	payload: Record<string, unknown>;
-}): Promise<Response> {
-	return fetch(agentGetOrCreateEndpoint(options.backendUrl), {
-		method: "POST",
-		headers: {
-			...options.authHeaders,
-			"Content-Type": "application/json",
-		},
-		body: JSON.stringify(options.payload),
-	});
-}
-
 async function postStartAgentSession(options: {
 	backendUrl: string;
 	authHeaders: BackendAuthHeaders;
@@ -278,10 +186,6 @@ async function postStartAgentSession(options: {
 		},
 		body: JSON.stringify(options.payload),
 	});
-}
-
-function agentGetOrCreateEndpoint(backendUrl: string): string {
-	return `${backendUrl}/orm/api/agents/v1/agents/get_or_create/`;
 }
 
 function agentStartSessionEndpoint(backendUrl: string, agentId: number): string {
@@ -360,167 +264,6 @@ function normalizeAgentSessionLookupId(value: unknown): number | null {
 		return Number.isFinite(parsed) ? parsed : null;
 	}
 	return null;
-}
-
-export async function registerMainsequenceAgent(
-	options: RegistrationOptions,
-): Promise<RegistrationResult> {
-	const { agentName, agentRole, projectId, userId, env, log } = options;
-	const runtimeEnv = env ?? process.env;
-	const safeAgentName = sanitizeId(agentName);
-	const registeredAgentName = resolveRegisteredAgentName(agentName);
-	const resolvedUserId = resolveMainsequenceUserId({ userId, env: runtimeEnv, log });
-
-	if (!resolvedUserId) {
-		log?.(`Agent registration failed for "${safeAgentName}": missing user id.`);
-		return {
-			ok: false,
-				exitCode: null,
-				stdout: "",
-				stderr: "Missing required user id for deterministic registration.",
-				body: null,
-				agentId: null,
-				agentUniqueId: null,
-				userId: null,
-		};
-	}
-
-	const isProjectExecutor = agentName === "mainsequence-project-executor";
-	const isProjectCoder =
-		agentName === "mainsequence-project-coder" || isProjectExecutor;
-	const resolvedProjectId = isProjectExecutor
-		? resolveProjectExecutorProjectId({
-				cwd: options.cwd,
-				projectId,
-				env: runtimeEnv,
-		  })
-		: normalizeIdPart(projectId ?? runtimeEnv.ASTRO_TARGET_PROJECT_ID);
-	if (isProjectCoder && !resolvedProjectId) {
-		log?.(`Agent registration failed for "${safeAgentName}": missing project id.`);
-		return {
-			ok: false,
-				exitCode: null,
-				stdout: "",
-				stderr: "Missing required project id for deterministic registration.",
-				body: null,
-				agentId: null,
-				agentUniqueId: null,
-				userId: resolvedUserId,
-		};
-	}
-
-	const agentUniqueId = buildAgentUniqueId({
-		agentName: safeAgentName,
-		userId: resolvedUserId,
-		projectId: resolvedProjectId,
-	});
-	const backendUrl = resolveBackendUrl(runtimeEnv);
-	const url = agentGetOrCreateEndpoint(backendUrl);
-
-	const authHeadersResult = await resolveBackendAuthHeaders(runtimeEnv, log);
-	if (!authHeadersResult.headers) {
-		log?.(
-			`Agent registration failed for "${safeAgentName}": ${
-				authHeadersResult.error ?? "missing backend auth headers"
-			}.`,
-		);
-		return {
-			ok: false,
-				exitCode: null,
-				stdout: "",
-				stderr: authHeadersResult.error ?? "Missing backend auth headers for agent get_or_create.",
-				body: null,
-				agentId: null,
-				agentUniqueId,
-				userId: resolvedUserId,
-		};
-	}
-
-	const payload: Record<string, unknown> = {
-		name: registeredAgentName,
-		agent_unique_id: agentUniqueId,
-	};
-
-	let response = await postGetOrCreateAgent({
-		backendUrl,
-		authHeaders: authHeadersResult.headers,
-		payload,
-	});
-
-	if (response.status === 401 || response.status === 403) {
-		const retryAuthHeaders = await resolveBackendAuthHeaders(runtimeEnv, log);
-		if (retryAuthHeaders.headers) {
-			response = await postGetOrCreateAgent({
-				backendUrl,
-				authHeaders: retryAuthHeaders.headers,
-				payload,
-			});
-		}
-	}
-
-	const responseText = await response.text();
-	let parsedBody: any = null;
-	try {
-		parsedBody = responseText ? JSON.parse(responseText) : null;
-	} catch {
-		parsedBody = null;
-	}
-
-	if (!response.ok) {
-		const message = extractBackendErrorMessage(
-			parsedBody,
-			responseText,
-			`Agent get_or_create failed with status ${response.status}.`,
-		);
-		log?.(
-			`Agent registration failed (${response.status}) backend=${backendUrl} agent_unique_id=${agentUniqueId}: ${message}`,
-		);
-			return {
-				ok: false,
-				exitCode: response.status,
-				stdout: "",
-				stderr: String(message),
-				body: parsedBody,
-				responseText,
-				url,
-				agentId: null,
-				agentUniqueId,
-				userId: resolvedUserId,
-		};
-	}
-
-	const agentId = parseAgentId(parsedBody);
-	if (agentId == null) {
-		log?.("Agent get_or_create succeeded but no `id` was returned.");
-		return {
-			ok: false,
-				exitCode: response.status,
-				stdout: responseText,
-				stderr: "Agent get_or_create did not return an `id`.",
-				body: parsedBody,
-				responseText,
-				url,
-				agentId: null,
-				agentUniqueId,
-				userId: resolvedUserId,
-		};
-	}
-
-	log?.(
-		`Resolved deterministic ${agentRole} agent "${agentUniqueId}" to backend id "${agentId}".`,
-	);
-	return {
-		ok: true,
-			exitCode: response.status,
-			stdout: responseText,
-			stderr: "",
-			body: parsedBody,
-			responseText,
-			url,
-			agentId,
-			agentUniqueId,
-			userId: resolvedUserId,
-	};
 }
 
 export async function startBackendAgentSession(options: {

@@ -83,9 +83,7 @@ import {
 } from "./model-provider-signin.js";
 import { discoverAgents, type AgentConfig } from "../../pi/extensions/tools/specialist-delegate/agents.js";
 import {
-	buildAgentUniqueId,
 	fetchBackendAgentSession,
-	registerMainsequenceAgent,
 	resolveMainsequenceUserId,
 	startBackendAgentSession,
 	shouldRegisterAgents,
@@ -723,7 +721,7 @@ type ThreadSessionBinding = {
 
 type HydratedBackendOrchestratorSession = {
 	agentId: number;
-	agentUniqueId: string;
+	agentUniqueId: string | null;
 	metadata: SessionMetadata;
 };
 
@@ -732,6 +730,7 @@ type SessionSwitchRequest = {
 	agentName: string;
 	projectId: string;
 	cwd: string;
+	agentId: number | null;
 	initialTask: string | null;
 	summary: string | null;
 };
@@ -1017,19 +1016,6 @@ async function ensureRequestCliAuth(
 		});
 		return { ok: false };
 	}
-}
-
-function logAgentResolutionFailure(details: {
-	threadId: string;
-	newChat: boolean;
-	error: string | null;
-	context: Record<string, unknown>;
-}) {
-	console.log(
-		`[astro-stream] agent registration failed threadId=${details.threadId} newChat=${details.newChat} userId=${String(
-			details.context.userId ?? "",
-		)} error=${details.error ?? "unknown"}`,
-	);
 }
 
 function parseJson(req: import("node:http").IncomingMessage): Promise<any> {
@@ -1366,6 +1352,28 @@ function extractBackendSessionAgentId(payload: Record<string, unknown>): number 
 	);
 }
 
+function extractRequestedAgentId(payload: Record<string, unknown>): number | null {
+	return (
+		extractNumericProperty(payload, "agent_id", "agentId") ??
+		(() => {
+			const sessionMetadata = extractObjectPropertyRecord(payload, "sessionMetadata", "session_metadata");
+			if (!sessionMetadata) return null;
+			return extractNumericProperty(sessionMetadata, "agent_id", "agentId");
+		})()
+	);
+}
+
+function extractRequestedAgentUniqueId(payload: Record<string, unknown>): string | null {
+	return (
+		extractStringProperty(payload, "agent_unique_id", "agentUniqueId") ??
+		(() => {
+			const sessionMetadata = extractObjectPropertyRecord(payload, "sessionMetadata", "session_metadata");
+			if (!sessionMetadata) return null;
+			return extractStringProperty(sessionMetadata, "agent_unique_id", "agentUniqueId");
+		})()
+	);
+}
+
 function extractBackendSessionWorkflowKey(
 	payload: Record<string, unknown>,
 	sessionMetadata: Record<string, unknown> | null,
@@ -1671,10 +1679,10 @@ async function attachHydratedBackendSession(options: {
 	const startedAt =
 		extractStringProperty(sessionPayload, "started_at", "startedAt") ??
 		extractStringProperty(sessionMetadata ?? {}, "started_at", "startedAt");
-	const agentUniqueId = buildAgentUniqueId({
-		agentName: "astro-orchestrator",
-		userId: options.userId,
-	});
+	const agentRecord = extractObjectPropertyRecord(sessionPayload, "agent");
+	const agentUniqueId = agentRecord
+		? extractStringProperty(agentRecord, "agent_unique_id", "agentUniqueId")
+		: null;
 	logStructuredEvent({
 		component: "astro-stream",
 		event: "backend_session_hydration_succeeded",
@@ -1990,6 +1998,7 @@ function parseSessionSwitchRequest(result: any): SessionSwitchRequest | null {
 		agentName: "mainsequence-project-coder",
 		projectId: candidate.projectId.trim(),
 		cwd: path.resolve(candidate.cwd),
+		agentId: extractNumericProperty(candidate, "agent_id", "agentId"),
 		initialTask:
 			typeof candidate.initialTask === "string" && candidate.initialTask.trim()
 				? candidate.initialTask.trim()
@@ -3846,7 +3855,7 @@ type BackendRuntimeSessionCreationSuccess = {
 	ok: true;
 	agentId: number;
 	agentName: string;
-	agentUniqueId: string;
+	agentUniqueId: string | null;
 	agentSessionId: number;
 	sessionKey: string;
 	threadId: string;
@@ -3868,6 +3877,8 @@ type BackendRuntimeSessionCreationResult =
 
 async function createBackendRuntimeSession(options: {
 	agentName: string;
+	agentId: number | null;
+	agentUniqueId?: string | null;
 	userId: string;
 	threadId: string;
 	projectId: string | null;
@@ -3882,36 +3893,19 @@ async function createBackendRuntimeSession(options: {
 	sessionModelBinding?: SessionModelBinding | null;
 	sessionConfigOverrides?: SessionConfigOverrides | null;
 }): Promise<BackendRuntimeSessionCreationResult> {
-	const registration = await registerMainsequenceAgent({
-		agentName: options.agentName,
-		agentRole: options.agentName === "astro-orchestrator" ? "orchestrator" : "specialist",
-		cwd: options.cwd ?? repoRoot,
-		projectId: options.projectId,
-		userId: options.userId,
-		log: (message) => {
-			console.log(`[astro-stream] ${message}`);
-		},
-	});
-
-	if (!registration.agentId) {
+	if (options.agentId == null) {
 		return {
 			ok: false,
-			error: registration.stderr || "Failed to resolve backend agent id.",
-			status: registration.exitCode,
-			body: registration.body,
-			responseText: registration.responseText ?? null,
-			url: registration.url ?? null,
+			error: "Missing backend agent id for session creation.",
+			status: 400,
+			body: null,
+			responseText: null,
+			url: null,
 		};
 	}
 
-	const agentId = registration.agentId;
-	const agentUniqueId =
-		registration.agentUniqueId ??
-		buildAgentUniqueId({
-			agentName: options.agentName,
-			userId: options.userId,
-			projectId: options.projectId,
-		});
+	const agentId = options.agentId;
+	const agentUniqueId = options.agentUniqueId ?? null;
 
 	const startedAt = new Date().toISOString();
 	const frozenRepoRoot =
@@ -4947,7 +4941,7 @@ function runPendingProjectRuntimeBootstrap(
 		projectImageRef?: string | null;
 		sessionKey: string;
 		agentId: number;
-		agentUniqueId: string;
+		agentUniqueId: string | null;
 		agentSessionId: number | null;
 		threadId: string;
 		startedAt: string | null;
@@ -5021,7 +5015,7 @@ function createContinuationContextFromSwitch(
 	options: {
 		sessionKey: string;
 		agentId: number;
-		agentUniqueId: string;
+		agentUniqueId: string | null;
 		agentSessionId: number;
 		agentName: string;
 		startedAt: string;
@@ -5207,6 +5201,7 @@ async function handleProjectSessionSwitch(ctx: RequestContext, request: SessionS
 
 	const created = await createBackendRuntimeSession({
 		agentName: request.agentName,
+		agentId: request.agentId,
 		userId: ctx.userId,
 		threadId: ctx.threadId,
 		projectId: request.projectId,
@@ -5242,7 +5237,7 @@ async function handleProjectSessionSwitch(ctx: RequestContext, request: SessionS
 				cwd: request.cwd,
 				thread_id: created.threadId,
 				agent_id: created.agentId,
-				agent_unique_id: created.agentUniqueId,
+				...(created.agentUniqueId ? { agent_unique_id: created.agentUniqueId } : {}),
 				agent_session_id: created.agentSessionId,
 				session_key: created.sessionKey,
 				runtime_session_id: created.sessionKey,
@@ -5286,7 +5281,7 @@ async function handleProjectSessionSwitch(ctx: RequestContext, request: SessionS
 				session_key: created.sessionKey,
 				runtime_session_id: created.sessionKey,
 				agent_name: created.agentName,
-				agent_unique_id: created.agentUniqueId,
+				...(created.agentUniqueId ? { agent_unique_id: created.agentUniqueId } : {}),
 				thread_id: created.threadId,
 				agent_id: created.agentId,
 			},
@@ -7247,43 +7242,22 @@ async function handleStreamRequest(
 	}
 	let agentId: number | null = null;
 	let agentUniqueId: string | null = null;
+	const explicitAgentId = extractRequestedAgentId(isPlainObject(body) ? body : {});
+	const explicitAgentUniqueId = extractRequestedAgentUniqueId(isPlainObject(body) ? body : {});
 	if (hydratedBackendSession) {
 		agentId = hydratedBackendSession.agentId;
 		agentUniqueId = hydratedBackendSession.agentUniqueId;
 	} else {
-		const registration = await registerMainsequenceAgent({
-			agentName,
-			agentRole: agentName === "astro-orchestrator" ? "orchestrator" : "specialist",
-			cwd: agentCwd ?? repoRoot,
-			projectId,
-			userId,
-			log: (message) => {
-				console.log(`[astro-stream] ${message}`);
-			},
-		});
-
-		if (!registration.agentId) {
-			logAgentResolutionFailure({
-				threadId,
-				newChat,
-				error: registration.stderr || "Agent registration failed.",
-				context: { userId, agentName },
-			});
-			json(res, 502, {
-				error: "agent_registration_failed",
-				message: registration.stderr || "Failed to resolve backend agent id.",
-			});
-			return;
-		}
-
-		agentId = registration.agentId;
-		agentUniqueId = registration.agentUniqueId ?? buildAgentUniqueId({ agentName, userId, projectId });
+		agentId = existingSessionMetadata?.agentId ?? explicitAgentId;
+		agentUniqueId = existingSessionMetadata?.agentUniqueId ?? explicitAgentUniqueId;
 	}
 
-	if (agentId == null || !agentUniqueId) {
-		json(res, 409, {
-			error: "session_hydration_failed",
-			message: "The backend-owned session could not be attached safely.",
+	if (agentId == null) {
+		json(res, newChat ? 400 : 409, {
+			error: "missing_agent_id",
+			message: newChat
+				? "A backend agentId is required to start this session."
+				: "Astro could not resolve the backend agent id for the provided session.",
 		});
 		return;
 	}
@@ -7390,7 +7364,11 @@ async function handleStreamRequest(
 			});
 			return;
 		}
-		if (existingSessionMetadata?.agentUniqueId && existingSessionMetadata.agentUniqueId !== agentUniqueId) {
+		if (
+			existingSessionMetadata?.agentUniqueId &&
+			agentUniqueId &&
+			existingSessionMetadata.agentUniqueId !== agentUniqueId
+		) {
 			json(res, 409, {
 				error: "session_mismatch",
 				message: "runtime_session_id does not match the active agent.",
@@ -7558,7 +7536,7 @@ async function handleStreamRequest(
 	markActiveStreamSession(ctx);
 	attachStreamAbortHandler(ctx);
 
-	if (newChat && agentSessionId != null && agentUniqueId) {
+	if (newChat && agentSessionId != null) {
 		writeChunk(ctx, {
 			type: "new_session",
 			new_session: {
@@ -7566,7 +7544,7 @@ async function handleStreamRequest(
 				session_key: sessionKey,
 				runtime_session_id: sessionKey,
 				agent_name: responseAgentName,
-				agent_unique_id: agentUniqueId,
+				...(agentUniqueId ? { agent_unique_id: agentUniqueId } : {}),
 				thread_id: responseThreadId,
 				agent_id: agentId ?? -1,
 			},
@@ -7575,7 +7553,7 @@ async function handleStreamRequest(
 
 	writeChunk(ctx, { type: "start", messageId });
 
-	if (pendingRuntimeBootstrap && shouldBootstrapProjectRuntimeForAgent(agentName) && agentCwd && agentUniqueId) {
+	if (pendingRuntimeBootstrap && shouldBootstrapProjectRuntimeForAgent(agentName) && agentCwd) {
 		const checkpointReady = await prepareCheckpointBeforePiLaunch(ctx);
 		if (checkpointReady.ok === false) {
 			writeChunk(ctx, checkpointReady.errorEvent);

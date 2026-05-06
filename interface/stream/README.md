@@ -44,6 +44,7 @@ Send a request compatible with assistant-ui's `ui-message-stream` runtime:
 {
   "newChat": true,
   "agentName": "astro-orchestrator",
+  "agentId": 17,
   "userId": "user_123",
   "system": "optional system prompt",
   "messages": [
@@ -80,6 +81,7 @@ To start a project-scoped coding session directly, use:
 {
   "newChat": true,
   "agentName": "mainsequence-project-coder",
+  "agentId": 456,
   "userId": "user_123",
   "projectId": "42",
   "cwd": "/absolute/path/to/checked-out-project",
@@ -118,7 +120,7 @@ To bind or override the session model on the same request, include:
 }
 ```
 
-The response includes `X-Thread-Id`. When backend registration succeeds, it also includes:
+The response includes `X-Thread-Id`. When the backend session authority provides the fields, it also includes:
 
 - `X-Agent-Id`
 - `X-Agent-Unique-Id`
@@ -133,8 +135,10 @@ Conversation continuity comes from the backend agent session key. When `newChat`
 the client must send `runtime_session_id` to resume the existing session.
 If the request includes an explicit `runtime_session_id`, the server resumes that session even when
 the request still arrives with `newChat: true`.
-`threadId` is informational for the frontend when backend registration is enabled and does not
+`threadId` is informational for the frontend when backend-backed sessions are enabled and does not
 control which session is resumed.
+When `newChat` is `true`, the request must include the backend integer `agentId` unless Astro is
+already attaching to a hydrated backend-owned session.
 For `mainsequence-project-coder`, the first `newChat: true` request must also include `projectId`
 and `cwd`. Resume requests can omit them when the session metadata already contains those values.
 When that coder session starts, the runtime emits the deterministic project bootstrap as synthetic
@@ -220,6 +224,7 @@ Current request fields accepted by Astro include:
   "newChat": true,
   "userId": "user_123",
   "agentName": "mainsequence-project-executor",
+  "agentId": 24,
   "task": "Inspect the prepared project and summarize the next implementation step.",
   "response_format": "Return a concise machine-facing status summary with blockers and next actions.",
   "caller": {

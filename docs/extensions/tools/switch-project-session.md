@@ -20,6 +20,9 @@ Use this after Astro has:
   - required selected Main Sequence project id
 - `cwd`
   - required absolute path to the checked-out project
+- `agentId`
+  - optional backend integer agent id for the target `mainsequence-project-coder` agent when it is
+    already known by the caller
 - `initialTask`
   - optional concrete project-local work to carry into the coder session
 - `summary`
@@ -41,6 +44,7 @@ On success, the tool returns `details.sessionSwitch` with:
 - `agentName: "mainsequence-project-coder"`
 - `projectId`
 - `cwd`
+- `agentId`
 - `initialTask`
 - `summary`
 

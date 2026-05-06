@@ -51,7 +51,8 @@ Typical error responses:
 - `500` — `conversation_persistence_failed` when the server cannot write history before streaming
 - `500` — `model_catalog_unavailable` when `GET /api/models/catalog` fails unexpectedly
 - `500` — `available_models_unavailable` when `GET /api/chat/get_available_models` fails unexpectedly
-- `502` — backend agent registration failure when registration is enabled
+- `400` — `missing_agent_id` when a new backend-backed session is requested without a backend
+  integer `agentId`
 - `502` — backend agent session creation failure
 - `404` — unknown route
 

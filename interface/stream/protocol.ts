@@ -19,7 +19,7 @@ export type StreamEvent =
 				session_key: string;
 				runtime_session_id: string;
 				agent_name: string;
-				agent_unique_id: string;
+				agent_unique_id?: string;
 				thread_id: string;
 				agent_id: number;
 			};
@@ -33,7 +33,7 @@ export type StreamEvent =
 				cwd: string;
 				thread_id: string;
 				agent_id: number;
-				agent_unique_id: string;
+				agent_unique_id?: string;
 				agent_session_id: number;
 				session_key: string;
 				runtime_session_id: string;

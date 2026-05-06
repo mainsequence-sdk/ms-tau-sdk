@@ -22,7 +22,7 @@
 - `ASTRO_CONTAINER_DATA_DIR` (container-local rebuildable runtime root; in containers use `/home/appuser/.astro-container-data`)
 - `ASTRO_ORCHESTRATOR_CWD` (optional writable cwd override for `astro-orchestrator`; defaults to `<ASTRO_CONTAINER_DATA_DIR>/astro-orchestrator-runtime`)
 - `ASTRO_ORCHESTRATOR_PROJECT_PI_DIR` (optional writable project `.pi` override for `astro-orchestrator`; defaults to `<ASTRO_CONTAINER_DATA_DIR>/.pi/project`)
-- `BUILD_AGENTS_IN_BACKEND` (enable backend agent registration)
+- `BUILD_AGENTS_IN_BACKEND` (enable backend-backed session start, hydration, and checkpoint coordination)
 - `OLLAMA_HOST` (optional Ollama host used by `GET /api/chat/get_available_models`, for example `http://localhost:11434`)
 
 ## Remote project worker mode
@@ -35,8 +35,7 @@ These env vars are used by image-backed `mainsequence-project-executor` pods:
   - recommended value: `mainsequence-project-executor`
 - `ASTRO_FIXED_PROJECT_CWD`
   - fixed project path inside the image, for example `/home/${NB_USER}/app`
-  - Astro reads `${ASTRO_FIXED_PROJECT_CWD}/.env` to resolve `MAINSEQUENCE_PROJECT_ID` for
-    executor registration
+  - this tells Astro where the mounted or baked project lives for executor-mode work
 - `ASTRO_PROJECT_IMAGE_REF`
   - optional image reference or digest persisted into project-session metadata
 

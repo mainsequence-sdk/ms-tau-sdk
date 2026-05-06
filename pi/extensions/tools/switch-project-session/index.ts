@@ -24,6 +24,7 @@ export default function (pi: ExtensionAPI) {
 		promptGuidelines: [
 			"Use this when the user should continue inside one checked-out Main Sequence project.",
 			"Pass both projectId and cwd.",
+			"Pass agentId when the backend already supplied the target mainsequence-project-coder agent id.",
 			"Use initialTask only when the current user turn already includes concrete project-local work.",
 			"Do not claim a session switch in plain text without calling this tool.",
 		],
@@ -34,6 +35,12 @@ export default function (pi: ExtensionAPI) {
 			cwd: Type.String({
 				description: "Absolute path to the checked-out target project directory.",
 			}),
+			agentId: Type.Optional(
+				Type.Number({
+					description:
+						"Optional backend integer agent id for the target mainsequence-project-coder agent when already known.",
+				}),
+			),
 			initialTask: Type.Optional(
 				Type.String({
 					description:
@@ -83,6 +90,9 @@ export default function (pi: ExtensionAPI) {
 			const summary = typeof params.summary === "string" && params.summary.trim()
 				? params.summary.trim()
 				: null;
+			const agentId = typeof params.agentId === "number" && Number.isFinite(params.agentId)
+				? Math.trunc(params.agentId)
+				: null;
 
 			return {
 				content: [
@@ -97,6 +107,7 @@ export default function (pi: ExtensionAPI) {
 						agentName: "mainsequence-project-coder",
 						projectId,
 						cwd: resolvedCwd,
+						agentId,
 						initialTask,
 						summary,
 					},

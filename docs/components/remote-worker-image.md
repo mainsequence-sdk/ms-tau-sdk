@@ -155,11 +155,10 @@ These are not baked into the Dockerfile because they depend on the specific back
 - Main Sequence runtime credential env vars when backend-backed auth is still required by the
   runtime
 
-For `mainsequence-project-executor`, Astro derives the backend registration identity from the
-project `.env` under `ASTRO_FIXED_PROJECT_CWD`:
+For `mainsequence-project-executor`, Astro uses a fixed backend registration identity:
 
 - backend agent name: `project-executor`
-- backend `agent_unique_id`: `project-executor-{MAINSEQUENCE_PROJECT_ID}`
+- backend `agent_unique_id`: `project-executor`
 - runtime agent name remains `mainsequence-project-executor`
 
 ## Filesystem layout and writable directories
