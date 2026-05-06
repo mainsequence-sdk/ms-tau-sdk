@@ -54,8 +54,9 @@ import {
 import {
 	buildPiModelArgument,
 	buildSessionModelEnv,
+	deriveSessionModelBindingFromSessionPayload,
 	normalizeSessionModelBinding,
-	resolveSessionModelBinding,
+	rebindSessionModelBindingFromIdentity,
 	type SessionModelBinding,
 } from "./session-model.js";
 import {
@@ -66,8 +67,8 @@ import {
 	type SessionConfigOverrides,
 } from "./session-config.js";
 import { resolveProviderDefinition } from "./model-provider-definitions.js";
+import { readSessionInsights } from "./session-insights.js";
 import {
-	isProviderUsableForExecution,
 	listModelProviderAuthStatuses,
 	signOffModelProvider,
 } from "./model-provider-auth.js";
@@ -1037,14 +1038,22 @@ function buildRuntimeConfigSnapshot(sessionModelBinding: SessionModelBinding | n
 	temperature: number;
 	top_p: number;
 	max_output_tokens: number;
-	reasoning_effort: RunConfigReasoningEffort;
+	reasoning_effort?: RunConfigReasoningEffort;
 } {
-	return {
+	const snapshot: {
+		temperature: number;
+		top_p: number;
+		max_output_tokens: number;
+		reasoning_effort?: RunConfigReasoningEffort;
+	} = {
 		temperature: 0.35,
 		top_p: 0.9,
 		max_output_tokens: 4000,
-		reasoning_effort: sessionModelBinding?.piThinkingLevel ?? "medium",
 	};
+	if (sessionModelBinding?.piThinkingLevel) {
+		snapshot.reasoning_effort = sessionModelBinding.piThinkingLevel;
+	}
+	return snapshot;
 }
 
 function resolveBackendLlmProvider(sessionModelBinding: SessionModelBinding | null): string {
@@ -1053,6 +1062,17 @@ function resolveBackendLlmProvider(sessionModelBinding: SessionModelBinding | nu
 
 function resolveBackendLlmModel(sessionModelBinding: SessionModelBinding | null): string {
 	return sessionModelBinding?.model ?? DEFAULT_OPENAI_MODEL;
+}
+
+function doesSessionModelIdentityMatch(
+	sessionModelBinding: SessionModelBinding | null,
+	provider: string | null,
+	model: string | null,
+): boolean {
+	return (
+		sessionModelBinding?.provider === (provider?.trim() || null) &&
+		sessionModelBinding?.model === (model?.trim() || null)
+	);
 }
 
 async function ensureRequestCliAuth(
@@ -1414,6 +1434,11 @@ function extractRequestedAgentId(payload: Record<string, unknown>): number | nul
 	return (
 		extractNumericProperty(payload, "agent_id", "agentId") ??
 		(() => {
+			const sessionPayload = extractRequestSessionPayload(payload);
+			if (!sessionPayload) return null;
+			return extractBackendSessionAgentId(sessionPayload);
+		})() ??
+		(() => {
 			const sessionMetadata = extractObjectPropertyRecord(payload, "sessionMetadata", "session_metadata");
 			if (!sessionMetadata) return null;
 			return extractNumericProperty(sessionMetadata, "agent_id", "agentId");
@@ -1425,10 +1450,29 @@ function extractRequestedAgentUniqueId(payload: Record<string, unknown>): string
 	return (
 		extractStringProperty(payload, "agent_unique_id", "agentUniqueId") ??
 		(() => {
+			const sessionPayload = extractRequestSessionPayload(payload);
+			if (!sessionPayload) return null;
+			const agentRecord = extractObjectPropertyRecord(sessionPayload, "agent");
+			return agentRecord ? extractStringProperty(agentRecord, "agent_unique_id", "agentUniqueId") : null;
+		})() ??
+		(() => {
 			const sessionMetadata = extractObjectPropertyRecord(payload, "sessionMetadata", "session_metadata");
 			if (!sessionMetadata) return null;
 			return extractStringProperty(sessionMetadata, "agent_unique_id", "agentUniqueId");
 		})()
+	);
+}
+
+function extractRequestSessionPayload(payload: Record<string, unknown>): Record<string, unknown> | null {
+	return extractObjectPropertyRecord(
+		payload,
+		"session",
+		"agent_session",
+		"agentSession",
+		"backend_session",
+		"backendSession",
+		"session_serializer",
+		"sessionSerializer",
 	);
 }
 
@@ -2220,6 +2264,51 @@ function writeSessionMetadata(sessionKey: string, metadata: SessionMetadata) {
 		if (existingAnnotations) nextMetadata.history_annotations = existingAnnotations;
 	}
 	writeFileSync(metadataPath, JSON.stringify(nextMetadata, null, 2));
+}
+
+function syncRuntimeReportedSessionModelBinding(ctx: RequestContext) {
+	const provider = ctx.responseProvider;
+	const model = ctx.responseModel;
+	if (!provider || !model) return;
+	if (doesSessionModelIdentityMatch(ctx.sessionModelBinding, provider, model)) return;
+
+	const nextBinding = rebindSessionModelBindingFromIdentity({
+		existingBinding: ctx.sessionModelBinding,
+		provider,
+		model,
+		source: "session",
+	});
+	if (!nextBinding) return;
+
+	const metadata = readSessionMetadata(ctx.sessionKey);
+	const nextMetadata = metadata
+		? {
+				...metadata,
+				sessionModelBinding: nextBinding,
+			}
+		: null;
+	const previousProvider = ctx.sessionModelBinding?.provider ?? metadata?.sessionModelBinding?.provider ?? null;
+	const previousModel = ctx.sessionModelBinding?.model ?? metadata?.sessionModelBinding?.model ?? null;
+
+	ctx.sessionModelBinding = nextBinding;
+	if (!nextMetadata) return;
+
+	writeSessionMetadata(ctx.sessionKey, nextMetadata);
+	logStructuredEvent({
+		component: "astro-stream",
+		event: "session_model_binding_refreshed_from_runtime",
+		message: "Astro refreshed the cached session model binding from the runtime-reported response model.",
+		data: {
+			sessionKey: ctx.sessionKey,
+			threadId: ctx.threadId,
+			agentSessionId: ctx.agentSessionId,
+			agentName: ctx.agentName,
+			previousProvider,
+			previousModel,
+			nextProvider: nextBinding.provider,
+			nextModel: nextBinding.model,
+		},
+	});
 }
 
 function readJsonFileObject(filePath: string): Record<string, unknown> | null {
@@ -3098,6 +3187,76 @@ function buildSessionMetadataFromBackendCheckpoint(input: {
 			bundleMetadata.sessionConfigOverrides ?? sessionMetadata?.session_config_overrides,
 		),
 		...(historyAnnotations ? { history_annotations: historyAnnotations } : {}),
+	};
+}
+
+function buildSessionMetadataFromRequestSessionPayload(input: {
+	sessionKey: string;
+	sessionPayload: Record<string, unknown>;
+	requestedThreadId: string | null;
+	fallbackAgentName: string;
+	existingMetadata?: SessionMetadata | null;
+}): SessionMetadata {
+	const sessionMetadata = extractObjectPropertyRecord(input.sessionPayload, "session_metadata", "sessionMetadata");
+	const agentRecord = extractObjectPropertyRecord(input.sessionPayload, "agent");
+	const agentName =
+		extractStringProperty(input.sessionPayload, "agent_name", "agentName") ??
+		(agentRecord ? extractStringProperty(agentRecord, "name", "agent_name", "agentName") : null) ??
+		extractBackendSessionWorkflowKey(input.sessionPayload, sessionMetadata) ??
+		input.existingMetadata?.agentName ??
+		input.fallbackAgentName;
+	const agentId = extractBackendSessionAgentId(input.sessionPayload) ?? input.existingMetadata?.agentId ?? null;
+	const agentUniqueId =
+		(agentRecord ? extractStringProperty(agentRecord, "agent_unique_id", "agentUniqueId") : null) ??
+		input.existingMetadata?.agentUniqueId ??
+		null;
+	const threadId =
+		extractBackendSessionThreadId(input.sessionPayload, sessionMetadata, input.requestedThreadId) ??
+		input.existingMetadata?.threadId ??
+		input.sessionKey;
+	const startedAt =
+		extractStringProperty(input.sessionPayload, "started_at", "startedAt") ??
+		extractStringProperty(sessionMetadata ?? {}, "started_at", "startedAt") ??
+		input.existingMetadata?.startedAt ??
+		null;
+	const projectRuntime =
+		(sessionMetadata?.project_runtime_snapshot && typeof sessionMetadata.project_runtime_snapshot === "object"
+			? (sessionMetadata.project_runtime_snapshot as ProjectRuntimeSnapshot)
+			: null) ?? input.existingMetadata?.projectRuntime ?? null;
+	const normalizedAgentSessionId =
+		normalizeNumericId(
+			extractNumericProperty(input.sessionPayload, "id", "agent_session_id", "agentSessionId") ?? input.sessionKey,
+		) ?? input.existingMetadata?.agentSessionId ?? null;
+
+	return {
+		agentId,
+		agentUniqueId,
+		agentSessionId: normalizedAgentSessionId,
+		threadId,
+		startedAt,
+		agentName,
+		projectId: normalizeProjectId(sessionMetadata?.project_id ?? input.existingMetadata?.projectId),
+		cwd: normalizeProjectCwd(sessionMetadata?.project_cwd ?? input.existingMetadata?.cwd),
+		repoRoot: normalizeRepoRoot(sessionMetadata?.project_repo_root ?? input.existingMetadata?.repoRoot),
+		projectImageRef: normalizeProjectImageRef(
+			sessionMetadata?.project_image_ref ?? input.existingMetadata?.projectImageRef,
+		),
+		pendingOnboarding: sessionMetadata?.pending_onboarding === true || input.existingMetadata?.pendingOnboarding === true,
+		pendingRuntimeBootstrap:
+			sessionMetadata?.pending_runtime_bootstrap === true ||
+			input.existingMetadata?.pendingRuntimeBootstrap === true,
+		switchSummary:
+			extractStringProperty(sessionMetadata ?? {}, "switch_summary", "switchSummary") ??
+			input.existingMetadata?.switchSummary ??
+			null,
+		projectRuntime,
+		sessionModelBinding: deriveSessionModelBindingFromSessionPayload({
+			sessionPayload: input.sessionPayload,
+			existingBinding: input.existingMetadata?.sessionModelBinding ?? null,
+		}),
+		sessionConfigOverrides: normalizeSessionConfigOverrides(
+			sessionMetadata?.session_config_overrides ?? input.existingMetadata?.sessionConfigOverrides,
+		),
 	};
 }
 
@@ -4169,6 +4328,9 @@ function updateResponseModelFromMessage(ctx: RequestContext, message: unknown) {
 	const model = normalizeLogString((message as { model?: unknown }).model);
 	if (provider) ctx.responseProvider = provider;
 	if (model) ctx.responseModel = model;
+	if (ctx.responseProvider && ctx.responseModel) {
+		syncRuntimeReportedSessionModelBinding(ctx);
+	}
 }
 
 function mapUsageSummary(usage: unknown): { inputTokens?: number; outputTokens?: number } | undefined {
@@ -6374,6 +6536,18 @@ async function handleStreamRequest(
 			return;
 		}
 
+		const activeCtx = getActiveStreamContext(sessionKey);
+		if (activeCtx?.responseProvider && activeCtx.responseModel) {
+			syncRuntimeReportedSessionModelBinding(activeCtx);
+		}
+		if (activeCtx?.sessionModelBinding) {
+			json(res, 200, {
+				sessionId: sessionKey,
+				model: activeCtx.sessionModelBinding,
+			});
+			return;
+		}
+
 		let metadata = readSessionMetadata(sessionKey);
 		if (!metadata) {
 			const hydration = await hydrateLocalSessionFilesForRead({
@@ -6390,6 +6564,42 @@ async function handleStreamRequest(
 					return;
 				}
 			metadata = hydration.metadata;
+		}
+
+		const insights = readSessionInsights({
+			sessionDir,
+			sessionKey,
+			metadata,
+		});
+		const activeProvider = insights?.context.model.provider ?? null;
+		const activeModel = insights?.context.model.model ?? null;
+		if (activeProvider && activeModel && !doesSessionModelIdentityMatch(metadata.sessionModelBinding, activeProvider, activeModel)) {
+			const refreshedBinding = rebindSessionModelBindingFromIdentity({
+				existingBinding: metadata.sessionModelBinding,
+				provider: activeProvider,
+				model: activeModel,
+				source: "session",
+			});
+			if (refreshedBinding) {
+				metadata = {
+					...metadata,
+					sessionModelBinding: refreshedBinding,
+				};
+				writeSessionMetadata(sessionKey, metadata);
+				logStructuredEvent({
+					component: "astro-stream",
+					event: "session_model_binding_repaired_from_session_history",
+					message:
+						"Astro repaired a stale cached session model binding from the persisted session runtime history.",
+					data: {
+						sessionKey,
+						agentSessionId: metadata.agentSessionId,
+						threadId: metadata.threadId,
+						provider: refreshedBinding.provider,
+						model: refreshedBinding.model,
+					},
+				});
+			}
 		}
 
 		json(res, 200, {
@@ -7139,18 +7349,52 @@ async function handleStreamRequest(
 	if (runtimeSessionFromRequest) {
 		newChat = false;
 	}
-	if (!newChat && !runtimeSessionId) {
-		json(res, 400, {
-			error: "missing_runtime_session_id",
-			message: "runtime_session_id is required when newChat is false.",
-		});
-		return;
-	}
-	const registrationRequired = shouldRegisterAgents(process.env);
-	let hydratedBackendSession: HydratedBackendOrchestratorSession | null = null;
-	const localSessionExists = runtimeSessionId ? sessionExists(runtimeSessionId) : false;
-	const localSessionMetadata = runtimeSessionId ? readSessionMetadata(runtimeSessionId) : null;
-	if (runtimeSessionId && (!localSessionExists || !localSessionMetadata)) {
+		if (!newChat && !runtimeSessionId) {
+			json(res, 400, {
+				error: "missing_runtime_session_id",
+				message: "runtime_session_id is required when newChat is false.",
+			});
+			return;
+		}
+		const registrationRequired = shouldRegisterAgents(process.env);
+		let hydratedBackendSession: HydratedBackendOrchestratorSession | null = null;
+		const requestSessionPayload = extractRequestSessionPayload(body);
+		let localSessionExists = runtimeSessionId ? sessionExists(runtimeSessionId) : false;
+		let localSessionMetadata = runtimeSessionId ? readSessionMetadata(runtimeSessionId) : null;
+		if (runtimeSessionId && requestSessionPayload) {
+			const requestSessionMetadata = buildSessionMetadataFromRequestSessionPayload({
+				sessionKey: runtimeSessionId,
+				sessionPayload: requestSessionPayload,
+				requestedThreadId,
+				fallbackAgentName: agentName,
+				existingMetadata: localSessionMetadata,
+			});
+			writeSessionMetadata(runtimeSessionId, requestSessionMetadata);
+			if (requestSessionMetadata.threadId) {
+				writeThreadBinding({
+					threadId: requestSessionMetadata.threadId,
+					runtimeSessionId,
+					updatedAt: new Date().toISOString(),
+				});
+			}
+			localSessionExists = true;
+			localSessionMetadata = requestSessionMetadata;
+			logStructuredEvent({
+				component: "astro-stream",
+				event: "request_session_metadata_attached",
+				message: "Astro materialized local session metadata from the request-carried session serializer.",
+				data: {
+					runtimeSessionId,
+					agentName: requestSessionMetadata.agentName,
+					threadId: requestSessionMetadata.threadId,
+					agentId: requestSessionMetadata.agentId,
+					agentSessionId: requestSessionMetadata.agentSessionId,
+					effectiveProvider: requestSessionMetadata.sessionModelBinding?.provider ?? null,
+					effectiveModel: requestSessionMetadata.sessionModelBinding?.model ?? null,
+				},
+			});
+		}
+		if (runtimeSessionId && (!localSessionExists || !localSessionMetadata)) {
 		if (!registrationRequired) {
 			logStructuredEvent({
 				severity: "ERROR",
@@ -7248,79 +7492,56 @@ async function handleStreamRequest(
 		});
 		return;
 	}
-	if (existingSessionMetadata?.agentName) {
-		if (existingSessionMetadata.agentName !== agentName) {
-			json(res, 409, {
-				error: "session_mismatch",
-				message: "runtime_session_id does not match the requested agent.",
-			});
-			return;
+		if (existingSessionMetadata?.agentName) {
+			if (existingSessionMetadata.agentName !== agentName) {
+				json(res, 409, {
+					error: "session_mismatch",
+					message: "runtime_session_id does not match the requested agent.",
+				});
+				return;
+			}
 		}
-	}
 
-	if (body.model !== undefined && body.model !== null && !isPlainObject(body.model)) {
-		badRequest(res, "`model` must be an object or null.");
-		return;
-	}
-
-	let sessionModelBinding = existingSessionMetadata?.sessionModelBinding ?? null;
-	if (body.model === null) {
-		sessionModelBinding = null;
-	} else if (isPlainObject(body.model)) {
-		const resolvedModelBinding = await resolveSessionModelBinding(body.model, {
-			env: process.env,
-			userId,
-		});
-		if (resolvedModelBinding.ok === false) {
+		if (body.model !== undefined) {
 			logStructuredEvent({
 				severity: "WARNING",
 				component: "astro-stream",
-				event: "session_model_binding_resolution_failed",
-				message: "Astro could not resolve the requested session model binding.",
+				event: "request_model_ignored_session_first",
+				message:
+					"Astro ignored the message-level `model` field because session-first model authority now comes from the request-carried session serializer or stored session metadata.",
 				data: {
 					agentName,
 					userId,
 					threadId: existingSessionMetadata?.threadId ?? requestedThreadId ?? null,
 					runtimeSessionId,
-					requestedModelSource:
-						typeof body.model.source === "string" ? body.model.source.trim() || null : null,
-					requestedModelProvider:
-						typeof body.model.provider === "string" ? body.model.provider.trim() || null : null,
-					requestedModelId:
-						typeof body.model.model === "string" ? body.model.model.trim() || null : null,
-					error: resolvedModelBinding.error,
-					statusCode: resolvedModelBinding.statusCode,
-					message: resolvedModelBinding.message,
 				},
 			});
-			json(res, resolvedModelBinding.statusCode, {
-				error: resolvedModelBinding.error,
-				message: resolvedModelBinding.message,
-			});
-			return;
 		}
-		sessionModelBinding = resolvedModelBinding.binding;
-	}
-	const requestModelSource =
-		body.model === null
-			? "cleared_by_request"
-			: isPlainObject(body.model)
-				? "request_payload"
+
+		const sessionModelBinding =
+			deriveSessionModelBindingFromSessionPayload({
+				sessionPayload: requestSessionPayload,
+				existingBinding: existingSessionMetadata?.sessionModelBinding ?? null,
+			}) ??
+			existingSessionMetadata?.sessionModelBinding ??
+			null;
+		const requestModelSource =
+			requestSessionPayload
+				? "request_session_serializer"
 				: existingSessionMetadata?.sessionModelBinding
 					? hydratedBackendSession ? "session_metadata_from_backend_hydration" : "session_metadata"
 					: "none";
-	const sessionModelBindingLogData = {
-		agentName,
-		userId,
-		threadId: existingSessionMetadata?.threadId ?? requestedThreadId ?? null,
-		runtimeSessionId,
-		newChat,
-		requestModelSource,
-		hasRequestModelObject: isPlainObject(body.model),
-		requestClearedModel: body.model === null,
-		existingSessionHadModelBinding: Boolean(existingSessionMetadata?.sessionModelBinding),
-		hydratedBackendSessionAttached: Boolean(hydratedBackendSession),
-		effectiveProvider: sessionModelBinding?.provider ?? null,
+		const sessionModelBindingLogData = {
+			agentName,
+			userId,
+			threadId: existingSessionMetadata?.threadId ?? requestedThreadId ?? null,
+			runtimeSessionId,
+			newChat,
+			requestModelSource,
+			requestSessionAttached: Boolean(requestSessionPayload),
+			existingSessionHadModelBinding: Boolean(existingSessionMetadata?.sessionModelBinding),
+			hydratedBackendSessionAttached: Boolean(hydratedBackendSession),
+			effectiveProvider: sessionModelBinding?.provider ?? null,
 		effectiveModel: sessionModelBinding?.model ?? null,
 		effectiveReasoningEffort: sessionModelBinding?.runConfig.reasoning_effort ?? null,
 	};
@@ -7338,32 +7559,11 @@ async function handleStreamRequest(
 			event: "session_model_binding_missing",
 			message:
 				"No session model binding is available for this request; Pi may launch without a model unless runtime state provides one.",
-			data: sessionModelBindingLogData,
-		});
-	}
-
-	if (sessionModelBinding) {
-		const providerUsable = await isProviderUsableForExecution(sessionModelBinding.provider, {
-			createdByUser: userId,
-			env: process.env,
-		});
-		if (providerUsable.ok === false) {
-			json(res, providerUsable.statusCode || 503, {
-				error: providerUsable.error,
-				message: providerUsable.message,
+				data: sessionModelBindingLogData,
 			});
-			return;
 		}
-		if (!providerUsable.value) {
-			json(res, 409, {
-				error: "provider_not_authenticated",
-				message: `The selected model provider "${sessionModelBinding.provider}" is not currently authenticated.`,
-			});
-			return;
-		}
-	}
 
-	const fixedProjectCwd = resolveFixedProjectCwd();
+		const fixedProjectCwd = resolveFixedProjectCwd();
 	const requestedProjectId = normalizeProjectId(body.projectId);
 	const requestedCwd = normalizeProjectCwd(body.cwd);
 	const fixedProjectId = isImageBackedProjectExecutor(agentName) ? null : resolveFixedProjectId();

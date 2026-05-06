@@ -13,14 +13,12 @@ Typical error responses:
 - `400` — missing `sessionId` for `GET /api/chat/session-model`
 - `400` — missing `sessionId` for `PATCH /api/chat/session-config`
 - `400` — `invalid_session_config` when the patch payload includes unsupported or invalid config fields
-- `400` — invalid `model` payload or unsupported `runConfig.reasoning_effort`
 - `404` — `provider_not_supported` for unsupported `GET/POST /api/model-providers/*` provider ids
 - `404` — `signin_attempt_not_found` for unknown `GET/POST /api/model-providers/:provider/signin/:attemptId*`
 - `400` — missing `sessionId` for `GET /api/chat/session-tools`; missing local metadata returns
   `200` with an empty `available_tools` object
 - `400` — missing `projectId` or `cwd` when starting `mainsequence-project-coder`
 - `403` — `cors_origin_not_allowed` when the browser `Origin` is not listed in `ASTRO_STREAM_TRUSTED_ORIGINS`
-- `404` — `model_not_found` when the requested session model is not in `GET /api/chat/get_available_models`
 - `400` — `invalid_runtime_session_id` when a missing local resume session uses an id that cannot
   be queried as a backend `AgentSession.id`
 - `409` — session mismatch for provided `runtime_session_id`

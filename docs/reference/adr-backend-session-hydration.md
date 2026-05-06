@@ -124,8 +124,10 @@ Expected backend fields:
 - `id`
 - related `agent`
 - `thread_id`
+- `llm_provider`
+- `llm_model`
 - `session_metadata.workflow_key`
-- `session_metadata.session_model_binding` when present
+- `session_metadata.session_model_binding` when present as cached Astro runtime state
 
 Astro may derive some fields from stable runtime context when needed:
 
@@ -139,8 +141,8 @@ The current request already supplies the runtime context needed for this branch:
 - `agentName`
 - `userId`
 - `runtime_session_id`
+- optional full backend `AgentSession` serializer under `session`
 - optional `threadId`
-- optional `model`
 
 Hydration must reuse that same request. The user message that triggered the attach attempt must
 remain the active turn and must continue through the normal stream flow after local state is
@@ -179,6 +181,10 @@ After local metadata is materialized, the same request should continue to:
 - open the SSE stream
 - build the prompt
 - run Pi normally
+
+When the request already carries the backend `AgentSession` serializer, Astro should prefer that
+request-carried session authority over performing a separate backend session fetch just to recover
+model/provider identity or wrapper metadata.
 
 Hydration must not discard or replay the triggering user message through a second request.
 

@@ -242,9 +242,15 @@ The returned available-model records should become the inputs for session switch
 
 - `messages` stays unchanged
 - the chat path should not carry full provider configuration
+- the chat path should not resolve model selection through `get_available_models`
 
-The chat path may carry a lightweight `model` field.
-The provider-specific binding still belongs to the control plane.
+Model authority is now session-first:
+
+- the backend `AgentSession` serializer is the authoritative source for `llm_provider` and
+  `llm_model`
+- each normal chat turn may carry that full session serializer on the request
+- Astro should refresh its local cached binding from the session serializer instead of resolving a
+  message-level `model` payload
 
 ### Switching Contract
 
@@ -262,11 +268,16 @@ Recommended request:
 }
 ```
 
-The actual session model change happens on `POST /api/chat` with the lightweight `model` field on
-the same request as the user message. For sources that require more configuration than just
-`provider + model`, the switching layer should resolve that configuration from the source metadata
-and backend/environment configuration rather than forcing the frontend to resend everything on each
-chat turn.
+The actual session model change no longer happens through a message-level `model` field on
+`POST /api/chat`.
+
+Instead:
+
+1. the session authority updates `llm_provider`, `llm_model`, and any cached
+   `session_metadata.session_model_binding`
+2. the next chat request carries that session serializer
+3. Astro compares the session serializer to its stored binding and refreshes local state when they
+   differ
 
 ### Runtime Strategy
 
@@ -277,11 +288,13 @@ process.
 
 Preferred direction:
 
-1. Astro stores the selected model binding in session metadata
-2. Astro passes request-scoped env vars when spawning Pi
-3. an always-loaded runtime extension reads those env vars
-4. that extension calls `pi.registerProvider(...)` when needed
-5. Pi starts with the correct provider/model without mutating shared runtime files
+1. the backend `AgentSession` keeps `llm_provider` and `llm_model` as the canonical model identity
+2. Astro stores a normalized `session_model_binding` only as cached runtime state
+3. each request may carry the backend session serializer and refresh that cache before launch
+4. Astro passes session-scoped env vars when spawning Pi
+5. an always-loaded runtime extension reads those env vars
+6. that extension calls `pi.registerProvider(...)` when needed
+7. Pi starts with the correct provider/model without mutating shared runtime files
 
 ## Why Split the ADR This Way
 
@@ -348,8 +361,8 @@ Costs:
 
 - one extra control-plane endpoint
 - one collector abstraction to define and maintain
-- one later follow-up to sync model-binding updates back into already-created backend AgentSession
-  records
+- one cached session-binding repair path inside Astro so stale local projections do not override the
+  backend session serializer carried on the next turn
 
 ## Tasks
 
@@ -372,5 +385,7 @@ Costs:
 - [x] Add the runtime extension that maps session-scoped env vars into `pi.registerProvider(...)`.
 - [x] Replace fixed backend `llm_provider` and `llm_model` values with selection-aware values for
   new sessions created with an explicit binding.
-- [x] Add a lightweight `model` field on `POST /api/chat`.
-- [ ] Sync model-binding updates back into already-created backend `AgentSession` records.
+- [x] Move the normal chat hot path to session-first model authority from the backend `AgentSession`
+  serializer.
+- [x] Refresh stale local Astro session bindings from the runtime-observed provider/model without
+  writing model updates back to the backend `AgentSession` on the chat hot path.

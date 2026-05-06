@@ -151,10 +151,18 @@ The stream wrapper injects:
 - `system` as an optional prompt prefix
 - `context` as structured UI context
 - `tools` as optional UI tool metadata
-- optional lightweight `model` selection metadata
+- optional request-carried backend `session` serializer for session-first resume
 - only the last `messages` entry as the turn input
 - `newChat` as the initial signal to create a new backend AgentSession when the thread does not
   already point at an active session
+
+Normal chat execution is session-first:
+
+- `POST /api/chat` does not use `model` as a message-level source of truth
+- when the request includes `session`, Astro refreshes local session metadata and model binding from
+  that backend session serializer before continuing the turn
+- `GET /api/chat/get_available_models` remains control-plane discovery and is not required on the
+  normal message hot path
 
 Response headers include:
 

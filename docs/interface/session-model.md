@@ -7,8 +7,9 @@ It does not send a chat message to Pi.
 
 `GET` accepts `sessionId`, `runtime_session_id`, or `runtimeSessionId` as query parameters.
 
-Model changes happen on `POST /api/chat` by including the optional lightweight `model` object on
-the same request as the user message.
+Model authority is session-first.
+Normal chat turns should carry the current backend `AgentSession` serializer, and Astro derives or
+refreshes its local binding from that session data.
 
 ## Response shape
 
@@ -47,10 +48,14 @@ the same request as the user message.
 - the stored binding is the launch-time source of truth for Pi on resumed turns
 - `POST /api/chat` uses the stored binding first and only falls back to the agent frontmatter model
   when no session model is bound
-- if the request includes `model`, Astro persists that binding before launching Pi for the turn
+- `POST /api/chat` no longer treats a message-level `model` field as authoritative
+- when the request includes a full `session` serializer, Astro compares
+  `session.llm_provider` and `session.llm_model` to the currently stored binding and refreshes the
+  local binding when they differ
 - when the binding requires a custom provider registration, Astro passes a session-scoped env payload
   and the always-loaded runtime hook registers that provider before Pi resolves `--model`
-- when a model binding is supplied on a brand-new session, Astro also includes it in backend
-  `session_metadata` and uses it for backend `llm_provider`, `llm_model`, and
-  `runtime_config_snapshot`
-- updating an already-created backend `AgentSession` record after the fact is still a follow-up
+- backend `llm_provider` and `llm_model` are now the canonical model identity fields for resumed
+  sessions; `session_metadata.session_model_binding` is a cached normalized Astro projection
+- when the runtime reports a different provider/model than the cached projection, Astro refreshes
+  the local cached binding only; Astro does not write the model identity back into the backend
+  session on the chat hot path

@@ -15,7 +15,7 @@ export type SessionModelBinding = {
 	label: string;
 	model: string;
 	runConfig: {
-		reasoning_effort: RunConfigReasoningEffort;
+		reasoning_effort: RunConfigReasoningEffort | null;
 	};
 	capabilities: {
 		features?: string[];
@@ -23,7 +23,7 @@ export type SessionModelBinding = {
 	};
 	metadata?: Record<string, unknown>;
 	updatedAt: string;
-	piThinkingLevel: PiThinkingLevel;
+	piThinkingLevel: PiThinkingLevel | null;
 };
 
 type SessionModelRequestPayload = {
@@ -80,6 +80,27 @@ function normalizeReasoningEffort(value: unknown): RunConfigReasoningEffort | nu
 		default:
 			return null;
 	}
+}
+
+function extractObjectPropertyRecord(
+	record: Record<string, unknown> | null | undefined,
+	...keys: string[]
+): Record<string, unknown> | null {
+	if (!record) return null;
+	for (const key of keys) {
+		const value = record[key];
+		if (isPlainObject(value)) return value;
+	}
+	return null;
+}
+
+function extractStringProperty(record: Record<string, unknown> | null | undefined, ...keys: string[]): string | null {
+	if (!record) return null;
+	for (const key of keys) {
+		const normalized = normalizeNonEmptyString(record[key]);
+		if (normalized) return normalized;
+	}
+	return null;
 }
 
 function normalizeFeatures(value: unknown): string[] | undefined {
@@ -280,18 +301,22 @@ export function normalizeSessionModelBinding(value: unknown): SessionModelBindin
 	const label = normalizeNonEmptyString(value.label);
 	const model = normalizeNonEmptyString(value.model);
 	const updatedAt = normalizeNonEmptyString(value.updatedAt);
-	const piThinkingLevel = normalizeReasoningEffort(value.piThinkingLevel);
-	if (!source || !provider || !label || !model || !updatedAt || !piThinkingLevel || piThinkingLevel === "on") {
+	if (!source || !provider || !label || !model || !updatedAt) {
 		return null;
 	}
 
 	const runConfig = isPlainObject(value.runConfig) ? value.runConfig : null;
-	const reasoningEffort = normalizeReasoningEffort(runConfig?.reasoning_effort);
-	if (!reasoningEffort) return null;
+	const reasoningEffort = normalizeReasoningEffort(runConfig?.reasoning_effort) ?? null;
+	const rawPiThinkingLevel = normalizeReasoningEffort(value.piThinkingLevel);
+	const piThinkingLevel =
+		rawPiThinkingLevel && rawPiThinkingLevel !== "on"
+			? rawPiThinkingLevel
+			: derivePiThinkingLevel(reasoningEffort, null);
 
 	const capabilities = isPlainObject(value.capabilities) ? value.capabilities : null;
-	const reasoningCapability = normalizeReasoningCapability(capabilities?.reasoning_effort);
-	if (!reasoningCapability) return null;
+	const reasoningCapability =
+		normalizeReasoningCapability(capabilities?.reasoning_effort) ??
+		(reasoningEffort ? buildGenericReasoningCapability(reasoningEffort) : buildUnknownReasoningCapability());
 
 	const metadata = isPlainObject(value.metadata) ? value.metadata : undefined;
 
@@ -313,9 +338,190 @@ export function normalizeSessionModelBinding(value: unknown): SessionModelBindin
 	};
 }
 
+function derivePiThinkingLevel(
+	value: RunConfigReasoningEffort | null,
+	fallback: PiThinkingLevel | null,
+): PiThinkingLevel | null {
+	if (value === "off") return "off";
+	if (value === "minimal") return "minimal";
+	if (value === "low") return "low";
+	if (value === "medium" || value === "on") return "medium";
+	if (value === "high") return "high";
+	if (value === "xhigh") return "xhigh";
+	return fallback ?? null;
+}
+
+function buildGenericReasoningCapability(
+	value: RunConfigReasoningEffort,
+): AvailableModelReasoningCapability {
+	if (value === "on" || value === "off") {
+		return {
+			supported: true,
+			mode: "toggle",
+			values: ["on"],
+			default: value === "on" ? "on" : "off",
+		};
+	}
+	return {
+		supported: true,
+		mode: "levels",
+		values: [value],
+		default: value,
+	};
+}
+
+function buildUnknownReasoningCapability(): AvailableModelReasoningCapability {
+	return {
+		supported: false,
+		mode: "unsupported",
+		values: ["off"],
+		default: "off",
+	};
+}
+
+export function rebindSessionModelBindingFromIdentity(options: {
+	existingBinding?: SessionModelBinding | null;
+	provider: string | null;
+	model: string | null;
+	reasoningEffort?: RunConfigReasoningEffort | null;
+	source?: string | null;
+	updatedAt?: string;
+}): SessionModelBinding | null {
+	const provider = normalizeNonEmptyString(options.provider);
+	const model = normalizeNonEmptyString(options.model);
+	const existingBinding = options.existingBinding ?? null;
+	if (!provider || !model) return existingBinding;
+
+	const effectiveReasoning = Object.prototype.hasOwnProperty.call(options, "reasoningEffort")
+		? normalizeReasoningEffort(options.reasoningEffort)
+		: existingBinding?.runConfig.reasoning_effort ?? null;
+	const isSameIdentity =
+		existingBinding?.provider === provider && existingBinding?.model === model;
+	const updatedAt = options.updatedAt ?? new Date().toISOString();
+
+	return {
+		source:
+			normalizeNonEmptyString(options.source) ??
+			existingBinding?.source ??
+			"session",
+		provider,
+		label: isSameIdentity ? existingBinding?.label ?? model : model,
+		model,
+		runConfig: {
+			reasoning_effort: effectiveReasoning,
+		},
+		capabilities: {
+			...(existingBinding?.capabilities.features
+				? { features: [...existingBinding.capabilities.features] }
+				: {}),
+			reasoning_effort:
+				existingBinding?.capabilities.reasoning_effort ??
+				(effectiveReasoning
+					? buildGenericReasoningCapability(effectiveReasoning)
+					: buildUnknownReasoningCapability()),
+		},
+		...(existingBinding?.metadata ? { metadata: existingBinding.metadata } : {}),
+		updatedAt,
+		piThinkingLevel: derivePiThinkingLevel(
+			effectiveReasoning,
+			existingBinding?.piThinkingLevel ?? null,
+		),
+	};
+}
+
+export function deriveSessionModelBindingFromSessionPayload(options: {
+	sessionPayload: Record<string, unknown> | null;
+	existingBinding?: SessionModelBinding | null;
+	now?: string;
+}): SessionModelBinding | null {
+	const sessionPayload = options.sessionPayload;
+	const existingBinding = options.existingBinding ?? null;
+	if (!sessionPayload) return existingBinding;
+
+	const sessionMetadata = extractObjectPropertyRecord(sessionPayload, "session_metadata", "sessionMetadata");
+	const explicitBinding = normalizeSessionModelBinding(
+		sessionPayload.session_model_binding ??
+			sessionPayload.sessionModelBinding ??
+			sessionMetadata?.session_model_binding ??
+			sessionMetadata?.sessionModelBinding,
+	);
+	const llmProvider = extractStringProperty(sessionPayload, "llm_provider", "llmProvider");
+	const llmModel = extractStringProperty(sessionPayload, "llm_model", "llmModel");
+	const runtimeConfigSnapshot =
+		extractObjectPropertyRecord(sessionPayload, "runtime_config_snapshot", "runtimeConfigSnapshot") ??
+		extractObjectPropertyRecord(sessionMetadata, "runtime_config_snapshot", "runtimeConfigSnapshot");
+	const rawThinking =
+		extractStringProperty(sessionPayload, "llm_thinking", "llmThinking") ??
+		extractStringProperty(sessionMetadata, "llm_thinking", "llmThinking") ??
+		extractStringProperty(
+			runtimeConfigSnapshot,
+			"reasoning_effort",
+			"reasoningEffort",
+			"thinking",
+		);
+	const runtimeReasoning = normalizeReasoningEffort(rawThinking) ?? null;
+	const updatedAt =
+		extractStringProperty(sessionPayload, "updated_at", "updatedAt") ??
+		extractStringProperty(sessionPayload, "started_at", "startedAt") ??
+		explicitBinding?.updatedAt ??
+		existingBinding?.updatedAt ??
+		options.now ??
+		new Date().toISOString();
+
+	if (!llmProvider || !llmModel) {
+		if (!explicitBinding) return existingBinding;
+		const explicitReasoning = runtimeReasoning ?? explicitBinding.runConfig.reasoning_effort;
+		const refreshedBinding: SessionModelBinding = {
+			...explicitBinding,
+			runConfig: {
+				reasoning_effort: explicitReasoning,
+			},
+			updatedAt,
+			piThinkingLevel: derivePiThinkingLevel(explicitReasoning, explicitBinding.piThinkingLevel),
+		};
+		if (!rawThinking) return refreshedBinding;
+		return {
+			...refreshedBinding,
+			metadata: {
+				...(refreshedBinding.metadata ?? {}),
+				backend_llm_thinking: rawThinking,
+			},
+		};
+	}
+
+	const baseBinding =
+		explicitBinding && explicitBinding.provider === llmProvider && explicitBinding.model === llmModel
+			? explicitBinding
+			: existingBinding && existingBinding.provider === llmProvider && existingBinding.model === llmModel
+				? existingBinding
+				: null;
+
+	const reboundBinding = rebindSessionModelBindingFromIdentity({
+		existingBinding:
+			baseBinding ??
+			explicitBinding ??
+			null,
+		provider: llmProvider,
+		model: llmModel,
+		reasoningEffort: runtimeReasoning,
+		source: baseBinding?.source ?? explicitBinding?.source ?? "session",
+		updatedAt,
+	});
+	if (!reboundBinding || !rawThinking) return reboundBinding;
+	return {
+		...reboundBinding,
+		metadata: {
+			...(reboundBinding.metadata ?? {}),
+			backend_llm_thinking: rawThinking,
+		},
+	};
+}
+
 export function buildPiModelArgument(binding: SessionModelBinding | null): string | null {
 	if (!binding) return null;
-	return `${binding.provider}/${binding.model}:${binding.piThinkingLevel}`;
+	return binding.piThinkingLevel
+		? `${binding.provider}/${binding.model}:${binding.piThinkingLevel}`
+		: `${binding.provider}/${binding.model}`;
 }
 
 function ensureProviderBaseUrl(value: string): string {

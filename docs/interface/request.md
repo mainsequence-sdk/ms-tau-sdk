@@ -33,9 +33,9 @@ currently stored for that runtime session.
 - `context` (object)
 - `tools` (object)
 - `runtime_session_id` (string; required when `newChat` is `false`)
+- `session` (object; preferred full backend `AgentSession` serializer on resume requests)
 - `projectId` (string | number; required for `mainsequence-project-coder` on `newChat: true`)
 - `cwd` (string; required for `mainsequence-project-coder` on `newChat: true`)
-- `model` (object | null; optional lightweight session model override)
 - `sessionMetadata` (object; optional non-reserved metadata only)
 
 ## Notes
@@ -47,6 +47,9 @@ currently stored for that runtime session.
 - `newChat` is treated as a UI hint for a new conversation.
 - An explicit `runtime_session_id` always resumes that existing session, even if the request still
   arrives with `newChat: true`.
+- Resume requests should include the full backend `AgentSession` serializer in `session`. Astro now
+  treats that request-carried session object as the authority for model/provider binding and local
+  metadata refresh.
 - `threadId` is informational/client-bookkeeping only when backend registration is enabled; it does
   not control session continuity.
 - `agentName` must match the backend registry (unknown agents return `error: unknown_agent`).
@@ -59,11 +62,14 @@ currently stored for that runtime session.
   backend tools such as `repo_diff`.
 - `GET /api/chat/session-tools` must not fail only because no tools are available; no tools is
   represented as an empty `available_tools` object.
-- `model`, when present on `POST /api/chat`, is stored in the runtime session metadata before Pi
-  starts for that turn.
-- `model.source` plus `model.model` must match one of the records from
-  `GET /api/chat/get_available_models` under `providers[*].models[*]`.
-- `model: null` clears any previously stored session model binding.
+- `POST /api/chat` no longer uses a message-level `model` field as session authority.
+- Astro derives or refreshes its local `sessionModelBinding` from the request-carried `session`
+  serializer and the stored session metadata.
+- The authoritative model identity is session-first:
+  `session.llm_provider`, `session.llm_model`, and any cached
+  `session.session_metadata.session_model_binding`.
+- `GET /api/chat/get_available_models` remains a control-plane discovery endpoint. It is not part
+  of the normal message hot path.
 - `sessionMetadata` is stored only for non-reserved keys. Astro owns reserved metadata such as
   `workflow_key`, `created_by_user`, `project_id`, `project_cwd`, `pending_runtime_bootstrap`,
   `session_model_binding`, and handoff fields.
@@ -99,6 +105,64 @@ currently stored for that runtime session.
   "context": {
     "appId": "astro-ui",
     "surfaceId": "command-center",
+    "userId": "user_123"
+  }
+}
+```
+
+Example resume request with session authority:
+
+```json
+{
+  "threadId": "thread-001",
+  "agentName": "astro-orchestrator",
+  "userId": "user_123",
+  "runtime_session_id": "456",
+  "session": {
+    "id": 456,
+    "thread_id": "thread-001",
+    "llm_provider": "openai-codex",
+    "llm_model": "gpt-5.3-codex-spark",
+    "runtime_config_snapshot": {
+      "reasoning_effort": "on"
+    },
+    "session_metadata": {
+      "workflow_key": "astro-orchestrator",
+      "session_model_binding": {
+        "source": "pi-model-registry",
+        "provider": "openai-codex",
+        "label": "gpt-5.3-codex-spark",
+        "model": "gpt-5.3-codex-spark",
+        "runConfig": {
+          "reasoning_effort": "on"
+        },
+        "capabilities": {
+          "reasoning_effort": {
+            "supported": true,
+            "mode": "toggle",
+            "values": ["on"],
+            "default": "on"
+          }
+        },
+        "updatedAt": "2026-05-06T12:00:00.000Z",
+        "piThinkingLevel": "medium"
+      }
+    },
+    "agent": {
+      "id": 123,
+      "name": "astro-orchestrator"
+    }
+  },
+  "messages": [
+    {
+      "role": "user",
+      "content": [
+        { "type": "text", "text": "Continue." }
+      ]
+    }
+  ],
+  "tools": {},
+  "context": {
     "userId": "user_123"
   }
 }
