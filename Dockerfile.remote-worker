@@ -10,7 +10,7 @@ FROM europe-west1-docker.pkg.dev/mainsequence-development/tsorm-images/project-e
 # [EXISTING] Stage 1: Start from the already-built project image
 # Purpose:
 #   - Reuse the project runtime exactly as prepared by BASE_IMAGE
-#   - Preserve the existing APP_DIR / NB_* contract from that image
+#   - Preserve the existing NB_* and user-skel contract from that image
 # =============================================================================
 FROM ${BASE_IMAGE}
 
@@ -23,8 +23,8 @@ ARG BASE_IMAGE
 #   - Keep the project image's runtime exactly as-is
 #   - Add the published project-executor Astro bundle under /app
 # Key path split:
-#   - ${APP_DIR} = project code/runtime from BASE_IMAGE
-#   - /app       = Astro runtime
+#   - ${SKEL_APP_DIR} = canonical cloned project tree from BASE_IMAGE
+#   - /app            = Astro runtime
 # Deployment contract:
 #   - the executor pod runs as uid/gid 10000
 #   - startup must not rely on the inherited jovyan uid from BASE_IMAGE
@@ -56,7 +56,7 @@ ENV PATH="/app/node_modules/.bin:${PATH}" \
     PI_CODING_AGENT_DIR=/home/${NB_USER}/.astro-container-data/.pi/agent \
     ASTRO_EXECUTION_MODE=remote_project_worker \
     ASTRO_FIXED_AGENT_NAME=mainsequence-project-executor \
-    ASTRO_FIXED_PROJECT_CWD=${APP_DIR} \
+    ASTRO_FIXED_PROJECT_CWD=${SKEL_APP_DIR} \
     ASTRO_PROJECT_IMAGE_REF=${BASE_IMAGE}
 
 RUN mkdir -p \
@@ -72,6 +72,7 @@ RUN mkdir -p \
  && chmod 755 /home/${NB_USER} \
  && chown -R 10000:10000 \
     ${APP_DIR} \
+    ${SKEL_APP_DIR} \
     /home/${NB_USER}/.astro-container-data \
     /home/${NB_USER}/.local \
     /home/${NB_USER}/.pi \
@@ -80,7 +81,7 @@ RUN mkdir -p \
     /session-state
 
 USER 10000:10000
-WORKDIR /app
+WORKDIR ${SKEL_APP_DIR}
 
 EXPOSE 8787
 

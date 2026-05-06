@@ -18,7 +18,7 @@ project root the executor should work against.
 It exists for the separate runtime where:
 
 - the backend already chose a project image
-- that image already contains the project repository at `${APP_DIR}`
+- that image already contains the canonical cloned project repository at `${SKEL_APP_DIR}`
 - that image already installs the project's Python dependencies
 - Astro should be layered on top so the pod can run `mainsequence-project-executor`
 
@@ -28,12 +28,12 @@ The resulting container has two distinct roots:
   - Astro runtime
   - copied from this repo
   - contains Astro's `.pi`, `pi`, `interface`, `scripts`, and `node_modules`
-- `${APP_DIR}`
-  - project runtime from the existing project-image scaffold
-  - defaults to `/home/${NB_USER}/app`
+- `${SKEL_APP_DIR}`
+  - canonical cloned project tree from the existing project-image scaffold
+  - defaults to `/usr/local/share/user-skel/app`
 
 That split is intentional. Astro still has a current runtime assumption that its own files live
-under `/app`, while project execution should happen inside `${APP_DIR}`.
+under `/app`, while project execution should happen inside `${SKEL_APP_DIR}`.
 
 ## Build structure
 
@@ -69,7 +69,7 @@ That image is expected to have already done the project-specific work:
 
 - clone or materialize the target repo
 - install the project's dependencies
-- expose the final runtime project directory at `${APP_DIR}`
+- expose the canonical cloned project directory at `${SKEL_APP_DIR}`
 - preserve the existing user contract such as `NB_USER`, `NB_UID`, and `NB_GID`
 
 `Dockerfile.remote-worker` does not repeat any of that work.
@@ -82,7 +82,7 @@ The final part adds Astro to the already-built project image:
 - copies the Astro runtime bundle into `/app`
 - creates Astro runtime directories
 - keeps `USER ${NB_USER}`
-- keeps `WORKDIR ${APP_DIR}`
+- keeps `WORKDIR ${SKEL_APP_DIR}`
 - starts Astro with:
 
 ```bash
@@ -125,7 +125,7 @@ executor mode without extra image edits.
   - tells Astro this is an image-backed project worker
 - `ASTRO_FIXED_AGENT_NAME=mainsequence-project-executor`
   - pins the runtime to the executor specialist
-- `ASTRO_FIXED_PROJECT_CWD=${APP_DIR}`
+- `ASTRO_FIXED_PROJECT_CWD=${SKEL_APP_DIR}`
   - tells Astro where the project code lives inside the image
 - `ASTRO_PROJECT_IMAGE_REF=${BASE_IMAGE}`
   - records the image reference into project-session metadata
@@ -140,10 +140,10 @@ The remote worker image is intended to run under the platform security context:
 
 To support that, the image:
 
-- starts from `WORKDIR /app` instead of the Jupyter project directory
-- keeps the real project path at `ASTRO_FIXED_PROJECT_CWD=/home/jovyan/app`
+- starts from `WORKDIR /usr/local/share/user-skel/app`
+- keeps the real project path at `ASTRO_FIXED_PROJECT_CWD=/usr/local/share/user-skel/app`
 - makes `/home/jovyan` itself owned by uid/gid `10000` so bootstrap can create runtime links there
-- makes the project tree and Astro runtime state directories writable by uid/gid `10000`
+- makes the canonical cloned project tree and Astro runtime state directories writable by uid/gid `10000`
 - does not require `/app` ownership changes for runtime execution
 
 ### Env vars that are usually injected at pod launch

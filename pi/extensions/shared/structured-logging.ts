@@ -17,6 +17,31 @@ type StructuredLogPayload = {
 	data?: Record<string, unknown>;
 };
 
+function isTruthyEnvValue(value: string | undefined): boolean {
+	if (!value) return false;
+	switch (value.trim().toLowerCase()) {
+		case "1":
+		case "true":
+		case "yes":
+		case "on":
+		case "debug":
+			return true;
+		default:
+			return false;
+	}
+}
+
+export function shouldEmitStructuredLog(
+	input: Pick<StructuredLogInput, "severity" | "component" | "event">,
+	env: NodeJS.ProcessEnv = process.env,
+): boolean {
+	const severity = input.severity ?? "INFO";
+	if (severity !== "INFO") return true;
+	if (isTruthyEnvValue(env.ASTRO_LOG_CHECKPOINT_INFO)) return true;
+	if (input.component === "astro-checkpoint-sidecar") return false;
+	return !input.event.includes("checkpoint");
+}
+
 function removeUndefinedDeep(value: unknown): unknown {
 	if (Array.isArray(value)) {
 		return value.map((entry) => removeUndefinedDeep(entry));
@@ -41,6 +66,7 @@ export function logStructuredEvent(input: StructuredLogInput) {
 	};
 
 	try {
+		if (!shouldEmitStructuredLog(payload)) return;
 		const serialized = JSON.stringify(payload);
 		if (payload.severity === "ERROR" || payload.severity === "WARNING") {
 			console.error(serialized);

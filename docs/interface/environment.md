@@ -34,7 +34,7 @@ These env vars are used by image-backed `mainsequence-project-executor` pods:
 - `ASTRO_FIXED_AGENT_NAME`
   - recommended value: `mainsequence-project-executor`
 - `ASTRO_FIXED_PROJECT_CWD`
-  - fixed project path inside the image, for example `/home/${NB_USER}/app`
+  - fixed project path inside the image, for example `/usr/local/share/user-skel/app`
   - this tells Astro where the mounted or baked project lives for executor-mode work
 - `ASTRO_PROJECT_IMAGE_REF`
   - optional image reference or digest persisted into project-session metadata
@@ -45,10 +45,11 @@ For the deployed Jupyter-based executor image, the effective runtime contract is
 - `ASTRO_CONTAINER_DATA_DIR=/home/jovyan/.astro-container-data`
 - `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/jovyan/.astro-container-data/.config/mainsequence`
 - `PI_CODING_AGENT_DIR=/home/jovyan/.astro-container-data/.pi/agent`
-- `ASTRO_FIXED_PROJECT_CWD=/home/jovyan/app`
+- `ASTRO_FIXED_PROJECT_CWD=/usr/local/share/user-skel/app`
 
 The executor image is built to start under Kubernetes `runAsUser: 10000` / `runAsGroup: 10000`,
-with `/app` as the process startup directory and `/home/jovyan/app` kept as the real project cwd.
+with `/usr/local/share/user-skel/app` as the process startup directory and
+`/usr/local/share/user-skel/app` kept as the real project cwd.
 
 For `mainsequence-project-executor`, incoming `/api/chat` and `/api/a2a/chat` requests do not need
 to provide `projectId`. The streamer no longer tries to resolve `projectId` from the request path

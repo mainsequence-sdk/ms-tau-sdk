@@ -22,6 +22,7 @@ import {
 	buildSessionInsightsResponse,
 	readSessionInsights,
 } from "../interface/stream/session-insights.js";
+import { shouldEmitStructuredLog } from "../pi/extensions/shared/structured-logging.js";
 
 type CheckpointReason =
 	| "stream_finish"
@@ -1366,6 +1367,9 @@ function sidecarLogSeverity(event: string): SidecarLogSeverity {
 
 function logEvent(event: string, data: Record<string, unknown>) {
 	const severity = sidecarLogSeverity(event);
+	if (!shouldEmitStructuredLog({ severity, component: "astro-checkpoint-sidecar", event })) {
+		return;
+	}
 	const payload = {
 		severity,
 		time: new Date().toISOString(),

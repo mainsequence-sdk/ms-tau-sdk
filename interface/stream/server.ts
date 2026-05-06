@@ -1064,6 +1064,13 @@ function resolveBackendLlmModel(sessionModelBinding: SessionModelBinding | null)
 	return sessionModelBinding?.model ?? DEFAULT_OPENAI_MODEL;
 }
 
+function resolveBackendLlmThinking(sessionModelBinding: SessionModelBinding | null): string {
+	const rawThinking = sessionModelBinding?.metadata?.backend_llm_thinking;
+	if (typeof rawThinking === "string") return rawThinking;
+	const normalizedThinking = sessionModelBinding?.runConfig.reasoning_effort;
+	return typeof normalizedThinking === "string" ? normalizedThinking : "";
+}
+
 function doesSessionModelIdentityMatch(
 	sessionModelBinding: SessionModelBinding | null,
 	provider: string | null,
@@ -4139,6 +4146,7 @@ async function createBackendRuntimeSession(options: {
 		workflow_key: backendWorkflowKey,
 		llm_provider: resolveBackendLlmProvider(options.sessionModelBinding ?? null),
 		llm_model: resolveBackendLlmModel(options.sessionModelBinding ?? null),
+		llm_thinking: resolveBackendLlmThinking(options.sessionModelBinding ?? null),
 		engine_name: "astro",
 		runtime_config_snapshot: runtimeConfig,
 		session_metadata: {
@@ -7721,6 +7729,7 @@ async function handleStreamRequest(
 				workflow_key: backendWorkflowKey,
 				llm_provider: resolveBackendLlmProvider(sessionModelBinding),
 				llm_model: resolveBackendLlmModel(sessionModelBinding),
+				llm_thinking: resolveBackendLlmThinking(sessionModelBinding),
 				engine_name: "astro",
 				runtime_config_snapshot: runtimeConfig,
 				session_metadata: {
