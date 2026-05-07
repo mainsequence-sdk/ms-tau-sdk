@@ -1,6 +1,6 @@
 {
   "name": "astro",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "type": "module",
   "description": "Astro orchestrator for Main Sequence project assistants with specialist delegation, generated docs context, and standard Pi web access.",
