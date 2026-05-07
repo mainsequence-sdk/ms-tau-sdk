@@ -48,8 +48,9 @@ For the deployed Jupyter-based executor image, the effective runtime contract is
 - `ASTRO_FIXED_PROJECT_CWD=/usr/local/share/user-skel/app`
 
 The executor image is built to start under Kubernetes `runAsUser: 10000` / `runAsGroup: 10000`,
-with `/usr/local/share/user-skel/app` as the process startup directory and
-`/usr/local/share/user-skel/app` kept as the real project cwd.
+with Docker `WORKDIR /app`, and the startup command then changes into
+`/usr/local/share/user-skel/app` before Astro starts so the live process cwd matches the real
+project workspace.
 
 For `mainsequence-project-executor`, incoming `/api/chat` and `/api/a2a/chat` requests do not need
 to provide `projectId`. The streamer no longer tries to resolve `projectId` from the request path

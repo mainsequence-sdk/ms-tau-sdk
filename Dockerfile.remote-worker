@@ -81,8 +81,8 @@ RUN mkdir -p \
     /session-state
 
 USER 10000:10000
-WORKDIR ${SKEL_APP_DIR}
+WORKDIR /app
 
 EXPOSE 8787
 
-CMD ["/app/node_modules/.bin/tsx", "/app/scripts/start_pi_stream.ts"]
+CMD ["/bin/bash", "-lc", "cd \"${ASTRO_FIXED_PROJECT_CWD:?missing ASTRO_FIXED_PROJECT_CWD}\" && exec /app/node_modules/.bin/tsx /app/scripts/start_pi_stream.ts"]

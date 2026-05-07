@@ -82,11 +82,12 @@ The final part adds Astro to the already-built project image:
 - copies the Astro runtime bundle into `/app`
 - creates Astro runtime directories
 - keeps `USER ${NB_USER}`
-- keeps `WORKDIR ${SKEL_APP_DIR}`
+- keeps Docker `WORKDIR /app` so Astro bundle-relative startup paths stay stable
+- changes into `${SKEL_APP_DIR}` before launching Astro so the live process cwd is the project tree
 - starts Astro with:
 
 ```bash
-tsx /app/scripts/start_pi_stream.ts
+cd "${ASTRO_FIXED_PROJECT_CWD}" && tsx /app/scripts/start_pi_stream.ts
 ```
 
 ## Build arguments
@@ -140,7 +141,8 @@ The remote worker image is intended to run under the platform security context:
 
 To support that, the image:
 
-- starts from `WORKDIR /usr/local/share/user-skel/app`
+- keeps Docker `WORKDIR /app` for stable bundle-relative startup
+- changes into `/usr/local/share/user-skel/app` immediately before Astro starts
 - keeps the real project path at `ASTRO_FIXED_PROJECT_CWD=/usr/local/share/user-skel/app`
 - makes `/home/jovyan` itself owned by uid/gid `10000` so bootstrap can create runtime links there
 - makes the canonical cloned project tree and Astro runtime state directories writable by uid/gid `10000`

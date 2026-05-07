@@ -114,6 +114,11 @@ export default function (pi: ExtensionAPI) {
 			const mainsequenceCli = readMainsequenceCliVersion();
 			const pythonVersion = readPythonVersion();
 			const includePaths = params.includePaths !== false;
+			const executionMode = process.env.ASTRO_EXECUTION_MODE?.trim() || "default";
+			const processCwd = process.cwd();
+			const projectCwd = process.env.ASTRO_FIXED_PROJECT_CWD?.trim() || null;
+			const effectiveWorkspaceCwd =
+				executionMode === "remote_project_worker" && projectCwd ? projectCwd : processCwd;
 
 			const details = {
 				astro_release_version: astroReleaseVersionEnv ?? astroPackageVersion,
@@ -124,13 +129,14 @@ export default function (pi: ExtensionAPI) {
 				python_version: pythonVersion.ok ? pythonVersion.value : null,
 				node_version: process.versions.node,
 				agent_name: resolveCurrentAstroAgentName(process.env),
-				execution_mode: process.env.ASTRO_EXECUTION_MODE?.trim() || "default",
+				execution_mode: executionMode,
 				project_image_ref: process.env.ASTRO_PROJECT_IMAGE_REF?.trim() || null,
 				auth_mode: process.env.MAINSEQUENCE_AUTH_MODE?.trim() || null,
 				...(includePaths
 					? {
-							process_cwd: process.cwd(),
-							project_cwd: process.env.ASTRO_FIXED_PROJECT_CWD?.trim() || null,
+							effective_workspace_cwd: effectiveWorkspaceCwd,
+							process_cwd: processCwd,
+							project_cwd: projectCwd,
 							home: process.env.HOME?.trim() || null,
 							astro_container_data_dir: process.env.ASTRO_CONTAINER_DATA_DIR?.trim() || null,
 							astro_mainsequence_config_dir:
@@ -158,7 +164,8 @@ export default function (pi: ExtensionAPI) {
 
 			if (includePaths) {
 				lines.push(
-					`Process cwd: ${details.process_cwd}`,
+					`Workspace cwd: ${details.effective_workspace_cwd}`,
+					`Astro process cwd: ${details.process_cwd}`,
 					`Project cwd: ${details.project_cwd ?? "unset"}`,
 					`Container data dir: ${details.astro_container_data_dir ?? "unset"}`,
 				);
