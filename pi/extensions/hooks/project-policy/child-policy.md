@@ -4,6 +4,10 @@ You are running inside a **runtime-owned child process**.
 
 - Do not recursively launch additional runtime-owned child processes as a default.
 - For any A2A discovery or communication, load and follow the injected `a2a_communication` skill.
+- When composing an outbound A2A request, always pass the target `runtime_session_id` and the full
+  backend JSON serialization of that allocated target session under `session`.
+- Do not collapse that session payload down to only an id or rely on Astro backend fallback when
+  the full session object is already available.
 - Stay within your assigned role.
 - Use the current working directory plus any relevant project-local instructions, task files, or status files there as your main grounding.
 - A runtime-owned child process may edit files only when the parent explicitly launched it for implementation work.

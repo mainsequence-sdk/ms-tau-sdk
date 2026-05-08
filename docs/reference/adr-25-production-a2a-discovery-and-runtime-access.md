@@ -4,6 +4,18 @@
 
 Accepted
 
+## Note
+
+The runtime-access and discovery portions of this ADR remain valid.
+
+The session-creation portions are superseded by
+[`adr-27-backend-only-session-initiation.md`](./adr-27-backend-only-session-initiation.md): the
+backend must allocate the A2A target session before Astro is called, and Astro must not create that
+session from the stream runtime.
+
+The retry/reuse semantics for that backend allocation step are further constrained by
+[`adr-28-backend-idempotent-a2a-session-allocation.md`](./adr-28-backend-idempotent-a2a-session-allocation.md).
+
 ## Context
 
 Astro already has:
@@ -30,7 +42,7 @@ This ADR closed the five concrete non-debug A2A gaps:
 
 1. How does it discover candidate agents?
 2. How does it choose the target agent?
-3. How does it create the target communication session?
+3. How does it obtain the target communication session identity?
 4. How does it obtain the runtime URL and bearer token for the selected target?
 5. How does it send the actual A2A request to the target runtime?
 
@@ -52,7 +64,7 @@ The end-to-end flow is:
 
 1. semantic agent search
 2. target selection
-3. backend session creation
+3. backend session allocation outside the Astro stream runtime
 4. runtime access resolution
 5. runtime health polling
 6. streamed A2A request to the resolved runtime URL
@@ -128,24 +140,28 @@ The default selection rule is:
 
 Astro should not apply a second local token-overlap ranking step in production mode.
 
-## Session Creation
+## Session Allocation
 
-After selecting the target agent, Astro should create a fresh backend session for that A2A
-communication with:
+After selecting the target agent, the backend control plane must allocate or provide the backend
+session identity for that A2A communication before Astro is called.
 
-```bash
-mainsequence agent start_new_session <agent_id>
-```
+Astro must receive that existing session id and treat it as the backend-owned A2A session key for
+the remainder of the flow. Astro must not create the session from the stream runtime.
 
-Initial implementation rules:
+Because the sender already holds the backend session-allocation response at this point, it must
+also forward the full backend `AgentSession` JSON serialization for that same target session in the
+outbound Astro request under `session`.
 
-- create a fresh target session per A2A request
-- do not reuse an existing runtime session automatically in the first production version
-- treat the returned session id as the backend-owned A2A session key for the remainder of the flow
+This is a sender-side correctness rule, not just an optimization:
+
+- do not send only `sessionId` plus messages
+- do not trim the session payload down to a hand-picked subset
+- do not rely on Astro's backend fetch fallback to recover model/provider/runtime metadata when the
+  backend session JSON is already available to the sender
 
 ## Runtime Access Resolution
 
-After session creation, Astro should resolve runtime access with:
+After backend session allocation, Astro should resolve runtime access with:
 
 ```bash
 mainsequence agent session resolve_runtime_access <session_id> --json
@@ -220,7 +236,16 @@ The canonical non-debug A2A runtime payload is:
 
 ```json
 {
-  "sessionId": "123",
+  "runtime_session_id": "123",
+  "session": {
+    "id": 123,
+    "thread_id": "123",
+    "llm_provider": "openai-codex",
+    "llm_model": "gpt-5.3-codex-spark",
+    "session_metadata": {
+      "workflow_key": "mainsequence-project-executor"
+    }
+  },
   "messages": [
     {
       "role": "user",
@@ -235,9 +260,13 @@ The canonical non-debug A2A runtime payload is:
 }
 ```
 
+The example above is abbreviated for readability. The real sender should forward the full backend
+session JSON serialization unchanged under `session`, not a trimmed subset.
+
 At minimum, the payload must carry:
 
-- the newly created target `sessionId`
+- the already-allocated target `runtime_session_id` (or accepted alias `sessionId`)
+- the full backend session serializer for that same session under `session`
 - the machine-facing `messages`
 - optional `response_format`
 - caller metadata
@@ -260,6 +289,8 @@ in addition to the current local-debug compatibility aliases like:
 - `request`
 
 The production path should use canonical `messages`, not the old task-alias shim.
+The production path should also forward the full backend session serializer in `session` on every
+non-debug A2A send.
 
 ## Cancellation
 
@@ -307,7 +338,7 @@ Those direct URLs are debug-only behavior.
 - Astro now depends on Main Sequence CLI execution for non-debug A2A
 - non-debug A2A becomes a multi-step flow with several failure points:
   - search
-  - session creation
+  - session allocation
   - runtime access resolution
   - health readiness
   - streamed runtime request
@@ -322,7 +353,10 @@ Those direct URLs are debug-only behavior.
   - `agent_description`
   - `a2a_card`
 - confirm selection uses backend/CLI ranking rather than local token-overlap scoring
-- confirm Astro creates a new backend session with `mainsequence agent start_new_session <agent_id>`
+- confirm Astro requires an already-allocated backend session id before sending the streamed A2A
+  request
+- confirm the non-debug A2A sender forwards the full backend session serializer together with the
+  target session id on every request
 - confirm Astro resolves runtime access with
   `mainsequence agent session resolve_runtime_access <session_id> --json`
 - confirm Astro reads `rpc_url` and `token` from runtime access
@@ -339,7 +373,8 @@ Those direct URLs are debug-only behavior.
 - [x] Normalize CLI search results into Astro's A2A candidate contract.
 - [x] Replace production-mode `not implemented` in the A2A discovery path.
 - [x] Add production candidate selection using backend/CLI ranking.
-- [x] Add a session-creation step using `mainsequence agent start_new_session <agent_id>`.
+- [x] Treat backend session allocation as an external control-plane step and require the resulting
+  session id on the Astro A2A request.
 - [x] Add runtime-access resolution using
   `mainsequence agent session resolve_runtime_access <session_id> --json`.
 - [x] Add token-authenticated health polling against `GET <rpc_url>/health`.

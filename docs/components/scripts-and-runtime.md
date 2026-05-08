@@ -44,9 +44,9 @@ Spawned agent processes inherit the runtime credential env and the shared CLI au
 They do not inherit token-style Main Sequence auth env vars, which prevents a long-running agent
 process from overriding the runtime-managed auth store.
 It accepts latest-turn UI requests, injects the optional UI `system`, `context`, and `tools`
-metadata into the prompt, treats `newChat: true` as a UI hint for a new conversation, registers
-the backend Agent when enabled, and uses backend AgentSession id files (fallback to `threadId` when
-registration is disabled) for continuity.
+metadata into the prompt, requires backend-owned `runtime_session_id` for real chat/A2A execution,
+hydrates backend session authority when local/request metadata is insufficient, and uses backend
+AgentSession id files (fallback to `threadId` when registration is disabled) for continuity.
 
 Astro no longer bootstraps a dedicated project-coder runtime inside the normal chat stream.
 Project implementation is owned by `mainsequence-project-executor`, and image-backed executor

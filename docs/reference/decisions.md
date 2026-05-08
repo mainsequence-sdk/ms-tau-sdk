@@ -344,8 +344,8 @@ Why:
 - production A2A needs a real discovery and routing path instead of the current debug shim
 - the target runtime URL must come from backend-owned runtime access resolution, not from guessed
   local service URLs
-- Astro should reuse the Main Sequence CLI for agent search, session creation, and runtime access
-  lookup in non-debug mode
+- Astro should reuse the Main Sequence CLI for agent search and runtime access lookup in non-debug
+  mode while backend control-plane session allocation stays outside the stream runtime
 
 ## 26. Retire project-coder and keep project-executor
 
@@ -361,3 +361,29 @@ Why:
   conversation into a local coder session
 - project implementation handoff should be a committed project artifact consumed by the
   backend-routed executor runtime
+
+## 27. Do not let Astro initiate session creation from chat or A2A
+
+Implementation:
+
+- `reference/adr-27-backend-only-session-initiation.md`
+
+Why:
+
+- backend session allocation is the required control-plane step before Astro runtime attach
+- model binding must fall back to backend-owned session authority instead of proceeding with a null
+  model
+- A2A callers should provide an existing session id rather than relying on Astro to create one
+
+## 28. Make backend A2A session allocation idempotent
+
+Implementation:
+
+- `reference/adr-28-backend-idempotent-a2a-session-allocation.md`
+
+Why:
+
+- one logical A2A task should not fork into multiple executor sessions just because the caller
+  retried
+- prompt guidance is too soft to enforce retry discipline across all callers
+- backend allocation authority is the right place to guarantee session reuse versus explicit restart

@@ -56,8 +56,9 @@ have a local checkpoint manifest created by Astro after backend lease/restore. B
 
 ### Restore and execution
 
-1. The frontend sends `POST /api/chat` with `runtime_session_id` or `newChat: true`.
-2. Astro resolves or creates the backend `AgentSession.id`; this remains the frontend-visible
+1. The frontend or backend control plane sends `POST /api/chat` with an existing
+   `runtime_session_id`.
+2. Astro attaches to that existing backend `AgentSession.id`; this remains the frontend-visible
    runtime session id.
 3. Astro acquires or renews a backend lease for that session.
 4. Astro checks a local manifest in the mounted `emptyDir`.

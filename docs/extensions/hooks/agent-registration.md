@@ -9,8 +9,8 @@ startup.
 
 ## Behavior
 
-- Astro stream-owned session creation and hydration use backend `agentId` authority instead of
-  Pi-time deterministic registration.
+- Astro stream-owned session hydration uses backend `agentId` authority instead of Pi-time
+  deterministic registration.
 - This hook remains present only so the extension loading layout stays stable while the old
   registration path is retired.
 

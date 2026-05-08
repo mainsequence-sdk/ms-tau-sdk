@@ -27,8 +27,9 @@ checkpoints. When backend registration is disabled, the local fallback key is `t
 
 The request contract is latest-turn oriented:
 
-- `newChat: true` is treated as a UI hint for a new conversation
-- `runtime_session_id`, when present, always resumes that exact session even if the request still says `newChat: true`
+- the backend must create the session before Astro is called
+- `runtime_session_id` is required for every real non-mock streamed request
+- `newChat` is deprecated as routing input and must not be relied on for session creation
 - `messages` should contain only the exact user message just typed
 - `threadId` is returned for client bookkeeping only and does not define continuity when agent registration is enabled
 - `context` carries the current UI/app/surface metadata

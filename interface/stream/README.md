@@ -42,9 +42,8 @@ Send a request compatible with assistant-ui's `ui-message-stream` runtime:
 
 ```json
 {
-  "newChat": true,
+  "runtime_session_id": "456",
   "agentName": "astro-orchestrator",
-  "agentId": 17,
   "userId": "user_123",
   "system": "optional system prompt",
   "messages": [
@@ -79,9 +78,8 @@ To start a project-scoped executor session directly, use:
 
 ```json
 {
-  "newChat": true,
+  "runtime_session_id": "87",
   "agentName": "mainsequence-project-executor",
-  "agentId": 456,
   "userId": "user_123",
   "projectId": "42",
   "cwd": "/absolute/path/to/checked-out-project",
@@ -124,42 +122,43 @@ The response includes `X-Thread-Id`. When the backend session authority provides
 
 - `X-Agent-Id`
 - `X-Agent-Unique-Id`
-- `X-Agent-Session-Id` (when a new session is created)
+- `X-Agent-Session-Id`
 - `X-Session-Key`
 
 This endpoint expects `messages` to contain the current user turn only. The server reads only the
 last message entry and treats it as the exact latest user message, plus optional UI metadata in
 `context`.
 
-Conversation continuity comes from the backend agent session key. When `newChat` is `false`,
-the client must send `runtime_session_id` to resume the existing session.
+Conversation continuity comes from the backend agent session key. For real non-mock execution, the
+client must send `runtime_session_id` to resume the existing session.
 If the request includes an explicit `runtime_session_id`, the server resumes that session even when
 the request still arrives with `newChat: true`.
 `threadId` is informational for the frontend when backend-backed sessions are enabled and does not
 control which session is resumed.
-When `newChat` is `true`, the request must include the backend integer `agentId` unless Astro is
-already attaching to a hydrated backend-owned session.
+`newChat` is deprecated as routing input. Older clients may still send it as a UI hint, but Astro
+must not interpret it as permission to create a backend session.
 For project-scoped executor requests, the runtime may use a pinned project cwd or accept an
 explicit `cwd`. Resume requests can omit those fields when the session metadata already contains
 them.
 If the latest user message contains the word `MOCK`, the stream returns a synthetic response
-immediately and skips agent execution, session creation, and conversation persistence.
+immediately and skips agent execution, backend session attach, and conversation persistence.
 
 The stream wrapper injects:
 
 - `system` as an optional prompt prefix
 - `context` as structured UI context
 - `tools` as optional UI tool metadata
-- optional request-carried backend `session` serializer for session-first resume
+- optional request-carried backend `session` serializer for session-first metadata/model refresh
 - only the last `messages` entry as the turn input
-- `newChat` as the initial signal to create a new backend AgentSession when the thread does not
-  already point at an active session
+- backend-owned `runtime_session_id` as the identity Astro must attach to
 
 Normal chat execution is session-first:
 
 - `POST /api/chat` does not use `model` as a message-level source of truth
 - when the request includes `session`, Astro refreshes local session metadata and model binding from
   that backend session serializer before continuing the turn
+- when request-carried `session` JSON is absent or insufficient, Astro must fetch backend session
+  authority from `runtime_session_id` before Pi launch rather than proceeding with no model binding
 - `GET /api/chat/get_available_models` remains control-plane discovery and is not required on the
   normal message hot path
 
@@ -197,10 +196,18 @@ Canonical request fields accepted by Astro include:
 
 ```json
 {
-  "sessionId": "123",
+  "runtime_session_id": "123",
   "userId": "user_123",
   "agentName": "mainsequence-project-executor",
-  "agentId": 24,
+  "session": {
+    "id": 123,
+    "thread_id": "123",
+    "llm_provider": "openai-codex",
+    "llm_model": "gpt-5.3-codex-spark",
+    "session_metadata": {
+      "workflow_key": "mainsequence-project-executor"
+    }
+  },
   "messages": [
     {
       "role": "user",
@@ -214,8 +221,16 @@ Canonical request fields accepted by Astro include:
 }
 ```
 
+The example session object above is abbreviated for readability. In real non-debug A2A sends, the
+caller should forward the full backend session JSON serialization under `session`, not a trimmed
+subset.
+
 Astro also accepts legacy task-style aliases such as `task`, `message`, `input`, `prompt`, or
 `request`. When canonical `messages` are present, they win.
+For real A2A execution, that backend session identity is mandatory. Astro must not create the
+executor session on behalf of the caller. The caller should also include the full backend session
+serializer for that target session on every outbound A2A request so session/model/provider metadata
+does not have to be recovered through fallback.
 
 ### `POST /api/a2a/cancel`
 

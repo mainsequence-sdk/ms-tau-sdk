@@ -7,7 +7,8 @@ Typical error responses:
 - `400` — missing user identity for provider status/sign-in/sign-off requests. Astro accepts
   `userId`, `user_id`, `created_by_user`, `createdByUser`, supported user-id headers, Bearer JWT
   user claims, or `ASTRO_MAINSEQUENCE_USER_ID`.
-- `400` — missing `runtime_session_id` when `newChat` is `false`
+- `400` — missing `runtime_session_id` (or accepted alias) for real non-mock `POST /api/chat` or
+  `POST /api/a2a/chat` requests
 - `400` — missing `sessionId` for `GET /api/chat/history`
 - `400` — missing `sessionId` for `GET /api/chat/session-model`
 - `400` — missing `sessionId` for `PATCH /api/chat/session-config`
@@ -44,9 +45,7 @@ Typical error responses:
 - `500` — `conversation_persistence_failed` when the server cannot write history before streaming
 - `500` — `model_catalog_unavailable` when `GET /api/models/catalog` fails unexpectedly
 - `500` — `available_models_unavailable` when `GET /api/chat/get_available_models` fails unexpectedly
-- `400` — `missing_agent_id` when a new backend-backed session is requested without a backend
-  integer `agentId`
-- `502` — backend agent session creation failure
+- `502` — backend session hydration/authority fetch failure before Pi launch
 - `404` — unknown route
 
 ## CORS

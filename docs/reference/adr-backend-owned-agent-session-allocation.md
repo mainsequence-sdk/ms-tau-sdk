@@ -4,6 +4,12 @@
 
 This ADR predates the retirement of `mainsequence-project-coder`.
 
+It also predates the stricter backend-only session-initiation rule introduced in
+[`adr-27-backend-only-session-initiation.md`](./adr-27-backend-only-session-initiation.md).
+That newer ADR supersedes the stream-runtime session-creation assumptions in this document. The
+backend still owns `AgentSession` creation, but Astro chat/A2A requests should no longer initiate
+that creation themselves.
+
 The current project-implementation architecture is defined by:
 
 - [`adr-23-backend-mediated-project-executor-runtimes.md`](./adr-23-backend-mediated-project-executor-runtimes.md)

@@ -15,17 +15,19 @@ currently stored for that runtime session.
 
 - `agentName` (string)
 - `userId` (string | number)
+- `runtime_session_id` (string; accepted aliases: `runtimeSessionId`, `sessionId`) for every real
+  non-mock execution request
 - `messages` (array) — the last entry must be the current user message
 
 ## Optional fields
 
 - `system` (string)
 - `threadId` (string)
-- `newChat` (boolean)
+- `newChat` (boolean; deprecated UI-only hint, ignored for session allocation)
 - `context` (object)
 - `tools` (object)
-- `runtime_session_id` (string; required when `newChat` is `false`)
-- `session` (object; preferred full backend `AgentSession` serializer on resume requests)
+- `session` (object; preferred full backend `AgentSession` serializer for metadata/model refresh;
+  expected on outbound A2A requests)
 - `projectId` (string | number; optional project identity for project-scoped executor requests)
 - `cwd` (string; project working directory when the executor runtime is not already pinned)
 - `sessionMetadata` (object; optional non-reserved metadata only)
@@ -36,12 +38,18 @@ currently stored for that runtime session.
 - The last entry must be a `user` role message.
 - If the latest user message contains the word `MOCK`, the server returns a synthetic response
   immediately for frontend testing and skips agent/session setup.
-- `newChat` is treated as a UI hint for a new conversation.
-- An explicit `runtime_session_id` always resumes that existing session, even if the request still
-  arrives with `newChat: true`.
+- `runtime_session_id` is mandatory for real non-mock execution. Astro must attach to that existing
+  backend session and must not create a new one.
+- `newChat` is deprecated as routing input. Older clients may still send it, but Astro must ignore
+  it for allocation decisions.
 - Resume requests should include the full backend `AgentSession` serializer in `session`. Astro now
-  treats that request-carried session object as the authority for model/provider binding and local
-  metadata refresh.
+  treats that request-carried session object as the preferred authority for model/provider binding
+  and local metadata refresh.
+- Outbound A2A requests should always include the full backend `AgentSession` serializer in
+  `session` together with `runtime_session_id` because the sender already has the backend session
+  allocation response for the target session.
+- If `session` is absent or insufficient, Astro must fetch backend session authority from
+  `runtime_session_id` before Pi launch instead of proceeding with no model binding.
 - `threadId` is informational/client-bookkeeping only when backend registration is enabled; it does
   not control session continuity.
 - `agentName` must match the backend registry (unknown agents return `error: unknown_agent`).
@@ -65,7 +73,7 @@ currently stored for that runtime session.
 ```json
 {
   "threadId": "thread-001",
-  "newChat": true,
+  "runtime_session_id": "456",
   "agentName": "astro-orchestrator",
   "userId": "user_123",
   "system": "optional system prompt",
@@ -149,9 +157,18 @@ Example project-executor request:
 ```json
 {
   "threadId": "thread-hope30",
-  "newChat": true,
+  "runtime_session_id": "87",
   "agentName": "mainsequence-project-executor",
   "userId": "user_123",
+  "session": {
+    "id": 87,
+    "thread_id": "87",
+    "llm_provider": "openai-codex",
+    "llm_model": "gpt-5.3-codex-spark",
+    "session_metadata": {
+      "workflow_key": "mainsequence-project-executor"
+    }
+  },
   "projectId": "42",
   "cwd": "/absolute/path/to/hope30",
   "messages": [
@@ -168,3 +185,6 @@ Example project-executor request:
   }
 }
 ```
+
+For real A2A sends, the example session object above should be treated as abbreviated. The sender
+should forward the full backend session JSON serialization under `session`, not a trimmed subset.

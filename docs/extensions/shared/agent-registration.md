@@ -4,15 +4,20 @@ Source: [`pi/extensions/shared/agent-registration.ts`](../../../pi/extensions/sh
 
 ## Purpose
 
-Provide the Main Sequence backend session-start, session-fetch, auth-header, and user-id helpers used by Astro and the stream runtime.
+Provide the Main Sequence backend session-fetch, auth-header, and user-id helpers used by Astro and
+the stream runtime. The file still contains a legacy session-start helper, but chat/A2A runtime
+paths should no longer depend on Astro-initiated session creation.
 
 ## Main responsibilities
 
 - decide whether backend-backed session features are enabled
 - resolve the Main Sequence user id
 - resolve backend auth headers from runtime credentials
-- call backend `start_new_session`
 - fetch backend `AgentSession` records for hydration
+
+Legacy helper still present in code:
+
+- `startBackendAgentSession(...)`
 
 ## Credentials
 
@@ -28,7 +33,6 @@ not use user token env vars for backend session start or backend session hydrati
 
 - `shouldRegisterAgents(...)`
 - `resolveMainsequenceUserId(...)`
-- `startBackendAgentSession(...)`
 - `fetchBackendAgentSession(...)`
 
 ## Related files

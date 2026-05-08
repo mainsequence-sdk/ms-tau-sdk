@@ -7,7 +7,7 @@ Responses are **SSE** with:
 - `X-Thread-Id`
 - `X-Agent-Id` (backend Agent id)
 - `X-Agent-Unique-Id` (deterministic identity)
-- `X-Agent-Session-Id` (backend AgentSession id when created)
+- `X-Agent-Session-Id` (backend AgentSession id for the attached session)
 - `X-Session-Key` (runtime session key)
 
 Each SSE event uses:
@@ -28,13 +28,12 @@ data: [DONE]
 `GET /api/chat/session-model` also returns JSON, not SSE. It exposes the model binding stored for
 the runtime session.
 If the latest user message contains the word `MOCK`, `POST /api/chat` returns a synthetic SSE
-response immediately and does not create or resume a backend session.
+response immediately and does not attach to or create a backend session.
 
 ## Chunk types
 
 The server emits standard assistant-ui stream chunks:
 
-- `new_session` (only on `newChat: true` after backend AgentSession creation)
 - `start`
 - `reasoning-start` / `reasoning-delta` / `reasoning-end`
 - `text-start` / `text-delta` / `text-end`
@@ -49,23 +48,8 @@ Every chunk also includes:
 { "agent_id": 123 }
 ```
 
-The `new_session` chunk payload includes:
-
-```json
-{
-  "type": "new_session",
-  "new_session": {
-    "agent_session_id": 456,
-    "session_key": "456",
-    "runtime_session_id": "456",
-    "agent_name": "astro-orchestrator",
-    "agent_unique_id": "astro-orchestrator_user_123",
-    "thread_id": "thread-001",
-    "agent_id": 123
-  },
-  "agent_id": 123
-}
-```
+Clients must not depend on Astro emitting a `new_session` chunk. The caller should already know the
+session id from the backend control-plane step that created the session before Astro was called.
 
 The `error` chunk keeps `error` as the human-readable field and includes `error_source` so the
 frontend can distinguish backend, provider, Pi, client, checkpoint, tool, and Astro

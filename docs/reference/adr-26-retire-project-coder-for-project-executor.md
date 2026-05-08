@@ -117,7 +117,7 @@ phase after that deterministic creation workflow is live.
 Backend:
 
 - owns executor discovery
-- owns executor session creation
+- owns executor session allocation
 - owns runtime access resolution
 - owns runtime URL/token issuance
 - routes or enables the A2A request to the target executor runtime

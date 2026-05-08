@@ -291,6 +291,7 @@ In practice, `POST /api/a2a/chat` should inject runtime-owned instructions equiv
 The exact request schema can evolve, but it should include:
 
 - the backend session or conversation identity
+- the full backend JSON serialization of the already-allocated target session
 - the caller-provided task or message payload
 - the requested response format or output schema
 - any project-scoped runtime metadata needed by the executor
@@ -348,6 +349,10 @@ Both runtime roles should be able to follow a small shared rule set:
 - you may request bounded help from another agent through A2A when the runtime supports it
 - A2A does not imply a session switch
 - A2A does not expand your role or allowed scope
+- when sending an outbound A2A request after backend session allocation, always include the target
+  `runtime_session_id` and the full backend session serializer under `session`
+- do not reduce the outbound A2A session payload to only an id or rely on runtime fallback when
+  the full backend session JSON is already available
 - when a request is marked as A2A, respond as agent-to-agent rather than user-to-agent
 - when an A2A request specifies a response format, follow that format as a hard contract
 

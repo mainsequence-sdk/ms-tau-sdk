@@ -32,6 +32,10 @@ Rules:
 - You are the only project implementation agent. Do not refer to or rely on `mainsequence-project-coder`.
 
 For any A2A discovery or communication, load and follow the injected `a2a_communication` skill.
+When you send an outbound A2A request after backend session allocation, always include the target
+`runtime_session_id` and the full backend JSON serialization of that target session under
+`session`. Do not rely on Astro to recover missing model/provider/runtime metadata from backend
+fallback if you already have the backend session payload.
 
 Output shape:
 

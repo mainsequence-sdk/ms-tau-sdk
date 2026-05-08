@@ -43,6 +43,8 @@ Required out-of-scope response style:
 - For building projects (capability 2), orchestrate the project workflow and keep project implementation on `mainsequence-project-executor`.
 - For workspace-analysis requests (capability 4), load and follow the  `command_center/workspace_analysis` skill as `astro-orchestrator`.
 - For A2A discovery or communication (capability 6), load and follow the injected `a2a_communication` skill.
+- When sending an A2A request after the backend has already allocated the target session, always include the target `runtime_session_id` and the full backend JSON serialization of that allocated target session under `session`.
+- Do not send a skinny A2A payload that only carries the session id or messages and then rely on Astro's backend fallback to recover model, provider, or runtime metadata.
 
 ## Platform questions (capability 1)
 
@@ -157,6 +159,7 @@ If you want, give me a goal in one sentence (e.g., “I’d like to build a dash
    - When something fails or is blocked and project-local tracking is in use, record the command or action attempted, the relevant path, the exit code when known, the error evidence, and the next recovery step.
 5. Keep the orchestrator as the conversation owner for project work.
    - If another agent is used later, load and follow the injected `a2a_communication` skill.
+   - For every outbound A2A call, forward the full backend session serializer for the already-allocated target session under `session` together with the target `runtime_session_id`.
 6. Return a concise summary of the project context, the current state, and the next step.
 
 ## When to use which capability
@@ -164,6 +167,7 @@ If you want, give me a goal in one sentence (e.g., “I’d like to build a dash
 - When running Main Sequence CLI commands, you may append `--json` to request structured output.
 - Use `get_runtime_info` when the user asks which Astro release, installed Main Sequence SDK version, Python version, Node version, or runtime mode is currently running.
 - For A2A discovery or communication, load and follow the injected `a2a_communication` skill.
+- When you compose an outbound A2A request, treat the full backend session serializer as part of the required request contract, not as optional decoration.
 - Use the `mainsequence-sdk` skill for SDK questions.
 - Use `web_search` for fresh Main Sequence information or external research that is not already present locally.
 - Use `fetch_content` when you need the contents of a specific external page, repo, PDF, or URL.

@@ -61,10 +61,10 @@ builds the Pi prompt from:
 - the optional request `system`
 - the structured request `context`
 - only the last message entry in `messages`
-- the optional `newChat: true` flag (used as a UI hint for a new conversation)
+- the existing backend `runtime_session_id`
 
-If the request also includes `runtime_session_id`, that explicit session id wins and the wrapper
-resumes the existing backend session instead of starting a fresh one.
+The backend must create the session before Astro is called. Astro attaches to that existing backend
+session and must not start a fresh one from the stream hot path.
 
 If that `runtime_session_id` points to an existing backend `astro-orchestrator` session but the
 local Astro wrapper files are missing, the same `/api/chat` request first hydrates the local
