@@ -17,7 +17,9 @@ const CONTAINER_PROVIDER_AUTH_ENTRIES = [
 const ASTRO_ORCHESTRATOR_CWD_ENV = "ASTRO_ORCHESTRATOR_CWD";
 const ASTRO_ORCHESTRATOR_PROJECT_PI_DIR_ENV = "ASTRO_ORCHESTRATOR_PROJECT_PI_DIR";
 const ASTRO_WORKSPACE_ANALYSIS_SKILL_PATH_ENV = "ASTRO_WORKSPACE_ANALYSIS_SKILL_PATH";
+const ASTRO_A2A_COMMUNICATION_SKILL_PATH_ENV = "ASTRO_A2A_COMMUNICATION_SKILL_PATH";
 const WORKSPACE_ANALYSIS_SKILL_SLUG = "command_center/workspace_analysis";
+const A2A_COMMUNICATION_SKILL_SLUG = "a2a_communication";
 const WORKSPACE_ANALYSIS_BOOTSTRAP_TIMEOUT_MS = 15000;
 
 function ensureDir(dirPath) {
@@ -586,11 +588,11 @@ function buildWorkspaceAnalysisBootstrapEnv(targetDir, runtimeCwd) {
 	return env;
 }
 
-function materializeWorkspaceAnalysisSkill(options) {
-	const { targetDir, runtimeCwd, projectPiDir } = options;
+function materializeMainsequenceSkill(options) {
+	const { targetDir, runtimeCwd, projectPiDir, slug, envVarName, label } = options;
 	const env = buildWorkspaceAnalysisBootstrapEnv(targetDir, runtimeCwd);
 	const command = env.ASTRO_REAL_MAINSEQUENCE || "mainsequence";
-	const args = ["skills", "path", WORKSPACE_ANALYSIS_SKILL_SLUG];
+	const args = ["skills", "path", slug];
 	const result = spawnSync(command, args, {
 		cwd: runtimeCwd,
 		shell: false,
@@ -602,10 +604,10 @@ function materializeWorkspaceAnalysisSkill(options) {
 	if (result.error) {
 		throw new Error(
 			result.error.code === "ETIMEDOUT"
-				? `Workspace-analysis skill bootstrap timed out after ${WORKSPACE_ANALYSIS_BOOTSTRAP_TIMEOUT_MS}ms while running: ${[command, ...args].join(" ")}`
+				? `${label} skill bootstrap timed out after ${WORKSPACE_ANALYSIS_BOOTSTRAP_TIMEOUT_MS}ms while running: ${[command, ...args].join(" ")}`
 				: result.error.code === "ENOENT"
-				? `Missing required command while materializing workspace-analysis skill: ${command}`
-				: `Workspace-analysis skill bootstrap failed: ${result.error.message}`,
+				? `Missing required command while materializing ${label} skill: ${command}`
+				: `${label} skill bootstrap failed: ${result.error.message}`,
 		);
 	}
 
@@ -613,7 +615,7 @@ function materializeWorkspaceAnalysisSkill(options) {
 	const stderr = typeof result.stderr === "string" ? result.stderr : "";
 	if ((result.status ?? 1) !== 0) {
 		const fragments = [
-			`Workspace-analysis skill bootstrap failed while running: ${[command, ...args].join(" ")}`,
+			`${label} skill bootstrap failed while running: ${[command, ...args].join(" ")}`,
 			`cwd=${runtimeCwd}`,
 			`exit_code=${result.status ?? "unknown"}`,
 		];
@@ -625,14 +627,14 @@ function materializeWorkspaceAnalysisSkill(options) {
 	const resolvedSourcePathText = lastNonEmptyLine(stdout);
 	if (!resolvedSourcePathText) {
 		throw new Error(
-			`Workspace-analysis skill bootstrap failed: ${[command, ...args].join(" ")} returned no usable path.`,
+			`${label} skill bootstrap failed: ${[command, ...args].join(" ")} returned no usable path.`,
 		);
 	}
 
 	const resolvedSourcePath = path.resolve(resolvedSourcePathText);
 	if (!fs.existsSync(resolvedSourcePath)) {
 		throw new Error(
-			`Workspace-analysis skill bootstrap failed: resolved source path does not exist: ${resolvedSourcePath}`,
+			`${label} skill bootstrap failed: resolved source path does not exist: ${resolvedSourcePath}`,
 		);
 	}
 	const resolvedSourceStat = fs.statSync(resolvedSourcePath);
@@ -643,7 +645,7 @@ function materializeWorkspaceAnalysisSkill(options) {
 	const targetPath = path.join(
 		projectPiDir,
 		"skills",
-		...WORKSPACE_ANALYSIS_SKILL_SLUG.split("/"),
+		...slug.split("/"),
 	);
 	removePath(targetPath);
 	ensureDir(path.dirname(targetPath));
@@ -652,13 +654,13 @@ function materializeWorkspaceAnalysisSkill(options) {
 	const skillFilePath = path.join(targetPath, "SKILL.md");
 	if (!fs.existsSync(skillFilePath)) {
 		throw new Error(
-			`Workspace-analysis skill bootstrap failed: copied skill is missing SKILL.md at ${skillFilePath}`,
+			`${label} skill bootstrap failed: copied skill is missing SKILL.md at ${skillFilePath}`,
 		);
 	}
 
-	process.env[ASTRO_WORKSPACE_ANALYSIS_SKILL_PATH_ENV] = targetPath;
+	process.env[envVarName] = targetPath;
 	return {
-		slug: WORKSPACE_ANALYSIS_SKILL_SLUG,
+		slug,
 		command: [command, ...args].join(" "),
 		cwd: runtimeCwd,
 		sourcePath: resolvedSourcePath,
@@ -687,10 +689,21 @@ export function bootstrapPiAgentDir() {
 	const piAgentHomeLink = ensurePiAgentHomeLink(homeDir, targetDir);
 	const streamSessions = ensureAstroStreamSessions(homeDir);
 	const sshRuntime = ensureRuntimeSshConfig(homeDir, containerData.rootDir);
-	const workspaceAnalysisSkill = materializeWorkspaceAnalysisSkill({
+	const workspaceAnalysisSkill = materializeMainsequenceSkill({
 		targetDir,
 		runtimeCwd: orchestratorRuntime.runtimeCwd,
 		projectPiDir: orchestratorRuntime.projectPiDir,
+		slug: WORKSPACE_ANALYSIS_SKILL_SLUG,
+		envVarName: ASTRO_WORKSPACE_ANALYSIS_SKILL_PATH_ENV,
+		label: "Workspace-analysis",
+	});
+	const a2aCommunicationSkill = materializeMainsequenceSkill({
+		targetDir,
+		runtimeCwd: orchestratorRuntime.runtimeCwd,
+		projectPiDir: orchestratorRuntime.projectPiDir,
+		slug: A2A_COMMUNICATION_SKILL_SLUG,
+		envVarName: ASTRO_A2A_COMMUNICATION_SKILL_PATH_ENV,
+		label: "A2A communication",
 	});
 
 	return {
@@ -704,6 +717,7 @@ export function bootstrapPiAgentDir() {
 		sshRuntime,
 		mainsequenceShimPath,
 		workspaceAnalysisSkill,
+		a2aCommunicationSkill,
 		prunedProviderAuthEntries,
 		prunedScopedProviderCredentialDir,
 	};

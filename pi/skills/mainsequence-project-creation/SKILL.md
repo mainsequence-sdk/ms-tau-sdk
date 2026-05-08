@@ -33,17 +33,20 @@ Use the template in [references/project_blueprint_template.md](./references/proj
 6. Only after the project blueprint is coherent should you create the project or start implementation.
 7. Resolve the GitHub organization for the new project with the command contract below.
 8. Create the project with `mainsequence project create "<name>" --github-org-id <githubOrgId>`.
-9. After creating the new project, set it locally with `tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>`, then query the project's details with the Main Sequence CLI and wait until `is_initialized=true`.
-10. Only after `is_initialized=true` may you copy `project_blueprint.md` to the root of that new project or hand the session off for implementation.
+9. After creating the new project, run `tsx /app/scripts/mainsequence_project_finalize_creation.ts <id>`.
+10. That helper sets the project up locally, copies `project_blueprint.md` into the checked-out project root, and prints the exact signed-terminal git steps.
+11. Open a signed terminal with `mainsequence project open-signed-terminal <id>`.
+12. In that signed terminal, run the printed `git add`, `git commit`, and `git push` commands.
 
 ## Operational rules
 
 - Never ask the user to run `mainsequence login` or any other manual auth command.
 - If a Main Sequence CLI command fails with auth during project creation, call `ensure_mainsequence_cli_auth` once and retry the blocked command before treating it as a runtime failure. Do not call `ensure_mainsequence_cli_auth` for non-auth failures.
 - For every non-auth Main Sequence CLI failure, follow the global Main Sequence CLI failure contract.
-- When running inside Astro, do not call raw `mainsequence project set-up-locally <id>` directly; use `tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>` so the persistent pod SSH runtime is prepared first.
-- Do not hand off to `mainsequence-project-coder`, and do not copy `project_blueprint.md` into the checked-out project, while the new platform project is still initializing.
-- Treat the CLI-reported project details as the source of truth for readiness and explicitly check `is_initialized` before continuing past local setup.
+- When running inside Astro, do not call raw `mainsequence project set-up-locally <id>` directly; use `tsx /app/scripts/mainsequence_project_finalize_creation.ts <id>` so the persistent pod SSH runtime is prepared first and blueprint persistence is deterministic.
+- Do not try to commit or push the created project checkout outside a signed terminal. Use `mainsequence project open-signed-terminal <id>` before the git commit/push step.
+- Do not switch sessions and do not hand off to another agent as part of this flow.
+- `mainsequence project create` already waits until `is_initialized=true`, so finalize the created project only after that command succeeds.
 - Do not retry project creation with guessed flags or alternate interactive paths after a non-auth failure. Stop and report the missing command, missing id, or exact backend/CLI error.
 
 Do not create the project first and ask questions later.

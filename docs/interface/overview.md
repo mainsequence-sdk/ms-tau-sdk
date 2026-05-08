@@ -2,9 +2,8 @@
 
 This interface exposes Astro over HTTP using assistant-ui's `ui-message-stream` protocol over SSE.
 Clients must identify the backend agent (`agentName`) and user (`userId`) on each request.
-The normal entry point is `astro-orchestrator`; project-scoped follow-up sessions can target
-`mainsequence-project-coder` directly once the project id and checked-out path are known. Image-backed
-remote worker pods can pin the runtime to `mainsequence-project-executor` with
+The normal entry point is `astro-orchestrator`. Project implementation runs through
+`mainsequence-project-executor`; image-backed remote worker pods can pin that runtime with
 `ASTRO_FIXED_AGENT_NAME` plus fixed project env vars when the project image already contains the
 prepared runtime.
 
@@ -26,10 +25,8 @@ The server binds to the LAN address when `ASTRO_STREAM_HOST=0.0.0.0`.
 - `GET /api/models/catalog`
 - `GET /api/model-providers`
 - `GET /api/model-providers/:provider/signin/:attemptId`
-- `GET /api/chat/diff`
 - `GET /api/chat/history`
 - `GET /api/chat/session-model`
-- `GET /api/chat/session-tools`
 - `PATCH /api/chat/session-config`
 - `POST /api/model-providers/:provider/signin`
 - `POST /api/model-providers/:provider/signin/:attemptId/manual`
@@ -38,3 +35,4 @@ The server binds to the LAN address when `ASTRO_STREAM_HOST=0.0.0.0`.
 - `POST /api/chat`
 
 See the request and response docs for the full contract.
+See [`logging.md`](./logging.md) for the structured operational log contract.

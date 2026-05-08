@@ -941,8 +941,9 @@ local manifest and restore the backend checkpoint before launching or flushing a
       fetch backend `AgentSession` plus `checkpoint/latest/` and rebuild the full frontend
       transcript from `bundle.pi_session_jsonl`.
 - [x] Update read endpoints that depend on local session metadata or Pi JSONL
-      (`session-model`, `session-config`, `session-tools`, `session-insights`, and `diff`) to
-      hydrate from backend checkpoint state before returning `session_not_found`.
+      (`session-model`, `session-config`, and `session-insights`, along with the read-only
+      surfaces that existed during the migration) to hydrate from backend checkpoint state before
+      returning `session_not_found`.
 - [x] Add an Astro `SessionCheckpointClient` for backend latest/restore/flush/lease calls.
 - [x] Change deployed `ASTRO_STREAM_SESSION_DIR` to an `emptyDir` path such as
       `/session-state/sessions`.

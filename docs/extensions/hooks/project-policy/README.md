@@ -4,7 +4,7 @@ Source: [`pi/extensions/hooks/project-policy/index.ts`](../../../../pi/extension
 
 ## Purpose
 
-Append Astro's child-specialist runtime policy to delegated child processes before the child agent starts.
+Append Astro's child runtime policy to runtime-owned child processes before the child agent starts.
 
 ## Activation
 
@@ -14,8 +14,8 @@ Append Astro's child-specialist runtime policy to delegated child processes befo
 ## Behavior
 
 1. Resolves the repo root from the child `cwd`.
-2. Reads the child-specialist policy markdown.
-3. Appends that policy to the child system prompt under an `Astro child-specialist policy` section.
+2. Reads the child-runtime policy markdown.
+3. Appends that policy to the child system prompt under an `Astro child runtime policy` section.
 
 This keeps the parent prompt and the child runtime policy separate.
 
@@ -31,4 +31,3 @@ This keeps the parent prompt and the child runtime policy separate.
 ## Related files
 
 - [`../../shared/repo.md`](../../shared/repo.md)
-- [`../../tools/specialist-delegate/README.md`](../../tools/specialist-delegate/README.md)

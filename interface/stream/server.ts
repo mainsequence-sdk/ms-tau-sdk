@@ -101,15 +101,6 @@ import {
 	loadEnvFile,
 	startMainsequenceCredentialExchangeLoop,
 } from "../../scripts/mainsequence_runtime_auth.js";
-import {
-	bootstrapProjectCoderRuntime,
-	buildProjectScopedCheckoutEnv,
-	buildActivatedProjectEnv,
-	formatProjectRuntimeSummary,
-	type ProjectRuntimeBootstrapEvent,
-	type ProjectRuntimeBootstrapResult,
-	type ProjectRuntimeSnapshot,
-} from "../../pi/extensions/shared/project-runtime.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..", "..");
@@ -118,12 +109,12 @@ const ASTRO_FIXED_AGENT_NAME_ENV = "ASTRO_FIXED_AGENT_NAME";
 const ASTRO_FIXED_PROJECT_ID_ENV = "ASTRO_FIXED_PROJECT_ID";
 const ASTRO_FIXED_PROJECT_CWD_ENV = "ASTRO_FIXED_PROJECT_CWD";
 const ASTRO_PROJECT_IMAGE_REF_ENV = "ASTRO_PROJECT_IMAGE_REF";
-const PROJECT_SESSION_AGENT_NAMES = new Set([
-	"mainsequence-project-coder",
-	"mainsequence-project-executor",
-]);
+const PROJECT_SESSION_AGENT_NAMES = new Set(["mainsequence-project-executor"]);
 const ALLOWED_AGENTS = new Set(["astro-orchestrator", ...PROJECT_SESSION_AGENT_NAMES]);
 const PI_BUILT_IN_TOOL_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
+const includeClientToolDetails = !["0", "false", "no", "off"].includes(
+	(process.env.ASTRO_STREAM_INCLUDE_TOOL_DETAILS ?? "false").trim().toLowerCase(),
+);
 
 loadEnvFile(repoRoot);
 
@@ -509,7 +500,6 @@ type RequestContext = {
 	activeReasoningAnnotationOrdinal: number | null;
 	runtimeToolCounter: number;
 	toolCallIds: Map<number, { toolCallId: string; toolName: string }>;
-	switching: boolean;
 	piProcess: ChildProcess | null;
 	cancelKillTimer: ReturnType<typeof setTimeout> | null;
 	cancellation: ActiveRunCancellation | null;
@@ -632,10 +622,6 @@ type SessionMetadata = {
 	cwd: string | null;
 	repoRoot: string | null;
 	projectImageRef?: string | null;
-	pendingOnboarding: boolean;
-	pendingRuntimeBootstrap: boolean;
-	switchSummary: string | null;
-	projectRuntime: ProjectRuntimeSnapshot | null;
 	sessionModelBinding: SessionModelBinding | null;
 	sessionConfigOverrides: SessionConfigOverrides | null;
 	history_annotations?: HistoryAnnotations;
@@ -687,34 +673,6 @@ type CheckpointLeaseState = {
 	renewTimer: ReturnType<typeof setInterval> | null;
 };
 
-type DiffFileStatus =
-	| "added"
-	| "copied"
-	| "deleted"
-	| "modified"
-	| "renamed"
-	| "typechange"
-	| "unmerged"
-	| "unknown"
-	| "untracked";
-
-type DiffFileSummary = {
-	path: string;
-	originalPath: string | null;
-	status: DiffFileStatus;
-	indexStatus: string | null;
-	worktreeStatus: string | null;
-	staged: boolean;
-	unstaged: boolean;
-	untracked: boolean;
-};
-
-type SessionAvailableTool = {
-	url: string;
-};
-
-type SessionAvailableTools = Record<string, SessionAvailableTool>;
-
 type ThreadSessionBinding = {
 	threadId: string;
 	runtimeSessionId: string;
@@ -726,22 +684,6 @@ type HydratedBackendOrchestratorSession = {
 	agentUniqueId: string | null;
 	metadata: SessionMetadata;
 };
-
-type SessionSwitchRequest = {
-	kind: "project_session_switch";
-	agentName: string;
-	projectId: string;
-	cwd: string;
-	agentId: number | null;
-	initialTask: string | null;
-	summary: string | null;
-};
-
-function isProjectRuntimeBootstrapFailure(
-	result: ProjectRuntimeBootstrapResult,
-): result is Extract<ProjectRuntimeBootstrapResult, { ok: false }> {
-	return result.ok === false;
-}
 
 function normalizeCorsOrigin(value: unknown): string | null {
 	if (typeof value !== "string") return null;
@@ -1141,16 +1083,8 @@ function isImageBackedProjectExecutor(agentName: string | null | undefined): boo
 	return agentName === "mainsequence-project-executor";
 }
 
-function shouldBootstrapProjectRuntimeForAgent(agentName: string | null | undefined): boolean {
-	return isProjectSessionAgentName(agentName) && !isImageBackedProjectExecutor(agentName);
-}
-
 function isRemoteProjectWorkerMode(env: NodeJS.ProcessEnv = process.env): boolean {
 	return env[ASTRO_EXECUTION_MODE_ENV]?.trim() === "remote_project_worker";
-}
-
-function resolveBackendWorkflowKeyForAgent(agentName: string): string {
-	return agentName === "mainsequence-project-executor" ? "mainsequence-project-coder" : agentName;
 }
 
 function resolveRuntimeAgentNameAfterBackendSession(
@@ -1358,16 +1292,44 @@ function mergeSystemPrompt(base: string | undefined, injected: string): string {
 	return parts.join("\n\n");
 }
 
+function normalizeA2AChatMessages(messages: unknown): Array<Record<string, unknown>> | null {
+	if (!Array.isArray(messages)) return null;
+	const normalized: Array<Record<string, unknown>> = [];
+	for (const entry of messages) {
+		if (!isPlainObject(entry)) continue;
+		const role = extractStringProperty(entry, "role");
+		if (!role) continue;
+		const rawContent = entry.content;
+		const content =
+			typeof rawContent === "string"
+				? [{ type: "text", text: rawContent }]
+				: Array.isArray(rawContent)
+					? rawContent
+					: null;
+		if (!content || extractText(content).trim().length === 0) continue;
+		normalized.push({
+			...entry,
+			role,
+			content,
+		});
+	}
+	return normalized.length > 0 ? normalized : null;
+}
+
 function normalizeA2AChatRequestBody(
 	body: Record<string, unknown>,
 ): { ok: true; body: Record<string, unknown> } | { ok: false; statusCode: number; error: string; message: string } {
+	const runtimeSessionId =
+		extractStringProperty(body, "runtime_session_id", "runtimeSessionId", "sessionId") ?? null;
+	const normalizedMessages = normalizeA2AChatMessages(body.messages);
 	const task = extractStringProperty(body, "task", "message", "input", "prompt", "request");
-	if (!task) {
+	if (!normalizedMessages && !task) {
 		return {
 			ok: false,
 			statusCode: 400,
 			error: "missing_a2a_task",
-			message: "A2A chat requests require a non-empty task, message, input, prompt, or request field.",
+			message:
+				"A2A chat requests require either canonical messages or a non-empty task, message, input, prompt, or request field.",
 		};
 	}
 
@@ -1403,24 +1365,27 @@ function normalizeA2AChatRequestBody(
 		ok: true,
 		body: {
 			...body,
-			newChat: body.newChat === false ? false : true,
+			...(runtimeSessionId ? { runtime_session_id: runtimeSessionId } : {}),
+			newChat: runtimeSessionId ? false : body.newChat === false ? false : true,
 			system: mergeSystemPrompt(
 				typeof body.system === "string" ? body.system : undefined,
 				injectedSystem,
 			),
 			context: mergedContext,
 			tools: {},
-			messages: [
-				{
-					role: "user",
-					content: [
-						{
-							type: "text",
-							text: task,
-						},
-					],
-				},
-			],
+			messages:
+				normalizedMessages ??
+				[
+					{
+						role: "user",
+						content: [
+							{
+								type: "text",
+								text: task,
+							},
+						],
+					},
+				],
 		},
 	};
 }
@@ -1821,10 +1786,6 @@ async function attachHydratedBackendSession(options: {
 				projectId: null,
 				cwd: null,
 				repoRoot: null,
-				pendingOnboarding: false,
-				pendingRuntimeBootstrap: false,
-				switchSummary: null,
-				projectRuntime: null,
 				sessionModelBinding,
 				sessionConfigOverrides: null,
 			},
@@ -1874,196 +1835,6 @@ function resolveGitRepoRoot(startCwd: string): string | null {
 	return normalizeRepoRoot(result.stdout);
 }
 
-function gitHeadExists(repoRootPath: string): boolean {
-	return runGitCommand(repoRootPath, ["rev-parse", "--verify", "HEAD"]).ok;
-}
-
-function resolveDiffFileStatus(indexStatus: string, worktreeStatus: string): DiffFileStatus {
-	if (indexStatus === "?" && worktreeStatus === "?") return "untracked";
-	if (indexStatus === "U" || worktreeStatus === "U") return "unmerged";
-	if (indexStatus === "R" || worktreeStatus === "R") return "renamed";
-	if (indexStatus === "C" || worktreeStatus === "C") return "copied";
-	if (indexStatus === "A" || worktreeStatus === "A") return "added";
-	if (indexStatus === "D" || worktreeStatus === "D") return "deleted";
-	if (indexStatus === "T" || worktreeStatus === "T") return "typechange";
-	if (indexStatus === "M" || worktreeStatus === "M") return "modified";
-	return "unknown";
-}
-
-function parseStatusEntryPath(rawPath: string): string {
-	return rawPath.replaceAll("\\", "/");
-}
-
-function parseGitStatusPorcelain(stdout: string): DiffFileSummary[] {
-	const records = stdout.split("\0");
-	if (records.at(-1) === "") records.pop();
-
-	const files: DiffFileSummary[] = [];
-	for (let index = 0; index < records.length; index += 1) {
-		const entry = records[index];
-		if (!entry) continue;
-
-		const statusCode = entry.slice(0, 2);
-		const currentPath = entry.length > 3 ? parseStatusEntryPath(entry.slice(3)) : "";
-		if (!currentPath) continue;
-
-		let originalPath: string | null = null;
-		if ((statusCode.includes("R") || statusCode.includes("C")) && index + 1 < records.length) {
-			originalPath = parseStatusEntryPath(records[index + 1]);
-			index += 1;
-		}
-
-		const indexStatus = statusCode[0] ?? " ";
-		const worktreeStatus = statusCode[1] ?? " ";
-		const untracked = statusCode === "??";
-		files.push({
-			path: currentPath,
-			originalPath,
-			status: resolveDiffFileStatus(indexStatus, worktreeStatus),
-			indexStatus: untracked ? null : indexStatus,
-			worktreeStatus: untracked ? null : worktreeStatus,
-			staged: !untracked && indexStatus !== " ",
-			unstaged: !untracked && worktreeStatus !== " ",
-			untracked,
-		});
-	}
-
-	return files;
-}
-
-function joinGitPatches(parts: string[]): string {
-	let combined = "";
-	for (const part of parts) {
-		if (!part.trim()) continue;
-		if (combined && !combined.endsWith("\n")) combined += "\n";
-		combined += part;
-		if (!combined.endsWith("\n")) combined += "\n";
-	}
-	return combined;
-}
-
-function buildUntrackedPatch(repoRootPath: string, relativePath: string): { ok: boolean; patch: string; error?: string } {
-	const result = runGitCommand(
-		repoRootPath,
-		["diff", "--no-index", "--binary", "--no-ext-diff", "--", "/dev/null", relativePath],
-		[0, 1],
-	);
-	if (result.ok === false) {
-		return {
-			ok: false,
-			patch: "",
-			error: result.stderr || `git diff --no-index failed with exit code ${result.exitCode ?? "unknown"}.`,
-		};
-	}
-	return { ok: true, patch: result.stdout };
-}
-
-function buildRepoDiffSnapshot(repoRootPath: string): {
-	ok: boolean;
-	base: "HEAD" | "staged_and_worktree";
-	patch: string;
-	files: DiffFileSummary[];
-	error?: string;
-} {
-	const statusResult = runGitCommand(repoRootPath, ["status", "--porcelain=v1", "--untracked-files=all", "-z"]);
-	if (!statusResult.ok) {
-		return {
-			ok: false,
-			base: "HEAD",
-			patch: "",
-			files: [],
-			error: statusResult.stderr || "git status failed while building the repo diff snapshot.",
-		};
-	}
-
-	const files = parseGitStatusPorcelain(statusResult.stdout);
-	const hasHead = gitHeadExists(repoRootPath);
-
-	let trackedPatch = "";
-	let base: "HEAD" | "staged_and_worktree" = hasHead ? "HEAD" : "staged_and_worktree";
-
-	if (hasHead) {
-		const trackedResult = runGitCommand(
-			repoRootPath,
-			["diff", "--binary", "--find-renames", "--no-ext-diff", "HEAD", "--"],
-			[0, 1],
-		);
-		if (!trackedResult.ok) {
-			return {
-				ok: false,
-				base,
-				patch: "",
-				files,
-				error:
-					trackedResult.stderr ||
-					"git diff HEAD failed while building the repo diff snapshot.",
-			};
-		}
-		trackedPatch = trackedResult.stdout;
-	} else {
-		const stagedResult = runGitCommand(
-			repoRootPath,
-			["diff", "--cached", "--binary", "--find-renames", "--no-ext-diff", "--"],
-			[0, 1],
-		);
-		if (!stagedResult.ok) {
-			return {
-				ok: false,
-				base,
-				patch: "",
-				files,
-				error:
-					stagedResult.stderr ||
-					"git diff --cached failed while building the repo diff snapshot.",
-			};
-		}
-
-		const unstagedResult = runGitCommand(
-			repoRootPath,
-			["diff", "--binary", "--find-renames", "--no-ext-diff", "--"],
-			[0, 1],
-		);
-		if (!unstagedResult.ok) {
-			return {
-				ok: false,
-				base,
-				patch: "",
-				files,
-				error:
-					unstagedResult.stderr ||
-					"git diff failed while building the repo diff snapshot.",
-			};
-		}
-
-		trackedPatch = joinGitPatches([stagedResult.stdout, unstagedResult.stdout]);
-	}
-
-	const untrackedPatches: string[] = [];
-	for (const file of files) {
-		if (!file.untracked) continue;
-		const patchResult = buildUntrackedPatch(repoRootPath, file.path);
-		if (!patchResult.ok) {
-			return {
-				ok: false,
-				base,
-				patch: "",
-				files,
-				error:
-					patchResult.error ||
-					`Failed to build an untracked-file patch for ${file.path}.`,
-			};
-		}
-		untrackedPatches.push(patchResult.patch);
-	}
-
-	return {
-		ok: true,
-		base,
-		patch: joinGitPatches([trackedPatch, ...untrackedPatches]),
-		files,
-	};
-}
-
 function isExistingDirectory(candidate: string): boolean {
 	try {
 		return statSync(candidate).isDirectory();
@@ -2072,10 +1843,22 @@ function isExistingDirectory(candidate: string): boolean {
 	}
 }
 
-function loadSpecialistAgent(agentName: string): AgentConfig | null {
-	if (agentName === "astro-orchestrator") return null;
-	const discovery = discoverAgents(repoRoot, "project");
-	return discovery.agents.find((candidate) => candidate.name === agentName) ?? null;
+type SpecialistAgentResolution = {
+	agentConfig: AgentConfig | null;
+	discoveryRoot: string;
+	projectAgentsDir: string | null;
+	availableAgentNames: string[];
+};
+
+function resolveSpecialistAgent(agentName: string, cwd?: string | null): SpecialistAgentResolution {
+	const discoveryRoot = cwd ? path.resolve(cwd) : repoRoot;
+	const discovery = discoverAgents(discoveryRoot, "project");
+	return {
+		agentConfig: discovery.agents.find((candidate) => candidate.name === agentName) ?? null,
+		discoveryRoot,
+		projectAgentsDir: discovery.projectAgentsDir,
+		availableAgentNames: discovery.agents.map((candidate) => candidate.name).sort(),
+	};
 }
 
 function writePromptToTempFile(agentName: string, prompt: string): string {
@@ -2092,31 +1875,6 @@ function cleanupPromptFile(promptPath: string | null) {
 	} catch {
 		// ignore prompt cleanup failures
 	}
-}
-
-function parseSessionSwitchRequest(result: any): SessionSwitchRequest | null {
-	const candidate = result?.details?.sessionSwitch;
-	if (!candidate || typeof candidate !== "object") return null;
-	if (candidate.kind !== "project_session_switch") return null;
-	if (candidate.agentName !== "mainsequence-project-coder") return null;
-	if (typeof candidate.projectId !== "string" || !candidate.projectId.trim()) return null;
-	if (typeof candidate.cwd !== "string" || !candidate.cwd.trim()) return null;
-
-	return {
-		kind: "project_session_switch",
-		agentName: "mainsequence-project-coder",
-		projectId: candidate.projectId.trim(),
-		cwd: path.resolve(candidate.cwd),
-		agentId: extractNumericProperty(candidate, "agent_id", "agentId"),
-		initialTask:
-			typeof candidate.initialTask === "string" && candidate.initialTask.trim()
-				? candidate.initialTask.trim()
-				: null,
-		summary:
-			typeof candidate.summary === "string" && candidate.summary.trim()
-				? candidate.summary.trim()
-				: null,
-	};
 }
 
 function buildBackendRuntimeSessionId(agentSessionId: number): string {
@@ -2190,10 +1948,6 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 		const rawCwd = (parsed as { cwd?: unknown }).cwd;
 		const rawRepoRoot = (parsed as { repoRoot?: unknown }).repoRoot;
 		const rawProjectImageRef = (parsed as { projectImageRef?: unknown }).projectImageRef;
-		const rawPendingOnboarding = (parsed as { pendingOnboarding?: unknown }).pendingOnboarding;
-		const rawPendingRuntimeBootstrap = (parsed as { pendingRuntimeBootstrap?: unknown }).pendingRuntimeBootstrap;
-		const rawSwitchSummary = (parsed as { switchSummary?: unknown }).switchSummary;
-		const rawProjectRuntime = (parsed as { projectRuntime?: unknown }).projectRuntime;
 		const rawSessionModelBinding = (parsed as { sessionModelBinding?: unknown }).sessionModelBinding;
 		const rawSessionConfigOverrides = (parsed as { sessionConfigOverrides?: unknown }).sessionConfigOverrides;
 		const rawHistoryAnnotations = (parsed as { history_annotations?: unknown }).history_annotations;
@@ -2223,14 +1977,6 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 		const normalizedCwd = normalizeProjectCwd(rawCwd);
 		const normalizedRepoRoot = normalizeRepoRoot(rawRepoRoot);
 		const normalizedProjectImageRef = normalizeProjectImageRef(rawProjectImageRef);
-		const normalizedPendingOnboarding = rawPendingOnboarding === true;
-		const normalizedPendingRuntimeBootstrap = rawPendingRuntimeBootstrap === true;
-		const normalizedSwitchSummary =
-			typeof rawSwitchSummary === "string" && rawSwitchSummary.trim() ? rawSwitchSummary.trim() : null;
-		const normalizedProjectRuntime =
-			rawProjectRuntime && typeof rawProjectRuntime === "object"
-				? (rawProjectRuntime as ProjectRuntimeSnapshot)
-				: null;
 		const normalizedSessionModelBinding = normalizeSessionModelBinding(rawSessionModelBinding);
 		const normalizedSessionConfigOverrides = normalizeSessionConfigOverrides(rawSessionConfigOverrides);
 		const normalizedHistoryAnnotations = normalizeHistoryAnnotations(rawHistoryAnnotations);
@@ -2247,10 +1993,6 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 			cwd: normalizedCwd,
 			repoRoot: normalizedRepoRoot,
 			projectImageRef: normalizedProjectImageRef,
-			pendingOnboarding: normalizedPendingOnboarding,
-			pendingRuntimeBootstrap: normalizedPendingRuntimeBootstrap,
-			switchSummary: normalizedSwitchSummary,
-			projectRuntime: normalizedProjectRuntime,
 			sessionModelBinding: normalizedSessionModelBinding,
 			sessionConfigOverrides: normalizedSessionConfigOverrides,
 			...(normalizedHistoryAnnotations ? { history_annotations: normalizedHistoryAnnotations } : {}),
@@ -2823,7 +2565,7 @@ function startCheckpointLeaseRenewal(ctx: RequestContext, client: SessionCheckpo
 	const renewIntervalMs = Math.max(5000, Math.floor((ttlSeconds * 1000) / 2));
 	ctx.checkpointLease.renewTimer = setInterval(() => {
 		const activeLease = ctx.checkpointLease;
-		if (!activeLease || ctx.finished || ctx.switching || ctx.agentSessionId == null) {
+		if (!activeLease || ctx.finished || ctx.agentSessionId == null) {
 			stopCheckpointLeaseRenewal(ctx);
 			return;
 		}
@@ -2836,7 +2578,7 @@ function startCheckpointLeaseRenewal(ctx: RequestContext, client: SessionCheckpo
 				leasePurpose: "runtime_run",
 			})
 			.then((result) => {
-				if (!ctx.checkpointLease || ctx.finished || ctx.switching) return;
+				if (!ctx.checkpointLease || ctx.finished) return;
 				if (result.ok === false) {
 					const errorMessage = "error" in result ? result.error : "Checkpoint lease renewal failed.";
 					logStructuredEvent({
@@ -3159,13 +2901,6 @@ function buildSessionMetadataFromBackendCheckpoint(input: {
 		extractStringProperty(bundleMetadata, "startedAt", "started_at") ??
 		extractStringProperty(input.sessionPayload, "started_at", "startedAt") ??
 		extractStringProperty(sessionMetadata ?? {}, "started_at", "startedAt");
-	const projectRuntime =
-		(bundleMetadata.projectRuntime && typeof bundleMetadata.projectRuntime === "object"
-			? (bundleMetadata.projectRuntime as ProjectRuntimeSnapshot)
-			: null) ??
-		(sessionMetadata?.project_runtime_snapshot && typeof sessionMetadata.project_runtime_snapshot === "object"
-			? (sessionMetadata.project_runtime_snapshot as ProjectRuntimeSnapshot)
-			: null);
 
 	return {
 		agentId,
@@ -3180,13 +2915,6 @@ function buildSessionMetadataFromBackendCheckpoint(input: {
 		projectImageRef: normalizeProjectImageRef(
 			bundleMetadata.projectImageRef ?? bundleMetadata.project_image_ref ?? sessionMetadata?.project_image_ref,
 		),
-		pendingOnboarding: bundleMetadata.pendingOnboarding === true || sessionMetadata?.pending_onboarding === true,
-		pendingRuntimeBootstrap:
-			bundleMetadata.pendingRuntimeBootstrap === true || sessionMetadata?.pending_runtime_bootstrap === true,
-		switchSummary:
-			extractStringProperty(bundleMetadata, "switchSummary", "switch_summary") ??
-			extractStringProperty(sessionMetadata ?? {}, "switch_summary", "switchSummary"),
-		projectRuntime,
 		sessionModelBinding: normalizeSessionModelBinding(
 			bundleMetadata.sessionModelBinding ?? sessionMetadata?.session_model_binding,
 		),
@@ -3226,10 +2954,6 @@ function buildSessionMetadataFromRequestSessionPayload(input: {
 		extractStringProperty(sessionMetadata ?? {}, "started_at", "startedAt") ??
 		input.existingMetadata?.startedAt ??
 		null;
-	const projectRuntime =
-		(sessionMetadata?.project_runtime_snapshot && typeof sessionMetadata.project_runtime_snapshot === "object"
-			? (sessionMetadata.project_runtime_snapshot as ProjectRuntimeSnapshot)
-			: null) ?? input.existingMetadata?.projectRuntime ?? null;
 	const normalizedAgentSessionId =
 		normalizeNumericId(
 			extractNumericProperty(input.sessionPayload, "id", "agent_session_id", "agentSessionId") ?? input.sessionKey,
@@ -3248,15 +2972,6 @@ function buildSessionMetadataFromRequestSessionPayload(input: {
 		projectImageRef: normalizeProjectImageRef(
 			sessionMetadata?.project_image_ref ?? input.existingMetadata?.projectImageRef,
 		),
-		pendingOnboarding: sessionMetadata?.pending_onboarding === true || input.existingMetadata?.pendingOnboarding === true,
-		pendingRuntimeBootstrap:
-			sessionMetadata?.pending_runtime_bootstrap === true ||
-			input.existingMetadata?.pendingRuntimeBootstrap === true,
-		switchSummary:
-			extractStringProperty(sessionMetadata ?? {}, "switch_summary", "switchSummary") ??
-			input.existingMetadata?.switchSummary ??
-			null,
-		projectRuntime,
 		sessionModelBinding: deriveSessionModelBindingFromSessionPayload({
 			sessionPayload: input.sessionPayload,
 			existingBinding: input.existingMetadata?.sessionModelBinding ?? null,
@@ -3270,7 +2985,7 @@ function buildSessionMetadataFromRequestSessionPayload(input: {
 async function hydrateLocalSessionFilesForRead(input: {
 	sessionKey: string;
 	requestedThreadId: string | null;
-	reason: "session_model" | "session_tools" | "session_config" | "session_diff";
+	reason: "session_model" | "session_config";
 }): Promise<
 	| { ok: true; metadata: SessionMetadata }
 	| { ok: false; statusCode: number; error: string; message: string; errorDetail?: string | null }
@@ -3952,39 +3667,6 @@ function writeCheckpointMarker(ctx: RequestContext, reason: "finish" | "error" |
 	}
 }
 
-function resolveSessionRepoRoot(sessionKey: string, metadata: SessionMetadata): string | null {
-	if (metadata.repoRoot) return metadata.repoRoot;
-	if (!metadata.cwd) return null;
-
-	const resolvedRepoRoot = resolveGitRepoRoot(metadata.cwd);
-	if (!resolvedRepoRoot) return null;
-
-	writeSessionMetadata(sessionKey, {
-		...metadata,
-		repoRoot: resolvedRepoRoot,
-	});
-	return resolvedRepoRoot;
-}
-
-function buildSessionToolUrl(pathname: string, sessionKey: string): string {
-	return `${pathname}?sessionId=${encodeURIComponent(sessionKey)}`;
-}
-
-function buildAvailableSessionTools(sessionKey: string, metadata: SessionMetadata): SessionAvailableTools {
-	const tools: SessionAvailableTools = {};
-
-	if (isProjectSessionAgentName(metadata.agentName)) {
-		const resolvedRepoRoot = resolveSessionRepoRoot(sessionKey, metadata);
-		if (resolvedRepoRoot && isExistingDirectory(resolvedRepoRoot)) {
-			tools.repo_diff = {
-				url: buildSessionToolUrl("/api/chat/diff", sessionKey),
-			};
-		}
-	}
-
-	return tools;
-}
-
 function writeMockStreamResponse(
 	req: import("node:http").IncomingMessage,
 	res: import("node:http").ServerResponse,
@@ -4075,177 +3757,6 @@ function writeThreadBinding(binding: ThreadSessionBinding) {
 	writeFileSync(getThreadBindingPath(binding.threadId), JSON.stringify(binding, null, 2));
 }
 
-type BackendRuntimeSessionCreationSuccess = {
-	ok: true;
-	agentId: number;
-	agentName: string;
-	agentUniqueId: string | null;
-	agentSessionId: number;
-	sessionKey: string;
-	threadId: string;
-	startedAt: string;
-};
-
-type BackendRuntimeSessionCreationFailure = {
-	ok: false;
-	error: string;
-	status: number | null;
-	body: unknown;
-	responseText: string | null;
-	url: string | null;
-};
-
-type BackendRuntimeSessionCreationResult =
-	| BackendRuntimeSessionCreationSuccess
-	| BackendRuntimeSessionCreationFailure;
-
-async function createBackendRuntimeSession(options: {
-	agentName: string;
-	agentId: number | null;
-	agentUniqueId?: string | null;
-	userId: string;
-	threadId: string;
-	projectId: string | null;
-	cwd: string | null;
-	projectImageRef?: string | null;
-	sessionMetadata?: Record<string, unknown>;
-	pendingOnboarding?: boolean;
-	pendingRuntimeBootstrap?: boolean;
-	initialTask?: string | null;
-	switchSummary?: string | null;
-	projectRuntime?: ProjectRuntimeSnapshot | null;
-	sessionModelBinding?: SessionModelBinding | null;
-	sessionConfigOverrides?: SessionConfigOverrides | null;
-}): Promise<BackendRuntimeSessionCreationResult> {
-	if (options.agentId == null) {
-		return {
-			ok: false,
-			error: "Missing backend agent id for session creation.",
-			status: 400,
-			body: null,
-			responseText: null,
-			url: null,
-		};
-	}
-
-	const agentId = options.agentId;
-	const agentUniqueId = options.agentUniqueId ?? null;
-
-	const startedAt = new Date().toISOString();
-	const frozenRepoRoot =
-		isProjectSessionAgentName(options.agentName) && options.cwd
-			? resolveGitRepoRoot(options.cwd)
-			: null;
-	const runtimeConfig = buildRuntimeConfigSnapshot(options.sessionModelBinding ?? null);
-	const backendWorkflowKey = resolveBackendWorkflowKeyForAgent(options.agentName);
-
-	const payload: Record<string, unknown> = {
-		status: "running",
-		created_by_user: options.userId,
-		thread_id: options.threadId,
-		workflow_key: backendWorkflowKey,
-		llm_provider: resolveBackendLlmProvider(options.sessionModelBinding ?? null),
-		llm_model: resolveBackendLlmModel(options.sessionModelBinding ?? null),
-		llm_thinking: resolveBackendLlmThinking(options.sessionModelBinding ?? null),
-		engine_name: "astro",
-		runtime_config_snapshot: runtimeConfig,
-		session_metadata: {
-			source: "frontend",
-			workflow_key: backendWorkflowKey,
-			runtime_agent_name: options.agentName,
-			created_by_user: options.userId,
-			...(options.projectId ? { project_id: options.projectId } : {}),
-			...(options.cwd ? { project_cwd: options.cwd } : {}),
-			...(frozenRepoRoot ? { project_repo_root: frozenRepoRoot } : {}),
-			...(options.projectImageRef ? { project_image_ref: options.projectImageRef } : {}),
-			...(options.projectRuntime ? { project_runtime_snapshot: options.projectRuntime } : {}),
-			pending_onboarding: options.pendingOnboarding === true,
-			pending_runtime_bootstrap: options.pendingRuntimeBootstrap === true,
-			switch_summary: options.switchSummary ?? null,
-			initial_task: options.initialTask ?? null,
-			session_model_binding: options.sessionModelBinding ?? null,
-			session_config_overrides: options.sessionConfigOverrides ?? null,
-			...(options.sessionMetadata ?? {}),
-		},
-	};
-
-	const sessionStart = await startBackendAgentSession({
-		agentId,
-		payload,
-		env: process.env,
-		log: (message) => {
-			console.log(`[astro-stream] ${message}`);
-		},
-	});
-
-	if (!sessionStart.ok || !sessionStart.agentSessionId) {
-		return {
-			ok: false,
-			error: sessionStart.error || "Failed to start backend agent session.",
-			status: sessionStart.status,
-			body: sessionStart.body,
-			responseText: sessionStart.responseText ?? null,
-			url: sessionStart.url ?? null,
-		};
-	}
-
-	const agentSessionId = sessionStart.agentSessionId;
-	const sessionKey = buildBackendRuntimeSessionId(agentSessionId);
-	const sessionStartBody = isPlainObject(sessionStart.body) ? sessionStart.body : {};
-	const resolvedStartedAt = extractStringProperty(sessionStartBody, "started_at", "startedAt") ?? startedAt;
-	const resolvedAgentId = sessionStart.agentId ?? agentId;
-	const resolvedAgentName = resolveRuntimeAgentNameAfterBackendSession(
-		options.agentName,
-		sessionStart.agentName ?? null,
-	);
-	const resolvedAgentUniqueId = sessionStart.agentUniqueId ?? agentUniqueId;
-	const resolvedThreadId = sessionStart.threadId ?? options.threadId;
-	writeSessionMetadata(sessionKey, {
-		agentId: resolvedAgentId,
-		agentUniqueId: resolvedAgentUniqueId,
-		agentSessionId,
-		threadId: resolvedThreadId,
-		startedAt: resolvedStartedAt,
-		agentName: resolvedAgentName,
-		projectId: options.projectId,
-		cwd: options.cwd,
-		repoRoot: frozenRepoRoot,
-		projectImageRef: options.projectImageRef ?? null,
-		pendingOnboarding: options.pendingOnboarding === true,
-		pendingRuntimeBootstrap: options.pendingRuntimeBootstrap === true,
-		switchSummary: options.switchSummary ?? null,
-		projectRuntime: options.projectRuntime ?? null,
-		sessionModelBinding: options.sessionModelBinding ?? null,
-		sessionConfigOverrides: options.sessionConfigOverrides ?? null,
-	});
-	writeThreadBinding({
-		threadId: resolvedThreadId,
-		runtimeSessionId: sessionKey,
-		updatedAt: startedAt,
-	});
-
-	createConversationStore({
-		sessionDir,
-		sessionKey,
-		threadId: resolvedThreadId,
-		agentName: resolvedAgentName,
-		agentId: resolvedAgentId,
-		agentSessionId,
-		startedAt: resolvedStartedAt,
-	});
-
-	return {
-		ok: true,
-		agentId: resolvedAgentId,
-		agentName: resolvedAgentName,
-		agentUniqueId: resolvedAgentUniqueId,
-		agentSessionId,
-		sessionKey,
-		threadId: resolvedThreadId,
-		startedAt: resolvedStartedAt,
-	};
-}
-
 function compactLogValue(value: string, maxLength = 240): string {
 	const compact = value.replace(/\s+/g, " ").trim();
 	if (!compact) return "";
@@ -4282,7 +3793,6 @@ const streamErrorSources = new Set<StreamErrorSource>([
 	"checkpoint",
 	"client",
 	"pi",
-	"project_runtime",
 	"provider",
 	"tool",
 	"unknown",
@@ -4544,11 +4054,6 @@ function logReadableChunk(ctx: RequestContext, chunk: ReturnType<typeof attachAg
 				`${prefix}: new_session agent_session_id=${chunk.new_session.agent_session_id} session_key=${chunk.new_session.session_key}`,
 			);
 			return;
-		case "session_switch":
-			console.log(
-				`${prefix}: session_switch to=${chunk.session_switch.to_agent_name} project_id=${chunk.session_switch.project_id} session_key=${chunk.session_switch.session_key}`,
-			);
-			return;
 		case "start":
 			console.log(`${prefix}: start messageId=${chunk.messageId}`);
 			return;
@@ -4637,6 +4142,11 @@ function logReadableChunk(ctx: RequestContext, chunk: ReturnType<typeof attachAg
 	}
 }
 
+function shouldSuppressClientChunk(chunk: ReturnType<typeof attachAgentId>): boolean {
+	if (includeClientToolDetails) return false;
+	return chunk.type === "tool-call-delta" || chunk.type === "tool-result";
+}
+
 function abortStreamOnPersistenceFailure(ctx: RequestContext, error: unknown) {
 	const message = error instanceof Error ? error.message : String(error);
 	console.error(
@@ -4665,7 +4175,7 @@ function writeChunkWithAgentId(ctx: RequestContext, chunk: StreamEvent, agentId:
 		abortStreamOnPersistenceFailure(ctx, error);
 		return;
 	}
-	if (ctx.clientAttached && !ctx.res.writableEnded && !ctx.res.destroyed) {
+	if (!shouldSuppressClientChunk(enrichedChunk) && ctx.clientAttached && !ctx.res.writableEnded && !ctx.res.destroyed) {
 		const payload = serializeSse(ctx.eventId, enrichedChunk);
 		try {
 			ctx.res.write(payload);
@@ -4864,9 +4374,6 @@ function attachStreamAbortHandler(ctx: RequestContext) {
 		if (ctx.finished || ctx.res.writableEnded) return;
 		ctx.clientAttached = false;
 		updateActiveStreamSession(ctx, { clientAttached: false });
-		if (ctx.switching) {
-			return;
-		}
 		logStructuredEvent({
 			severity: "INFO",
 			component: "astro-stream",
@@ -4914,45 +4421,6 @@ function extractTextParts(content: any): string {
 		.join("");
 }
 
-function buildProjectSwitchAnnouncement(request: SessionSwitchRequest): string {
-	const summary = request.summary?.trim() ?? "";
-	const quotedProjectName = summary.match(/["']([^"']+)["']/)?.[1]?.trim() ?? null;
-	if (quotedProjectName) {
-		return `${quotedProjectName} is checked out locally and ready. I’m switching you now to the project coding agent so we can keep working inside that project.`;
-	}
-	if (summary) {
-		return `${summary} I’m switching you now to the project coding agent so we can continue inside this checked-out project.`;
-	}
-	return `Project ${request.projectId} is checked out locally and ready. I’m switching you now to the project coding agent so we can continue working inside that project.`;
-}
-
-function buildProjectRuntimeBootstrapAnnouncement(summary: string | null): string {
-	const quotedProjectName = summary?.match(/["']([^"']+)["']/)?.[1]?.trim() ?? null;
-	if (quotedProjectName) {
-		return `Verifying the project environment for ${quotedProjectName}. I’m checking SDK status, preparing the local virtual environment, syncing dependencies, and activating the project runtime before we continue.`;
-	}
-	return "Verifying the project environment. I’m checking SDK status, preparing the local virtual environment, syncing dependencies, and activating the project runtime before we continue.";
-}
-
-function buildProjectRuntimeReadyAnnouncement(summary: string | null): string {
-	const quotedProjectName = summary?.match(/["']([^"']+)["']/)?.[1]?.trim() ?? null;
-	if (quotedProjectName) {
-		return `${quotedProjectName} is ready. The project environment is prepared and I’m now in the project coding session.`;
-	}
-	return "The project environment is prepared and I’m now in the project coding session.";
-}
-
-function buildCoderOnboardingInstruction(
-	summary: string | null,
-	projectRuntime: ProjectRuntimeSnapshot | null,
-): string {
-	const summaryPrefix = summary?.trim() ? `${summary.trim()} ` : "";
-	const runtimeInstruction = projectRuntime
-		? "The runtime already completed the deterministic project bootstrap for this session. Use the provided project runtime bootstrap summary as your source of truth for SDK and active virtualenv state, and do not rerun `mainsequence project sdk-status --path . --json`, `mainsequence project build_local_venv --path .`, or `uv sync` unless you are intentionally refreshing the environment after a user-approved change."
-		: "Runtime bootstrap metadata is missing, so you must establish the SDK/runtime state yourself before broader onboarding.";
-	return `${summaryPrefix}This is the first turn after switching into a checked-out project session without a concrete implementation task. ${runtimeInstruction} Then perform the rest of the no-task onboarding flow from your specialist prompt: handle missing or outdated \`AGENTS.md\` / agent skills exactly as instructed, ask the user about upgrading \`mainsequence\` only if the project SDK version or active environment version differs from the latest available version, and then answer the latest user message in that project context.`;
-}
-
 function isPlainObject(value: any): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -4965,13 +4433,6 @@ const ASTRO_SESSION_METADATA_RESERVED_KEYS = new Set([
 	"project_cwd",
 	"project_repo_root",
 	"project_image_ref",
-	"project_runtime_snapshot",
-	"pending_onboarding",
-	"pending_runtime_bootstrap",
-	"switch_summary",
-	"switched_from_agent",
-	"switched_from_session_key",
-	"initial_task",
 	"session_model_binding",
 	"session_config_overrides",
 ]);
@@ -5025,11 +4486,6 @@ function buildPrompt(
 	latestUserMessage: string,
 	context: Record<string, unknown>,
 	tools: Record<string, unknown>,
-	options: {
-		onboardingInstruction?: string | null;
-		switchSummary?: string | null;
-		projectRuntimeSummary?: string | null;
-	} = {},
 ): string {
 	const lines: string[] = [];
 	if (system?.trim()) lines.push(`System: ${system.trim()}`);
@@ -5053,253 +4509,10 @@ function buildPrompt(
 		lines.push(stringifyInline(tools));
 	}
 
-	if (options.switchSummary?.trim()) {
-		lines.push("Active project context:");
-		lines.push(options.switchSummary.trim());
-	}
-
-	if (options.onboardingInstruction?.trim()) {
-		lines.push("Session bootstrap instruction:");
-		lines.push(options.onboardingInstruction.trim());
-	}
-
-	if (options.projectRuntimeSummary?.trim()) {
-		lines.push("Project runtime bootstrap:");
-		lines.push(options.projectRuntimeSummary.trim());
-	}
-
 	lines.push("Latest user message:");
 	lines.push(latestUserMessage);
 	lines.push("Use the active session for prior conversation context when the same backend agent session is reused.");
 	return lines.join("\n");
-}
-
-function formatProjectRuntimeBootstrapError(result: ProjectRuntimeBootstrapResult): string {
-	if (!isProjectRuntimeBootstrapFailure(result)) {
-		return "Deterministic project runtime bootstrap did not return an error payload.";
-	}
-	const detail = result.stderr.trim() || result.stdout.trim() || result.error;
-	return `Deterministic project runtime bootstrap failed during ${result.step}: ${detail}`;
-}
-
-function getProjectRuntimeToolName(step: ProjectRuntimeBootstrapEvent["step"]): string {
-	switch (step) {
-		case "sdk_status":
-			return "runtime_mainsequence_project_sdk_status";
-		case "build_local_venv":
-			return "runtime_mainsequence_project_build_local_venv";
-		case "resolve_venv":
-			return "runtime_resolve_project_venv";
-		case "activate_venv":
-			return "runtime_activate_project_venv";
-		case "uv_sync":
-			return "runtime_uv_sync";
-		case "read_venv_mainsequence":
-			return "runtime_read_venv_mainsequence_version";
-	}
-}
-
-function compactToolResultText(text: string, maxLength = 600): string {
-	const trimmed = text.replace(/\s+/g, " ").trim();
-	if (!trimmed) return "(no output)";
-	if (trimmed.length <= maxLength) return trimmed;
-	return `${trimmed.slice(0, maxLength - 3).trimEnd()}...`;
-}
-
-function buildProjectRuntimeToolArgs(event: ProjectRuntimeBootstrapEvent): string {
-	return JSON.stringify({
-		step: event.step,
-		command: event.command,
-		cwd: event.cwd,
-		...(event.details ?? {}),
-	});
-}
-
-function emitProjectRuntimeBootstrapEvent(
-	ctx: RequestContext,
-	event: ProjectRuntimeBootstrapEvent,
-	toolCallIds: Map<ProjectRuntimeBootstrapEvent["step"], string>,
-) {
-	if (event.phase === "start") {
-		ctx.runtimeToolCounter += 1;
-		const toolCallId = `runtime_${event.step}_${ctx.runtimeToolCounter}`;
-		toolCallIds.set(event.step, toolCallId);
-		writeChunk(ctx, {
-			type: "tool-call-start",
-			id: toolCallId,
-			toolCallId,
-			toolName: getProjectRuntimeToolName(event.step),
-		});
-		writeChunk(ctx, {
-			type: "tool-call-delta",
-			toolCallId,
-			argsText: buildProjectRuntimeToolArgs(event),
-		});
-		writeChunk(ctx, {
-			type: "tool-call-end",
-			toolCallId,
-		});
-		return;
-	}
-
-	const toolCallId = toolCallIds.get(event.step) ?? `runtime_${event.step}_unknown`;
-	const resultText =
-		event.phase === "success"
-			? event.summary
-			: `${event.summary} ${compactToolResultText(event.stderr || event.stdout || event.error, 400)}`;
-	writeChunk(ctx, {
-		type: "tool-result",
-		toolCallId,
-		result: {
-			content: [
-				{
-					type: "text",
-					text: compactToolResultText(resultText),
-				},
-			],
-		},
-	});
-}
-
-function runPendingProjectRuntimeBootstrap(
-	ctx: RequestContext,
-	options: {
-		cwd: string;
-		repoRoot: string | null;
-		projectImageRef?: string | null;
-		sessionKey: string;
-		agentId: number;
-		agentUniqueId: string | null;
-		agentSessionId: number | null;
-		threadId: string;
-		startedAt: string | null;
-		agentName: string;
-		projectId: string | null;
-		pendingOnboarding: boolean;
-		switchSummary: string | null;
-		sessionModelBinding: SessionModelBinding | null;
-		sessionConfigOverrides: SessionConfigOverrides | null;
-	},
-): ProjectRuntimeBootstrapResult {
-	const runtimeEnv = buildProjectScopedCheckoutEnv(process.env, {
-		projectId: options.projectId,
-		cwd: options.cwd,
-	});
-	const toolCallIds = new Map<ProjectRuntimeBootstrapEvent["step"], string>();
-	const result = bootstrapProjectCoderRuntime({
-		cwd: options.cwd,
-		env: runtimeEnv,
-		log: (message) => {
-			console.log(`[astro-stream] ${message}`);
-		},
-		onEvent: (event) => {
-			emitProjectRuntimeBootstrapEvent(ctx, event, toolCallIds);
-		},
-	});
-
-	if (result.ok) {
-		writeSessionMetadata(options.sessionKey, {
-			agentId: options.agentId,
-			agentUniqueId: options.agentUniqueId,
-			agentSessionId: options.agentSessionId,
-			threadId: options.threadId,
-			startedAt: options.startedAt,
-			agentName: options.agentName,
-			projectId: options.projectId,
-			cwd: options.cwd,
-			repoRoot: options.repoRoot,
-			projectImageRef: options.projectImageRef ?? null,
-			pendingOnboarding: options.pendingOnboarding,
-			pendingRuntimeBootstrap: false,
-			switchSummary: options.switchSummary,
-			projectRuntime: result.snapshot,
-			sessionModelBinding: options.sessionModelBinding,
-			sessionConfigOverrides: options.sessionConfigOverrides,
-		});
-	}
-
-	return result;
-}
-
-function markConversationStoreCompleted(ctx: RequestContext, finishReason = "session_switch") {
-	try {
-		ctx.conversationStore.recordStreamChunkSync(
-			attachAgentId(
-				{
-					type: "finish",
-					finishReason,
-				},
-				ctx.agentId,
-			),
-		);
-		ctx.conversationStore.recordStreamDoneSync();
-	} catch {
-		// ignore local history finalization failures during session handoff
-	}
-}
-
-function createContinuationContextFromSwitch(
-	parentCtx: RequestContext,
-	options: {
-		sessionKey: string;
-		agentId: number;
-		agentUniqueId: string | null;
-		agentSessionId: number;
-		agentName: string;
-		startedAt: string;
-		initialTask: string | null;
-	},
-): RequestContext | null {
-	try {
-		const conversationStore = createConversationStore({
-			sessionDir,
-			sessionKey: options.sessionKey,
-			threadId: parentCtx.threadId,
-			agentName: options.agentName,
-			agentId: options.agentId,
-			agentSessionId: options.agentSessionId,
-			startedAt: options.startedAt,
-		});
-		if (options.initialTask) {
-			conversationStore.recordUserMessageSync({ text: options.initialTask });
-		}
-		return {
-			...parentCtx,
-			sessionKey: options.sessionKey,
-			agentId: options.agentId,
-			agentUniqueId: options.agentUniqueId,
-			agentSessionId: options.agentSessionId,
-			agentName: options.agentName,
-			conversationStore,
-			logState: {
-				reasoning: null,
-				text: null,
-				toolCalls: new Map(),
-			},
-			toolCallIds: new Map(),
-			switching: false,
-			piProcess: null,
-			cancelKillTimer: null,
-			cancellation: null,
-			clientAttached: parentCtx.clientAttached,
-			finished: false,
-			terminalError: null,
-			responseProvider: null,
-			responseModel: null,
-			piAssistantTextSeen: false,
-			lastAssistantFinishReason: null,
-			lastAssistantErrorMessage: null,
-			lastAssistantUsage: undefined,
-			checkpointLease: null,
-		};
-	} catch (error) {
-		console.error(
-			`[astro-stream] failed to initialize switched project session history for session=${options.sessionKey}: ${
-				error instanceof Error ? error.message : String(error)
-			}`,
-		);
-		return null;
-	}
 }
 
 function stopActivePiProcess(ctx: RequestContext) {
@@ -5412,192 +4625,6 @@ function beginActiveRunCancellation(
 	}, sessionCancelGraceMs);
 }
 
-async function handleProjectSessionSwitch(ctx: RequestContext, request: SessionSwitchRequest) {
-	if (ctx.finished || ctx.switching) return;
-	ctx.switching = true;
-
-	if (!isExistingDirectory(request.cwd)) {
-		writeChunk(ctx, {
-			type: "error",
-			error: `switch_project_session requires an existing checked-out project directory. Invalid cwd: ${request.cwd}`,
-			error_source: "tool",
-		});
-		writeDone(ctx);
-		stopActivePiProcess(ctx);
-		return;
-	}
-
-	const created = await createBackendRuntimeSession({
-		agentName: request.agentName,
-		agentId: request.agentId,
-		userId: ctx.userId,
-		threadId: ctx.threadId,
-		projectId: request.projectId,
-		cwd: request.cwd,
-		sessionMetadata: {
-			switched_from_agent: ctx.agentName,
-			switched_from_session_key: ctx.sessionKey,
-		},
-		pendingOnboarding: !request.initialTask,
-		pendingRuntimeBootstrap: true,
-		initialTask: request.initialTask,
-		switchSummary: request.summary ?? null,
-		sessionModelBinding: ctx.sessionModelBinding,
-		sessionConfigOverrides: ctx.sessionConfigOverrides,
-	});
-
-	if (created.ok === false) {
-		writeChunk(ctx, buildBackendFailureErrorEvent("Project session creation failed", created));
-		writeDone(ctx);
-		stopActivePiProcess(ctx);
-		return;
-	}
-
-	emitAssistantText(ctx, buildProjectSwitchAnnouncement(request), ctx.agentId);
-	writeChunkWithAgentId(
-		ctx,
-		{
-			type: "session_switch",
-			session_switch: {
-				from_agent_name: ctx.agentName,
-				to_agent_name: created.agentName,
-				project_id: request.projectId,
-				cwd: request.cwd,
-				thread_id: created.threadId,
-				agent_id: created.agentId,
-				...(created.agentUniqueId ? { agent_unique_id: created.agentUniqueId } : {}),
-				agent_session_id: created.agentSessionId,
-				session_key: created.sessionKey,
-				runtime_session_id: created.sessionKey,
-				initial_task: request.initialTask,
-				summary: request.summary,
-			},
-		},
-		created.agentId,
-	);
-	stopActivePiProcess(ctx);
-	markConversationStoreCompleted(ctx);
-	clearActiveStreamSession(ctx);
-
-	const coderCtx = createContinuationContextFromSwitch(ctx, {
-		sessionKey: created.sessionKey,
-		agentId: created.agentId,
-		agentUniqueId: created.agentUniqueId,
-		agentSessionId: created.agentSessionId,
-		agentName: created.agentName,
-		startedAt: created.startedAt,
-		initialTask: request.initialTask,
-	});
-
-	if (!coderCtx) {
-		writeChunk(ctx, {
-			type: "error",
-			error: "Failed to initialize the project coding session after switching.",
-			error_source: "astro",
-		});
-		writeDone(ctx);
-		return;
-	}
-	markActiveStreamSession(coderCtx);
-
-	writeChunkWithAgentId(
-		coderCtx,
-		{
-			type: "new_session",
-			new_session: {
-				agent_session_id: created.agentSessionId,
-				session_key: created.sessionKey,
-				runtime_session_id: created.sessionKey,
-				agent_name: created.agentName,
-				...(created.agentUniqueId ? { agent_unique_id: created.agentUniqueId } : {}),
-				thread_id: created.threadId,
-				agent_id: created.agentId,
-			},
-		},
-		created.agentId,
-	);
-
-	const checkpointReady = await prepareCheckpointBeforePiLaunch(coderCtx);
-	if (checkpointReady.ok === false) {
-		writeChunk(coderCtx, checkpointReady.errorEvent);
-		writeDone(coderCtx);
-		return;
-	}
-	emitAssistantText(coderCtx, buildProjectRuntimeBootstrapAnnouncement(request.summary), created.agentId);
-	const runtimeBootstrapResult = runPendingProjectRuntimeBootstrap(coderCtx, {
-		cwd: request.cwd,
-		repoRoot: resolveGitRepoRoot(request.cwd),
-		sessionKey: created.sessionKey,
-		agentId: created.agentId,
-		agentUniqueId: created.agentUniqueId,
-		agentSessionId: created.agentSessionId,
-		threadId: created.threadId,
-		startedAt: created.startedAt,
-		agentName: created.agentName,
-		projectId: request.projectId,
-		pendingOnboarding: !request.initialTask,
-		switchSummary: request.summary ?? null,
-		sessionModelBinding: coderCtx.sessionModelBinding,
-		sessionConfigOverrides: coderCtx.sessionConfigOverrides,
-	});
-	if (!runtimeBootstrapResult.ok) {
-		writeChunk(coderCtx, {
-			type: "error",
-			error: formatProjectRuntimeBootstrapError(runtimeBootstrapResult),
-			error_source: "project_runtime",
-		});
-		writeDone(coderCtx);
-		return;
-	}
-
-	if (!request.initialTask) {
-		emitAssistantText(coderCtx, buildProjectRuntimeReadyAnnouncement(request.summary), created.agentId);
-		writeChunk(coderCtx, { type: "finish", finishReason: "stop" });
-		writeDone(coderCtx);
-		return;
-	}
-
-	const agentConfig = loadSpecialistAgent(request.agentName);
-	if (!agentConfig) {
-		writeChunk(coderCtx, {
-			type: "error",
-			error: "Could not load the mainsequence-project-coder specialist prompt after switching sessions.",
-			error_source: "astro",
-		});
-		writeDone(coderCtx);
-		return;
-	}
-
-	const projectRuntime = runtimeBootstrapResult.snapshot;
-	const prompt = buildPrompt(
-		ctx.system,
-		request.initialTask,
-		ctx.uiContext,
-		ctx.uiTools,
-		{
-			switchSummary: request.summary ?? null,
-			projectRuntimeSummary: formatProjectRuntimeSummary(projectRuntime),
-		},
-	);
-	void runPiPrompt(prompt, coderCtx, {
-		cwd: request.cwd,
-		projectId: request.projectId,
-		agentConfig,
-		envOverrides: buildActivatedProjectEnv(process.env, projectRuntime, {
-			projectId: request.projectId,
-			cwd: request.cwd,
-		}),
-	}).catch((error) => {
-		if (!coderCtx.finished) {
-			writeChunk(coderCtx, {
-				type: "error",
-				error: error instanceof Error ? error.message : String(error),
-				error_source: "pi",
-			});
-			writeDone(coderCtx);
-		}
-	});
-}
 
 function handleAssistantDelta(ctx: RequestContext, evt: any) {
 	updateResponseModelFromMessage(ctx, evt?.message ?? evt?.partial);
@@ -5981,7 +5008,7 @@ async function runPiPrompt(
 			return;
 		}
 
-		if (ctx.finished || ctx.switching) return;
+		if (ctx.finished) return;
 		updateActiveStreamSession(ctx, { lastPiEventAt: new Date().toISOString() });
 
 		if (parsed?.type === "message_start") {
@@ -6007,11 +5034,6 @@ async function runPiPrompt(
 		}
 
 		if (parsed?.type === "tool_execution_end") {
-			const sessionSwitchRequest = parseSessionSwitchRequest(parsed.result);
-			if (sessionSwitchRequest) {
-				void handleProjectSessionSwitch(ctx, sessionSwitchRequest);
-				return;
-			}
 			const toolCallId = parsed.toolCallId;
 			if (typeof toolCallId === "string") {
 				writeChunk(ctx, { type: "tool-result", toolCallId, result: parsed.result });
@@ -6024,7 +5046,6 @@ async function runPiPrompt(
 	const stderr = createInterface({ input: child.stderr });
 	let nodeRuntimeWarningActive = false;
 	stderr.on("line", (line) => {
-		if (ctx.switching) return;
 		if (line.trim()) {
 			childStderrLines.push(line);
 			if (childStderrLines.length > 20) childStderrLines.shift();
@@ -6078,7 +5099,6 @@ async function runPiPrompt(
 					? "stream_error"
 					: "stream_finish";
 			await finalizeProviderCredentials(terminalReason);
-			if (ctx.switching) return;
 			if (ctx.finished) return;
 			if (ctx.cancellation?.requested) {
 				writeChunk(ctx, buildCancellationErrorEvent());
@@ -6137,7 +5157,6 @@ async function runPiPrompt(
 				threadId: ctx.threadId,
 			},
 		});
-		if (ctx.switching) return;
 		if (!ctx.finished) {
 			if (ctx.cancellation?.requested) {
 				writeChunk(ctx, buildCancellationErrorEvent());
@@ -7081,164 +6100,6 @@ async function handleStreamRequest(
 		return;
 	}
 
-	if (req.method === "GET" && url.pathname === "/api/chat/session-tools") {
-		const sessionKey = normalizeRuntimeSessionId(
-			url.searchParams.get("sessionId") ??
-				url.searchParams.get("runtime_session_id") ??
-				url.searchParams.get("runtimeSessionId"),
-		);
-		if (!sessionKey) {
-			badRequest(res, "Missing sessionId.");
-			return;
-		}
-
-		let metadata = readSessionMetadata(sessionKey);
-		let hydrationFailure: Extract<
-			Awaited<ReturnType<typeof hydrateLocalSessionFilesForRead>>,
-			{ ok: false }
-		> | null = null;
-		if (!metadata) {
-			const hydration = await hydrateLocalSessionFilesForRead({
-				sessionKey,
-				requestedThreadId: url.searchParams.get("thread_id") ?? url.searchParams.get("threadId"),
-				reason: "session_tools",
-			});
-			if (hydration.ok === true) {
-				metadata = hydration.metadata;
-			} else {
-				hydrationFailure = hydration;
-			}
-		}
-
-		if (!metadata) {
-			logStructuredEvent({
-				severity: "WARNING",
-				component: "astro-stream",
-				event: "session_tools_metadata_missing",
-				message: "Session tool discovery could not hydrate metadata, so Astro returned an empty tool set.",
-				data: {
-					sessionId: sessionKey,
-					localSessionExists: sessionExists(sessionKey),
-					hydrationStatusCode: hydrationFailure?.statusCode ?? null,
-					hydrationError: hydrationFailure?.error ?? null,
-					hydrationMessage: hydrationFailure?.message ?? null,
-				},
-			});
-			json(res, 200, {
-				version: 1,
-				session: {
-					sessionId: sessionKey,
-					agentName: null,
-					agentId: null,
-					agentUniqueId: null,
-					agentSessionId: normalizeNumericId(sessionKey),
-					projectId: null,
-				},
-				available_tools: {},
-				warnings: [
-					{
-						code:
-							hydrationFailure?.error ??
-							(sessionExists(sessionKey) ? "session_metadata_unavailable" : "session_not_found"),
-						message:
-							hydrationFailure?.message ??
-							"No local session metadata is available yet, so no deterministic tools are advertised.",
-					},
-				],
-			});
-			return;
-		}
-
-		json(res, 200, {
-			version: 1,
-			session: {
-				sessionId: sessionKey,
-				agentName: metadata.agentName,
-				agentId: metadata.agentId,
-				agentUniqueId: metadata.agentUniqueId,
-				agentSessionId: metadata.agentSessionId,
-				projectId: metadata.projectId,
-			},
-			available_tools: buildAvailableSessionTools(sessionKey, metadata),
-		});
-		return;
-	}
-
-	if (req.method === "GET" && url.pathname === "/api/chat/diff") {
-		const sessionKey = normalizeRuntimeSessionId(
-			url.searchParams.get("sessionId") ??
-				url.searchParams.get("runtime_session_id") ??
-				url.searchParams.get("runtimeSessionId"),
-		);
-		if (!sessionKey) {
-			badRequest(res, "Missing sessionId.");
-			return;
-		}
-
-		let metadata = readSessionMetadata(sessionKey);
-		if (!metadata) {
-			const hydration = await hydrateLocalSessionFilesForRead({
-				sessionKey,
-				requestedThreadId: url.searchParams.get("thread_id") ?? url.searchParams.get("threadId"),
-				reason: "session_diff",
-			});
-				if (hydration.ok === false) {
-					json(res, hydration.statusCode, {
-						error: hydration.error,
-						message: hydration.message,
-						...(hydration.errorDetail ? { error_detail: hydration.errorDetail } : {}),
-					});
-					return;
-				}
-			metadata = hydration.metadata;
-		}
-
-		if (!isProjectSessionAgentName(metadata.agentName)) {
-			json(res, 409, {
-				error: "diff_not_available",
-				message: "Repo diff snapshots are only available for project-scoped coding sessions.",
-			});
-			return;
-		}
-
-		const resolvedRepoRoot = resolveSessionRepoRoot(sessionKey, metadata);
-		if (!resolvedRepoRoot || !isExistingDirectory(resolvedRepoRoot)) {
-			json(res, 409, {
-				error: "diff_not_available",
-				message: "The frozen project repo root is unavailable for this session.",
-			});
-			return;
-		}
-
-		const diffSnapshot = buildRepoDiffSnapshot(resolvedRepoRoot);
-		if (!diffSnapshot.ok) {
-			json(res, 409, {
-				error: "diff_not_available",
-				message: diffSnapshot.error || "Failed to build the repo diff snapshot for this session.",
-			});
-			return;
-		}
-
-		json(res, 200, {
-			version: 1,
-			session: {
-				sessionId: sessionKey,
-				agentName: metadata.agentName,
-				agentId: metadata.agentId,
-				agentUniqueId: metadata.agentUniqueId,
-				agentSessionId: metadata.agentSessionId,
-				projectId: metadata.projectId,
-			},
-			diff: {
-				base: diffSnapshot.base,
-				hasChanges: diffSnapshot.files.length > 0,
-				patch: diffSnapshot.patch,
-				files: diffSnapshot.files,
-			},
-		});
-		return;
-	}
-
 	if (url.pathname === "/api/chat" && req.method === "GET") {
 		json(res, 200, {
 			ok: true,
@@ -7630,7 +6491,11 @@ async function handleStreamRequest(
 		isProjectSessionAgentName(agentName)
 			? effectiveRequestedCwd ?? existingSessionMetadata?.cwd ?? null
 			: resolveOrchestratorRuntimeCwd();
-	const agentConfig = isProjectSessionAgentName(agentName) ? loadSpecialistAgent(agentName) : null;
+	const specialistAgent =
+		isProjectSessionAgentName(agentName) && agentCwd
+			? resolveSpecialistAgent(agentName, agentCwd)
+			: null;
+	const agentConfig = specialistAgent?.agentConfig ?? null;
 	const projectImageRef =
 		isProjectSessionAgentName(agentName)
 			? configuredProjectImageRef ?? existingSessionMetadata?.projectImageRef ?? null
@@ -7658,6 +6523,21 @@ async function handleStreamRequest(
 			return;
 		}
 		if (!agentConfig) {
+			logStructuredEvent({
+				severity: "WARNING",
+				component: "astro-stream",
+				event: "specialist_agent_not_found",
+				message: "Astro could not discover the requested specialist prompt for the active project session.",
+				data: {
+					agentName,
+					userId,
+					runtimeSessionId,
+					agentCwd,
+					discoveryRoot: specialistAgent?.discoveryRoot ?? null,
+					projectAgentsDir: specialistAgent?.projectAgentsDir ?? null,
+					availableAgentNames: specialistAgent?.availableAgentNames ?? [],
+				},
+			});
 			json(res, 500, {
 				error: "agent_prompt_not_found",
 				message: `Could not load the ${agentName} specialist prompt.`,
@@ -7666,14 +6546,7 @@ async function handleStreamRequest(
 		}
 	}
 
-	let projectRuntime: ProjectRuntimeSnapshot | null = existingSessionMetadata?.projectRuntime ?? null;
 	const system = typeof body.system === "string" ? body.system : undefined;
-	const shouldRunPendingOnboarding =
-		agentName === "mainsequence-project-coder" && existingSessionMetadata?.pendingOnboarding === true;
-	let pendingRuntimeBootstrap =
-		shouldBootstrapProjectRuntimeForAgent(agentName) &&
-		(newChat || existingSessionMetadata?.pendingRuntimeBootstrap === true);
-	const switchSummary = existingSessionMetadata?.switchSummary ?? null;
 
 	const threadId = existingSessionMetadata?.threadId ?? requestedThreadId ?? randomUUID();
 	if (!registrationRequired) {
@@ -7720,7 +6593,7 @@ async function handleStreamRequest(
 		startedAt = new Date().toISOString();
 		const sessionMetadataInput = sanitizeFrontendSessionMetadata(body.sessionMetadata);
 		const runtimeConfig = buildRuntimeConfigSnapshot(sessionModelBinding);
-		const backendWorkflowKey = resolveBackendWorkflowKeyForAgent(agentName);
+		const backendWorkflowKey = agentName;
 
 			const payload: Record<string, unknown> = {
 				status: "running",
@@ -7741,13 +6614,6 @@ async function handleStreamRequest(
 					...(persistedCwd ? { project_cwd: persistedCwd } : {}),
 					...(frozenRepoRoot ? { project_repo_root: frozenRepoRoot } : {}),
 					...(projectImageRef ? { project_image_ref: projectImageRef } : {}),
-					...(projectRuntime ? { project_runtime_snapshot: projectRuntime } : {}),
-					pending_onboarding: false,
-					pending_runtime_bootstrap: shouldBootstrapProjectRuntimeForAgent(agentName),
-					switch_summary: null,
-					switched_from_agent: null,
-					switched_from_session_key: null,
-					initial_task: null,
 					session_model_binding: sessionModelBinding,
 					session_config_overrides: null,
 					...sessionMetadataInput,
@@ -7793,10 +6659,6 @@ async function handleStreamRequest(
 				cwd: persistedCwd,
 				repoRoot: frozenRepoRoot,
 				projectImageRef,
-				pendingOnboarding: false,
-				pendingRuntimeBootstrap: shouldBootstrapProjectRuntimeForAgent(agentName),
-				switchSummary: null,
-				projectRuntime: null,
 				sessionModelBinding,
 				sessionConfigOverrides: null,
 			});
@@ -7833,10 +6695,6 @@ async function handleStreamRequest(
 			cwd: persistedCwd,
 			repoRoot: frozenRepoRoot,
 			projectImageRef,
-			pendingOnboarding: existingSessionMetadata?.pendingOnboarding ?? false,
-			pendingRuntimeBootstrap,
-			switchSummary: existingSessionMetadata?.switchSummary ?? null,
-			projectRuntime,
 			sessionModelBinding,
 			sessionConfigOverrides: existingSessionMetadata?.sessionConfigOverrides ?? null,
 		});
@@ -7957,7 +6815,6 @@ async function handleStreamRequest(
 		activeReasoningAnnotationOrdinal: null,
 		runtimeToolCounter: 0,
 		toolCallIds: new Map(),
-		switching: false,
 		piProcess: null,
 		cancelKillTimer: null,
 		cancellation: null,
@@ -7997,51 +6854,7 @@ async function handleStreamRequest(
 
 	writeChunk(ctx, { type: "start", messageId });
 
-	if (pendingRuntimeBootstrap && shouldBootstrapProjectRuntimeForAgent(agentName) && agentCwd) {
-		const checkpointReady = await prepareCheckpointBeforePiLaunch(ctx);
-		if (checkpointReady.ok === false) {
-			writeChunk(ctx, checkpointReady.errorEvent);
-			writeDone(ctx);
-			return;
-		}
-		emitAssistantText(ctx, buildProjectRuntimeBootstrapAnnouncement(switchSummary));
-		const runtimeBootstrapResult = runPendingProjectRuntimeBootstrap(ctx, {
-			cwd: agentCwd,
-			repoRoot: frozenRepoRoot,
-			sessionKey,
-			agentId,
-			agentUniqueId,
-			agentSessionId,
-			threadId,
-			startedAt,
-			agentName: responseAgentName,
-			projectId,
-			projectImageRef,
-			pendingOnboarding: existingSessionMetadata?.pendingOnboarding ?? false,
-			switchSummary,
-			sessionModelBinding,
-			sessionConfigOverrides: existingSessionMetadata?.sessionConfigOverrides ?? null,
-		});
-		if (!runtimeBootstrapResult.ok) {
-			writeChunk(ctx, {
-				type: "error",
-				error: formatProjectRuntimeBootstrapError(runtimeBootstrapResult),
-				error_source: "project_runtime",
-			});
-			writeDone(ctx);
-			return;
-		}
-		projectRuntime = runtimeBootstrapResult.snapshot;
-		pendingRuntimeBootstrap = false;
-	}
-
-	const prompt = buildPrompt(system, latestUserMessage, context, tools, {
-		switchSummary,
-		onboardingInstruction: shouldRunPendingOnboarding
-			? buildCoderOnboardingInstruction(switchSummary, projectRuntime)
-			: null,
-		projectRuntimeSummary: projectRuntime ? formatProjectRuntimeSummary(projectRuntime) : null,
-	});
+	const prompt = buildPrompt(system, latestUserMessage, context, tools);
 
 	if (isProjectSessionAgentName(agentName)) {
 		writeSessionMetadata(sessionKey, {
@@ -8055,10 +6868,6 @@ async function handleStreamRequest(
 			cwd: persistedCwd,
 			repoRoot: frozenRepoRoot,
 			projectImageRef,
-			pendingOnboarding: shouldRunPendingOnboarding ? false : (existingSessionMetadata?.pendingOnboarding ?? false),
-			pendingRuntimeBootstrap,
-			switchSummary,
-			projectRuntime,
 			sessionModelBinding,
 			sessionConfigOverrides: existingSessionMetadata?.sessionConfigOverrides ?? null,
 		});
@@ -8068,13 +6877,6 @@ async function handleStreamRequest(
 		cwd: agentCwd ?? repoRoot,
 		projectId,
 		agentConfig,
-		envOverrides:
-			shouldBootstrapProjectRuntimeForAgent(agentName)
-				? buildActivatedProjectEnv(process.env, projectRuntime, {
-						projectId,
-						cwd: agentCwd,
-				  })
-				: undefined,
 	}).catch((error) => {
 		if (!ctx.finished) {
 			writeChunk(ctx, {

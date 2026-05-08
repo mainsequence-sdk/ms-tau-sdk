@@ -8,14 +8,6 @@
 - `runtime_session_id`
 - `runtimeSessionId`
 
-`GET /api/chat/diff` accepts the same query parameters and returns the current deterministic git
-diff snapshot for a `mainsequence-project-coder` session.
-
-`GET /api/chat/session-tools` also accepts the same query parameters and returns the deterministic
-backend tools currently advertised for that runtime session.
-If local metadata is not available yet, this endpoint still returns `200` with
-`available_tools: {}` so the UI can treat tool discovery as best-effort.
-
 `GET /api/chat/session-model` also accepts the same query parameters and returns the model binding
 currently stored for that runtime session.
 
@@ -34,8 +26,8 @@ currently stored for that runtime session.
 - `tools` (object)
 - `runtime_session_id` (string; required when `newChat` is `false`)
 - `session` (object; preferred full backend `AgentSession` serializer on resume requests)
-- `projectId` (string | number; required for `mainsequence-project-coder` on `newChat: true`)
-- `cwd` (string; required for `mainsequence-project-coder` on `newChat: true`)
+- `projectId` (string | number; optional project identity for project-scoped executor requests)
+- `cwd` (string; project working directory when the executor runtime is not already pinned)
 - `sessionMetadata` (object; optional non-reserved metadata only)
 
 ## Notes
@@ -54,14 +46,9 @@ currently stored for that runtime session.
   not control session continuity.
 - `agentName` must match the backend registry (unknown agents return `error: unknown_agent`).
 - When backend registration is enabled, `runtime_session_id` is the backend `AgentSession.id` string.
-- `mainsequence-project-coder` uses a project-scoped deterministic identity, so its initial
-  request must include both `projectId` and the checked-out project `cwd`.
-- Resume requests for `mainsequence-project-coder` can omit `projectId` and `cwd` when the stored
-  session metadata already contains them.
-- `GET /api/chat/session-tools` is the canonical discovery endpoint for deterministic session-level
-  backend tools such as `repo_diff`.
-- `GET /api/chat/session-tools` must not fail only because no tools are available; no tools is
-  represented as an empty `available_tools` object.
+- `mainsequence-project-executor` is the only project implementation runtime.
+- Project-scoped executor requests may rely on a deployment-pinned project cwd or supply `cwd`
+  explicitly when the runtime is not already pinned.
 - `POST /api/chat` no longer uses a message-level `model` field as session authority.
 - Astro derives or refreshes its local `sessionModelBinding` from the request-carried `session`
   serializer and the stored session metadata.
@@ -71,19 +58,8 @@ currently stored for that runtime session.
 - `GET /api/chat/get_available_models` remains a control-plane discovery endpoint. It is not part
   of the normal message hot path.
 - `sessionMetadata` is stored only for non-reserved keys. Astro owns reserved metadata such as
-  `workflow_key`, `created_by_user`, `project_id`, `project_cwd`, `pending_runtime_bootstrap`,
-  `session_model_binding`, and handoff fields.
-- `GET /api/chat/diff` does not require the frontend to send `projectId` or `cwd`; the server
-  resolves the frozen repo root from the stored coding-session metadata.
-- On a new `mainsequence-project-coder` session, the runtime prepares the checked-out project before
-  Pi starts by running `sdk-status`, `build_local_venv`, `uv sync`, and then activating the
-  project's `.venv` for the session process.
-- Those deterministic bootstrap steps are emitted as tool-style stream events on the
-  `mainsequence-project-coder` session after a short runtime status message and before normal
-  Pi-driven assistant work begins.
-- When the orchestrator hands off with `session_switch`, the same response may continue immediately
-  with those coder-session bootstrap events instead of waiting for another user turn.
-
+  `workflow_key`, `created_by_user`, `project_id`, `project_cwd`, `project_repo_root`,
+  and `session_model_binding`.
 ## Example request
 
 ```json
@@ -168,13 +144,13 @@ Example resume request with session authority:
 }
 ```
 
-Example project-coder request:
+Example project-executor request:
 
 ```json
 {
   "threadId": "thread-hope30",
   "newChat": true,
-  "agentName": "mainsequence-project-coder",
+  "agentName": "mainsequence-project-executor",
   "userId": "user_123",
   "projectId": "42",
   "cwd": "/absolute/path/to/hope30",

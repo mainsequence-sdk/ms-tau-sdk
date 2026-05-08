@@ -1,14 +1,23 @@
 # Research guide
 
+> Historical note:
+> This guide started from experiments around the retired `mainsequence-project-coder` role.
+> `mainsequence-project-coder` is no longer a supported runtime path. Current implementation work
+> belongs on `mainsequence-project-executor`, invoked through the orchestrator/executor workflow
+> rather than any direct child-launch surface.
+
 ## Research problem: cost-effective agent evaluation for code generation
 
 We want a repeatable way to identify the cheapest coding agent that can complete a code-generation task at an acceptable quality level.
 
-We start with a specific example: an agent called `main-sequence-project-coder`. This agent takes a prompt and generates a full code folder that is intended to satisfy the prompt and follow Main Sequence library guidelines.
+We start with a specific example: the historical `main-sequence-project-coder` agent. That role was
+used to take a prompt and generate a full code folder intended to satisfy the prompt and follow
+Main Sequence library guidelines.
 
 A second, stronger evaluator agent then compares the generated code against our reference implementation and assigns a score. This gives us a concrete Agent / Evaluator setup that can later be generalized into a broader experiment where the output is code.
 
-For `main-sequence-project-coder`, we will provide several prompts and project examples.
+For that historical `main-sequence-project-coder` evaluation setup, we will provide several
+prompts and project examples.
 
 The first test prompt is:
 
@@ -22,9 +31,10 @@ The next prompt and project will be shared as public repos in:
 
 Each project will also include the prompt used to generate the project.
 
-The current Astro agent is an orchestrator agent, but for this evaluation we only care about the `main-sequence-project-coder` agent.
+The current Astro product flow is orchestrator plus project-executor. This document keeps the older
+coder example only as research context for the evaluation shape.
 
-## Particular example: `main-sequence-project-coder`
+## Historical example: `main-sequence-project-coder`
 
 ### Inputs
 
@@ -58,7 +68,7 @@ The evaluator assigns a score using a stronger model, such as GPT-5.4 or a top A
 
 ```mermaid
 flowchart TD
-    A[Prompt] --> B[main-sequence-project-coder]
+    A[Prompt] --> B["historical main-sequence-project-coder"]
     B --> C[Generated Code Folder]
     D[Reference Code Folder] --> E[Evaluator Agent]
     C --> E
@@ -139,59 +149,20 @@ The outcome of this research should be a standard evaluation framework for code-
 
 ## Deliverable
 
-A reusable Agent / Evaluator experiment framework for code generation, starting with `main-sequence-project-coder` and extending to any coding library, prompt suite, or evaluation set.
+A reusable Agent / Evaluator experiment framework for code generation, starting from the historical
+`main-sequence-project-coder` case study and extending to any coding library, prompt suite, or
+evaluation set.
 
-## Direct specialist execution
+## Current execution guidance
 
-Use this when you want a focused Astro run without the full parent-orchestrator workflow.
+Do not launch `mainsequence-project-coder` directly. That role is retired.
 
-### When to use direct specialist mode
+For current Astro flows:
 
-Launch a specialist directly when you want:
+- use the normal parent flow when orchestration, project selection, or handoff preparation still
+  belongs to `astro-orchestrator`
+- use the dedicated `mainsequence-project-executor` runtime once implementation work moves onto the
+  executor path
 
-- one constrained Pi session
-- no parent orchestration
-- no `delegate_specialist` tool in the session
-- one known role, such as `mainsequence-project-coder`
-
-This is useful for focused implementation or investigation inside an already checked-out project.
-
-### Launch `mainsequence-project-coder` directly
-
-Interactive mode:
-
-```bash
-npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project --project-id <project-id>
-```
-
-Single-task mode:
-
-```bash
-npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project --project-id <project-id> "Read the project's task and status context, then implement the next task"
-```
-
-### What this does
-
-The launcher starts Pi in specialist mode with:
-
-- `ASTRO_SUBAGENT_CHILD=1`
-- `ASTRO_ACTIVE_SPECIALIST=mainsequence-project-coder`
-- the specialist prompt loaded as an appended system prompt
-- the specialist's tool restrictions
-
-That means the session behaves like Astro's delegated child process, but you start it directly from the terminal.
-
-### When not to use it
-
-Do not use direct specialist mode when you still need Astro to:
-
-- create or select a Main Sequence project
-- write the initial `astro/` handoff files
-- choose between multiple specialists
-- review status at the orchestration layer
-
-For those cases, use the normal parent flow instead:
-
-```bash
-npm run pi
-```
+The important architecture change is that project implementation is no longer modeled as a direct
+child launch inside a coder session.

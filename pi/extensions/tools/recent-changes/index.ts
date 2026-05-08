@@ -33,11 +33,6 @@ export default function (pi: ExtensionAPI) {
 		refreshStatus(ctx);
 	});
 
-	pi.on("session_switch", async (_event, ctx) => {
-		clearTrackedFiles();
-		refreshStatus(ctx);
-	});
-
 	pi.on("session_fork", async (_event, ctx) => {
 		clearTrackedFiles();
 		refreshStatus(ctx);

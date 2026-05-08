@@ -17,4 +17,4 @@ startup.
 ## Related files
 
 - [`../shared/agent-registration.md`](../shared/agent-registration.md)
-- [`../../../.pi/agents/mainsequence-project-coder.md`](../../../.pi/agents/mainsequence-project-coder.md)
+- [`../../../.pi/agents/mainsequence-project-executor.md`](../../../.pi/agents/mainsequence-project-executor.md)

@@ -19,20 +19,17 @@ Astro's runtime extensions live under `pi/extensions/`. The detailed docs now mi
 
 - [`ensure_mainsequence_cli_auth`](../extensions/tools/mainsequence-cli-auth.md)
 - [`list_recent_changes`](../extensions/tools/recent-changes.md)
-- [`delegate_specialist`](../extensions/tools/specialist-delegate/README.md)
-- [`switch_project_session`](../extensions/tools/switch-project-session.md)
 
 ## Shared helpers
 
 - [`agent-registration`](../extensions/shared/agent-registration.md)
-- [`project-runtime`](../extensions/shared/project-runtime.md)
 - [`repo`](../extensions/shared/repo.md)
 - [`telemetry`](../extensions/shared/telemetry.md)
 
 ## Runtime notes
 
 - launch scripts bootstrap deterministic Main Sequence CLI auth before agent work begins
-- the stream runtime owns deterministic project-session bootstrap for `mainsequence-project-coder`
+- project implementation belongs on the dedicated executor runtime, not on a child session switch
 - Docker Compose keeps the same extension surface while mounting the editable repo files into `/app`
 
 ## Related pages

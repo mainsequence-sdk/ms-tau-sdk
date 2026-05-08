@@ -48,19 +48,12 @@ metadata into the prompt, treats `newChat: true` as a UI hint for a new conversa
 the backend Agent when enabled, and uses backend AgentSession id files (fallback to `threadId` when
 registration is disabled) for continuity.
 
-Before a new `mainsequence-project-coder` session begins normal Pi work, the stream runtime deterministically:
-
-- runs `mainsequence project sdk-status --path . --json`
-- runs `mainsequence project build_local_venv --path .`
-- runs `uv sync`
-- verifies `.venv`
-- starts the coder session with `VIRTUAL_ENV` set to that `.venv` and the venv `bin/` prepended to `PATH`
-
-Those steps are emitted to the frontend as synthetic tool events on the coder session itself.
-When the coder session is created through `session_switch`, the same stream response continues as
-that coder session so the bootstrap is visible immediately instead of waiting for another user turn.
-The resulting SDK/runtime snapshot is persisted in local session metadata and injected into the
-coder prompt as runtime context before Pi starts.
+Astro no longer bootstraps a dedicated project-coder runtime inside the normal chat stream.
+Project implementation is owned by `mainsequence-project-executor`, and image-backed executor
+pods are expected to start from an already-prepared project runtime instead of rebuilding one on
+the hot path.
+Structured operational logs from this runtime follow the contract documented in
+[`../interface/logging.md`](../interface/logging.md).
 
 ### `scripts/mainsequence_project_set_up_locally.ts`
 
@@ -74,6 +67,10 @@ tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>
 
 instead of calling raw `mainsequence project set-up-locally <id>` directly.
 
+For the current new-project creation flow, prefer
+`tsx /app/scripts/mainsequence_project_finalize_creation.ts <id>` instead. That helper wraps this
+lower-level setup step and then persists `project_blueprint.md` into the created project.
+
 The wrapper:
 
 - bootstraps Astro's rebuildable SSH runtime first
@@ -82,6 +79,35 @@ The wrapper:
 - symlinks the project-scoped home back to the shared Main Sequence CLI config under `/home/appuser/.astro-container-data/.config/mainsequence`
 - relies on SSH `StrictHostKeyChecking=accept-new` with a pod-local rebuildable `known_hosts`
 - retries bounded transient clone failures such as host-key verification or delayed deploy-key access
+
+### `scripts/mainsequence_project_finalize_creation.ts`
+
+This helper finalizes the current new-project creation workflow after `mainsequence project create`
+succeeds.
+
+Inside Astro, the orchestrator should call:
+
+```bash
+tsx /app/scripts/mainsequence_project_finalize_creation.ts <id>
+```
+
+The helper:
+
+- reuses Astro's project-scoped local setup wrapper
+- resolves the deterministic checked-out project path
+- copies `project_blueprint.md` into the checked-out project root
+- prints the exact signed-terminal git commands for `git add`, `git commit`, and `git push`
+
+After that helper finishes, Astro should open a signed terminal with:
+
+```bash
+mainsequence project open-signed-terminal <id>
+```
+
+and run the printed git commands inside that signed terminal.
+
+This is the current deterministic completion step for new project creation. It does not invoke
+executor and does not create a second handoff artifact.
 
 ## Container runtime note
 
@@ -156,13 +182,13 @@ backend checkpoint cycle:
 - let Astro's checkout wrapper generate per-project SSH identities under `/home/appuser/.astro-container-data/project-checkout-runtime/project-<id>/home/.ssh`
 - let Astro run `astro-orchestrator` from `/home/appuser/.astro-container-data/astro-orchestrator-runtime`, not `/app`
 - set `ASTRO_STREAM_SESSION_DIR=/session-state/sessions`
-- use the same `tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>` wrapper in production pods
+- for newly created projects, use `tsx /app/scripts/mainsequence_project_finalize_creation.ts <id>` in production pods so setup, blueprint persistence, and signed-terminal commit instructions stay deterministic
 
 Operational guidance:
 
 - do not share one writable session filesystem across unrelated replicas
 - keep `/home/appuser/.astro-container-data/.ssh/known_hosts` writable inside the pod so first contact can be recorded with `accept-new`
-- do not hand off to `mainsequence-project-coder` until local setup succeeds and the project reports `is_initialized=true`
+- do not treat project implementation as a session switch inside the orchestrator container
 
 When using containers, run Python commands inside this same app container (do not use a separate Python-only container).
 The image intentionally does not copy `docs/`, `tutorial/`, or `.env`; provide env vars at container start.

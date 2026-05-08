@@ -24,5 +24,4 @@ Provide a compact review workflow for a checked-out project.
 
 ## Related files
 
-- [`../extensions/tools/specialist-delegate/README.md`](../extensions/tools/specialist-delegate/README.md)
-- [`../../.pi/agents/mainsequence-project-coder.md`](../../.pi/agents/mainsequence-project-coder.md)
+- [`../../.pi/agents/mainsequence-project-executor.md`](../../.pi/agents/mainsequence-project-executor.md)

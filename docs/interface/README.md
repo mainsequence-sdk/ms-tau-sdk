@@ -15,5 +15,6 @@ This section defines the public interface of Astro, including the HTTP stream AP
 - [`response.md`](./response.md)
 - [`sessions.md`](./sessions.md)
 - [`history-hydration.md`](./history-hydration.md) (compact history API)
+- [`logging.md`](./logging.md) (structured operational logging contract)
 - [`errors.md`](./errors.md)
 - [`environment.md`](./environment.md)

@@ -1,5 +1,17 @@
 # ADR: Backend-Owned AgentSession Allocation
 
+## Note
+
+This ADR predates the retirement of `mainsequence-project-coder`.
+
+The current project-implementation architecture is defined by:
+
+- [`adr-23-backend-mediated-project-executor-runtimes.md`](./adr-23-backend-mediated-project-executor-runtimes.md)
+- [`adr-26-retire-project-coder-for-project-executor.md`](./adr-26-retire-project-coder-for-project-executor.md)
+
+The backend-owned allocation contract remains valid, but the current runtime examples use
+`mainsequence-project-executor` instead of the retired coder session-switch flow.
+
 ## Status
 
 Accepted. Implemented and verified in Astro.
@@ -19,7 +31,7 @@ created it, but Astro still owned important creation decisions:
 - frontend/runtime resume key shape
 - session metadata shape
 - initial local history/metadata materialization
-- project-coder handoff state
+- project-scoped workflow state
 
 The emptyDir checkpoint design requires a stronger backend contract. If session files are restored
 from backend checkpoints and protected by backend leases, the backend must first be the authority
@@ -159,7 +171,7 @@ Relevant existing request values:
 ```python
 chat_request_values = {
     "threadId": str,
-    "agentName": "astro-orchestrator | mainsequence-project-coder",
+    "agentName": "astro-orchestrator | mainsequence-project-executor",
     "userId": str,
     "messages": list,
     "newChat": bool,
@@ -175,7 +187,7 @@ Astro owns validation of frontend intent:
 
 - `agentName`
 - `newChat` versus `runtime_session_id`
-- `projectId` and `cwd` requirements for `mainsequence-project-coder`
+- `projectId` and `cwd` requirements for `mainsequence-project-executor` when the runtime is not already pinned
 - model binding
 - session metadata semantics
 
@@ -204,7 +216,7 @@ Deterministic ids remain Astro-owned:
 
 ```python
 astro_orchestrator_agent_unique_id = f"astro-orchestrator_{created_by_user}"
-project_coder_agent_unique_id = f"mainsequence-project-coder_{created_by_user}_{project_id}"
+project_executor_agent_unique_id = f"mainsequence-project-executor_{created_by_user}_{project_id}"
 ```
 
 Astro then calls the existing Agent-scoped session route:
@@ -220,7 +232,7 @@ start_new_session_request = {
     "status": "running",
     "created_by_user": created_by_user,
     "thread_id": frontend_thread_id,
-    "workflow_key": "astro-orchestrator" | "mainsequence-project-coder",
+    "workflow_key": "astro-orchestrator" | "mainsequence-project-executor",
     "llm_provider": llm_provider,
     "llm_model": llm_model,
     "engine_name": "astro",
@@ -236,7 +248,7 @@ Request value rules:
   backend `thread_id` for UI correlation, but it is not unique and must not be used as the session
   identity.
 - `workflow_key` is the top-level backend contract field and is one of `"astro-orchestrator"` or
-  `"mainsequence-project-coder"`.
+  `"mainsequence-project-executor"`.
 - `llm_provider`, `llm_model`, `runtime_config_snapshot`, and `session_metadata` are computed by
   Astro.
 - `engine_name` is the Astro runtime identity for this integration and is always `"astro"`.
@@ -244,9 +256,10 @@ Request value rules:
 - `error_detail` uses the existing model default on successful allocation.
 
 The current backend `AgentStartSessionRequest` schema does not expose `parent_session_id`.
-Project-coder handoff provenance is therefore represented in Astro-owned `session_metadata`
-(`switched_from_agent` and `switched_from_session_key`) until the backend contract exposes lineage
-as a first-class request field.
+The current creation-first flow does not require project-coder-style session-switch provenance.
+Project-scoped executor lineage, when needed later, should be represented through backend-native
+session relationships or future executor-specific metadata rather than a revived session-switch
+contract.
 
 Astro-owned session metadata is sent inside `session_metadata` and stored unchanged:
 
@@ -259,20 +272,15 @@ orchestrator_session_metadata = {
     "session_config_overrides": dict | None,
 }
 
-project_coder_session_metadata = {
+project_executor_session_metadata = {
     "source": "frontend",
-    "workflow_key": "mainsequence-project-coder",
+    "workflow_key": "mainsequence-project-executor",
     "created_by_user": str,
     "project_id": str,
     "project_cwd": str,
     "project_repo_root": str | None,
     "project_runtime_snapshot": dict | None,
-    "pending_onboarding": bool,
-    "pending_runtime_bootstrap": bool,
-    "switch_summary": str | None,
-    "switched_from_agent": str | None,
-    "switched_from_session_key": str | None,
-    "initial_task": str | None,
+    "project_image_ref": str | None,
     "session_model_binding": dict | None,
     "session_config_overrides": dict | None,
 }
@@ -333,22 +341,11 @@ new_session = {
     "agent_unique_id": response["agent"]["agent_unique_id"],
     "thread_id": response["thread_id"] or str(response["agent_session_id"]),
 }
-
-session_switch = {
-    "from_agent_name": "astro-orchestrator",
-    "to_agent_name": response["agent"]["name"],
-    "project_id": response["session_metadata"]["project_id"],
-    "cwd": response["session_metadata"]["project_cwd"],
-    "thread_id": response["thread_id"] or str(response["agent_session_id"]),
-    "agent_id": response["agent"]["id"],
-    "agent_unique_id": response["agent"]["agent_unique_id"],
-    "agent_session_id": response["agent_session_id"],
-    "session_key": str(response["agent_session_id"]),
-    "runtime_session_id": str(response["agent_session_id"]),
-    "initial_task": str | None,
-    "summary": str | None,
-}
 ```
+
+Astro no longer emits a dedicated project-implementation session-handoff chunk as part of the current
+creation-first flow. New project creation stays on the orchestrator session, and direct executor
+sessions use normal `new_session` semantics when they are started explicitly.
 
 ## Backend Contract Consumed By Astro
 
@@ -367,29 +364,29 @@ The existing `start_new_session` route owns generic persistence:
 Astro owns workflow semantics:
 
 - `workflow_key`
-- project handoff fields
+- project-scoped session metadata fields
 - `session_metadata` shape
 
-## Project-Coder Handoff
+## Project-Scoped Executor Sessions
 
-Project-coder handoff is Astro workflow logic.
+Project-scoped executor allocation is Astro workflow logic.
 
 For the backend allocation route, it is just another `start_new_session` call against the already
-resolved `mainsequence-project-coder` Agent. Astro includes:
+resolved `mainsequence-project-executor` Agent. Astro includes:
 
 - `thread_id`
 - top-level `workflow_key`
 - `session_metadata`
 
 The backend stores those fields exactly like any other session allocation. It does not inspect or
-validate the project handoff keys inside `session_metadata`.
+validate the project-scoped keys inside `session_metadata`.
 
 ## Existing Session Attach
 
 For existing sessions, Astro should not allocate a new `AgentSession`. It should call backend
 attach/restore operations using the existing `runtime_session_id`.
 
-The `start_new_session` route is only for new sessions and structured session handoffs.
+The `start_new_session` route is only for new sessions and direct executor session starts.
 
 ## Consequences
 
@@ -398,7 +395,7 @@ The `start_new_session` route is only for new sessions and structured session ha
 - backend owns the complete `AgentSession` creation contract
 - Astro no longer duplicates backend session identity logic
 - emptyDir checkpoint restore has an authoritative session id from the AgentSession allocation
-- project handoff state becomes backend-visible from creation time
+- project-scoped workflow state becomes backend-visible from creation time
 - future non-Astro session creators can reuse the same contract
 
 ### Negative
@@ -420,14 +417,12 @@ The `start_new_session` route is only for new sessions and structured session ha
 - [x] Keep Agent lookup/creation on the existing `agents/get_or_create/` endpoint.
 - [x] Make Astro derive canonical `runtime_session_id = str(agent_session_id)`.
 - [x] Implement the `AgentSession` row mapping exactly as defined in this ADR.
-- [x] Map backend `AgentSession` response fields into `new_session` and `session_switch` stream
-      chunks exactly as defined in this ADR.
+- [x] Map backend `AgentSession` response fields into `new_session` stream chunks exactly as
+      defined in this ADR.
 - [x] Keep `session_metadata` Astro-owned and opaque to backend workflow validation.
 - [x] Reject or strip frontend `session_metadata` keys reserved for Astro-owned metadata.
-- [x] Ensure project-coder handoff metadata passes through `session_metadata` unchanged.
+- [x] Ensure project-scoped executor metadata passes through `session_metadata` unchanged.
 - [x] Update Astro to consume the richer `start_new_session` response for `new_chat: true`.
-- [x] Update Astro to consume the richer `start_new_session` response for
-      `switch_project_session` handoff creation.
 - [x] Keep existing attach/resume flow for existing `runtime_session_id` sessions.
 - [x] Remove Astro-side pending runtime id generation after Astro derives canonical
       `runtime_session_id = str(agent_session_id)`.

@@ -75,12 +75,12 @@ Send a request compatible with assistant-ui's `ui-message-stream` runtime:
 }
 ```
 
-To start a project-scoped coding session directly, use:
+To start a project-scoped executor session directly, use:
 
 ```json
 {
   "newChat": true,
-  "agentName": "mainsequence-project-coder",
+  "agentName": "mainsequence-project-executor",
   "agentId": 456,
   "userId": "user_123",
   "projectId": "42",
@@ -139,10 +139,9 @@ the request still arrives with `newChat: true`.
 control which session is resumed.
 When `newChat` is `true`, the request must include the backend integer `agentId` unless Astro is
 already attaching to a hydrated backend-owned session.
-For `mainsequence-project-coder`, the first `newChat: true` request must also include `projectId`
-and `cwd`. Resume requests can omit them when the session metadata already contains those values.
-When that coder session starts, the runtime emits the deterministic project bootstrap as synthetic
-tool events before normal Pi output begins.
+For project-scoped executor requests, the runtime may use a pinned project cwd or accept an
+explicit `cwd`. Resume requests can omit those fields when the session metadata already contains
+them.
 If the latest user message contains the word `MOCK`, the stream returns a synthetic response
 immediately and skips agent execution, session creation, and conversation persistence.
 
@@ -182,37 +181,6 @@ Each stream chunk now has this envelope:
 }
 ```
 
-When the orchestrator requests a real switch into a checked-out project session, the stream emits:
-
-```json
-{
-  "type": "session_switch",
-  "session_switch": {
-    "from_agent_name": "astro-orchestrator",
-    "to_agent_name": "mainsequence-project-coder",
-    "project_id": "42",
-    "cwd": "/absolute/path/to/checked-out-project",
-    "thread_id": "thread-001",
-    "agent_id": 456,
-    "agent_unique_id": "mainsequence-project-coder_user_123_42",
-    "agent_session_id": 789,
-    "session_key": "789",
-    "runtime_session_id": "789",
-    "initial_task": null,
-    "summary": "Project setup is complete and the coder session is ready."
-  },
-  "agent_id": 456
-}
-```
-
-After that `session_switch`, the same SSE response may continue with
-`mainsequence-project-coder` chunks for the new session:
-
-- `new_session`
-- a short assistant runtime status message
-- deterministic bootstrap tool events such as `runtime_mainsequence_project_sdk_status`
-- either a ready message or continued coder output
-
 ### `POST /api/a2a/chat`
 
 Receives machine-facing A2A requests on the Astro streamer and returns the response on the same SSE
@@ -225,15 +193,20 @@ injecting A2A execution context. At minimum, the injected contract tells the tar
 - this is not a human-facing chat request
 - the requested response format must be followed exactly
 
-Current request fields accepted by Astro include:
+Canonical request fields accepted by Astro include:
 
 ```json
 {
-  "newChat": true,
+  "sessionId": "123",
   "userId": "user_123",
   "agentName": "mainsequence-project-executor",
   "agentId": 24,
-  "task": "Inspect the prepared project and summarize the next implementation step.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Inspect the prepared project and summarize the next implementation step."
+    }
+  ],
   "response_format": "Return a concise machine-facing status summary with blockers and next actions.",
   "caller": {
     "agent_name": "astro-orchestrator"
@@ -241,7 +214,8 @@ Current request fields accepted by Astro include:
 }
 ```
 
-Astro also accepts task aliases such as `message`, `input`, `prompt`, or `request`.
+Astro also accepts legacy task-style aliases such as `task`, `message`, `input`, `prompt`, or
+`request`. When canonical `messages` are present, they win.
 
 ### `POST /api/a2a/cancel`
 
@@ -256,19 +230,6 @@ it returns local `.history.json` when available, otherwise it fetches the backen
 and latest checkpoint, projects `bundle.pi_session_jsonl` into frontend user/assistant messages,
 normalizes assistant thinking into structured `reasoning` content parts, and caches the rebuilt
 `.history.json` locally.
-
-### `GET /api/chat/diff?sessionId=<runtime_session_id>`
-
-Returns the current deterministic git diff snapshot for a `mainsequence-project-coder` session.
-The frontend only supplies the runtime session id; the server resolves the frozen repo root from
-session metadata and returns the current patch plus a file summary.
-
-### `GET /api/chat/session-tools?sessionId=<runtime_session_id>`
-
-Returns the deterministic backend tools advertised for the runtime session. The initial use case is
-`repo_diff`, which points to the relative `GET /api/chat/diff?...` URL for the same session.
-When no deterministic tools are available, or local metadata is not available yet, the response is
-still `200` with `available_tools: {}`.
 
 ### `GET /api/chat/session-model?sessionId=<runtime_session_id>`
 

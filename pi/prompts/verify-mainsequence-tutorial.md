@@ -17,33 +17,27 @@ Follow this workflow:
    - If CLI auth is still unavailable after that retry, stop and record it as a runtime auth failure in `astro/status.md`.
 4. Create the disposable Main Sequence project named `tutorial_review_[sdk_version]`, set it up locally, and prepare `astro/brief.md`, `astro/tasks.md`, `astro/record.md`, and `astro/status.md`.
    - Split the task plan into CLI validation, GUI validation, tutorial mismatch review, tutorial-only GitHub issue escalation, and backend cleanup.
-5. Call `delegate_specialist` with `mainsequence-project-coder`, set `cwd` to the checked-out project folder, and pass a custom task that tells it to:
-   - work only inside the checked-out disposable tutorial review project
-   - follow the official CLI tutorial path first
-   - prefer deterministic CLI steps over open-ended exploration
-   - record exact commands, working directories, exit codes, stderr excerpts, and mismatches in `astro/status.md`
-   - treat the project as disposable and keep cleanup expectations visible for the parent workflow
-6. Validate the CLI tutorial yourself after the coder step.
+5. Validate the CLI tutorial inside the checked-out disposable tutorial review project.
    - Follow the official tutorial instructions through the CLI first.
    - Record exact commands, working directories, exit codes, and mismatches.
-7. Validate the GUI tutorial second, but only for steps that are actually GUI-validatable.
+6. Validate the GUI tutorial second, but only for steps that are actually GUI-validatable.
    - Use Playwright for browser automation and evidence capture.
    - Use an authenticated session derived from the environment tokens; do not prompt for username/password.
    - If GUI validation cannot proceed without interactive login, record the missing auth path in `astro/status.md` and mark the step as blocked.
    - If GUI coverage for a GUI-validatable step does not exist in `docs/tutorial_gui`, create a concrete suggested tutorial update in `astro/status.md`.
    - If the SDK or web product changed, document the mismatch precisely in `astro/status.md`.
-8. GitHub issue rules for this workflow:
+7. GitHub issue rules for this workflow:
    - open GitHub issues only for tutorial documentation changes, missing instructions, or outdated guidance in `docs/tutorial` or `docs/tutorial_gui`
    - do not open issues for unrelated product bugs, auth problems, infrastructure failures, or generic SDK defects unless the problem is specifically that the tutorial docs are wrong or missing
-   - use a classic GitHub personal access token supplied via machine-local secrets (not repo files)
-   - prefer GitHub REST API over `gh`
+   - use the GitHub capability available in the current environment; do not prescribe a specific auth method or transport
    - do not require an extra user confirmation before opening a tutorial-only issue once the evidence and duplicate-check rules are satisfied
-10. Cleanup is mandatory for this workflow.
+   - record whether each tutorial-only GitHub issue was opened, skipped, or blocked; include issue identifiers or links when available, and include the blocking reason when not opened
+8. Cleanup is mandatory for this workflow.
    - Always attempt backend cleanup through the Main Sequence CLI before finishing.
    - Delete the disposable `tutorial_review_[sdk_version]` project from the backend and record the exact cleanup command and result.
    - If validation passed but cleanup failed, overall status must be `passed_with_cleanup_warning`.
    - If main validation failed and cleanup also failed, overall status must be `failed_with_cleanup_error`.
-11. Return:
+9. Return:
    - overall status
    - SDK version
    - project id or name

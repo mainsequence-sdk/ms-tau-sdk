@@ -20,8 +20,8 @@ export default function (pi: ExtensionAPI) {
 		return {
 			systemPrompt: `${event.systemPrompt}
 
-# Astro child-specialist policy
-Current specialist: ${process.env.ASTRO_ACTIVE_SPECIALIST || "unknown"}
+# Astro child runtime policy
+Current agent: ${process.env.ASTRO_ACTIVE_SPECIALIST || "unknown"}
 
 ${policy.trim()}`,
 		};

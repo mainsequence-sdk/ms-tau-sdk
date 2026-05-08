@@ -9,7 +9,7 @@ Astro does not modify Pi core. It shapes Pi from the outside using:
 - project-local settings
 - system prompts
 - extensions
-- specialist prompt files
+- runtime agent prompt files
 - reusable prompt templates
 - skills
 - repo-installed Pi packages
@@ -39,13 +39,13 @@ Extensions live under `pi/extensions/hooks/` and `pi/extensions/tools/` and do t
 - register custom tools
 - hook into agent lifecycle events such as `before_agent_start`
 
-### Specialists
+### Runtime agent prompts
 
-Specialists live in `.pi/agents/` as markdown files with frontmatter and a prompt body.
+Runtime agent prompts live in `.pi/agents/` as markdown files with frontmatter and a prompt body.
 
 Astro currently uses:
 
-- `mainsequence-project-coder`
+- `mainsequence-project-executor`
 
 ### Prompt templates
 
@@ -63,22 +63,22 @@ This repository keeps `pi-web-access` in normal `node_modules` and loads it from
 
 ## The key mental model
 
-Astro has a parent-child structure:
+Astro has an orchestrator-runtime structure:
 
 - the parent session orchestrates
-- child specialists implement or review
+- the dedicated executor runtime implements when that phase is used
 
 The parent handles:
 
 - intent translation
 - existing-project selection or new-project creation
 - loading deeper skills when a branch needs more detailed guidance, such as new-project intake
-- Main Sequence local setup and delegation
-- deciding when to delegate and when to review
+- Main Sequence local setup and project preparation
+- deciding when to continue orchestration versus when a later A2A executor call is needed
 
-The child specialists handle:
+The dedicated executor runtime handles:
 
-- implementation inside the checked-out project
+- implementation inside the dedicated project runtime
 
 ## Read next
 

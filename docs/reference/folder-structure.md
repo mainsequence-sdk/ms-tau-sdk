@@ -10,7 +10,7 @@ astro/
 │   ├── APPEND_SYSTEM.md
 │   ├── settings.json
 │   └── agents/
-│       └── mainsequence-project-coder.md
+│       └── mainsequence-project-executor.md
 ├── pi/
 │   ├── extensions/
 │   │   ├── hooks/
@@ -39,7 +39,7 @@ astro/
 
 ### `.pi/`
 
-Project-local Pi settings, parent prompt, and specialist prompts.
+Project-local Pi settings, parent prompt, and runtime agent prompts.
 
 ### `.astro/`
 

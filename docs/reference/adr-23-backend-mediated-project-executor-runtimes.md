@@ -4,6 +4,15 @@
 
 Proposed
 
+## Note
+
+This ADR established `mainsequence-project-executor` as a backend-mediated runtime.
+
+The follow-up decision to retire `mainsequence-project-coder` and make executor the only project
+implementation runtime is specified in:
+
+- [`adr-26-retire-project-coder-for-project-executor.md`](./adr-26-retire-project-coder-for-project-executor.md)
+
 ## Context
 
 Astro now has two distinct concerns that should not share the same runtime topology:
@@ -14,9 +23,11 @@ Astro now has two distinct concerns that should not share the same runtime topol
 The orchestrator is a conversational control-plane runtime. The executor is a project-specific
 execution runtime that should run against a prepared project environment.
 
-This ADR does **not** replace Astro's existing orchestrator behavior for normal project work.
-Existing orchestrator-led flows may still use the current project-builder or project-coder
-specialist model where appropriate.
+This ADR originally left existing project-coder flows in place while executor isolation was being
+introduced. ADR 26 supersedes that coexistence plan: project implementation should move to
+`mainsequence-project-executor`, `mainsequence-project-coder` should be retired, and the
+orchestrator should no longer present project implementation through the old child-specialist
+surface.
 
 Those roles have been drifting together in the local Astro implementation. In particular, the
 executor has started to look like a normal Astro specialist that the orchestrator can route to
@@ -78,9 +89,9 @@ That means:
 - in the normal mode, Astro starts with `astro-orchestrator` as the main agent
 - in executor mode, Astro starts with `mainsequence-project-executor` as the main agent
 
-This ADR does not remove or redefine the orchestrator's existing ability to route normal
-project-building work through the current specialist flows. It only states that
-`mainsequence-project-executor` is not one of those normal orchestrator-specialist targets.
+This ADR does not require the orchestrator to expose a generic child-specialist delegation surface.
+It only states that `mainsequence-project-executor` is not a normal orchestrator-specialist target
+and must stay behind the backend-mediated executor boundary.
 
 The architecture will have three layers:
 
@@ -185,10 +196,10 @@ These rules are mandatory.
 
 `astro-orchestrator`:
 
-- keeps its existing specialist-routing behavior for non-executor workflows
+- remains the user-facing control plane
 - must not directly spawn `mainsequence-project-executor`
-- must not treat the executor as a normal `delegate_specialist` target
-- must not use `switch_project_session` to enter the executor runtime
+- must not treat the executor as a normal child-specialist target
+- must not use any project-session handoff to enter the executor runtime
 - must not rely on repo-local executor-only startup assumptions
 
 The orchestrator may only call backend APIs that represent executor operations.
@@ -220,8 +231,9 @@ The intended A2A direction is:
 
 The orchestrator does not address executor pods or containers directly.
 
-This is intentionally different from the current in-process orchestrator-to-specialist flows used
-for existing project-builder or project-coder behavior.
+This is intentionally different from the older in-process orchestrator-to-specialist flows. ADR 26
+completes that transition by retiring `mainsequence-project-coder` and keeping project
+implementation on `mainsequence-project-executor`.
 
 This ADR intentionally prefers a backend mailbox or control-plane contract over direct runtime
 discovery between Astro processes.
@@ -310,9 +322,8 @@ rule that A2A communication is an allowed collaboration modality.
 
 This should be implemented in the least intrusive way possible.
 
-The goal is **not** to redefine the roles of the orchestrator, project-coder, or
-project-executor. The goal is only to let each of them do one additional thing within their
-existing role:
+The goal is **not** to redefine the roles of the orchestrator or project-executor. The goal is
+only to let each of them do one additional thing within their existing role:
 
 - answer directly
 - or ask another agent for bounded help through A2A without changing session
@@ -325,13 +336,13 @@ a replacement for existing handoff/session-switch behavior.
 The minimal directive change should apply to:
 
 - the shared parent prompt for `astro-orchestrator`
-- the `mainsequence-project-coder` specialist prompt
 - the `mainsequence-project-executor` specialist prompt
-- the child-specialist runtime policy that currently forbids recursive delegation
+- the child-specialist runtime policy that currently forbids recursive delegation for remaining
+  bounded child work
 
 ### What those directives should say
 
-All three agent roles should be able to follow a small shared rule set:
+Both runtime roles should be able to follow a small shared rule set:
 
 - you may answer directly within your role
 - you may request bounded help from another agent through A2A when the runtime supports it
@@ -348,8 +359,14 @@ So the prompt layer does not need to restate transport details, backend routing,
 semantics in a heavy way. It only needs to make the agents recognize A2A as an allowed modality and
 respect the machine-facing response contract.
 
-This keeps the directive change small and avoids destabilizing the existing project workflow,
-specialist routing, or session-switch behavior.
+This keeps the directive change small and avoids destabilizing the existing project workflow or
+session-switch behavior.
+
+ADR 26 narrows the project implementation path further:
+
+- `astro-orchestrator` remains the user-facing control plane
+- `mainsequence-project-executor` remains the only project implementation runtime
+- `mainsequence-project-coder` is removed from the target steady state
 
 ## Compose And Local Launching
 
@@ -426,7 +443,7 @@ The executor still needs to remain a valid runtime agent for:
 The correction is narrower:
 
 - the parent-oriented specialist discovery and delegation surfaces must stop surfacing the executor
-- the local child-specialist spawn path must stop launching the executor
+- the old direct child-launch path must stop launching the executor
 - parent prompts and docs must stop teaching executor access through `delegate_specialist`
 
 In particular, executor-specific behavior should be removed or kept out of:
@@ -440,30 +457,22 @@ present the executor as a normal local child specialist.
 
 ### Delegation-path corrections
 
-The remaining implementation work is primarily about making the above boundary real in the current
-Astro code paths.
+The main delegation-path corrections from this ADR are already done:
 
-`mainsequence-project-executor` currently still leaks through the normal specialist surfaces in at
-least these ways:
+- the active `delegate_specialist` tool surface was removed
+- the old `scripts/run_specialist.ts` direct-launch surface was removed
+- active prompts and workflow docs no longer teach executor access through specialist delegation
 
-- `pi/extensions/tools/specialist-delegate/index.ts`
-  - still describes `mainsequence-project-executor` as a valid `delegate_specialist` target
-  - still validates executor requests as if executor were a normal checked-out child specialist
-- `scripts/run_specialist.ts`
-  - still accepts `mainsequence-project-executor`
-  - still spawns it through the child-specialist local process path
-- `pi/extensions/tools/specialist-delegate/agents.ts`
-  - still exposes `.pi/agents/mainsequence-project-executor.md` through normal project specialist
-    discovery
-- prompt and workflow docs
-  - must not imply that executor access happens through local specialist delegation
+The only remaining `.pi/agents` discovery usage is runtime-owned prompt resolution for direct
+executor-mode startup and direct executor session handling. That internal lookup is acceptable
+because it no longer creates a user-facing specialist-delegation path.
 
 The intended end state is:
 
 - the executor prompt file may remain in `.pi/agents` so direct executor-mode Astro startup can
   still load its system prompt
 - the executor may remain in runtime-owned allowlists needed for direct startup and registration
-- but normal parent specialist discovery, `delegate_specialist`, and `run_specialist` must not
+- but normal parent specialist discovery and any direct child-launch surfaces must not
   present or launch the executor
 
 ## Implementation Plan
@@ -481,18 +490,11 @@ The intended end state is:
    response format contract.
 7. Add a minimal prompt-layer A2A directive to:
    - `.pi/APPEND_SYSTEM.md`
-   - `.pi/agents/mainsequence-project-coder.md`
    - `.pi/agents/mainsequence-project-executor.md`
    - `pi/extensions/hooks/project-policy/child-policy.md`
 8. Define the backend executor-control contract around those streamer routes.
-9. Refactor Astro so `mainsequence-project-executor` is not part of normal orchestrator specialist
-   delegation:
-   - filter it out of normal parent specialist discovery
-   - make `delegate_specialist` reject it as a target
-   - make `run_specialist` reject it as a child-specialist launch mode
-   - update prompts and docs that still imply executor access through specialist delegation
-10. Keep executor-specific runtime env handling only in the worker runtime path.
-11. Treat local mocked A2A discovery and direct-to-container communication as the test harness
+9. Keep executor-specific runtime env handling only in the worker runtime path.
+10. Treat local mocked A2A discovery and direct-to-container communication as the test harness
     until the backend contract is implemented.
 
 ## Verification Plan
@@ -508,18 +510,15 @@ The intended end state is:
 - confirm `POST /api/a2a/chat` always injects A2A runtime context even when the caller prompt does
   not mention that the request is machine-to-machine
 - confirm `POST /api/a2a/chat` responses follow the requested response format contract
-- confirm the orchestrator, project-coder, and project-executor prompts all allow bounded A2A
-  collaboration without redefining their primary roles
-- confirm the child-specialist runtime policy no longer blocks A2A collaboration while still
+- confirm the orchestrator and project-executor prompts allow bounded A2A collaboration without
+  redefining their primary roles
+- confirm the child runtime policy no longer blocks A2A collaboration while still
   preventing unrestricted recursive specialist orchestration
 - confirm `POST /api/a2a/cancel` stops the active executor run without requiring a separate
   Astro-local run id
 - confirm `mainsequence-project-executor` is no longer exposed as a normal orchestrator specialist
-- confirm normal parent specialist discovery no longer lists `mainsequence-project-executor`
-- confirm `delegate_specialist` refuses `mainsequence-project-executor` even if the prompt file is
-  present locally
-- confirm `run_specialist` refuses `mainsequence-project-executor` and points callers to the
-  backend/A2A path instead
+- confirm there is no active `delegate_specialist` tool surface for project implementation routing
+- confirm there is no active direct `run_specialist`-style launcher for project implementation
 - confirm local executor testing works with mocked A2A discovery and direct-to-container
   communication even while backend discovery/routing remains `TBD`
 
@@ -533,8 +532,8 @@ The intended end state is:
 - [x] Inject deterministic A2A context and requested-response-format instructions on
   `POST /api/a2a/chat`.
 - [x] Add a minimal A2A-collaboration directive to the shared parent prompt, the
-  `mainsequence-project-coder` prompt, the `mainsequence-project-executor` prompt, and the
-  child-specialist runtime policy.
+  `mainsequence-project-executor` prompt, and the child runtime policy. Earlier coder
+  prompt wiring is superseded by ADR 26.
 - [x] Update docs to distinguish:
   - remote image-backed executor runtime
   - local mounted-project executor runtime
@@ -542,9 +541,9 @@ The intended end state is:
 - [x] Support local mocked A2A testing so executor runtime behavior can be exercised before backend
   discovery and routing are implemented.
 - [ ] Define the backend executor-control API contract around the A2A streamer routes.
-- [ ] Filter `mainsequence-project-executor` out of normal parent specialist discovery.
-- [ ] Make `delegate_specialist` reject `mainsequence-project-executor` and remove executor from its
-  user-facing guidance.
-- [ ] Make `run_specialist` reject `mainsequence-project-executor` as a child-specialist launch
-  mode.
-- [ ] Update prompts and docs that still imply executor access through specialist delegation.
+- [x] Remove the active `delegate_specialist` tool surface for project implementation routing.
+- [x] Remove `mainsequence-project-executor` from normal parent specialist guidance and discovery
+  surfaces.
+- [x] Remove the old direct `run_specialist` launcher surface.
+- [x] Update prompts and docs that previously implied executor access through specialist
+  delegation.

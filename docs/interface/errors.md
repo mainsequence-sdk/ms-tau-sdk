@@ -9,15 +9,12 @@ Typical error responses:
   user claims, or `ASTRO_MAINSEQUENCE_USER_ID`.
 - `400` — missing `runtime_session_id` when `newChat` is `false`
 - `400` — missing `sessionId` for `GET /api/chat/history`
-- `400` — missing `sessionId` for `GET /api/chat/diff`
 - `400` — missing `sessionId` for `GET /api/chat/session-model`
 - `400` — missing `sessionId` for `PATCH /api/chat/session-config`
 - `400` — `invalid_session_config` when the patch payload includes unsupported or invalid config fields
 - `404` — `provider_not_supported` for unsupported `GET/POST /api/model-providers/*` provider ids
 - `404` — `signin_attempt_not_found` for unknown `GET/POST /api/model-providers/:provider/signin/:attemptId*`
-- `400` — missing `sessionId` for `GET /api/chat/session-tools`; missing local metadata returns
-  `200` with an empty `available_tools` object
-- `400` — missing `projectId` or `cwd` when starting `mainsequence-project-coder`
+- `400` — missing required project-scoped fields such as `cwd` when starting a project executor request
 - `403` — `cors_origin_not_allowed` when the browser `Origin` is not listed in `ASTRO_STREAM_TRUSTED_ORIGINS`
 - `400` — `invalid_runtime_session_id` when a missing local resume session uses an id that cannot
   be queried as a backend `AgentSession.id`
@@ -39,8 +36,6 @@ Typical error responses:
   credential storage is unavailable or rejects the operation
 - `400` — `signin_manual_input_missing` when `POST /api/model-providers/:provider/signin/:attemptId/manual` has no `input`
 - `409` — resume request `projectId` or `cwd` does not match the stored session metadata
-- `409` — `diff_not_available` when the requested session is not a `mainsequence-project-coder`
-  session or its frozen repo root cannot be resolved
 - `404` — `session_not_found` or `history_not_available` for `GET /api/chat/history`
 - `502` — `backend_session_history_reconstruction_failed` when backend `AgentSession` data cannot
   be fetched for Astro history reconstruction
@@ -65,5 +60,5 @@ Access-Control-Allow-Headers: Content-Type, Authorization, Last-Event-ID
 When Astro rejects a browser origin, it logs a line like:
 
 ```text
-[astro-cors] Rejected origin=http://localhost:3000 method=GET path=/api/chat/session-tools?sessionId=38 trusted_origins=http://localhost:5173,http://127.0.0.1:5173
+[astro-cors] Rejected origin=http://localhost:3000 method=GET path=/api/chat/history?sessionId=38 trusted_origins=http://localhost:5173,http://127.0.0.1:5173
 ```

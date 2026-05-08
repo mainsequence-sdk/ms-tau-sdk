@@ -19,7 +19,7 @@ Serialize structured Astro telemetry events to stdout in a machine-readable form
 - `role`
   - `parent` or `child`
 - `specialist`
-  - present when a child specialist is active
+  - legacy field name; present when a runtime-owned child process is active
 - `data`
   - event-specific payload
 

@@ -13,7 +13,6 @@ Emit structured runtime telemetry events to stdout so Astro's stream layer and o
 ## Emitted events
 
 - `session_start`
-- `session_switch`
 - `session_fork`
 - `message_start`
 - `message_update`
@@ -27,7 +26,7 @@ The hook delegates serialization to [`emitTelemetryEvent`](../shared/telemetry.m
 - event name
 - timestamp
 - parent or child role
-- active specialist name when present
+- active child agent name when present
 - event-specific data
 
 ## Related files

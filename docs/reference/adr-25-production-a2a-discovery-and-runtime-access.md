@@ -1,0 +1,349 @@
+# ADR: Production A2A Discovery And Runtime Access
+
+## Status
+
+Accepted
+
+## Context
+
+Astro already has:
+
+- a prompt-layer A2A collaboration rule
+- a local debug A2A shim using `A2A_DEV_PROJECT`
+- an executor-facing streamer surface:
+  - `POST /api/a2a/chat`
+  - `POST /api/a2a/cancel`
+
+Astro previously lacked a real non-debug production discovery and communication flow.
+
+That leaves a hole in the architecture:
+
+- the orchestrator can decide that another agent should help
+- but it does not have a real production path to find that agent, obtain runtime access, and send
+  the A2A request
+
+We now have an explicit backend-backed contract for that path through the Main Sequence CLI.
+
+## Problem
+
+This ADR closed the five concrete non-debug A2A gaps:
+
+1. How does it discover candidate agents?
+2. How does it choose the target agent?
+3. How does it create the target communication session?
+4. How does it obtain the runtime URL and bearer token for the selected target?
+5. How does it send the actual A2A request to the target runtime?
+
+The local debug shim is not enough because:
+
+- it mocks discovery from `.agents/agent_card.json`
+- it uses a fixed executor URL list
+- it bypasses the real backend lifecycle and runtime access control plane
+
+For non-debug A2A, the production path must be backend-mediated and must not invent pod URLs or
+container URLs locally.
+
+## Decision
+
+Non-debug A2A discovery and communication will use the Main Sequence CLI as the backend-facing
+control-plane client.
+
+The end-to-end flow is:
+
+1. semantic agent search
+2. target selection
+3. backend session creation
+4. runtime access resolution
+5. runtime health polling
+6. streamed A2A request to the resolved runtime URL
+
+The orchestrator does **not** derive the target URL from discovery.
+
+The URL and bearer token come only from runtime access resolution.
+
+## Discovery
+
+### Command
+
+Astro should perform non-debug A2A discovery with:
+
+```bash
+mainsequence agent search "<intent>" --limit 10 --json
+```
+
+The search prompt is the discovery prompt already constructed by the A2A tooling from:
+
+- the bounded request
+- any response-format requirement
+- any agent hint
+
+### Search result shape
+
+The CLI returns search results like:
+
+```json
+[
+  {
+    "orm_class": "AgentSemanticSearchResult",
+    "id": 25,
+    "name": "mainsequence-project-executor",
+    "agent_unique_id": "project-executor_81",
+    "description": "A testing-only project that exposes two CLI-backed capabilities: return the current time and return the authenticated user.",
+    "semantic_score": 0.7781205009695902,
+    "text_score": 0.04040404,
+    "combined_score": 0.5199197397584775
+  }
+]
+```
+
+### Candidate mapping
+
+To preserve Astro's existing A2A discovery shape, each CLI result should be normalized to:
+
+```json
+{
+  "agent_id": 25,
+  "agent_description": "A testing-only project that exposes two CLI-backed capabilities: return the current time and return the authenticated user.",
+  "a2a_card": {
+    "name": "mainsequence-project-executor",
+    "agent_unique_id": "project-executor_81",
+    "semantic_score": 0.7781205009695902,
+    "text_score": 0.04040404,
+    "combined_score": 0.5199197397584775
+  }
+}
+```
+
+This keeps the public Astro discovery contract stable while making the backend search result the
+source of truth.
+
+### Selection rule
+
+For non-debug A2A, Astro should treat the CLI search result ordering and scores as authoritative.
+
+The default selection rule is:
+
+1. choose the result with the highest `combined_score`
+2. preserve backend/CLI result ordering as the tie-breaker
+
+Astro should not apply a second local token-overlap ranking step in production mode.
+
+## Session Creation
+
+After selecting the target agent, Astro should create a fresh backend session for that A2A
+communication with:
+
+```bash
+mainsequence agent start_new_session <agent_id>
+```
+
+Initial implementation rules:
+
+- create a fresh target session per A2A request
+- do not reuse an existing runtime session automatically in the first production version
+- treat the returned session id as the backend-owned A2A session key for the remainder of the flow
+
+## Runtime Access Resolution
+
+After session creation, Astro should resolve runtime access with:
+
+```bash
+mainsequence agent session resolve_runtime_access <session_id> --json
+```
+
+Example response:
+
+```json
+{
+  "orm_class": "AgentSessionRuntimeAccess",
+  "coding_agent_service_id": "42",
+  "coding_agent_id": "project-executor-service-81",
+  "mode": "token",
+  "rpc_url": "https://project-executor-service-81.coding-agent-development.main-sequence.app/",
+  "token": "..."
+}
+```
+
+### Required fields
+
+Astro must read:
+
+- `rpc_url`
+- `token`
+- `mode`
+
+Initial production support is limited to:
+
+- `mode == "token"`
+
+If `mode` is not `token`, Astro should fail the A2A request with a structured runtime-access error.
+
+## Health Readiness
+
+Before sending the A2A request, Astro should poll the resolved runtime health endpoint every 30
+seconds using the resolved bearer token.
+
+The health probe is:
+
+```text
+GET <rpc_url>/health
+Authorization: Bearer <token>
+```
+
+Rules:
+
+- treat the resolved `rpc_url` as the runtime base URL
+- poll until the runtime reports healthy
+- if the runtime never becomes healthy within the configured timeout budget, fail the A2A request
+  as a runtime-readiness error
+
+Astro must not guess an alternate runtime URL if `rpc_url` is unavailable or unhealthy.
+
+## Runtime Request
+
+After the runtime becomes healthy, Astro should send the actual A2A request to the resolved
+runtime's existing A2A endpoint:
+
+```text
+POST <rpc_url>/api/a2a/chat
+Authorization: Bearer <token>
+Accept: text/event-stream
+Content-Type: application/json
+```
+
+This intentionally uses the Astro A2A receiver surface, not the human-facing `POST /api/chat`
+endpoint.
+
+### Canonical runtime request body
+
+The canonical non-debug A2A runtime payload is:
+
+```json
+{
+  "sessionId": "123",
+  "messages": [
+    {
+      "role": "user",
+      "content": "hello"
+    }
+  ],
+  "response_format": "Return a concise machine-facing status summary.",
+  "caller": {
+    "agent_id": 12,
+    "agent_name": "astro-orchestrator"
+  }
+}
+```
+
+At minimum, the payload must carry:
+
+- the newly created target `sessionId`
+- the machine-facing `messages`
+- optional `response_format`
+- caller metadata
+
+### Streamer normalization requirement
+
+Astro's `/api/a2a/chat` normalizer must support this canonical A2A request shape in non-debug mode.
+
+That means the streamer must accept:
+
+- `sessionId`
+- `messages`
+
+in addition to the current local-debug compatibility aliases like:
+
+- `task`
+- `message`
+- `input`
+- `prompt`
+- `request`
+
+The production path should use canonical `messages`, not the old task-alias shim.
+
+## Cancellation
+
+If Astro needs to cancel an in-flight non-debug A2A request, it should call the resolved runtime's
+existing cancel endpoint:
+
+```text
+POST <rpc_url>/api/a2a/cancel
+Authorization: Bearer <token>
+Content-Type: application/json
+```
+
+with the backend-created target `sessionId`.
+
+## Local Debug Relationship
+
+`A2A_DEV_PROJECT` remains the local debug override.
+
+When `A2A_DEV_PROJECT` is set:
+
+- discovery may stay mocked from `.agents/agent_card.json`
+- communication may keep routing directly to the local dev executor runtime
+
+When `A2A_DEV_PROJECT` is **not** set:
+
+- Astro must use the CLI-backed discovery and runtime-access flow defined by this ADR
+- Astro must not fall back to guessed service URLs such as:
+  - `http://astro-project-executor:8787`
+  - `http://127.0.0.1:<port>`
+
+Those direct URLs are debug-only behavior.
+
+## Consequences
+
+### Positive
+
+- production A2A discovery becomes real instead of `not implemented`
+- Astro no longer needs to guess or hardcode target runtime URLs in non-debug mode
+- backend session allocation remains authoritative
+- runtime access tokens remain backend-controlled
+- the existing executor A2A streamer surface stays in use
+
+### Negative
+
+- Astro now depends on Main Sequence CLI execution for non-debug A2A
+- non-debug A2A becomes a multi-step flow with several failure points:
+  - search
+  - session creation
+  - runtime access resolution
+  - health readiness
+  - streamed runtime request
+- `/api/a2a/chat` must grow support for canonical `messages` input rather than only the current
+  task-alias shim
+
+## Verification Plan
+
+- confirm non-debug discovery shells out to `mainsequence agent search ... --json`
+- confirm Astro normalizes CLI search results into:
+  - `agent_id`
+  - `agent_description`
+  - `a2a_card`
+- confirm selection uses backend/CLI ranking rather than local token-overlap scoring
+- confirm Astro creates a new backend session with `mainsequence agent start_new_session <agent_id>`
+- confirm Astro resolves runtime access with
+  `mainsequence agent session resolve_runtime_access <session_id> --json`
+- confirm Astro reads `rpc_url` and `token` from runtime access
+- confirm Astro polls `GET <rpc_url>/health` with bearer auth every 30 seconds until healthy
+- confirm Astro sends the A2A request to `POST <rpc_url>/api/a2a/chat`, not `POST /api/chat`
+- confirm Astro can cancel the run through `POST <rpc_url>/api/a2a/cancel`
+- confirm non-debug mode no longer returns `a2a_backend_discovery_not_implemented`
+- confirm non-debug mode no longer returns `a2a_backend_not_implemented`
+
+## Tasks
+
+- [x] Add a production A2A discovery adapter that shells out to
+  `mainsequence agent search "<intent>" --limit 10 --json`.
+- [x] Normalize CLI search results into Astro's A2A candidate contract.
+- [x] Replace production-mode `not implemented` in the A2A discovery path.
+- [x] Add production candidate selection using backend/CLI ranking.
+- [x] Add a session-creation step using `mainsequence agent start_new_session <agent_id>`.
+- [x] Add runtime-access resolution using
+  `mainsequence agent session resolve_runtime_access <session_id> --json`.
+- [x] Add token-authenticated health polling against `GET <rpc_url>/health`.
+- [x] Add a production A2A sender that targets `POST <rpc_url>/api/a2a/chat`.
+- [x] Add token-authenticated cancellation against `POST <rpc_url>/api/a2a/cancel`.
+- [x] Extend `/api/a2a/chat` normalization to accept canonical `sessionId` and `messages`.
+- [x] Keep `A2A_DEV_PROJECT` as a debug-only override.

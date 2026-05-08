@@ -22,7 +22,11 @@ import {
 	buildSessionInsightsResponse,
 	readSessionInsights,
 } from "../interface/stream/session-insights.js";
-import { shouldEmitStructuredLog } from "../pi/extensions/shared/structured-logging.js";
+import {
+	normalizeStructuredLogRecord,
+	shouldEmitStructuredLog,
+	resolveStructuredLogSessionId,
+} from "../pi/extensions/shared/structured-logging.js";
 
 type CheckpointReason =
 	| "stream_finish"
@@ -1370,13 +1374,16 @@ function logEvent(event: string, data: Record<string, unknown>) {
 	if (!shouldEmitStructuredLog({ severity, component: "astro-checkpoint-sidecar", event })) {
 		return;
 	}
+	const normalizedData = normalizeStructuredLogRecord(data) ?? {};
+	const sessionId = resolveStructuredLogSessionId(normalizedData);
 	const payload = {
 		severity,
 		time: new Date().toISOString(),
 		component: "astro-checkpoint-sidecar",
 		event,
 		message: sidecarLogMessages[event] ?? event,
-		...data,
+		...(sessionId ? { session_id: sessionId } : {}),
+		...normalizedData,
 	};
 	const serialized = JSON.stringify(payload);
 	if (severity === "ERROR" || severity === "WARNING") {

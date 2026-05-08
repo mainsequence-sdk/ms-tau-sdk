@@ -14,8 +14,19 @@ type StructuredLogPayload = {
 	component: string;
 	event: string;
 	message: string;
+	session_id?: string;
 	data?: Record<string, unknown>;
 };
+
+const STRUCTURED_LOG_SESSION_ID_KEYS = [
+	"session_id",
+	"sessionId",
+	"sessionKey",
+	"runtime_session_id",
+	"runtimeSessionId",
+	"agent_session_id",
+	"agentSessionId",
+] as const;
 
 function isTruthyEnvValue(value: string | undefined): boolean {
 	if (!value) return false;
@@ -55,14 +66,50 @@ function removeUndefinedDeep(value: unknown): unknown {
 	return value;
 }
 
+function normalizeStructuredLogSessionIdValue(value: unknown): string | null {
+	if (typeof value === "string" && value.trim()) return value.trim();
+	if (typeof value === "number" && Number.isFinite(value)) return String(Math.trunc(value));
+	return null;
+}
+
+export function resolveStructuredLogSessionId(
+	record: Record<string, unknown> | undefined | null,
+): string | null {
+	if (!record) return null;
+	for (const key of STRUCTURED_LOG_SESSION_ID_KEYS) {
+		const resolved = normalizeStructuredLogSessionIdValue(record[key]);
+		if (resolved) return resolved;
+	}
+	return null;
+}
+
+export function normalizeStructuredLogRecord(
+	record: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+	if (!record) return undefined;
+	const cleaned = removeUndefinedDeep(record);
+	if (!cleaned || typeof cleaned !== "object" || Array.isArray(cleaned)) return undefined;
+	const normalized = cleaned as Record<string, unknown>;
+	const sessionId = resolveStructuredLogSessionId(normalized);
+	if (!sessionId) return normalized;
+	if (normalized.session_id === sessionId) return normalized;
+	return {
+		...normalized,
+		session_id: sessionId,
+	};
+}
+
 export function logStructuredEvent(input: StructuredLogInput) {
+	const normalizedData = normalizeStructuredLogRecord(input.data);
+	const sessionId = resolveStructuredLogSessionId(normalizedData);
 	const payload: StructuredLogPayload = {
 		severity: input.severity ?? "INFO",
 		time: new Date().toISOString(),
 		component: input.component,
 		event: input.event,
 		message: input.message,
-		...(input.data ? { data: removeUndefinedDeep(input.data) as Record<string, unknown> } : {}),
+		...(sessionId ? { session_id: sessionId } : {}),
+		...(normalizedData ? { data: normalizedData } : {}),
 	};
 
 	try {

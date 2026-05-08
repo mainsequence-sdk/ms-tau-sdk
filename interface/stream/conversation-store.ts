@@ -229,8 +229,6 @@ function applyConversationEvent(
 					next.session.agentId = chunk.agent_id;
 					next.session.threadId = chunk.new_session.thread_id;
 					return next;
-				case "session_switch":
-					return next;
 				case "start":
 				case "tool-call-start":
 				case "tool-call-delta":

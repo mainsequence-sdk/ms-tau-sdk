@@ -4,7 +4,7 @@
 
 Astro is a Pi package that acts as a parent orchestrator for Main Sequence project assistants.
 
-It translates user intent into a Main Sequence project workflow, helps select an existing project or create a new one, sets the project up locally, and delegates implementation or review to specialists. A separate prompt template exists for the optional tutorial-regression workflow.
+It translates user intent into a Main Sequence project workflow, helps select an existing project or create a new one, and sets the project up locally while keeping the dedicated project executor on its own runtime path. A separate prompt template exists for the optional tutorial-regression workflow.
 
 ## Quick start
 
@@ -102,10 +102,12 @@ That local executor harness:
 - lives in the normal `docker-compose.yml` stack
 - keeps the orchestrator and executor as separate runtimes
 
-To launch only the coding specialist instead of the full orchestrator for an already selected and checked-out project:
+To run only the local executor runtime instead of the full orchestrator:
 
 ```bash
-npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project --project-id <project-id>
+export A2A_DEV_PROJECT=/absolute/path/to/checked-out-project
+export ASTRO_EXECUTOR_PROJECT_ID=<project-id>
+docker compose up astro-project-executor
 ```
 
 ## Start reading here

@@ -155,20 +155,15 @@ This launcher:
 
 Run Pi and use the `verify-mainsequence-tutorial` prompt template only when you explicitly want the fixed tutorial-regression workflow.
 
-## Run only `mainsequence-project-coder`
+## Run only the local executor runtime
 
-Use this only when the project has already been selected and checked out locally, and you already know the checked-out path plus the Main Sequence project id.
-
-Interactive single-specialist mode:
-
-```bash
-npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project --project-id <project-id>
-```
-
-Single task mode:
+Use the local executor container harness when you want to inspect or test the dedicated project
+runtime directly:
 
 ```bash
-npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project --project-id <project-id> "Read the project's task and status context, then implement the next task"
+export A2A_DEV_PROJECT=/absolute/path/to/checked-out-project
+export ASTRO_EXECUTOR_PROJECT_ID=<project-id>
+docker compose up astro-project-executor
 ```
 
 ## Manual commands

@@ -3,7 +3,7 @@
   "version": "0.1.6",
   "private": true,
   "type": "module",
-  "description": "Astro orchestrator for Main Sequence project assistants with specialist delegation, generated docs context, and standard Pi web access.",
+  "description": "Astro orchestrator for Main Sequence project assistants with generated docs context and standard Pi web access.",
   "keywords": [
     "pi-package",
     "pi",
@@ -23,8 +23,7 @@
     "mainsequence:project-setup": "tsx scripts/mainsequence_project_set_up_locally.ts",
     "pi": "node scripts/start_pi.mjs",
     "pi:stream": "tsx scripts/start_pi_stream.ts",
-    "checkpoint:sidecar": "tsx scripts/session_checkpoint_sidecar.ts",
-    "specialist": "tsx scripts/run_specialist.ts"
+    "checkpoint:sidecar": "tsx scripts/session_checkpoint_sidecar.ts"
   },
   "peerDependencies": {
     "@mariozechner/pi-agent-core": "*",

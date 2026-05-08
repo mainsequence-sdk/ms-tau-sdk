@@ -38,15 +38,8 @@ the frontend transcript from the backend `AgentSession` record plus latest check
 - When backend-backed sessions are enabled, `threadId` is optional metadata/UI correlation only; it is
   not unique and it does not route resume behavior.
 - New sessions include `created_by_user` set to the request `userId`.
-- `mainsequence-project-coder` sessions also persist the selected `projectId` and checked-out
-  project `cwd` in local session metadata so resume requests can keep using the same project context.
-- `mainsequence-project-coder` sessions also freeze the git repo root in local session metadata so
-  repo diff snapshots can be fetched later without the frontend sending a path.
-- deterministic session-tool discovery uses the stored runtime session metadata and returns
-  session-scoped relative URLs such as `repo_diff`
-- `mainsequence-project-coder` sessions also persist the deterministic project-runtime bootstrap
-  snapshot (SDK status, `.venv` paths, and active `mainsequence` version) so resumed turns keep
-  using the same activated project environment.
+- `mainsequence-project-executor` sessions persist the selected project context such as `projectId`
+  and project `cwd` in local session metadata so resume requests can keep using the same project context.
 - The stream wrapper keeps a local history cache for the active process. The backend does not store
   Astro's frontend history snapshot shape.
 - `GET /api/chat/history` returns Astro's frontend history shape from local `.history.json` when it

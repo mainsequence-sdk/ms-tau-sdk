@@ -25,7 +25,8 @@ It defines Astro's main role:
 
 - orchestrate Main Sequence projects
 - use the Main Sequence CLI
-- delegate implementation and review to specialists
+- keep project creation and setup on the orchestrator path
+- use A2A for executor communication when that later phase is active
 
 It also defines the global Main Sequence CLI failure contract. Any failed `mainsequence ...`
 command must be reported as a CLI error with the exact command, working directory when relevant,
@@ -35,15 +36,15 @@ for non-auth failures they must not invent causes or retry guessed command varia
 
 The parent prompt is static on purpose. It is easier to inspect and reason about than generating parent policy dynamically every run.
 
-## Child specialist policy
+## Child runtime policy
 
-Child specialists should not behave like the parent.
+Runtime-owned child processes should not behave like the parent.
 
 Astro handles that with:
 
 - `pi/extensions/hooks/project-policy/index.ts`
 
-The `project-policy` extension appends this child-only policy at `before_agent_start` only when Astro spawns a child process.
+The `project-policy` extension appends this child-only policy at `before_agent_start` only when Astro spawns a runtime-owned child process.
 
 ## Why the split exists
 
@@ -52,7 +53,7 @@ Astro uses a deliberate split:
 - parent prompt: static in `.pi/APPEND_SYSTEM.md`
 - child guardrails: runtime-only
 
-That keeps the parent easy to inspect while still preventing children from recursively acting like orchestrators.
+That keeps the parent easy to inspect while still preventing runtime-owned child processes from acting like orchestrators.
 
 ## Related pages
 

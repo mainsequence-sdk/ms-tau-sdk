@@ -177,8 +177,8 @@ The Dockerfile creates those directories and assigns ownership to `${NB_UID}:${N
 
 ## Current Astro behavior in remote worker mode
 
-The current repo changes make the worker runtime behave differently from a normal
-`mainsequence-project-coder` session:
+The current repo changes make the worker runtime behave differently from the old local checked-out
+project flow:
 
 - the runtime can be pinned to `mainsequence-project-executor`
 - request-time Main Sequence CLI auth bootstrap is skipped when

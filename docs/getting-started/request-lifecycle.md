@@ -82,17 +82,17 @@ on every SSE chunk as `agent_id`.
 Before a stream chunk is written to the client, the HTTP stream layer appends a normalized
 conversation event and rewrites the compact conversation snapshot synchronously so the history
 endpoint can read that snapshot directly later.
-When the frontend starts a project-scoped `mainsequence-project-coder` session, it must provide the
-selected `projectId` and checked-out project `cwd` on the first `newChat: true` request. Resume
-requests can reuse the stored session metadata.
+When the frontend starts a project-scoped executor session directly, it provides the selected
+project context such as `projectId` and the checked-out or pinned project `cwd` when needed.
+Resume requests can reuse the stored session metadata.
 
 ## 2. Before the agent starts
 
 Astro keeps the parent prompt static and avoids auto-injecting repo docs into the agent context.
 
-The only runtime policy injection that remains is for child specialists:
+The only runtime policy injection that remains is for runtime-owned child processes:
 
-- `project-policy` appends child-only policy when the process is a delegated specialist
+- `project-policy` appends child-only policy when the process is a child runtime process
 
 ## 3. Parent session decides what to do
 
@@ -110,65 +110,44 @@ Then it decides whether the task is:
 - an Astro-internal review task
 - an explicitly requested standalone workflow prompt
 
-## 4. Parent session prepares the project handoff
+## 4. Parent session prepares the created project
 
 For a normal Main Sequence project, the parent:
 
 1. decides whether to select an existing project or create a new one
    - for an existing project, the parent treats "work on/open this project" as selection and setup, not automatic task intake
    - if the user wants a new project, the parent loads the project-creation skill and uses it to collect the missing intake before creation
-2. runs `tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>` after the project id is known
-   - inside Astro, the parent should not call raw `mainsequence project set-up-locally <id>` directly
-3. queries the project details with the CLI and waits until `is_initialized=true` before treating the checkout as ready
-   - the parent must not hand off or copy `project_blueprint.md` before that readiness check passes
-4. resolves the checked-out local path
-5. prepares any needed project-local task or status context for the checked-out project
+2. after project creation succeeds, runs `tsx /app/scripts/mainsequence_project_finalize_creation.ts <id>`
+   - `mainsequence project create` already waits until `is_initialized=true`
+   - the finalize helper sets the project up locally, resolves the checked-out path, copies
+     `project_blueprint.md` into the project root, and prints the exact signed-terminal git steps
+   - before committing or pushing the project checkout, open a signed terminal with
+     `mainsequence project open-signed-terminal <id>`
+   - run the printed `git add`, `git commit`, and `git push` commands inside that signed terminal
+3. prepares any needed project-local task or status context for the checked-out project
    - use the target project's own instructions, planning files, and status files when they exist
    - do not assume an Astro-owned `astro/` file contract by default
-6. either delegates a bounded background task or hands off into a project-scoped coding session
-   - when the active conversation should move into the checked-out project, the parent calls `switch_project_session`
-   - when there is no concrete implementation task yet, the handoff should establish project-local context and readiness instead of asking the user to restate a first task
+   - for existing projects, do not invent or require `project_blueprint.md` by default
+4. continues orchestration without any session switch
+   - the active user conversation stays in the orchestrator session
+   - if `mainsequence-project-executor` is used later, that communication is A2A-only and does not transfer session ownership
+   - when there is no concrete implementation task yet, the orchestrator should establish project-local context and readiness instead of asking the user to restate a first task
 
-## 5. Parent delegates to a specialist
+## 5. Orchestrator stays active
 
-The parent calls `delegate_specialist`.
+There is no longer an active `delegate_specialist` tool in the normal project workflow.
 
-That tool:
+For the current creation-first flow:
 
-1. discovers `.pi/agents/*.md`
-2. reads frontmatter
-3. appends shared guideline files if the specialist declares them
-4. spawns a child `pi` process
-5. passes the checked-out target `cwd` and selected `projectId` when required
-6. streams live child progress back to the parent
+1. the orchestrator selects or creates the project
+2. the orchestrator finalizes the local checkout with `tsx /app/scripts/mainsequence_project_finalize_creation.ts <id>`
+3. the orchestrator keeps the active user conversation
+4. the workflow stops after `project_blueprint.md` is copied and the signed-terminal commit/push instructions are ready
 
-The HTTP stream layer also supports:
+If executor is used in a later phase, the orchestrator communicates with it through A2A and stays
+the owner of the user-facing conversation.
 
-- starting `mainsequence-project-coder` directly as its own backend Agent session when the frontend already knows the selected `projectId` and checked-out project `cwd`
-- creating that coder session in response to a structured `switch_project_session` handoff from the orchestrator
-- continuing that same handoff response as the new coder session so the frontend can see bootstrap progress without a second user message
-- running a deterministic project-runtime bootstrap inside the new `mainsequence-project-coder` session before Pi starts:
-  - `mainsequence project sdk-status --path . --json`
-  - `mainsequence project build_local_venv --path .`
-  - `uv sync`
-  - activation of the checked-out project's `.venv`
-  - emitting those bootstrap steps as synthetic tool events so the frontend can see them
-
-## 6. Child specialist runs
-
-The child process gets:
-
-- the repo context
-- the specialist prompt
-- the child-only policy
-- the checked-out target project `cwd` when delegated for implementation
-- the selected Main Sequence project id when the specialist requires it
-- the checked-out project's activated `.venv` when the active agent is `mainsequence-project-coder`
-- the deterministic project-runtime bootstrap summary in prompt context when the active agent is `mainsequence-project-coder`
-
-That is how the parent can run a specialist inside another project folder while keeping the parent in its own working directory.
-
-## 7. Parent reviews and responds
+## 6. Parent reviews and responds
 
 The parent may:
 
@@ -181,10 +160,12 @@ Then it returns:
 - the local path
 - blockers or next actions
 
-When the parent switches into a project session, the stream emits a short user-facing handoff
-message and then a structured `session_switch` chunk instead of relying on plain-text narration
-alone. After that handoff, the same response can continue immediately with the coder session's
-environment verification and bootstrap steps.
+Project work should no longer rely on switching the active user session into a separate coder
+runtime. For the current new-project flow, the orchestrator remains the user-facing session and
+uses `tsx /app/scripts/mainsequence_project_finalize_creation.ts <id>` to persist the creation
+blueprint into the initialized checkout, then uses `mainsequence project open-signed-terminal <id>`
+for the actual git commit/push step. If executor is involved later, the orchestrator communicates
+with it through A2A and remains the owner of the user-facing conversation.
 
 ## Read next
 

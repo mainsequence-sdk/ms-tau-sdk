@@ -4,6 +4,19 @@
 
 Proposed
 
+## Note
+
+This ADR defines the prompt-layer and tooling-layer collaboration rules for A2A.
+
+The concrete non-debug production discovery and runtime-access flow is now specified in:
+
+- [`adr-25-production-a2a-discovery-and-runtime-access.md`](./adr-25-production-a2a-discovery-and-runtime-access.md)
+
+The follow-up decision to retire `mainsequence-project-coder` and keep
+`mainsequence-project-executor` as the only project implementation runtime is specified in:
+
+- [`adr-26-retire-project-coder-for-project-executor.md`](./adr-26-retire-project-coder-for-project-executor.md)
+
 ## Context
 
 Astro now needs a general agent-to-agent collaboration model that applies across:
@@ -16,9 +29,9 @@ This is separate from session switching.
 
 Today, Astro already has two existing collaboration mechanisms:
 
-- `switch_project_session`
-  - changes the active session
-  - intended for real project-session handoff
+- legacy project-session handoff
+  - changed the active session
+  - was intended for real project-session handoff
 - repo-local specialist delegation
   - bounded child-process work inside the current runtime topology
 
@@ -50,7 +63,7 @@ We need a small routing rule that says:
 But that behavior must stay disciplined:
 
 - it must not become general scope expansion
-- it must not silently replace session switching
+- it must not silently replace legacy project-session handoff behavior
 - it must not force the orchestrator to delegate without the user's consent
 
 ## Decision
@@ -79,7 +92,7 @@ At minimum, Astro agents should follow these guidelines:
 
 1. First decide whether you should answer directly within your current role and scope.
 2. If another known agent appears better suited, you may use A2A instead of changing session.
-3. A2A does not imply `switch_project_session`.
+3. A2A does not imply any project-session handoff.
 4. A2A does not expand the active agent's allowed scope or role.
 5. If a request is marked as A2A, respond as agent-to-agent rather than user-to-agent.
 6. If the request specifies a response format or output schema, follow it exactly.
@@ -192,7 +205,7 @@ The tooling exists so an Astro agent can:
 
 This is intentionally different from:
 
-- `switch_project_session`
+- legacy project-session handoff
 - repo-local specialist delegation
 - direct pod-to-pod communication
 
@@ -201,8 +214,12 @@ This is intentionally different from:
 For discovery, Astro should always make a backend request using a search prompt that summarizes the
 user's intent.
 
-The backend path is intentionally left as `TBD` in this ADR. Until the backend contract exists, the
-production-path implementation should raise `not implemented` rather than guessing a route.
+The detailed non-debug production discovery path is defined in:
+
+- [`adr-25-production-a2a-discovery-and-runtime-access.md`](./adr-25-production-a2a-discovery-and-runtime-access.md)
+
+This ADR keeps the higher-level discovery rule and candidate shape, while ADR 25 defines the
+backend-facing implementation steps.
 
 The backend discovery response is expected to return candidates of this shape:
 
@@ -237,7 +254,9 @@ The backend remains the transport control plane:
 - Astro sends the A2A request through the backend
 - the backend routes that request to the selected agent deployment
 
-The backend route is intentionally `TBD` in this ADR.
+The concrete non-debug runtime-access and routing path is defined in:
+
+- [`adr-25-production-a2a-discovery-and-runtime-access.md`](./adr-25-production-a2a-discovery-and-runtime-access.md)
 
 The request body sent through the backend should match the JSON contract expected by
 `POST /api/a2a/chat` on the target Astro runtime.
@@ -381,7 +400,7 @@ Astro must not silently invent a fallback production routing path.
   without separate user confirmation
 - confirm child-specialist runtime policy still blocks unrestricted recursive specialist delegation
   while allowing bounded A2A
-- confirm prompt wording keeps A2A distinct from `switch_project_session`
+- confirm prompt wording keeps A2A distinct from project-session handoff behavior
 - confirm the discovery-only A2A tool can list available A2A-capable agents without sending a
   request
 - confirm the A2A request tool always performs discovery before communication
@@ -402,12 +421,12 @@ Astro must not silently invent a fallback production routing path.
   recursive delegation.
 - [x] Add A2A discovery tooling for both discovery-only and discovery-plus-communication flows.
 - [x] Summarize user intent into a discovery prompt before A2A candidate lookup.
-- [ ] Add the backend discovery contract with candidate fields:
+- [x] Add the backend discovery contract with candidate fields:
   - `agent_id`
   - `agent_description`
   - `a2a_card`
-- [x] Leave production backend discovery and routing paths as `TBD` and raise `not implemented`
-  until they exist.
+- [x] Replace the temporary production `not implemented` plan with the CLI-backed backend discovery
+  and runtime-access contract defined by ADR 25.
 - [x] Add `A2A_DEV_PROJECT` local debug mode.
 - [x] In local debug mode, mock discovery from `${A2A_DEV_PROJECT}/.agents/agent_card.json`.
 - [x] In local debug mode, route communication directly to the local dev executor container.

@@ -11,7 +11,7 @@ Why:
 - the parent role is mostly stable
 - static prompt files are easier to inspect than runtime-generated parent policy
 
-## 2. Keep child policy dynamic
+## 2. Keep child runtime policy dynamic
 
 Implementation:
 
@@ -20,19 +20,19 @@ Implementation:
 
 Why:
 
-- child specialists should not behave like the parent
+- runtime-owned child processes should not behave like the parent
 - child-only guardrails are naturally runtime-specific
 
-## 3. Use specialists for focused delegated work
+## 3. Use a dedicated executor runtime for project implementation
 
 Implementation:
 
-- `.pi/agents/mainsequence-project-coder.md`
+- `.pi/agents/mainsequence-project-executor.md`
 
 Why:
 
-- implementation belongs in a checked-out project specialist instead of the parent session
-- tutorial verification can still delegate checked-out project work without introducing a second builder role
+- project implementation belongs on the dedicated executor runtime instead of the parent session
+- the orchestrator should remain the user-facing control plane rather than switching into a local coder session
 
 ## 4. Keep repo-local runtime in TypeScript
 
@@ -332,3 +332,32 @@ Why:
 - A2A should be a collaboration modality, not a session-switch substitute
 - the orchestrator needs explicit user-confirmed discovery behavior before A2A initiation
 - project-scoped agents need bounded A2A without broadening their core roles
+
+## 25. Use CLI-backed runtime access for non-debug A2A
+
+Implementation:
+
+- `reference/adr-25-production-a2a-discovery-and-runtime-access.md`
+
+Why:
+
+- production A2A needs a real discovery and routing path instead of the current debug shim
+- the target runtime URL must come from backend-owned runtime access resolution, not from guessed
+  local service URLs
+- Astro should reuse the Main Sequence CLI for agent search, session creation, and runtime access
+  lookup in non-debug mode
+
+## 26. Retire project-coder and keep project-executor
+
+Implementation:
+
+- `reference/adr-26-retire-project-coder-for-project-executor.md`
+
+Why:
+
+- `mainsequence-project-coder` duplicates the project implementation role now owned by
+  `mainsequence-project-executor`
+- the orchestrator should remain the user-facing session instead of switching the active
+  conversation into a local coder session
+- project implementation handoff should be a committed project artifact consumed by the
+  backend-routed executor runtime

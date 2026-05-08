@@ -13,6 +13,14 @@ try {
 	});
 	logStructuredEvent({
 		component: "astro-stream",
+		event: "a2a_communication_skill_ready",
+		message: "Astro materialized the A2A communication skill before server startup.",
+		data: {
+			a2aCommunicationSkill: piAgentState.a2aCommunicationSkill ?? null,
+		},
+	});
+	logStructuredEvent({
+		component: "astro-stream",
 		event: "orchestrator_runtime_ready",
 		message: "Astro orchestrator runtime cwd and project-local Pi settings are ready.",
 		data: {
@@ -21,6 +29,7 @@ try {
 			orchestratorProjectPiDir: piAgentState.orchestratorRuntime?.projectPiDir,
 			orchestratorProjectPiLink: piAgentState.orchestratorRuntime?.projectPiLink,
 			workspaceAnalysisSkill: piAgentState.workspaceAnalysisSkill ?? null,
+			a2aCommunicationSkill: piAgentState.a2aCommunicationSkill ?? null,
 			prunedProviderAuthEntries: piAgentState.prunedProviderAuthEntries ?? [],
 			prunedScopedProviderCredentialDir: piAgentState.prunedScopedProviderCredentialDir ?? null,
 		},

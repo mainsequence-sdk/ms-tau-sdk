@@ -9,12 +9,11 @@ Track and list files recently changed by the parent Astro session through Pi `wr
 ## Activation
 
 - Parent-only tool
-- Disabled in child specialists when `ASTRO_SUBAGENT_CHILD=1`
+- Disabled in runtime-owned child processes when `ASTRO_SUBAGENT_CHILD=1`
 
 ## Tracked events
 
 - clears tracked state on `session_start`
-- clears tracked state on `session_switch`
 - clears tracked state on `session_fork`
 - records successful `write` and `edit` results on `tool_result`
 

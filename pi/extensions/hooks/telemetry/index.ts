@@ -8,10 +8,6 @@ export default function (pi: ExtensionAPI) {
 		emitTelemetryEvent("session_start", { cwd: ctx.cwd });
 	});
 
-	pi.on("session_switch", async (_event, ctx) => {
-		emitTelemetryEvent("session_switch", { cwd: ctx.cwd });
-	});
-
 	pi.on("session_fork", async (_event, ctx) => {
 		emitTelemetryEvent("session_fork", { cwd: ctx.cwd });
 	});

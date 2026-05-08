@@ -13,10 +13,10 @@ Run Astro's fixed tutorial-regression workflow against a disposable Main Sequenc
 3. treat CLI auth as runtime-managed
 4. call `ensure_mainsequence_cli_auth` once on auth failure, then retry
 5. create and set up the disposable tutorial review project
-6. delegate checked-out project work to `mainsequence-project-coder`
-7. validate the CLI tutorial directly
-8. validate GUI steps with Playwright when possible
-9. open GitHub issues only for tutorial-documentation defects
+6. validate the CLI tutorial directly
+7. validate GUI steps with Playwright when possible
+8. open GitHub issues only for tutorial-documentation defects, using whatever GitHub capability the environment provides
+9. report whether each tutorial-only issue was opened, skipped, or blocked
 10. perform backend cleanup before finishing
 
 ## Required return shape
@@ -35,4 +35,3 @@ Run Astro's fixed tutorial-regression workflow against a disposable Main Sequenc
 ## Related files
 
 - [`../extensions/tools/mainsequence-cli-auth.md`](../extensions/tools/mainsequence-cli-auth.md)
-- [`../extensions/tools/specialist-delegate/README.md`](../extensions/tools/specialist-delegate/README.md)

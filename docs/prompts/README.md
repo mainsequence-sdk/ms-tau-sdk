@@ -4,7 +4,6 @@ Astro's repo-owned reusable prompt templates live under `pi/prompts/` and are do
 
 ## Prompts
 
-- [`implement-additive.md`](./implement-additive.md)
 - [`design-and-audit.md`](./design-and-audit.md)
 - [`verify-mainsequence-tutorial.md`](./verify-mainsequence-tutorial.md)
 

@@ -6,28 +6,18 @@ This documentation set is organized for readers who may not know Pi yet. It expl
 
 1. what Pi components Astro uses
 2. how those components are wired together
-3. how the prompt and specialist layers drive project behavior
+3. how the prompt and runtime-agent layers drive project behavior
 4. where the per-file extension and prompt docs live
 
-## Launch one specialist directly
+## Run the local executor runtime
 
-If you want Pi to start in single-specialist mode instead of the full Astro orchestrator, use:
-
-```bash
-npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project --project-id <project-id>
-```
-
-That launches Pi with:
-
-- `ASTRO_SUBAGENT_CHILD=1`
-- `ASTRO_ACTIVE_SPECIALIST=mainsequence-project-coder`
-- the `mainsequence-project-coder` prompt body as the appended system prompt
-- the specialist's tool restrictions
-
-If you want to launch it non-interactively with one task:
+If you want to inspect the dedicated project runtime instead of the full Astro orchestrator, use
+the local executor container harness:
 
 ```bash
-npm run specialist -- --agent mainsequence-project-coder --cwd /absolute/path/to/checked-out-project --project-id <project-id> "Read the project's task and status context, then implement the next task"
+export A2A_DEV_PROJECT=/absolute/path/to/checked-out-project
+export ASTRO_EXECUTOR_PROJECT_ID=<project-id>
+docker compose up astro-project-executor
 ```
 
 ## Architecture
@@ -40,15 +30,14 @@ flowchart LR
     SET --> EXT["Extensions"]
 
     EXT --> PP["project-policy"]
-    EXT --> SD["specialist-delegate"]
     EXT --> RC["recent-changes"]
 
     P --> PROMPTS["pi/prompts/"]
     P --> AGENTS[".pi/agents/"]
     P --> CLI["mainsequence CLI"]
 
-AGENTS --> CODER["mainsequence-project-coder"]
-    CODER --> TARGET["Checked-out Main Sequence project"]
+AGENTS --> EXEC["mainsequence-project-executor"]
+    EXEC --> TARGET["Project runtime"]
 
     P --> DOCKER["Dockerfile runtime for Python/Node tasks"]
 ```
@@ -75,7 +64,7 @@ AGENTS --> CODER["mainsequence-project-coder"]
 - [`extensions/README.md`](./extensions/README.md)
   - per-file docs for hooks, tools, and shared helpers in `pi/extensions/`
 - [`components/agents.md`](./components/agents.md)
-  - specialist files in `.pi/agents/`
+  - runtime agent prompt files in `.pi/agents/`
 - [`components/prompts.md`](./components/prompts.md)
   - reusable workflow prompts in `pi/prompts/`
 - [`prompts/README.md`](./prompts/README.md)

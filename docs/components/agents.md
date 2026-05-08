@@ -1,21 +1,21 @@
 # Agents
 
-Astro uses project-local specialist agents defined in `.pi/agents/`.
+Astro uses project-local runtime agent prompts defined in `.pi/agents/`.
 
-## What a specialist file looks like
+## What a runtime agent prompt looks like
 
-Each specialist is a markdown file with frontmatter and a prompt body.
+Each runtime agent prompt is a markdown file with frontmatter and a prompt body.
 
 Example shape:
 
 ```md
 ---
-name: mainsequence-project-coder
-description: Implements tasks inside a checked-out Main Sequence project
+name: mainsequence-project-executor
+description: Executes project-scoped work inside a Main Sequence project runtime
 tools: read, grep, find, ls, bash, edit, write
 ---
 
-Specialist instructions here.
+Runtime agent instructions here.
 ```
 
 ## Frontmatter fields used in Astro
@@ -25,17 +25,17 @@ Specialist instructions here.
 - `tools`
 - `model`
 
-The body becomes the specialist's appended system prompt.
+The body becomes the runtime agent's appended system prompt.
 
-## Current specialists
+## Current runtime agents
 
-### `mainsequence-project-coder`
+### `mainsequence-project-executor`
 
 Use when:
 
-- the checked-out Main Sequence project needs implementation work
-- the user has already opened or selected a checked-out Main Sequence project and the session should now stay project-local
-- an explicit tutorial-verification workflow needs deterministic work inside a disposable checked-out project
+- a Main Sequence project runtime needs concrete implementation work
+- the orchestrator has already selected and prepared the project context
+- the task should run inside the dedicated project runtime rather than in the user-facing orchestrator session
 
 Important rule:
 
@@ -44,18 +44,17 @@ Important rule:
   `mainsequence ...` commands are reported with the exact command, working directory when relevant,
   exit code or signal, CLI version or version lookup failure, stderr, stdout, and the concrete
   blocker or next action
-- before a new project-coder session starts, the runtime should deterministically run `mainsequence project sdk-status --path . --json`, `mainsequence project build_local_venv --path .`, `uv sync`, and then activate the checked-out project's `.venv`
-- when started without a concrete task, it should use that runtime bootstrap summary first, bootstrap missing `AGENTS.md` / agent skills automatically, and then establish project-local context, summarize readiness, and stay ready for the next project-local turn
-- when the first turn after project handoff is only incidental chat, the onboarding flow should still run before the normal reply
+- it is the only project implementation agent; Astro no longer routes implementation through `mainsequence-project-coder`
+- it is reached only through the dedicated executor runtime flow, not through any removed child-launch surface
 
-## Role split
+## Runtime split
 
-Astro intentionally keeps a parent-child split:
+Astro intentionally keeps an orchestrator-runtime split:
 
 - parent orchestrates
-- child implements
+- executor implements when that later phase is introduced
 
-That keeps the parent focused on Main Sequence operations and keeps specialists focused on narrower tasks.
+That keeps the parent focused on Main Sequence operations and keeps implementation on the dedicated project runtime.
 
 ## Related pages
 
