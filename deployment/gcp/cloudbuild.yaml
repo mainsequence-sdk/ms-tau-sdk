@@ -53,11 +53,15 @@ steps:
           -p "process.versions.node.split('.').slice(0, 2).join('.')" )"
 
         VERSION_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}"
-        DESCRIPTIVE_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}-py$${PYTHON_VERSION_TAG}-node$${NODE_VERSION_TAG}-ms$${MAINSEQUENCE_VERSION}"
+        PYTHON_RUNTIME_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}-py$${PYTHON_VERSION_TAG}"
+        NODE_RUNTIME_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}-node$${NODE_VERSION_TAG}"
+        MAINSEQUENCE_RUNTIME_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}-ms$${MAINSEQUENCE_VERSION}"
         BUNDLE_VERSION_IMAGE="${_BUNDLE_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}"
 
         printf '%s' "$${VERSION_IMAGE}" > /workspace/version_image.txt
-        printf '%s' "$${DESCRIPTIVE_IMAGE}" > /workspace/descriptive_image.txt
+        printf '%s' "$${PYTHON_RUNTIME_IMAGE}" > /workspace/python_runtime_image.txt
+        printf '%s' "$${NODE_RUNTIME_IMAGE}" > /workspace/node_runtime_image.txt
+        printf '%s' "$${MAINSEQUENCE_RUNTIME_IMAGE}" > /workspace/mainsequence_runtime_image.txt
         printf '%s' "$${BUNDLE_VERSION_IMAGE}" > /workspace/bundle_version_image.txt
 
         CONTAINER_ID="$$(docker create "$${LOCAL_IMAGE}")"
@@ -74,7 +78,9 @@ steps:
           "$${LABELED_IMAGE}" >/dev/null
 
         docker tag "$${LABELED_IMAGE}" "$${VERSION_IMAGE}"
-        docker tag "$${LABELED_IMAGE}" "$${DESCRIPTIVE_IMAGE}"
+        docker tag "$${LABELED_IMAGE}" "$${PYTHON_RUNTIME_IMAGE}"
+        docker tag "$${LABELED_IMAGE}" "$${NODE_RUNTIME_IMAGE}"
+        docker tag "$${LABELED_IMAGE}" "$${MAINSEQUENCE_RUNTIME_IMAGE}"
         docker tag "$${LABELED_IMAGE}" "${_LATEST_IMAGE}"
         docker tag "$${LOCAL_BUNDLE_IMAGE}" "$${BUNDLE_VERSION_IMAGE}"
         docker tag "$${LOCAL_BUNDLE_IMAGE}" "${_BUNDLE_LATEST_IMAGE}"
@@ -102,7 +108,7 @@ steps:
       - "push"
       - "${_LATEST_IMAGE}"
 
-  - id: "push-descriptive-image"
+  - id: "push-python-runtime-image"
     waitFor:
       - "build-image-and-detect-mainsequence-version"
     name: "gcr.io/cloud-builders/docker"
@@ -111,8 +117,32 @@ steps:
       - "-c"
       - |
         set -euo pipefail
-        DESCRIPTIVE_IMAGE="$$(cat /workspace/descriptive_image.txt)"
-        docker push "$${DESCRIPTIVE_IMAGE}"
+        PYTHON_RUNTIME_IMAGE="$$(cat /workspace/python_runtime_image.txt)"
+        docker push "$${PYTHON_RUNTIME_IMAGE}"
+
+  - id: "push-node-runtime-image"
+    waitFor:
+      - "build-image-and-detect-mainsequence-version"
+    name: "gcr.io/cloud-builders/docker"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        set -euo pipefail
+        NODE_RUNTIME_IMAGE="$$(cat /workspace/node_runtime_image.txt)"
+        docker push "$${NODE_RUNTIME_IMAGE}"
+
+  - id: "push-mainsequence-runtime-image"
+    waitFor:
+      - "build-image-and-detect-mainsequence-version"
+    name: "gcr.io/cloud-builders/docker"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        set -euo pipefail
+        MAINSEQUENCE_RUNTIME_IMAGE="$$(cat /workspace/mainsequence_runtime_image.txt)"
+        docker push "$${MAINSEQUENCE_RUNTIME_IMAGE}"
 
   - id: "push-project-executor-bundle-version-image"
     waitFor:

@@ -42,6 +42,26 @@ For A2A, the backend already owns:
 So the backend is the correct authority to decide whether a retry should reuse an existing target
 session or create a new one.
 
+The backend already has one proven idempotent allocation primitive:
+
+- `AgentSessionHandle`
+- `AgentSessionHandle.current_session`
+- short transactional `select_for_update()` reuse/create behavior
+
+That primitive is already used by the Astro command-center control-plane path.
+
+Relevant existing backend surfaces include:
+
+- `AgentSession`
+- `AgentSessionHandle`
+- `AgentSessionHandle.current_session`
+- `SESSION_HANDLE_UNIQUE_ID_ASTRO_COMMAND_CENTER`
+- `_get_or_create_astro_command_center_session(...)`
+- `POST /orm/api/agents/v1/agents/session-handles/get_or_create_astro_command_center/`
+
+So the A2A hardening should reuse the same primitive rather than inventing a second allocation
+system.
+
 ## Problem
 
 Without backend hardening, the system can allocate multiple executor sessions for what is really one
@@ -61,21 +81,36 @@ there is an explicit reason to start over.
 
 ## Decision
 
-The backend must make A2A target-session allocation idempotent and reuse-oriented by default.
+The backend must make A2A target-session allocation idempotent and reuse-oriented by default by
+anchoring allocation on `AgentSessionHandle`.
 
 The core rule is:
 
-> One logical A2A task maps to one backend-allocated target session unless an explicit restart rule
-> says otherwise.
+> One logical A2A task maps to one backend-allocated target session. A fresh delegated conversation
+> requires a different logical A2A correlation identity.
 
 Prompt-layer guidance remains useful, but backend behavior is authoritative.
+
+For the implemented backend contract, the logical A2A task is the triple:
+
+- `caller_agent_session_id`
+- `target_agent_id`
+- `a2a_correlation_id`
+
+That triple resolves to one stable `AgentSessionHandle`, and therefore one stable
+`handle.current_session`, by default.
+
+This ADR is additive.
+
+It does not replace or redefine the current constant-based Astro command-center handle workflow.
+That existing path must remain backward compatible.
 
 ## Required Backend Behavior
 
 ### 1. Session allocation must be idempotent
 
 Whatever backend control-plane API allocates the target A2A session must behave idempotently for a
-single logical task.
+single logical task by using `AgentSessionHandle` as the allocation anchor.
 
 Repeated allocation requests for the same logical A2A task must return the same target
 `AgentSession`, not silently create a fresh one.
@@ -84,15 +119,22 @@ Repeated allocation requests for the same logical A2A task must return the same 
 
 The allocation request must include a stable correlation key for the logical A2A task.
 
-Recommended contract:
+Canonical request shape:
 
 ```json
 {
   "caller_agent_session_id": 52,
-  "target_agent_id": 25,
   "a2a_correlation_id": "52:turn-184:executor-step-1"
 }
 ```
+
+Canonical route:
+
+```text
+POST /orm/api/agents/v1/agents/<agent_id>/allocate-a2a-target-session/
+```
+
+The target agent is the route `agent_id`.
 
 The exact field names can vary, but the semantics must be:
 
@@ -103,7 +145,23 @@ The exact field names can vary, but the semantics must be:
 If the backend already has a stronger request identity from the control plane, it may use that
 instead. The important point is that retries must carry a stable reuse key.
 
-### 3. Allocation response must be canonical
+### 3. The backend must derive a deterministic handle identity
+
+The backend must derive a deterministic A2A handle identity from:
+
+- `caller_agent_session_id`
+- `target_agent_id`
+- `a2a_correlation_id`
+
+Representative format:
+
+```text
+a2a:<caller_session_id>:<target_agent_id>:<a2a_correlation_id>
+```
+
+That value becomes the stable handle identity for the logical A2A task.
+
+### 4. Allocation response must be canonical
 
 The allocation response should return:
 
@@ -120,7 +178,7 @@ This makes two things explicit:
 1. whether the backend created or reused the target session
 2. the exact full backend session JSON that the caller must forward to Astro under `session`
 
-### 4. Retry classes that must reuse the same target session
+### 5. Retry classes that must reuse the same target session
 
 The backend must treat the following as same-session retry territory by default:
 
@@ -135,31 +193,32 @@ The backend must treat the following as same-session retry territory by default:
 The existence of one of those failures is not, by itself, permission to allocate another target
 session.
 
-### 5. New target sessions require an explicit restart reason
+### 6. New conversation policy
 
-The backend may create a fresh target session only when at least one of these is true:
+If the caller wants a fresh delegated conversation, it must allocate a new logical A2A task
+identity.
 
-1. the caller explicitly requests a restart, for example with `force_new_session=true`
-2. the previous target session is incompatible with the intended target agent, workflow, or project
-3. the previous target session is terminal and backend policy says it cannot be continued for this
-   A2A task
-4. the previous target session is unrecoverable according to a documented backend invariant
+That means:
 
-If a new target session is created, the backend should require or record a machine-readable
-`restart_reason`.
+- same (`caller_agent_session_id`, `target_agent_id`, `a2a_correlation_id`) => same target session
+- different `a2a_correlation_id` => different target session
 
-### 6. Timeout must not imply fresh allocation
+The backend must not branch to a fresh target session for the same correlation id.
+
+If the previously allocated session is no longer acceptable for the same correlation id, the
+backend should fail clearly instead of silently allocating a sibling target session.
+
+### 7. Timeout must not imply fresh allocation
 
 If the caller timed out while waiting for the runtime stream, the backend default should be:
 
 1. inspect the existing target session state
 2. return the same allocated target session when it is still the valid target for that logical task
-3. require an explicit restart reason before branching to a new session
 
 Timeout is a transport problem unless proven otherwise. It is not an automatic session-allocation
 event.
 
-### 7. Observability must show reuse versus creation
+### 8. Observability must show reuse versus creation
 
 The backend should record and expose enough data to make retry storms obvious.
 
@@ -169,11 +228,35 @@ Recommended fields or logs:
 - `target_agent_id`
 - `a2a_correlation_id`
 - `allocation_state` (`created_new` vs `reused_existing`)
-- `restart_reason` when present
-- timestamps for first allocation and later reuse attempts
+- `first_allocated_at`
+- `last_reused_at`
+- `allocation_attempt_count`
 
 This makes it possible to explain why multiple target sessions exist and whether they were valid or
 accidental.
+
+Initial implementation may keep these fields in:
+
+- structured logs
+- `AgentSessionHandle.metadata`
+
+If later query requirements exceed what handle metadata can support cleanly, the backend may add a
+dedicated allocation-audit model in a future ADR. That is not required for the first
+implementation.
+
+### 9. Backward compatibility with existing handle workflows
+
+This change must be additive.
+
+The backend must keep the existing Astro command-center handle path unchanged:
+
+- constant handle key: `SESSION_HANDLE_UNIQUE_ID_ASTRO_COMMAND_CENTER`
+- current constant value: `astro-orchestrator-command-center`
+- existing route:
+  `POST /orm/api/agents/v1/agents/session-handles/get_or_create_astro_command_center/`
+
+The new A2A path must be a separate allocation contract that reuses `AgentSessionHandle`, not a
+replacement for the existing constant-based workflow.
 
 ## Caller Contract
 
@@ -184,7 +267,7 @@ Once the backend returns the target session allocation result, the caller must p
 - the same logical-task correlation key
 
 Every resend for the same logical task should use the same backend-allocated target session unless
-the backend has explicitly instructed the caller to start a new one.
+the caller intentionally starts a new logical A2A task with a different correlation identity.
 
 ## Relationship To Astro
 
@@ -215,7 +298,56 @@ That policy belongs to the backend allocation authority.
 - backend must introduce or formalize a logical-task correlation concept
 - allocation APIs need idempotent semantics instead of "always create"
 - callers must preserve and resend the same correlation key on retry
-- explicit restart semantics must be designed instead of relying on accidental fresh allocation
+- a fresh delegated conversation now requires a new logical correlation identity rather than an
+  accidental retry
+
+## Proposed Implementation Shape
+
+### Models
+
+Use the existing backend models:
+
+- `AgentSession`
+- `AgentSessionHandle`
+
+No new allocation model is required for the first implementation.
+
+### Services
+
+Add a dedicated backend allocation service parallel to the Astro command-center path.
+
+Representative service name:
+
+```text
+allocate_a2a_target_session(...)
+```
+
+Responsibilities:
+
+- validate caller session and target agent
+- derive deterministic A2A handle identity
+- lock the matching handle with `select_for_update()`
+- reuse `handle.current_session` when the reuse policy says it is still valid
+- create and bind one new target session only when no prior session exists for that logical A2A
+  task
+- return the canonical allocation response
+
+### Serializers
+
+Add dedicated serializers for:
+
+- A2A allocation request
+- A2A allocation response
+
+The response serializer should embed the existing canonical `AgentSession` serializer.
+
+### Views
+
+Add one additive backend endpoint for A2A allocation:
+
+```text
+POST /orm/api/agents/v1/agents/<agent_id>/allocate-a2a-target-session/
+```
 
 ## Implementation Tasks
 
@@ -224,9 +356,8 @@ That policy belongs to the backend allocation authority.
 - [ ] Make allocation idempotent for the same logical task.
 - [ ] Return the full backend session serializer in the allocation response.
 - [ ] Distinguish `created_new` from `reused_existing` in the allocation response or logs.
-- [ ] Require an explicit restart reason before creating a fresh target session for an existing
-      logical task.
-- [ ] Document which terminal or incompatible states justify a forced new target session.
+- [ ] Record `first_allocated_at`, `last_reused_at`, and `allocation_attempt_count`.
+- [ ] Keep the existing Astro command-center handle path backward compatible.
 - [ ] Update A2A callers to reuse the same correlation key and target session across retries.
 - [ ] Keep Astro fallback behavior as a recovery path, not as the normal session-allocation policy.
 

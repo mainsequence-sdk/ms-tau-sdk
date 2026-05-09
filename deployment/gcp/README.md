@@ -35,8 +35,9 @@ The current `deployment/gcp/cloudbuild.yaml` has four responsibilities:
 1. Build the `astro-pi-stream` Docker target from the repo `Dockerfile`
 2. Detect the Astro package version plus which `mainsequence`, Python, and Node versions were actually installed in the image
 3. Stamp OCI labels on the final image with the exact full detected versions
-4. Push three tags to Artifact Registry:
-   one tag for the Astro package version, one descriptive runtime tag, and one `latest` tag
+4. Push five tags to Artifact Registry:
+   one tag for the Astro package version, one convenience tag each for Python, Node, and
+   `mainsequence` runtime versions, and one `latest` tag
 
 Suggested high-level flow:
 
@@ -60,7 +61,13 @@ steps:
   - name: Push version tag
     uses: docker push
 
-  - name: Push descriptive runtime tag
+  - name: Push Python runtime tag
+    uses: docker push
+
+  - name: Push Node runtime tag
+    uses: docker push
+
+  - name: Push mainsequence runtime tag
     uses: docker push
 
   - name: Push latest tag
@@ -175,7 +182,9 @@ latest available `mainsequence`, then Cloud Build detects the Astro project vers
 runtime versions and publishes:
 
 - `<image>:astro-<astro-version>`
-- `<image>:astro-<astro-version>-py<python-major.minor>-node<node-major.minor>-ms<mainsequence-version>`
+- `<image>:astro-<astro-version>-py<python-major.minor>`
+- `<image>:astro-<astro-version>-node<node-major.minor>`
+- `<image>:astro-<astro-version>-ms<mainsequence-version>`
 - `<image>:latest`
 
 The final published image is also labeled with exact full versions:
@@ -258,10 +267,14 @@ steps:
           -p "process.versions.node.split('.').slice(0, 2).join('.')" )"
 
         VERSION_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}"
-        DESCRIPTIVE_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}-py$${PYTHON_VERSION_TAG}-node$${NODE_VERSION_TAG}-ms$${MAINSEQUENCE_VERSION}"
+        PYTHON_RUNTIME_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}-py$${PYTHON_VERSION_TAG}"
+        NODE_RUNTIME_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}-node$${NODE_VERSION_TAG}"
+        MAINSEQUENCE_RUNTIME_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}-ms$${MAINSEQUENCE_VERSION}"
 
         printf '%s' "$${VERSION_IMAGE}" > /workspace/version_image.txt
-        printf '%s' "$${DESCRIPTIVE_IMAGE}" > /workspace/descriptive_image.txt
+        printf '%s' "$${PYTHON_RUNTIME_IMAGE}" > /workspace/python_runtime_image.txt
+        printf '%s' "$${NODE_RUNTIME_IMAGE}" > /workspace/node_runtime_image.txt
+        printf '%s' "$${MAINSEQUENCE_RUNTIME_IMAGE}" > /workspace/mainsequence_runtime_image.txt
 
         CONTAINER_ID="$$(docker create "$${LOCAL_IMAGE}")"
         trap 'docker rm -f "$${CONTAINER_ID}" >/dev/null 2>&1 || true' EXIT
@@ -277,7 +290,9 @@ steps:
           "$${LABELED_IMAGE}" >/dev/null
 
         docker tag "$${LABELED_IMAGE}" "$${VERSION_IMAGE}"
-        docker tag "$${LABELED_IMAGE}" "$${DESCRIPTIVE_IMAGE}"
+        docker tag "$${LABELED_IMAGE}" "$${PYTHON_RUNTIME_IMAGE}"
+        docker tag "$${LABELED_IMAGE}" "$${NODE_RUNTIME_IMAGE}"
+        docker tag "$${LABELED_IMAGE}" "$${MAINSEQUENCE_RUNTIME_IMAGE}"
         docker tag "$${LABELED_IMAGE}" "${_LATEST_IMAGE}"
 
         docker rm -f "$${CONTAINER_ID}" >/dev/null 2>&1 || true
@@ -302,7 +317,7 @@ steps:
       - push
       - ${_LATEST_IMAGE}
 
-  - id: push-descriptive-image
+  - id: push-python-runtime-image
     waitFor:
       - build-image-and-detect-mainsequence-version
     name: gcr.io/cloud-builders/docker
@@ -310,8 +325,30 @@ steps:
     args:
       - -c
       - |
-        DESCRIPTIVE_IMAGE="$$(cat /workspace/descriptive_image.txt)"
-        docker push "$${DESCRIPTIVE_IMAGE}"
+        PYTHON_RUNTIME_IMAGE="$$(cat /workspace/python_runtime_image.txt)"
+        docker push "$${PYTHON_RUNTIME_IMAGE}"
+
+  - id: push-node-runtime-image
+    waitFor:
+      - build-image-and-detect-mainsequence-version
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        NODE_RUNTIME_IMAGE="$$(cat /workspace/node_runtime_image.txt)"
+        docker push "$${NODE_RUNTIME_IMAGE}"
+
+  - id: push-mainsequence-runtime-image
+    waitFor:
+      - build-image-and-detect-mainsequence-version
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        MAINSEQUENCE_RUNTIME_IMAGE="$$(cat /workspace/mainsequence_runtime_image.txt)"
+        docker push "$${MAINSEQUENCE_RUNTIME_IMAGE}"
 
 options:
   dynamicSubstitutions: true
@@ -325,8 +362,8 @@ options:
 - the running service still needs writable container runtime state at `/home/appuser/.astro-container-data`
 - rebuilding without bumping the Astro package version will repoint that `astro-<version>` tag to
   the newly built image
-- the extra `astro...-py...-node...-ms...` tag is still just another tag on the same built image,
-  not a separate build
+- the extra `astro...-py...`, `astro...-node...`, and `astro...-ms...` tags are still just more
+  tags on the same built image, not separate builds
 - the published tags now point at the same final labeled image, while the unlabeled local build
   image is only an internal intermediate used during Cloud Build
 - horizontal scaling should use pod-local session state plus backend checkpoint restore/flush
