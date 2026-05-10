@@ -215,18 +215,18 @@ This ADR does not:
 
 ## Implementation Tasks
 
-- [ ] Persist a durable A2A envelope in Astro session-scoped metadata/checkpoint state.
-- [ ] Include explicit provenance that a bounded `user` turn was agent-originated.
-- [ ] Preserve caller agent identity, caller metadata, response format, and delegated linkage in
+- [x] Persist a durable A2A envelope in Astro session-scoped metadata/checkpoint state.
+- [x] Include explicit provenance that a bounded `user` turn was agent-originated.
+- [x] Preserve caller agent identity, caller metadata, response format, and delegated linkage in
       that envelope.
-- [ ] Hydrate the A2A envelope on attach, resume, and checkpoint restore.
-- [ ] Keep prompt injection as a projection of the durable A2A envelope rather than the sole source
+- [x] Hydrate the A2A envelope on attach, resume, and checkpoint restore.
+- [x] Keep prompt injection as a projection of the durable A2A envelope rather than the sole source
       of truth.
-- [ ] Ensure local history reconstruction can distinguish human-originated versus agent-originated
+- [x] Ensure local history reconstruction can distinguish human-originated versus agent-originated
       `user` turns without introducing a new `agent` role.
-- [ ] Consume backend-exposed delegated provenance fields instead of inferring A2A lineage purely
-      from transient request context.
-- [ ] Update the Astro-facing A2A docs to describe the durable provenance rule for agent-originated
+- [x] Consume backend-exposed delegated provenance fields when present instead of inferring A2A
+      lineage only from transient request context.
+- [x] Update the Astro-facing A2A docs to describe the durable provenance rule for agent-originated
       `user` turns.
 
 ## Related

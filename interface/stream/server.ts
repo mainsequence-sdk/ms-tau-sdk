@@ -1806,11 +1806,34 @@ type SpecialistAgentResolution = {
 function resolveSpecialistAgent(agentName: string, cwd?: string | null): SpecialistAgentResolution {
 	const discoveryRoot = cwd ? path.resolve(cwd) : repoRoot;
 	const projectDiscovery = discoverAgents(discoveryRoot, "project");
+	const projectAgentConfig =
+		projectDiscovery.agents.find((candidate) => candidate.name === agentName) ?? null;
+	const fixedAgentName = resolveFixedAgentName();
+
+	if (isRemoteProjectWorkerMode() && fixedAgentName === "mainsequence-project-executor") {
+		const bundledDiscovery = discoverAgents(repoRoot, "project");
+		const bundledAgentConfig =
+			bundledDiscovery.agents.find((candidate) => candidate.name === fixedAgentName) ?? null;
+		const agentConfig = projectAgentConfig ?? bundledAgentConfig;
+		const availableAgentNames = Array.from(
+			new Set([
+				...projectDiscovery.agents.map((candidate) => candidate.name),
+				...bundledDiscovery.agents.map((candidate) => candidate.name),
+			]),
+		).sort();
+		return {
+			agentConfig,
+			discoveryRoot,
+			projectAgentsDir: projectDiscovery.projectAgentsDir,
+			availableAgentNames,
+		};
+	}
+
+	const discovery = projectAgentConfig ? projectDiscovery : discoverAgents(discoveryRoot, "both");
 	const agentConfig =
-		projectDiscovery.agents.find((candidate) => candidate.name === agentName) ??
-		discoverAgents(discoveryRoot, "both").agents.find((candidate) => candidate.name === agentName) ??
+		projectAgentConfig ??
+		discovery.agents.find((candidate) => candidate.name === agentName) ??
 		null;
-	const discovery = agentConfig ? discoverAgents(discoveryRoot, "both") : projectDiscovery;
 	return {
 		agentConfig,
 		discoveryRoot,
