@@ -2,12 +2,6 @@
 
 `POST /api/chat` accepts a JSON body compatible with assistant-ui's `ui-message-stream` request shape.
 
-`GET /api/chat/history` accepts one of these query parameters:
-
-- `sessionId`
-- `runtime_session_id`
-- `runtimeSessionId`
-
 `GET /api/chat/session-model` also accepts the same query parameters and returns the model binding
 currently stored for that runtime session.
 

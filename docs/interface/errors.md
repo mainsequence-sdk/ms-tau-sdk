@@ -9,7 +9,6 @@ Typical error responses:
   user claims, or `ASTRO_MAINSEQUENCE_USER_ID`.
 - `400` — missing `runtime_session_id` (or accepted alias) for real non-mock `POST /api/chat` or
   `POST /api/a2a/chat` requests
-- `400` — missing `sessionId` for `GET /api/chat/history`
 - `400` — missing `sessionId` for `GET /api/chat/session-model`
 - `400` — missing `sessionId` for `PATCH /api/chat/session-config`
 - `400` — `invalid_session_config` when the patch payload includes unsupported or invalid config fields
@@ -37,9 +36,6 @@ Typical error responses:
   credential storage is unavailable or rejects the operation
 - `400` — `signin_manual_input_missing` when `POST /api/model-providers/:provider/signin/:attemptId/manual` has no `input`
 - `409` — resume request `projectId` or `cwd` does not match the stored session metadata
-- `404` — `session_not_found` or `history_not_available` for `GET /api/chat/history`
-- `502` — `backend_session_history_reconstruction_failed` when backend `AgentSession` data cannot
-  be fetched for Astro history reconstruction
 - `404` — `session_not_found` or `session_checkpoint_not_found` for read endpoints that cannot
   hydrate from backend checkpoint state
 - `500` — `conversation_persistence_failed` when the server cannot write history before streaming
@@ -59,5 +55,5 @@ Access-Control-Allow-Headers: Content-Type, Authorization, Last-Event-ID
 When Astro rejects a browser origin, it logs a line like:
 
 ```text
-[astro-cors] Rejected origin=http://localhost:3000 method=GET path=/api/chat/history?sessionId=38 trusted_origins=http://localhost:5173,http://127.0.0.1:5173
+[astro-cors] Rejected origin=http://localhost:3000 method=POST path=/api/chat trusted_origins=http://localhost:5173,http://127.0.0.1:5173
 ```

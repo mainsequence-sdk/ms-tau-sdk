@@ -747,15 +747,15 @@ checkpoint_marker_reason_map = {
 If the user returns after the detached run finished, the frontend loads:
 
 ```http
-GET /api/chat/history?sessionId={runtime_session_id}
+GET backend-owned chat history for {runtime_session_id}
 ```
 
-Astro rebuilds the completed assistant answer from local cache or backend checkpoint state.
+The history service returns the completed assistant answer from durable session state.
 
 If the user returns while the run is still active, the frontend can poll:
 
 ```http
-GET /api/chat/history?sessionId={runtime_session_id}
+GET backend-owned chat history for {runtime_session_id}
 ```
 
 and optionally:

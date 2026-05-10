@@ -25,7 +25,6 @@ The server binds to the LAN address when `ASTRO_STREAM_HOST=0.0.0.0`.
 - `GET /api/models/catalog`
 - `GET /api/model-providers`
 - `GET /api/model-providers/:provider/signin/:attemptId`
-- `GET /api/chat/history`
 - `GET /api/chat/session-model`
 - `PATCH /api/chat/session-config`
 - `POST /api/model-providers/:provider/signin`

@@ -23,8 +23,6 @@ The stream always ends with:
 data: [DONE]
 ```
 
-`GET /api/chat/history` returns compact JSON history, not SSE. See
-[`history-hydration.md`](./history-hydration.md) for the response shape.
 `GET /api/chat/session-model` also returns JSON, not SSE. It exposes the model binding stored for
 the runtime session.
 If the latest user message contains the word `MOCK`, `POST /api/chat` returns a synthetic SSE

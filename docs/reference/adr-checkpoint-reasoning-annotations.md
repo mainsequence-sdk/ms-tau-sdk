@@ -274,7 +274,7 @@ Astro must:
 - avoid storing raw reasoning text in annotations
 - let the sidecar flush annotations with the normal checkpoint bundle
 - use annotations only as a fallback when Pi JSONL lacks native thinking content
-- return structured `reasoning` content parts from `GET /api/chat/history`
+- return structured `reasoning` content parts from hydrated chat history
 - ignore malformed or stale annotations rather than corrupting history
 
 Astro should prefer this match order during history projection:

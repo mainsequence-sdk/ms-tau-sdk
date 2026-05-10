@@ -237,15 +237,6 @@ does not have to be recovered through fallback.
 Requests cancellation of an active A2A-backed runtime session. This is an out-of-band control path,
 not part of the streamed `POST /api/a2a/chat` response itself.
 
-### `GET /api/chat/history?sessionId=<runtime_session_id>`
-
-Returns the compact JSON conversation snapshot for an existing session. This endpoint is intended
-for fast chat hydration and does not replay the live SSE stream. Astro owns this response shape:
-it returns local `.history.json` when available, otherwise it fetches the backend `AgentSession`
-and latest checkpoint, projects `bundle.pi_session_jsonl` into frontend user/assistant messages,
-normalizes assistant thinking into structured `reasoning` content parts, and caches the rebuilt
-`.history.json` locally.
-
 ### `GET /api/chat/session-model?sessionId=<runtime_session_id>`
 
 Returns the model binding stored for the runtime session.
@@ -320,14 +311,6 @@ Session files are stored at:
 
 `ASTRO_STREAM_SESSION_DIR/<agent_session_id>.jsonl`
 `ASTRO_STREAM_SESSION_DIR/<agent_session_id>.meta.json`
-
-Frontend chat history shape is owned by Astro and keyed by `AgentSession.id` and `thread_id`.
-Local `.conversation.jsonl` and `.history.json` files are process-local cache. If the full local
-history snapshot is missing, `GET /api/chat/history` reconstructs the transcript from backend
-`AgentSession` fields plus the latest checkpoint `bundle.pi_session_jsonl`. The backend does not
-store Astro's frontend-history response blob. Pi `thinking` blocks and literal provider
-`<think>...</think>` text are returned as structured `reasoning` parts, not as normal assistant
-text.
 
 ### `GET /health`
 

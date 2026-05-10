@@ -86,6 +86,16 @@ function readMainsequenceCliVersion(): CommandResult {
 	return runCommand("mainsequence", ["--version"]);
 }
 
+function formatRuntimeVersionTag(
+	label: string,
+	version: string | null,
+	options: { prefixWithV?: boolean; separator?: string } = {},
+): string {
+	if (!version) return `${label} unknown`;
+	const separator = options.separator ?? " ";
+	return options.prefixWithV ? `${label}${separator}v${version}` : `${label}${separator}${version}`;
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "get_runtime_info",
@@ -151,13 +161,16 @@ export default function (pi: ExtensionAPI) {
 				},
 			};
 
+			const versionTags = [
+				formatRuntimeVersionTag("Astro", details.astro_release_version, { prefixWithV: true }),
+				formatRuntimeVersionTag("ms-sdk", details.mainsequence_sdk_version, { separator: "-" }),
+				formatRuntimeVersionTag("Python", details.python_version),
+				formatRuntimeVersionTag("Node", details.node_version),
+			];
+
 			const lines = [
-				`Astro release version: ${details.astro_release_version ?? "unknown"}`,
-				`Astro package version: ${details.astro_package_version ?? "unknown"}`,
-				`Main Sequence SDK version: ${details.mainsequence_sdk_version ?? "unknown"}`,
-				`Main Sequence CLI version: ${details.mainsequence_cli_version ?? "unknown"}`,
-				`Python version: ${details.python_version ?? "unknown"}`,
-				`Node version: ${details.node_version}`,
+				`Versions: ${versionTags.join(" | ")}`,
+				`Astro package ${details.astro_package_version ?? "unknown"}`,
 				`Agent: ${details.agent_name}`,
 				`Execution mode: ${details.execution_mode}`,
 			];
@@ -178,7 +191,10 @@ export default function (pi: ExtensionAPI) {
 						text: lines.join("\n"),
 					},
 				],
-				details,
+				details: {
+					...details,
+					version_tags: versionTags,
+				},
 			};
 		},
 	});

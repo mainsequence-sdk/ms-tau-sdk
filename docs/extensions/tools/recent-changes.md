@@ -37,4 +37,3 @@ Track and list files recently changed by the parent Astro session through Pi `wr
 ## Related files
 
 - [`../shared/repo.md`](../shared/repo.md)
-- [`../../interface/history-hydration.md`](../../interface/history-hydration.md)

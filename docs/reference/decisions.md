@@ -374,16 +374,3 @@ Why:
 - model binding must fall back to backend-owned session authority instead of proceeding with a null
   model
 - A2A callers should provide an existing session id rather than relying on Astro to create one
-
-## 28. Make backend A2A session allocation idempotent
-
-Implementation:
-
-- `reference/adr-28-backend-idempotent-a2a-session-allocation.md`
-
-Why:
-
-- one logical A2A task should not fork into multiple executor sessions just because the caller
-  retried
-- prompt guidance is too soft to enforce retry discipline across all callers
-- backend allocation authority is the right place to guarantee session reuse versus explicit restart

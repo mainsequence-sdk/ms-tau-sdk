@@ -512,7 +512,7 @@ After compaction normalization:
 
 - local `<session_id>.conversation.jsonl` is deleted
 - local `<session_id>.history.json` is deleted
-- future `GET /api/chat/history` rebuilds from backend latest checkpoint
+- future chat-history hydration rebuilds from the backend latest checkpoint
 - the frontend history projection includes a compacted-history boundary from the compaction summary
 - deleted pre-compaction user/assistant turns do not come back
 

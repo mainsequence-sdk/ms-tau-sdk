@@ -18,8 +18,6 @@ npm run pi:stream
 This starts the HTTP streaming wrapper on `http://0.0.0.0:8787` and is reachable on your LAN at `http://<your-ip>:8787`.
 
 The stream endpoint accepts assistant-ui compatible `ui-message-stream` requests at `POST /api/chat` and returns SSE.
-A compact JSON snapshot for an old conversation can be fetched later with
-`GET /api/chat/history?sessionId=<runtime_session_id>`.
 
 When backend agent registration is enabled, `runtime_session_id` is the backend `AgentSession.id`.
 Active files live under the configured session directory, and durable continuity comes from backend

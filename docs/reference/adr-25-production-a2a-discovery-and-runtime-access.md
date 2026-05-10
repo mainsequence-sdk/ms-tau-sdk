@@ -13,8 +13,14 @@ The session-creation portions are superseded by
 backend must allocate the A2A target session before Astro is called, and Astro must not create that
 session from the stream runtime.
 
-The retry/reuse semantics for that backend allocation step are further constrained by
-[`adr-28-backend-idempotent-a2a-session-allocation.md`](./adr-28-backend-idempotent-a2a-session-allocation.md).
+The retry/reuse semantics for that backend allocation step are owned by the backend control plane
+through backend ADR-007 (`A2A Target Session Allocation Idempotency`).
+
+Astro is only a consumer of that contract:
+
+- the backend allocation response is authoritative
+- Astro should persist and reuse the returned `handle_unique_id`
+- Astro should not restate or reimplement backend allocation internals in this repo
 
 ## Context
 
@@ -147,6 +153,21 @@ session identity for that A2A communication before Astro is called.
 
 Astro must receive that existing session id and treat it as the backend-owned A2A session key for
 the remainder of the flow. Astro must not create the session from the stream runtime.
+
+Per backend ADR-007, the allocation response is canonical and should include:
+
+- `handle_unique_id`
+- `agent_session_id`
+- `allocation_state`
+- `session`
+
+Astro should treat that backend response as authoritative.
+
+Allocation/retry semantics are:
+
+- first allocation may omit `handle_unique_id`; backend may generate one
+- later retries and reconnects should reuse the returned `handle_unique_id`
+- Astro should not invent its own correlation or restart identity locally
 
 Because the sender already holds the backend session-allocation response at this point, it must
 also forward the full backend `AgentSession` JSON serialization for that same target session in the

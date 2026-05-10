@@ -13,11 +13,6 @@ ASTRO_STREAM_SESSION_DIR/<agent_session_id>.meta.json
 When registration is disabled, the older local `threadId` fallback may still exist in code, but it
 is not the intended production contract for chat or A2A.
 
-Frontend chat history shape is owned by Astro. The local `<session>.conversation.jsonl` and
-`<session>.history.json` files are runtime cache files; when that cache is missing, Astro rebuilds
-the frontend transcript from the backend `AgentSession` record plus latest checkpoint
-`bundle.pi_session_jsonl`.
-
 ## Session attachment logic
 
 - Real `POST /api/chat` and `POST /api/a2a/chat` requests must include `runtime_session_id` (or an
@@ -40,10 +35,6 @@ the frontend transcript from the backend `AgentSession` record plus latest check
 - `mainsequence-project-executor` sessions persist selected project context such as `projectId` and
   project `cwd` in local runtime metadata so later requests against the same `runtime_session_id`
   can keep using the same project context.
-- The stream wrapper keeps a local history cache for the active process. The backend does not store
-  Astro's frontend history snapshot shape.
-- `GET /api/chat/history` returns Astro's frontend history shape from local `.history.json` when it
-  exists; otherwise it reconstructs history from backend `AgentSession.id` plus checkpoint state.
 - Read endpoints that require session metadata or Pi JSONL hydrate from backend checkpoint state
   before returning `session_not_found`.
 

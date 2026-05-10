@@ -157,24 +157,9 @@ These files are not authoritative checkpoint files:
 During migration, Astro may still write them as local runtime cache files, but the sidecar must not
 treat them as required checkpoint bundle members. They are disposable with the pod.
 
-The backend should not expose or persist Astro's frontend `conversation_history_snapshot` shape.
-The backend owns generic session/checkpoint/domain data. Astro owns the projection from backend
-data into the frontend chat-history response.
-
-Astro exposes the frontend history endpoint:
-
-```http
-GET /api/chat/history?sessionId={runtime_session_id}
-```
-
-Optional aliases accepted by Astro:
-
-```http
-GET /api/chat/history?runtime_session_id={runtime_session_id}
-GET /api/chat/history?runtimeSessionId={runtime_session_id}
-```
-
-The response body is the Astro/frontend `conversation_history_snapshot` directly:
+This ADR originally assumed Astro would own projection of backend session/checkpoint data into the
+frontend chat-history response. The active system no longer exposes that Astro-owned history
+endpoint, but the projected response shape described below remains the same:
 
 ```python
 conversation_history_snapshot = {
@@ -240,7 +225,7 @@ Errors returned by Astro:
 
 ```python
 astro_chat_history_error_response = {
-    "error": "session_not_found" | "history_not_available" | "backend_session_history_reconstruction_failed",
+    "error": "session_not_found" | "history_not_available",
     "message": str,
 }
 ```
@@ -248,8 +233,7 @@ astro_chat_history_error_response = {
 The intended read paths are:
 
 - Pi resume reads the backend checkpoint bundle and restores `<session_id>.jsonl`.
-- Frontend chat hydration reads Astro `/api/chat/history`, which reconstructs the frontend shape
-  from local cache or backend `AgentSession` plus backend `pi_session_jsonl`.
+- Frontend chat hydration reads a projected history snapshot built from durable session state.
 
 Local cache writes should happen at message or turn boundaries, not per streamed token/chunk.
 
@@ -938,9 +922,9 @@ local manifest and restore the backend checkpoint before launching or flushing a
       frontend correlation only.
 - [ ] Add the backend read-only latest checkpoint endpoint used by Astro history hydration:
       `GET /orm/api/agents/v1/sessions/{agent_session_id}/checkpoint/latest/`.
-- [x] Update Astro `GET /api/chat/history` to return local `.history.json` when present, otherwise
-      fetch backend `AgentSession` plus `checkpoint/latest/` and rebuild the full frontend
-      transcript from `bundle.pi_session_jsonl`.
+- [x] Update Astro's historical history-hydration path to return local `.history.json` when
+      present, otherwise fetch backend `AgentSession` plus `checkpoint/latest/` and rebuild the
+      full frontend transcript from `bundle.pi_session_jsonl`.
 - [x] Update read endpoints that depend on local session metadata or Pi JSONL
       (`session-model`, `session-config`, and `session-insights`, along with the read-only
       surfaces that existed during the migration) to hydrate from backend checkpoint state before

@@ -210,5 +210,14 @@ This ADR supersedes the stream-runtime creation assumptions in:
 The backend remains the creator of the `AgentSession` row. The additional rule from this ADR is:
 Astro must not be the component that initiates that creation from chat or A2A stream requests.
 
-The retry and reuse semantics for backend-created A2A target sessions are defined in
-[`adr-28-backend-idempotent-a2a-session-allocation.md`](./adr-28-backend-idempotent-a2a-session-allocation.md).
+The retry and reuse semantics for backend-created A2A target sessions are owned by backend ADR-007
+(`A2A Target Session Allocation Idempotency`).
+
+Astro's responsibility in this repo is narrower:
+
+- do not create the target session from chat or A2A
+- consume the backend-allocated target session contract
+- preserve and reuse the backend-returned `handle_unique_id` on retries instead of inventing local
+  allocation policy
+- allow first allocation to come from the backend without a caller-supplied `handle_unique_id`,
+  then treat the returned `handle_unique_id` as the stable delegated reuse key for later retries
