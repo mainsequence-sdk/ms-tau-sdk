@@ -182,9 +182,9 @@ latest available `mainsequence`, then Cloud Build detects the Astro project vers
 runtime versions and publishes:
 
 - `<image>:astro-<astro-version>`
-- `<image>:astro-<astro-version>-py<python-major.minor>`
-- `<image>:astro-<astro-version>-node<node-major.minor>`
-- `<image>:astro-<astro-version>-ms<mainsequence-version>`
+- `<image>:python-<python-major.minor>`
+- `<image>:node-<node-major.minor>`
+- `<image>:ms-sdk-<mainsequence-version>`
 - `<image>:latest`
 
 The final published image is also labeled with exact full versions:
@@ -267,9 +267,9 @@ steps:
           -p "process.versions.node.split('.').slice(0, 2).join('.')" )"
 
         VERSION_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}"
-        PYTHON_RUNTIME_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}-py$${PYTHON_VERSION_TAG}"
-        NODE_RUNTIME_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}-node$${NODE_VERSION_TAG}"
-        MAINSEQUENCE_RUNTIME_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}-ms$${MAINSEQUENCE_VERSION}"
+        PYTHON_RUNTIME_IMAGE="${_IMAGE_PREFIX}:python-$${PYTHON_VERSION_TAG}"
+        NODE_RUNTIME_IMAGE="${_IMAGE_PREFIX}:node-$${NODE_VERSION_TAG}"
+        MAINSEQUENCE_RUNTIME_IMAGE="${_IMAGE_PREFIX}:ms-sdk-$${MAINSEQUENCE_VERSION}"
 
         printf '%s' "$${VERSION_IMAGE}" > /workspace/version_image.txt
         printf '%s' "$${PYTHON_RUNTIME_IMAGE}" > /workspace/python_runtime_image.txt
@@ -362,7 +362,7 @@ options:
 - the running service still needs writable container runtime state at `/home/appuser/.astro-container-data`
 - rebuilding without bumping the Astro package version will repoint that `astro-<version>` tag to
   the newly built image
-- the extra `astro...-py...`, `astro...-node...`, and `astro...-ms...` tags are still just more
+- the extra `python-...`, `node-...`, and `ms-sdk-...` tags are still just more
   tags on the same built image, not separate builds
 - the published tags now point at the same final labeled image, while the unlabeled local build
   image is only an internal intermediate used during Cloud Build

@@ -53,9 +53,9 @@ steps:
           -p "process.versions.node.split('.').slice(0, 2).join('.')" )"
 
         VERSION_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}"
-        PYTHON_RUNTIME_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}-py$${PYTHON_VERSION_TAG}"
-        NODE_RUNTIME_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}-node$${NODE_VERSION_TAG}"
-        MAINSEQUENCE_RUNTIME_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}-ms$${MAINSEQUENCE_VERSION}"
+        PYTHON_RUNTIME_IMAGE="${_IMAGE_PREFIX}:python-$${PYTHON_VERSION_TAG}"
+        NODE_RUNTIME_IMAGE="${_IMAGE_PREFIX}:node-$${NODE_VERSION_TAG}"
+        MAINSEQUENCE_RUNTIME_IMAGE="${_IMAGE_PREFIX}:ms-sdk-$${MAINSEQUENCE_VERSION}"
         BUNDLE_VERSION_IMAGE="${_BUNDLE_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}"
 
         printf '%s' "$${VERSION_IMAGE}" > /workspace/version_image.txt
