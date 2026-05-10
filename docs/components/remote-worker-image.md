@@ -41,9 +41,9 @@ under `/app`, while project execution should happen inside `${SKEL_APP_DIR}`.
 
 ### 1. Published Astro executor bundle
 
-The first stage pulls a published `project-executor-bundle` image from Artifact Registry:
+The first stage pulls a published `astro/project-executor-bundle` image from Artifact Registry:
 
-- `europe-west1-docker.pkg.dev/mainsequence-development/tsorm-images/project-executor-bundle`
+- `europe-west1-docker.pkg.dev/mainsequence-development/tsorm-images/astro/project-executor-bundle`
 - the Dockerfile only varies the bundle tag via `ASTRO_EXECUTOR_BUNDLE_REF`
 
 That bundle is built from the Astro repo itself and carries the `/app` runtime tree needed by the
@@ -101,7 +101,7 @@ cd "${ASTRO_FIXED_PROJECT_CWD}" && tsx /app/scripts/start_pi_stream.ts
   - optional
   - defaults to `latest`
   - selects the published tag from
-    `europe-west1-docker.pkg.dev/mainsequence-development/tsorm-images/project-executor-bundle`
+    `europe-west1-docker.pkg.dev/mainsequence-development/tsorm-images/astro/project-executor-bundle`
 
 ## Runtime environment variables
 
@@ -225,7 +225,7 @@ consume the remote worker image definition from Cloud Storage.
 This repo's Cloud Build also publishes the executor bundle image to:
 
 ```text
-${_AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/project-executor-bundle
+${_AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/astro/project-executor-bundle
 ```
 
 It pushes:

@@ -144,7 +144,7 @@ steps:
         MAINSEQUENCE_RUNTIME_IMAGE="$$(cat /workspace/mainsequence_runtime_image.txt)"
         docker push "$${MAINSEQUENCE_RUNTIME_IMAGE}"
 
-  - id: "push-project-executor-bundle-version-image"
+  - id: "push-astro-project-executor-bundle-version-image"
     waitFor:
       - "build-image-and-detect-mainsequence-version"
     name: "gcr.io/cloud-builders/docker"
@@ -156,7 +156,7 @@ steps:
         BUNDLE_VERSION_IMAGE="$$(cat /workspace/bundle_version_image.txt)"
         docker push "$${BUNDLE_VERSION_IMAGE}"
 
-  - id: "push-project-executor-bundle-latest-image"
+  - id: "push-astro-project-executor-bundle-latest-image"
     waitFor:
       - "build-image-and-detect-mainsequence-version"
     name: "gcr.io/cloud-builders/docker"
@@ -168,7 +168,7 @@ substitutions:
   _AR_REGION: "europe-west1"
   _AR_REPO: "tsorm-images"
   _IMAGE_NAME: "astro/astro-pi-stream"
-  _BUNDLE_IMAGE_NAME: "project-executor-bundle"
+  _BUNDLE_IMAGE_NAME: "astro/project-executor-bundle"
   _DOCKER_TARGET: "astro-pi-stream"
   _IMAGE_PREFIX: "${_AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE_NAME}"
   _BUNDLE_IMAGE_PREFIX: "${_AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_BUNDLE_IMAGE_NAME}"

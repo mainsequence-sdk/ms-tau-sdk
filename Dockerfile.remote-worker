@@ -3,7 +3,7 @@
 ARG BASE_IMAGE
 ARG ASTRO_EXECUTOR_BUNDLE_REF=latest
 
-FROM europe-west1-docker.pkg.dev/mainsequence-development/tsorm-images/project-executor-bundle:${ASTRO_EXECUTOR_BUNDLE_REF} AS astro-executor-bundle
+FROM europe-west1-docker.pkg.dev/mainsequence-development/tsorm-images/astro/project-executor-bundle:${ASTRO_EXECUTOR_BUNDLE_REF} AS astro-executor-bundle
 
 
 # =============================================================================
