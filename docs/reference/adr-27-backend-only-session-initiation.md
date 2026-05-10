@@ -213,6 +213,10 @@ Astro must not be the component that initiates that creation from chat or A2A st
 The retry and reuse semantics for backend-created A2A target sessions are owned by backend ADR-007
 (`A2A Target Session Allocation Idempotency`).
 
+The Astro-side rule for preserving caller/response/linkage A2A state as durable local session data
+is covered by
+[`adr-28-durable-a2a-session-envelope.md`](./adr-28-durable-a2a-session-envelope.md).
+
 Astro's responsibility in this repo is narrower:
 
 - do not create the target session from chat or A2A
@@ -221,3 +225,4 @@ Astro's responsibility in this repo is narrower:
   allocation policy
 - allow first allocation to come from the backend without a caller-supplied `handle_unique_id`,
   then treat the returned `handle_unique_id` as the stable delegated reuse key for later retries
+- durably retain the A2A envelope for attached sessions without introducing a new chat-role model

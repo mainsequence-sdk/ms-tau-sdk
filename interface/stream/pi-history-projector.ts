@@ -5,6 +5,12 @@ import {
 	type SessionEntry,
 	type SessionMessageEntry,
 } from "../../node_modules/@mariozechner/pi-coding-agent/dist/core/session-manager.js";
+import {
+	a2aEnvelopeToUserProvenance,
+	cloneA2AEnvelope,
+	cloneUserMessageProvenance,
+	normalizeA2AEnvelope,
+} from "./a2a-envelope.js";
 import type {
 	ConversationHistorySnapshot,
 	ConversationMessage,
@@ -576,6 +582,13 @@ function buildCompactionHistoryMessage(entry: CompactionEntry): ConversationMess
 	};
 }
 
+function resolveA2AEnvelopeFromMetadata(metadata: unknown, session: HistorySessionEnvelope) {
+	const sessionEnvelope = normalizeA2AEnvelope(session.a2a);
+	if (sessionEnvelope) return sessionEnvelope;
+	if (!isRecord(metadata)) return null;
+	return normalizeA2AEnvelope(metadata.a2a ?? metadata.a2a_envelope);
+}
+
 function normalizeHistoryAnnotations(metadata: unknown): HistoryAnnotation[] {
 	if (!isRecord(metadata)) return [];
 	const annotations = metadata.history_annotations;
@@ -655,7 +668,10 @@ function applyHistoryAnnotations(
 	});
 }
 
-function projectMessages(entries: SessionEntry[]): ProjectedMessage[] {
+function projectMessages(
+	entries: SessionEntry[],
+	options?: { agentUserProvenance?: ConversationMessage["provenance"] },
+): ProjectedMessage[] {
 	const messages: ProjectedMessage[] = [];
 	let userCount = 0;
 	let assistantCount = 0;
@@ -717,6 +733,9 @@ function projectMessages(entries: SessionEntry[]): ProjectedMessage[] {
 				createdAt: timestamp,
 				completedAt: role === "assistant" ? timestamp : undefined,
 				content,
+				...(role === "user" && options?.agentUserProvenance
+					? { provenance: cloneUserMessageProvenance(options.agentUserProvenance) }
+					: {}),
 			},
 			piEntryId: entry.id,
 		});
@@ -736,9 +755,16 @@ export function rebuildConversationHistoryFromPiJsonl(input: {
 
 	const currentBranch = getCurrentBranch(entries);
 	validateCurrentBranchToolCallConsistency(currentBranch);
-	const messages = applyHistoryAnnotations(projectMessages(currentBranch), input.metadata, {
+	const a2aEnvelope = resolveA2AEnvelopeFromMetadata(input.metadata, input.session);
+	const messages = applyHistoryAnnotations(
+		projectMessages(currentBranch, {
+			agentUserProvenance: a2aEnvelopeToUserProvenance(a2aEnvelope),
+		}),
+		input.metadata,
+		{
 		allowOrdinalFallback: !currentBranch.some(isCompactionEntry),
-	});
+		},
+	);
 	const lastMessage = messages[messages.length - 1] ?? null;
 	const updatedAt =
 		input.session.updatedAt ??
@@ -751,6 +777,7 @@ export function rebuildConversationHistoryFromPiJsonl(input: {
 		session: {
 			...input.session,
 			updatedAt,
+			...(a2aEnvelope ? { a2a: cloneA2AEnvelope(a2aEnvelope) } : {}),
 		},
 		messages,
 		inProgressMessage: null,

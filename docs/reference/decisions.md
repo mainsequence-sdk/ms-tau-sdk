@@ -374,3 +374,18 @@ Why:
 - model binding must fall back to backend-owned session authority instead of proceeding with a null
   model
 - A2A callers should provide an existing session id rather than relying on Astro to create one
+
+## 28. Keep A2A envelope as durable session state
+
+Implementation:
+
+- `reference/adr-28-durable-a2a-session-envelope.md`
+
+Why:
+
+- A2A is session-to-session communication and needs durable caller/response/linkage state beyond
+  flattened user text
+- keeping `user` / `assistant` avoids a broad protocol churn across Pi history, session insights,
+  and UI contracts
+- prompt injection should project durable A2A state rather than being the only place that
+  relationship exists

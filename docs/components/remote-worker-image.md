@@ -193,6 +193,10 @@ project flow:
 That is the core contract of the image-backed worker: the image should already contain the prepared
 project runtime, so Astro should execute work inside it instead of rebuilding it.
 
+The executor prompt itself still comes from Astro's bundled `.pi/agents` runtime prompt set unless
+the project image provides its own `.pi/agents/mainsequence-project-executor.md` override inside
+`${SKEL_APP_DIR}`.
+
 ## What the backend should pass
 
 At pod launch time, the backend should provide at least:

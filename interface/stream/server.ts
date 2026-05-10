@@ -26,6 +26,13 @@ import {
 	type ConversationStore,
 } from "./conversation-store.js";
 import {
+	a2aEnvelopeToUserProvenance,
+	mergeA2AEnvelopes,
+	normalizeA2AEnvelope,
+	normalizeA2AResponseFormat,
+	type A2AEnvelope,
+} from "./a2a-envelope.js";
+import {
 	repairPiSessionJsonlCurrentBranch,
 	validatePiSessionJsonlCurrentBranch,
 	type PiSessionJsonlRepair,
@@ -85,7 +92,6 @@ import {
 } from "../../pi/extensions/shared/agent-registration.js";
 import {
 	buildA2ASystemInstruction,
-	normalizeA2AResponseFormat,
 } from "../../pi/extensions/shared/a2a.js";
 import { logStructuredEvent } from "../../pi/extensions/shared/structured-logging.js";
 import {
@@ -617,6 +623,7 @@ type SessionMetadata = {
 	projectImageRef?: string | null;
 	sessionModelBinding: SessionModelBinding | null;
 	sessionConfigOverrides: SessionConfigOverrides | null;
+	a2a?: A2AEnvelope | null;
 	history_annotations?: HistoryAnnotations;
 };
 
@@ -1481,6 +1488,56 @@ function extractBackendSessionThreadId(
 	);
 }
 
+function extractCanonicalA2AEnvelope(...sources: Array<Record<string, unknown> | null | undefined>): A2AEnvelope | null {
+	for (const source of sources) {
+		if (!source) continue;
+		const normalized =
+			normalizeA2AEnvelope(source.a2a) ??
+			normalizeA2AEnvelope(source.a2a_envelope) ??
+			null;
+		if (normalized) return normalized;
+	}
+	return null;
+}
+
+function buildRequestA2AEnvelope(input: {
+	enabled: boolean;
+	body: Record<string, unknown>;
+	a2aContext: Record<string, unknown>;
+	caller: Record<string, unknown>;
+}): A2AEnvelope | null {
+	if (!input.enabled) return null;
+	const responseFormat = normalizeA2AResponseFormat(
+		input.body.response_format ??
+			input.body.responseFormat ??
+			input.a2aContext.response_format ??
+			input.a2aContext.responseFormat,
+	);
+	return {
+		version: 1,
+		enabled: true,
+		userOrigin: "agent",
+		callerAgentName:
+			extractStringProperty(input.caller, "agent_name", "agentName", "name") ??
+			extractStringProperty(input.a2aContext, "caller_agent_name", "callerAgentName") ??
+			null,
+		callerMetadata: Object.keys(input.caller).length > 0 ? input.caller : null,
+		responseFormat,
+		handleUniqueId:
+			extractStringProperty(input.body, "handle_unique_id", "handleUniqueId") ??
+			extractStringProperty(input.a2aContext, "handle_unique_id", "handleUniqueId") ??
+			null,
+		callerAgentSessionId:
+			extractNumericProperty(input.body, "caller_agent_session_id", "callerAgentSessionId") ??
+			extractNumericProperty(input.caller, "agent_session_id", "agentSessionId", "session_id", "sessionId") ??
+			null,
+		targetAgentId:
+			extractNumericProperty(input.body, "target_agent_id", "targetAgentId") ??
+			extractNumericProperty(input.a2aContext, "target_agent_id", "targetAgentId") ??
+			null,
+	};
+}
+
 async function attachHydratedBackendSession(options: {
 	runtimeSessionId: string;
 	userId: string;
@@ -1748,9 +1805,14 @@ type SpecialistAgentResolution = {
 
 function resolveSpecialistAgent(agentName: string, cwd?: string | null): SpecialistAgentResolution {
 	const discoveryRoot = cwd ? path.resolve(cwd) : repoRoot;
-	const discovery = discoverAgents(discoveryRoot, "project");
+	const projectDiscovery = discoverAgents(discoveryRoot, "project");
+	const agentConfig =
+		projectDiscovery.agents.find((candidate) => candidate.name === agentName) ??
+		discoverAgents(discoveryRoot, "both").agents.find((candidate) => candidate.name === agentName) ??
+		null;
+	const discovery = agentConfig ? discoverAgents(discoveryRoot, "both") : projectDiscovery;
 	return {
-		agentConfig: discovery.agents.find((candidate) => candidate.name === agentName) ?? null,
+		agentConfig,
 		discoveryRoot,
 		projectAgentsDir: discovery.projectAgentsDir,
 		availableAgentNames: discovery.agents.map((candidate) => candidate.name).sort(),
@@ -1846,6 +1908,7 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 		const rawProjectImageRef = (parsed as { projectImageRef?: unknown }).projectImageRef;
 		const rawSessionModelBinding = (parsed as { sessionModelBinding?: unknown }).sessionModelBinding;
 		const rawSessionConfigOverrides = (parsed as { sessionConfigOverrides?: unknown }).sessionConfigOverrides;
+		const rawA2A = (parsed as { a2a?: unknown }).a2a;
 		const rawHistoryAnnotations = (parsed as { history_annotations?: unknown }).history_annotations;
 		const normalizedAgentId =
 			typeof rawAgentId === "number" && Number.isFinite(rawAgentId)
@@ -1875,6 +1938,7 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 		const normalizedProjectImageRef = normalizeProjectImageRef(rawProjectImageRef);
 		const normalizedSessionModelBinding = normalizeSessionModelBinding(rawSessionModelBinding);
 		const normalizedSessionConfigOverrides = normalizeSessionConfigOverrides(rawSessionConfigOverrides);
+		const normalizedA2A = normalizeA2AEnvelope(rawA2A);
 		const normalizedHistoryAnnotations = normalizeHistoryAnnotations(rawHistoryAnnotations);
 		return {
 			agentId: Number.isFinite(normalizedAgentId as number) ? (normalizedAgentId as number) : null,
@@ -1891,6 +1955,7 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 			projectImageRef: normalizedProjectImageRef,
 			sessionModelBinding: normalizedSessionModelBinding,
 			sessionConfigOverrides: normalizedSessionConfigOverrides,
+			...(normalizedA2A ? { a2a: normalizedA2A } : {}),
 			...(normalizedHistoryAnnotations ? { history_annotations: normalizedHistoryAnnotations } : {}),
 		};
 	} catch {
@@ -1907,6 +1972,10 @@ function writeSessionMetadata(sessionKey: string, metadata: SessionMetadata) {
 			readJsonFileObject(metadataPath)?.history_annotations,
 		);
 		if (existingAnnotations) nextMetadata.history_annotations = existingAnnotations;
+	}
+	if (!Object.prototype.hasOwnProperty.call(nextMetadata, "a2a")) {
+		const existingA2A = normalizeA2AEnvelope(readJsonFileObject(metadataPath)?.a2a);
+		if (existingA2A) nextMetadata.a2a = existingA2A;
 	}
 	writeFileSync(metadataPath, JSON.stringify(nextMetadata, null, 2));
 }
@@ -2786,6 +2855,7 @@ function buildSessionMetadataFromBackendCheckpoint(input: {
 		extractStringProperty(bundleMetadata, "startedAt", "started_at") ??
 		extractStringProperty(input.sessionPayload, "started_at", "startedAt") ??
 		extractStringProperty(sessionMetadata ?? {}, "started_at", "startedAt");
+	const a2a = extractCanonicalA2AEnvelope(bundleMetadata, sessionMetadata, input.sessionPayload);
 
 	return {
 		agentId,
@@ -2806,6 +2876,7 @@ function buildSessionMetadataFromBackendCheckpoint(input: {
 		sessionConfigOverrides: normalizeSessionConfigOverrides(
 			bundleMetadata.sessionConfigOverrides ?? sessionMetadata?.session_config_overrides,
 		),
+		...(a2a ? { a2a } : {}),
 		...(historyAnnotations ? { history_annotations: historyAnnotations } : {}),
 	};
 }
@@ -2843,6 +2914,10 @@ function buildSessionMetadataFromRequestSessionPayload(input: {
 		normalizeNumericId(
 			extractNumericProperty(input.sessionPayload, "id", "agent_session_id", "agentSessionId") ?? input.sessionKey,
 		) ?? input.existingMetadata?.agentSessionId ?? null;
+	const a2a =
+		extractCanonicalA2AEnvelope(sessionMetadata, input.sessionPayload) ??
+		input.existingMetadata?.a2a ??
+		null;
 
 	return {
 		agentId,
@@ -2864,6 +2939,7 @@ function buildSessionMetadataFromRequestSessionPayload(input: {
 		sessionConfigOverrides: normalizeSessionConfigOverrides(
 			sessionMetadata?.session_config_overrides ?? input.existingMetadata?.sessionConfigOverrides,
 		),
+		...(a2a ? { a2a } : {}),
 	};
 }
 
@@ -2901,6 +2977,10 @@ function buildSessionMetadataFromBackendSessionPayload(input: {
 		normalizeNumericId(
 			extractNumericProperty(input.sessionPayload, "id", "agent_session_id", "agentSessionId") ?? input.sessionKey,
 		) ?? input.existingMetadata?.agentSessionId ?? null;
+	const a2a =
+		extractCanonicalA2AEnvelope(sessionMetadata, input.sessionPayload) ??
+		input.existingMetadata?.a2a ??
+		null;
 
 	return {
 		agentId,
@@ -2922,6 +3002,7 @@ function buildSessionMetadataFromBackendSessionPayload(input: {
 		sessionConfigOverrides: normalizeSessionConfigOverrides(
 			sessionMetadata?.session_config_overrides ?? input.existingMetadata?.sessionConfigOverrides,
 		),
+		...(a2a ? { a2a } : {}),
 	};
 }
 
@@ -5796,6 +5877,12 @@ async function handleStreamRequest(
 	}
 	const a2aContext = extractObjectPropertyRecord(context, "a2a") ?? {};
 	const a2aCaller = extractObjectPropertyRecord(a2aContext, "caller") ?? {};
+	const requestA2AEnvelope = buildRequestA2AEnvelope({
+		enabled: isA2AChatRequest || a2aContext.enabled === true,
+		body: isPlainObject(body) ? body : {},
+		a2aContext,
+		caller: a2aCaller,
+	});
 
 	const fixedAgentName = resolveFixedAgentName();
 	const rawRequestedAgentName = normalizeAgentName(body.agentName);
@@ -5880,28 +5967,35 @@ async function handleStreamRequest(
 			fallbackAgentName: agentName,
 			existingMetadata: localSessionMetadata,
 		});
-		writeSessionMetadata(runtimeSessionId, requestSessionMetadata);
-		if (requestSessionMetadata.threadId) {
+		const effectiveRequestSessionMetadata =
+			requestA2AEnvelope != null
+				? {
+						...requestSessionMetadata,
+						a2a: mergeA2AEnvelopes(requestSessionMetadata.a2a ?? null, requestA2AEnvelope),
+				  }
+				: requestSessionMetadata;
+		writeSessionMetadata(runtimeSessionId, effectiveRequestSessionMetadata);
+		if (effectiveRequestSessionMetadata.threadId) {
 			writeThreadBinding({
-				threadId: requestSessionMetadata.threadId,
+				threadId: effectiveRequestSessionMetadata.threadId,
 				runtimeSessionId,
 				updatedAt: new Date().toISOString(),
 			});
 		}
 		localSessionExists = true;
-		localSessionMetadata = requestSessionMetadata;
+		localSessionMetadata = effectiveRequestSessionMetadata;
 		logStructuredEvent({
 			component: "astro-stream",
 			event: "request_session_metadata_attached",
 			message: "Astro materialized local session metadata from the request-carried session serializer.",
 			data: {
 				runtimeSessionId,
-				agentName: requestSessionMetadata.agentName,
-				threadId: requestSessionMetadata.threadId,
-				agentId: requestSessionMetadata.agentId,
-				agentSessionId: requestSessionMetadata.agentSessionId,
-				effectiveProvider: requestSessionMetadata.sessionModelBinding?.provider ?? null,
-				effectiveModel: requestSessionMetadata.sessionModelBinding?.model ?? null,
+				agentName: effectiveRequestSessionMetadata.agentName,
+				threadId: effectiveRequestSessionMetadata.threadId,
+				agentId: effectiveRequestSessionMetadata.agentId,
+				agentSessionId: effectiveRequestSessionMetadata.agentSessionId,
+				effectiveProvider: effectiveRequestSessionMetadata.sessionModelBinding?.provider ?? null,
+				effectiveModel: effectiveRequestSessionMetadata.sessionModelBinding?.model ?? null,
 			},
 		});
 	}
@@ -6036,6 +6130,13 @@ async function handleStreamRequest(
 			message: "Astro could not hydrate session metadata for the provided runtime_session_id.",
 		});
 		return;
+	}
+	if (requestA2AEnvelope) {
+		existingSessionMetadata = {
+			...existingSessionMetadata,
+			a2a: mergeA2AEnvelopes(existingSessionMetadata.a2a ?? null, requestA2AEnvelope),
+		};
+		writeSessionMetadata(runtimeSessionId, existingSessionMetadata);
 	}
 		if (existingSessionMetadata?.agentName) {
 			if (existingSessionMetadata.agentName !== agentName) {
@@ -6256,6 +6357,27 @@ async function handleStreamRequest(
 	let startedAt: string | null = null;
 	let responseAgentName = existingSessionMetadata?.agentName ?? agentName;
 	let responseThreadId = threadId;
+	const effectiveA2AEnvelope =
+		existingSessionMetadata?.a2a || requestA2AEnvelope
+			? mergeA2AEnvelopes(existingSessionMetadata?.a2a ?? null, {
+					...(requestA2AEnvelope ?? existingSessionMetadata?.a2a ?? {
+						version: 1,
+						enabled: true,
+						userOrigin: "agent",
+						callerAgentName: null,
+						callerMetadata: null,
+						responseFormat: null,
+						handleUniqueId: null,
+						callerAgentSessionId: null,
+						targetAgentId: null,
+					}),
+					targetAgentId:
+						requestA2AEnvelope?.targetAgentId ??
+						existingSessionMetadata?.a2a?.targetAgentId ??
+						agentId ??
+						null,
+			  })
+			: null;
 	const persistedCwd = isProjectSessionAgentName(agentName) ? agentCwd : null;
 	const frozenRepoRoot =
 		isProjectSessionAgentName(agentName)
@@ -6289,6 +6411,7 @@ async function handleStreamRequest(
 		projectImageRef,
 		sessionModelBinding,
 		sessionConfigOverrides: existingSessionMetadata?.sessionConfigOverrides ?? null,
+		...(effectiveA2AEnvelope ? { a2a: effectiveA2AEnvelope } : {}),
 	});
 
 	const activeRun = getActiveStreamSession(sessionKey, agentSessionId);
@@ -6353,8 +6476,14 @@ async function handleStreamRequest(
 			agentId,
 			agentSessionId,
 			startedAt,
+			...(effectiveA2AEnvelope ? { a2a: effectiveA2AEnvelope } : {}),
 		});
-		conversationStore.recordUserMessageSync({ text: latestUserMessage });
+		conversationStore.recordUserMessageSync({
+			text: latestUserMessage,
+			...(effectiveA2AEnvelope
+				? { provenance: a2aEnvelopeToUserProvenance(effectiveA2AEnvelope) }
+				: {}),
+		});
 	} catch (error) {
 		console.error(
 			`[astro-stream] failed to initialize conversation history for session=${sessionKey}: ${
@@ -6446,6 +6575,7 @@ async function handleStreamRequest(
 			projectImageRef,
 			sessionModelBinding,
 			sessionConfigOverrides: existingSessionMetadata?.sessionConfigOverrides ?? null,
+			...(effectiveA2AEnvelope ? { a2a: effectiveA2AEnvelope } : {}),
 		});
 	}
 

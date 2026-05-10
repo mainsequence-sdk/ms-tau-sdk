@@ -1,6 +1,7 @@
 # Agents
 
-Astro uses project-local runtime agent prompts defined in `.pi/agents/`.
+Astro ships bundled runtime agent prompts and allows project-local `.pi/agents/` prompts to
+override them when a project provides its own version.
 
 ## What a runtime agent prompt looks like
 
@@ -26,6 +27,11 @@ Runtime agent instructions here.
 - `model`
 
 The body becomes the runtime agent's appended system prompt.
+
+For image-backed executor runtimes, Astro loads the bundled
+`mainsequence-project-executor` prompt from its own Pi bundle by default. If the target project
+contains `.pi/agents/mainsequence-project-executor.md`, that project-local prompt overrides the
+bundled one.
 
 ## Current runtime agents
 

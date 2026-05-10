@@ -7,6 +7,12 @@ import {
 	writeFileSync,
 } from "node:fs";
 import path from "node:path";
+import {
+	cloneA2AEnvelope,
+	cloneUserMessageProvenance,
+	type A2AEnvelope,
+	type UserMessageProvenance,
+} from "./a2a-envelope.js";
 import type { StreamChunk } from "./protocol.js";
 
 export type ConversationMessagePart =
@@ -25,6 +31,7 @@ export type ConversationMessage = {
 	createdAt: string;
 	completedAt?: string;
 	content: ConversationMessagePart[];
+	provenance?: UserMessageProvenance;
 };
 
 export type ConversationHistorySnapshot = {
@@ -39,6 +46,7 @@ export type ConversationHistorySnapshot = {
 		startedAt: string | null;
 		updatedAt: string | null;
 		error: string | null;
+		a2a?: A2AEnvelope | null;
 	};
 	messages: ConversationMessage[];
 	inProgressMessage: ConversationMessage | null;
@@ -68,10 +76,15 @@ type ConversationStoreMetadata = {
 	agentId: number | null;
 	agentSessionId: number | null;
 	startedAt: string | null;
+	a2a?: A2AEnvelope | null;
 };
 
 export type ConversationStore = {
-	recordUserMessageSync(input: { text: string; createdAt?: string }): ConversationHistorySnapshot;
+	recordUserMessageSync(input: {
+		text: string;
+		createdAt?: string;
+		provenance?: UserMessageProvenance | null;
+	}): ConversationHistorySnapshot;
 	recordStreamChunkSync(chunk: StreamChunk): ConversationHistorySnapshot;
 	recordStreamDoneSync(): ConversationHistorySnapshot;
 	getSnapshot(): ConversationHistorySnapshot;
@@ -89,16 +102,21 @@ function cloneMessage(message: ConversationMessage): ConversationMessage {
 	return {
 		...message,
 		content: message.content.map((part) => ({ ...part })),
+		provenance: cloneUserMessageProvenance(message.provenance),
 	};
 }
 
 function cloneSnapshot(snapshot: ConversationHistorySnapshot): ConversationHistorySnapshot {
-	return {
+	const next: ConversationHistorySnapshot = {
 		version: snapshot.version,
 		session: { ...snapshot.session },
 		messages: snapshot.messages.map(cloneMessage),
 		inProgressMessage: snapshot.inProgressMessage ? cloneMessage(snapshot.inProgressMessage) : null,
 	};
+	if (snapshot.session.a2a !== undefined) {
+		next.session.a2a = cloneA2AEnvelope(snapshot.session.a2a ?? null);
+	}
+	return next;
 }
 
 function nextMessageId(snapshot: ConversationHistorySnapshot, role: "user" | "assistant"): string {
@@ -126,6 +144,7 @@ function createDefaultSnapshot(metadata: ConversationStoreMetadata): Conversatio
 			startedAt: metadata.startedAt,
 			updatedAt: metadata.startedAt,
 			error: null,
+			...(metadata.a2a !== undefined ? { a2a: cloneA2AEnvelope(metadata.a2a ?? null) } : {}),
 		},
 		messages: [],
 		inProgressMessage: null,
@@ -144,6 +163,9 @@ function syncSnapshotMetadata(
 	next.session.agentSessionId = metadata.agentSessionId;
 	if (!next.session.startedAt) {
 		next.session.startedAt = metadata.startedAt;
+	}
+	if (metadata.a2a !== undefined) {
+		next.session.a2a = cloneA2AEnvelope(metadata.a2a ?? null);
 	}
 	return next;
 }
@@ -331,6 +353,7 @@ export function createConversationStore(metadata: ConversationStoreMetadata): Co
 				role: "user",
 				createdAt: at,
 				content: [{ type: "text", text: input.text }],
+				...(input.provenance ? { provenance: cloneUserMessageProvenance(input.provenance) } : {}),
 			};
 			snapshot = appendConversationEventSync(eventLogPath, historyPath, snapshot, {
 				type: "user_message_added",

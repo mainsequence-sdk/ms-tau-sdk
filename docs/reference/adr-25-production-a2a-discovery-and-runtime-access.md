@@ -22,6 +22,9 @@ Astro is only a consumer of that contract:
 - Astro should persist and reuse the returned `handle_unique_id`
 - Astro should not restate or reimplement backend allocation internals in this repo
 
+The Astro-side durable representation of the A2A caller/response/linkage envelope is covered by
+[`adr-28-durable-a2a-session-envelope.md`](./adr-28-durable-a2a-session-envelope.md).
+
 ## Context
 
 Astro already has:
@@ -179,6 +182,8 @@ This is a sender-side correctness rule, not just an optimization:
 - do not trim the session payload down to a hand-picked subset
 - do not rely on Astro's backend fetch fallback to recover model/provider/runtime metadata when the
   backend session JSON is already available to the sender
+- Astro should durably materialize the resulting A2A envelope for that session instead of treating
+  it as prompt-only request scaffolding
 
 ## Runtime Access Resolution
 
