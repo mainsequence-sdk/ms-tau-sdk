@@ -39,57 +39,58 @@ services:
     ports:
       - "${ASTRO_STREAM_PORT:-8787}:8787"
 
-  astro-project-executor:
-    build:
-      context: .
-      dockerfile: Dockerfile.remote-worker.local
-      args:
-        MAINSEQUENCE_PIP_SPEC: ${MAINSEQUENCE_PIP_SPEC:-mainsequence}
-    image: astro:project-executor-local
-    env_file:
-      - .env
-    environment:
-      HOME: /home/appuser
-      ASTRO_CONTAINER_DATA_DIR: /home/appuser/.astro-container-data
-      ASTRO_MAINSEQUENCE_CONFIG_DIR: /home/appuser/.astro-container-data/.config/mainsequence
-      PI_CODING_AGENT_DIR: /home/appuser/.astro-container-data/.pi/agent
-      ASTRO_STREAM_HOST: 0.0.0.0
-      ASTRO_STREAM_PORT: 8787
-      ASTRO_SESSION_STATE_DIR: /session-state
-      ASTRO_STREAM_SESSION_DIR: /session-state/sessions
-      ASTRO_SESSION_OVERRIDES_DIR: /session-state/session-overrides
-      ASTRO_PROVIDER_CREDENTIAL_DIR: /session-state/pi-agent-auth
-      ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS: ${ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS:-10000}
-      ASTRO_CHECKPOINT_HOLDER_ID: pod/local-compose-astro-project-executor
-      BUILD_AGENTS_IN_BACKEND: "1"
-      ASTRO_EXECUTION_MODE: remote_project_worker
-      ASTRO_FIXED_AGENT_NAME: mainsequence-project-executor
-      ASTRO_FIXED_PROJECT_CWD: /workspace/project
-      ASTRO_PROJECT_IMAGE_REF: local-mounted-project
-      A2A_DEV_PROJECT_MOUNTED_PATH: /workspace/project
-    volumes:
-      - ./.pi:/app/.pi
-      - ./pi:/app/pi
-      - ./interface:/app/interface
-      - ./scripts:/app/scripts
-      - ./docs:/app/docs
-      - ./README.md:/app/README.md
-      - ./package.json:/app/package.json
-      - ./package-lock.json:/app/package-lock.json
-      - ./tsconfig.json:/app/tsconfig.json
-      - ${A2A_DEV_PROJECT:-.}:/workspace/project
-      - astro_executor_session_emptydir:/session-state
-    command:
-      - bash
-      - -lc
-      - |
-        if [ -z "${A2A_DEV_PROJECT:-}" ]; then
-          echo "A2A_DEV_PROJECT must point to a checked-out Main Sequence project for the local executor harness." >&2
-          exit 64
-        fi
-        exec /app/node_modules/.bin/tsx /app/scripts/start_pi_stream.ts
-    ports:
-      - "${ASTRO_EXECUTOR_STREAM_PORT:-8790}:8787"
+  # Local mounted-project executor harness disabled for now.
+  # astro-project-executor:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile.remote-worker.local
+  #     args:
+  #       MAINSEQUENCE_PIP_SPEC: ${MAINSEQUENCE_PIP_SPEC:-mainsequence}
+  #   image: astro:project-executor-local
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     HOME: /home/appuser
+  #     ASTRO_CONTAINER_DATA_DIR: /home/appuser/.astro-container-data
+  #     ASTRO_MAINSEQUENCE_CONFIG_DIR: /home/appuser/.astro-container-data/.config/mainsequence
+  #     PI_CODING_AGENT_DIR: /home/appuser/.astro-container-data/.pi/agent
+  #     ASTRO_STREAM_HOST: 0.0.0.0
+  #     ASTRO_STREAM_PORT: 8787
+  #     ASTRO_SESSION_STATE_DIR: /session-state
+  #     ASTRO_STREAM_SESSION_DIR: /session-state/sessions
+  #     ASTRO_SESSION_OVERRIDES_DIR: /session-state/session-overrides
+  #     ASTRO_PROVIDER_CREDENTIAL_DIR: /session-state/pi-agent-auth
+  #     ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS: ${ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS:-10000}
+  #     ASTRO_CHECKPOINT_HOLDER_ID: pod/local-compose-astro-project-executor
+  #     BUILD_AGENTS_IN_BACKEND: "1"
+  #     ASTRO_EXECUTION_MODE: remote_project_worker
+  #     ASTRO_FIXED_AGENT_NAME: mainsequence-project-executor
+  #     ASTRO_FIXED_PROJECT_CWD: /workspace/project
+  #     ASTRO_PROJECT_IMAGE_REF: local-mounted-project
+  #     A2A_DEV_PROJECT_MOUNTED_PATH: /workspace/project
+  #   volumes:
+  #     - ./.pi:/app/.pi
+  #     - ./pi:/app/pi
+  #     - ./interface:/app/interface
+  #     - ./scripts:/app/scripts
+  #     - ./docs:/app/docs
+  #     - ./README.md:/app/README.md
+  #     - ./package.json:/app/package.json
+  #     - ./package-lock.json:/app/package-lock.json
+  #     - ./tsconfig.json:/app/tsconfig.json
+  #     - ${A2A_DEV_PROJECT:-.}:/workspace/project
+  #     - astro_executor_session_emptydir:/session-state
+  #   command:
+  #     - bash
+  #     - -lc
+  #     - |
+  #       if [ -z "${A2A_DEV_PROJECT:-}" ]; then
+  #         echo "A2A_DEV_PROJECT must point to a checked-out Main Sequence project for the local executor harness." >&2
+  #         exit 64
+  #       fi
+  #       exec /app/node_modules/.bin/tsx /app/scripts/start_pi_stream.ts
+  #   ports:
+  #     - "${ASTRO_EXECUTOR_STREAM_PORT:-8790}:8787"
 
   astro-session-checkpoint-sidecar:
     build:
@@ -126,40 +127,40 @@ services:
     depends_on:
       - astro-pi-stream
 
-  astro-project-executor-session-checkpoint-sidecar:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: astro-session-checkpoint-sidecar
-      args:
-        MAINSEQUENCE_PIP_SPEC: ${MAINSEQUENCE_PIP_SPEC:-mainsequence}
-    image: astro:session-checkpoint-sidecar
-    env_file:
-      - .env
-    environment:
-      HOME: /home/appuser
-      ASTRO_CONTAINER_DATA_DIR: /home/appuser/.astro-container-data
-      ASTRO_MAINSEQUENCE_CONFIG_DIR: /home/appuser/.astro-container-data/.config/mainsequence
-      PI_CODING_AGENT_DIR: /home/appuser/.astro-container-data/.pi/agent
-      ASTRO_SESSION_STATE_DIR: /session-state
-      ASTRO_STREAM_SESSION_DIR: /session-state/sessions
-      ASTRO_SESSION_OVERRIDES_DIR: /session-state/session-overrides
-      ASTRO_PROVIDER_CREDENTIAL_DIR: /session-state/pi-agent-auth
-      ASTRO_CHECKPOINT_HOLDER_ID: pod/local-compose-astro-project-executor
-      ASTRO_CHECKPOINT_SIDECAR_DEBOUNCE_MS: ${ASTRO_CHECKPOINT_SIDECAR_DEBOUNCE_MS:-1000}
-      ASTRO_CHECKPOINT_SIDECAR_SCAN_INTERVAL_MS: ${ASTRO_CHECKPOINT_SIDECAR_SCAN_INTERVAL_MS:-10000}
-      ASTRO_CHECKPOINT_SIDECAR_PERIODIC_FLUSH_MS: ${ASTRO_CHECKPOINT_SIDECAR_PERIODIC_FLUSH_MS:-30000}
-      ASTRO_CHECKPOINT_SIDECAR_METRICS_INTERVAL_MS: ${ASTRO_CHECKPOINT_SIDECAR_METRICS_INTERVAL_MS:-60000}
-    volumes:
-      - ./pi:/app/pi
-      - ./interface:/app/interface
-      - ./scripts:/app/scripts
-      - ./package.json:/app/package.json
-      - ./package-lock.json:/app/package-lock.json
-      - ./tsconfig.json:/app/tsconfig.json
-      - astro_executor_session_emptydir:/session-state
-    depends_on:
-      - astro-project-executor
+  # astro-project-executor-session-checkpoint-sidecar:
+  #   build:
+  #     context: .
+  #     dockerfile: Dockerfile
+  #     target: astro-session-checkpoint-sidecar
+  #     args:
+  #       MAINSEQUENCE_PIP_SPEC: ${MAINSEQUENCE_PIP_SPEC:-mainsequence}
+  #   image: astro:session-checkpoint-sidecar
+  #   env_file:
+  #     - .env
+  #   environment:
+  #     HOME: /home/appuser
+  #     ASTRO_CONTAINER_DATA_DIR: /home/appuser/.astro-container-data
+  #     ASTRO_MAINSEQUENCE_CONFIG_DIR: /home/appuser/.astro-container-data/.config/mainsequence
+  #     PI_CODING_AGENT_DIR: /home/appuser/.astro-container-data/.pi/agent
+  #     ASTRO_SESSION_STATE_DIR: /session-state
+  #     ASTRO_STREAM_SESSION_DIR: /session-state/sessions
+  #     ASTRO_SESSION_OVERRIDES_DIR: /session-state/session-overrides
+  #     ASTRO_PROVIDER_CREDENTIAL_DIR: /session-state/pi-agent-auth
+  #     ASTRO_CHECKPOINT_HOLDER_ID: pod/local-compose-astro-project-executor
+  #     ASTRO_CHECKPOINT_SIDECAR_DEBOUNCE_MS: ${ASTRO_CHECKPOINT_SIDECAR_DEBOUNCE_MS:-1000}
+  #     ASTRO_CHECKPOINT_SIDECAR_SCAN_INTERVAL_MS: ${ASTRO_CHECKPOINT_SIDECAR_SCAN_INTERVAL_MS:-10000}
+  #     ASTRO_CHECKPOINT_SIDECAR_PERIODIC_FLUSH_MS: ${ASTRO_CHECKPOINT_SIDECAR_PERIODIC_FLUSH_MS:-30000}
+  #     ASTRO_CHECKPOINT_SIDECAR_METRICS_INTERVAL_MS: ${ASTRO_CHECKPOINT_SIDECAR_METRICS_INTERVAL_MS:-60000}
+  #   volumes:
+  #     - ./pi:/app/pi
+  #     - ./interface:/app/interface
+  #     - ./scripts:/app/scripts
+  #     - ./package.json:/app/package.json
+  #     - ./package-lock.json:/app/package-lock.json
+  #     - ./tsconfig.json:/app/tsconfig.json
+  #     - astro_executor_session_emptydir:/session-state
+  #   depends_on:
+  #     - astro-project-executor
 
 volumes:
   astro_session_emptydir:
@@ -168,9 +169,9 @@ volumes:
       type: tmpfs
       device: tmpfs
       o: uid=10000,gid=10000,mode=1770,size=512m
-  astro_executor_session_emptydir:
-    driver: local
-    driver_opts:
-      type: tmpfs
-      device: tmpfs
-      o: uid=10000,gid=10000,mode=1770,size=512m
+  # astro_executor_session_emptydir:
+  #   driver: local
+  #   driver_opts:
+  #     type: tmpfs
+  #     device: tmpfs
+  #     o: uid=10000,gid=10000,mode=1770,size=512m

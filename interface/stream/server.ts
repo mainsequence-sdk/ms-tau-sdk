@@ -111,9 +111,6 @@ const ASTRO_PROJECT_IMAGE_REF_ENV = "ASTRO_PROJECT_IMAGE_REF";
 const PROJECT_SESSION_AGENT_NAMES = new Set(["mainsequence-project-executor"]);
 const ALLOWED_AGENTS = new Set(["astro-orchestrator", ...PROJECT_SESSION_AGENT_NAMES]);
 const PI_BUILT_IN_TOOL_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
-const includeClientToolDetails = !["0", "false", "no", "off"].includes(
-	(process.env.ASTRO_STREAM_INCLUDE_TOOL_DETAILS ?? "false").trim().toLowerCase(),
-);
 
 loadEnvFile(repoRoot);
 
@@ -4159,8 +4156,7 @@ function logReadableChunk(ctx: RequestContext, chunk: ReturnType<typeof attachAg
 }
 
 function shouldSuppressClientChunk(chunk: ReturnType<typeof attachAgentId>): boolean {
-	if (includeClientToolDetails) return false;
-	return chunk.type === "tool-call-delta" || chunk.type === "tool-result";
+	return false;
 }
 
 function abortStreamOnPersistenceFailure(ctx: RequestContext, error: unknown) {
