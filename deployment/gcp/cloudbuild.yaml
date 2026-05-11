@@ -6,8 +6,8 @@ steps:
     args:
       - "-c"
       - |
-        sed "s|^ARG PROJECT_ID$|ARG PROJECT_ID=${PROJECT_ID}|" Dockerfile.remote-worker > /workspace/Dockerfile.remote-worker
-        gsutil cp /workspace/Dockerfile.remote-worker "gs://${PROJECT_ID}/pod-dockerfiles/project_executor/Dockerfile"
+        sed "s|^ARG PROJECT_ID$|ARG PROJECT_ID=${PROJECT_ID}|" Dockerfile.remote-worker > /workspace/Dockerfile.remote-worker.rendered
+        gsutil cp /workspace/Dockerfile.remote-worker.rendered "gs://${PROJECT_ID}/pod-dockerfiles/project_executor/Dockerfile"
 
   - id: "build-image-and-detect-mainsequence-version"
     name: "gcr.io/cloud-builders/docker"
