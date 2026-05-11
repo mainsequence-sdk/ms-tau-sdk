@@ -1,11 +1,13 @@
 steps:
   # Upload the Dockerfile (OVerwrite the object on each build)
   - id: "upload-fixed-repo-dockerfile"
-    name: "gcr.io/cloud-builders/gsutil"
+    name: "gcr.io/cloud-builders/gcloud"
+    entrypoint: "bash"
     args:
-      - "cp"
-      - "Dockerfile.remote-worker"
-      - "gs://${PROJECT_ID}/pod-dockerfiles/project_executor/Dockerfile"
+      - "-c"
+      - |
+        sed "s|^ARG PROJECT_ID$|ARG PROJECT_ID=${PROJECT_ID}|" Dockerfile.remote-worker > /workspace/Dockerfile.remote-worker
+        gsutil cp /workspace/Dockerfile.remote-worker "gs://${PROJECT_ID}/pod-dockerfiles/project_executor/Dockerfile"
 
   - id: "build-image-and-detect-mainsequence-version"
     name: "gcr.io/cloud-builders/docker"

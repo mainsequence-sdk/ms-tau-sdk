@@ -1,9 +1,10 @@
 # syntax=docker/dockerfile:1.4
 
+ARG PROJECT_ID
 ARG BASE_IMAGE
 ARG ASTRO_EXECUTOR_BUNDLE_REF=latest
 
-FROM europe-west1-docker.pkg.dev/mainsequence-development/tsorm-images/astro/project-executor-bundle:${ASTRO_EXECUTOR_BUNDLE_REF} AS astro-executor-bundle
+FROM europe-west1-docker.pkg.dev/${PROJECT_ID}/tsorm-images/astro/project-executor-bundle:${ASTRO_EXECUTOR_BUNDLE_REF} AS astro-executor-bundle
 
 
 # =============================================================================
