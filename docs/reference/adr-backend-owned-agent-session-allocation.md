@@ -177,7 +177,7 @@ Relevant existing request values:
 ```python
 chat_request_values = {
     "threadId": str,
-    "agentName": "astro-orchestrator | mainsequence-project-executor",
+    "runtimeAgentName": "astro-orchestrator | mainsequence-project-executor",
     "userId": str,
     "messages": list,
     "newChat": bool,
@@ -191,7 +191,7 @@ chat_request_values = {
 
 Astro owns validation of frontend intent:
 
-- `agentName`
+- `runtimeAgentName`
 - `newChat` versus `runtime_session_id`
 - `projectId` and `cwd` requirements for `mainsequence-project-executor` when the runtime is not already pinned
 - model binding
@@ -207,13 +207,13 @@ POST /orm/api/agents/v1/agents/get_or_create/
 
 ```python
 agent_get_or_create_payload = {
-    "name": str,
+    "agent_type": str,
     "agent_unique_id": str,
 }
 
 agent_get_or_create_response = {
     "id": int,
-    "name": str,
+    "agent_type": str,
     "agent_unique_id": str,
 }
 ```
@@ -238,7 +238,6 @@ start_new_session_request = {
     "status": "running",
     "created_by_user": created_by_user,
     "thread_id": frontend_thread_id,
-    "workflow_key": "astro-orchestrator" | "mainsequence-project-executor",
     "llm_provider": llm_provider,
     "llm_model": llm_model,
     "engine_name": "astro",
@@ -253,8 +252,6 @@ Request value rules:
 - `frontend_thread_id` comes from the frontend request when present. Astro passes it through as
   backend `thread_id` for UI correlation, but it is not unique and must not be used as the session
   identity.
-- `workflow_key` is the top-level backend contract field and is one of `"astro-orchestrator"` or
-  `"mainsequence-project-executor"`.
 - `llm_provider`, `llm_model`, `runtime_config_snapshot`, and `session_metadata` are computed by
   Astro.
 - `engine_name` is the Astro runtime identity for this integration and is always `"astro"`.
@@ -272,7 +269,8 @@ Astro-owned session metadata is sent inside `session_metadata` and stored unchan
 ```python
 orchestrator_session_metadata = {
     "source": "frontend",
-    "workflow_key": "astro-orchestrator",
+    "runtime_agent_name": "astro-orchestrator",
+    "backend_agent_type": str,
     "created_by_user": str,
     "session_model_binding": dict | None,
     "session_config_overrides": dict | None,
@@ -280,7 +278,8 @@ orchestrator_session_metadata = {
 
 project_executor_session_metadata = {
     "source": "frontend",
-    "workflow_key": "mainsequence-project-executor",
+    "runtime_agent_name": "mainsequence-project-executor",
+    "backend_agent_type": str,
     "created_by_user": str,
     "project_id": str,
     "project_cwd": str,
@@ -319,7 +318,7 @@ start_new_session_response = {
     # Existing Agent identity required by Astro stream chunks.
     "agent": {
         "id": agent_session.agent_id,
-        "name": agent_session.agent.name,
+        "agent_type": agent_session.agent.agent_type,
         "agent_unique_id": agent_session.agent.agent_unique_id,
     },
 
@@ -333,7 +332,7 @@ Required value rules:
 - `error_detail` is the current `AgentSession.error_detail`; on successful allocation it is the model
   default empty string.
 - `session_metadata` is exactly the object Astro sent.
-- `agent.id`, `agent.name`, and `agent.agent_unique_id` come from the resolved Agent.
+- `agent.id`, `agent.agent_type`, and `agent.agent_unique_id` come from the resolved Agent.
 
 Astro maps the backend response to frontend stream chunks:
 
@@ -343,7 +342,8 @@ new_session = {
     "session_key": str(response["agent_session_id"]),
     "runtime_session_id": str(response["agent_session_id"]),
     "agent_id": response["agent"]["id"],
-    "agent_name": response["agent"]["name"],
+    "runtime_agent_name": response["session_metadata"]["runtime_agent_name"],
+    "backend_agent_type": response["agent"]["agent_type"],
     "agent_unique_id": response["agent"]["agent_unique_id"],
     "thread_id": response["thread_id"] or str(response["agent_session_id"]),
 }
@@ -369,7 +369,6 @@ The existing `start_new_session` route owns generic persistence:
 
 Astro owns workflow semantics:
 
-- `workflow_key`
 - project-scoped session metadata fields
 - `session_metadata` shape
 
@@ -381,7 +380,6 @@ For the backend allocation route, it is just another `start_new_session` call ag
 resolved `mainsequence-project-executor` Agent. Astro includes:
 
 - `thread_id`
-- top-level `workflow_key`
 - `session_metadata`
 
 The backend stores those fields exactly like any other session allocation. It does not inspect or

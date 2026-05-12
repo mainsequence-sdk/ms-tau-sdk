@@ -167,7 +167,7 @@ conversation_history_snapshot = {
     "session": {
         "sessionId": str,
         "threadId": str,
-        "agentName": str,
+        "runtimeAgentName": str,
         "agentId": int | None,
         "agentSessionId": int | None,
         "status": "running" | "completed" | "error",

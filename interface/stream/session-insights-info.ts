@@ -87,7 +87,8 @@ export function buildSessionInsightsInfo(): Record<string, SessionInsightsInfoNo
 			{
 				sessionId: leaf("Session ID", "The local runtime session id used to resume this session."),
 				threadId: leaf("Thread ID", "The frontend thread identifier currently bound to this runtime session."),
-				agentName: leaf("Agent Name", "The backend agent handling this session, such as astro-orchestrator or mainsequence-project-executor."),
+				runtimeAgentName: leaf("Runtime Agent Name", "The Astro runtime or prompt selector for this session, such as astro-orchestrator or mainsequence-project-executor."),
+				backendAgentType: leaf("Backend Agent Type", "The backend Agent.agent_type classification, when the backend session serializer provides it."),
 				agentId: leaf("Agent ID", "The backend Main Sequence agent id resolved for this session."),
 				agentSessionId: leaf("Agent Session ID", "The backend Main Sequence agent-session id associated with this runtime session."),
 				status: leaf("Status", "Astro's current view of the session state: running, completed, or error."),

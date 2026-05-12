@@ -39,7 +39,7 @@ export type ConversationHistorySnapshot = {
 	session: {
 		sessionId: string;
 		threadId: string;
-		agentName: string;
+		runtimeAgentName: string;
 		agentId: number | null;
 		agentSessionId: number | null;
 		status: "running" | "completed" | "error";
@@ -72,7 +72,7 @@ type ConversationStoreMetadata = {
 	sessionDir: string;
 	sessionKey: string;
 	threadId: string;
-	agentName: string;
+	runtimeAgentName: string;
 	agentId: number | null;
 	agentSessionId: number | null;
 	startedAt: string | null;
@@ -137,7 +137,7 @@ function createDefaultSnapshot(metadata: ConversationStoreMetadata): Conversatio
 		session: {
 			sessionId: metadata.sessionKey,
 			threadId: metadata.threadId,
-			agentName: metadata.agentName,
+			runtimeAgentName: metadata.runtimeAgentName,
 			agentId: metadata.agentId,
 			agentSessionId: metadata.agentSessionId,
 			status: "running",
@@ -158,7 +158,7 @@ function syncSnapshotMetadata(
 	const next = cloneSnapshot(snapshot);
 	next.session.sessionId = metadata.sessionKey;
 	next.session.threadId = metadata.threadId;
-	next.session.agentName = metadata.agentName;
+	next.session.runtimeAgentName = metadata.runtimeAgentName;
 	next.session.agentId = metadata.agentId;
 	next.session.agentSessionId = metadata.agentSessionId;
 	if (!next.session.startedAt) {

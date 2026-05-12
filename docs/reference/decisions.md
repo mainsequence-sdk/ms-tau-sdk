@@ -389,3 +389,17 @@ Why:
   and UI contracts
 - prompt injection should project durable A2A state rather than being the only place that
   relationship exists
+
+## 29. Separate backend Agent type from runtime agent names
+
+Implementation:
+
+- `reference/adr-29-agent-type-identity.md`
+
+Why:
+
+- backend classification uses `Agent.agent_type`
+- Astro runtime and prompt names such as `astro-orchestrator` and `mainsequence-project-executor`
+  are local routing selectors, not backend Agent type values
+- clearer names such as `backendAgentType`, `runtimeAgentName`, and `promptAgentName` reduce future
+  confusion in backend session hydration and prompt lookup code

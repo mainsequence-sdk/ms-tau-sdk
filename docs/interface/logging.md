@@ -133,7 +133,8 @@ Session-scoped `astro-stream` events commonly include:
 - `session_id`
 - `threadId`
 - `agentSessionId`
-- `agentName`
+- `runtimeAgentName`
+- `backendAgentType`
 - `userId`
 - `projectId`
 - `cwd`

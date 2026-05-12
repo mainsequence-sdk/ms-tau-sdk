@@ -26,7 +26,8 @@ Example `insights` payload:
   "session": {
     "sessionId": "39",
     "threadId": "__LOCALID_R0NXTWK",
-    "agentName": "astro-orchestrator",
+    "runtimeAgentName": "astro-orchestrator",
+    "backendAgentType": "backend-owned-agent-type",
     "agentId": 1,
     "agentSessionId": 39,
     "status": "completed",

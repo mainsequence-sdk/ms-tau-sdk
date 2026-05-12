@@ -486,7 +486,7 @@ type RequestContext = {
 	agentId: number | null;
 	agentUniqueId: string | null;
 	agentSessionId: number | null;
-	agentName: string;
+	runtimeAgentName: string;
 	userId: string;
 	conversationStore: ConversationStore;
 	logState: RequestLogState;
@@ -534,7 +534,7 @@ type ActiveStreamSession = {
 	threadId: string;
 	agentSessionId: number | null;
 	messageId: string;
-	agentName: string;
+	runtimeAgentName: string;
 	startedAt: string;
 	clientAttached: boolean;
 	lastPiEventAt: string | null;
@@ -561,7 +561,7 @@ function markActiveStreamSession(ctx: RequestContext) {
 		threadId: ctx.threadId,
 		agentSessionId: ctx.agentSessionId,
 		messageId: ctx.messageId,
-		agentName: ctx.agentName,
+		runtimeAgentName: ctx.runtimeAgentName,
 		startedAt: new Date().toISOString(),
 		clientAttached: ctx.clientAttached,
 		lastPiEventAt: null,
@@ -613,7 +613,8 @@ type SessionMetadata = {
 	agentSessionId: number | null;
 	threadId: string | null;
 	startedAt: string | null;
-	agentName: string | null;
+	runtimeAgentName: string | null;
+	backendAgentType: string | null;
 	projectId: string | null;
 	cwd: string | null;
 	repoRoot: string | null;
@@ -1066,35 +1067,26 @@ function sanitizeSessionKey(value: string): string {
 	return value.trim().replace(/[^a-zA-Z0-9._-]+/g, "_");
 }
 
-function normalizeAgentName(value: unknown): string | null {
+function normalizeRuntimeAgentName(value: unknown): string | null {
 	if (typeof value !== "string") return null;
 	const trimmed = value.trim();
 	return trimmed ? trimmed : null;
 }
 
-function isProjectSessionAgentName(agentName: string | null | undefined): boolean {
-	return typeof agentName === "string" && PROJECT_SESSION_AGENT_NAMES.has(agentName);
+function isProjectSessionRuntimeAgentName(runtimeAgentName: string | null | undefined): boolean {
+	return typeof runtimeAgentName === "string" && PROJECT_SESSION_AGENT_NAMES.has(runtimeAgentName);
 }
 
-function isImageBackedProjectExecutor(agentName: string | null | undefined): boolean {
-	return agentName === "mainsequence-project-executor";
+function isImageBackedProjectExecutor(runtimeAgentName: string | null | undefined): boolean {
+	return runtimeAgentName === "mainsequence-project-executor";
 }
 
 function isRemoteProjectWorkerMode(env: NodeJS.ProcessEnv = process.env): boolean {
 	return env[ASTRO_EXECUTION_MODE_ENV]?.trim() === "remote_project_worker";
 }
 
-function resolveRuntimeAgentNameAfterBackendSession(
-	requestedAgentName: string,
-	backendAgentName: string | null,
-): string {
-	return requestedAgentName === "mainsequence-project-executor"
-		? requestedAgentName
-		: (backendAgentName ?? requestedAgentName);
-}
-
-function resolveFixedAgentName(env: NodeJS.ProcessEnv = process.env): string | null {
-	return normalizeAgentName(env[ASTRO_FIXED_AGENT_NAME_ENV]);
+function resolveFixedRuntimeAgentName(env: NodeJS.ProcessEnv = process.env): string | null {
+	return normalizeRuntimeAgentName(env[ASTRO_FIXED_AGENT_NAME_ENV]);
 }
 
 function normalizeRuntimeSessionId(value: unknown): string | null {
@@ -1276,6 +1268,45 @@ function extractStringProperty(record: Record<string, unknown>, ...keys: string[
 	return null;
 }
 
+function extractRuntimeAgentNameFromSessionPayload(
+	payload: Record<string, unknown>,
+	sessionMetadata: Record<string, unknown> | null,
+): string | null {
+	const metadata = sessionMetadata ?? {};
+	return (
+		extractStringProperty(
+			metadata,
+			"runtime_agent_name",
+			"runtimeAgentName",
+		) ??
+		extractStringProperty(
+			payload,
+			"runtime_agent_name",
+			"runtimeAgentName",
+		) ??
+		(() => {
+			const agentRecord = extractObjectPropertyRecord(payload, "agent");
+			if (!agentRecord) return null;
+			return extractStringProperty(agentRecord, "runtime_agent_name", "runtimeAgentName");
+		})()
+	);
+}
+
+function extractBackendAgentType(...sources: Array<Record<string, unknown> | null | undefined>): string | null {
+	for (const source of sources) {
+		if (!source) continue;
+		const backendAgentType = extractStringProperty(
+			source,
+			"backendAgentType",
+			"backend_agent_type",
+			"agent_type",
+			"agentType",
+		);
+		if (backendAgentType) return backendAgentType;
+	}
+	return null;
+}
+
 function extractNumericProperty(record: Record<string, unknown>, ...keys: string[]): number | null {
 	for (const key of keys) {
 		const value = normalizeNumericId(record[key]);
@@ -1332,8 +1363,9 @@ function normalizeA2AChatRequestBody(
 
 	const caller =
 		extractObjectPropertyRecord(body, "caller", "caller_metadata", "callerMetadata") ?? {};
-	const callerAgentName =
-		extractStringProperty(caller, "agent_name", "agentName", "name") ?? "unknown-agent";
+	const callerRuntimeAgentName =
+		extractStringProperty(caller, "runtime_agent_name", "runtimeAgentName") ??
+		"unknown-agent";
 	const responseFormat = normalizeA2AResponseFormat(body.response_format ?? body.responseFormat);
 	const context = extractObjectPropertyRecord(body, "context") ?? {};
 	const userId =
@@ -1353,7 +1385,7 @@ function normalizeA2AChatRequestBody(
 	};
 
 	const injectedSystem = buildA2ASystemInstruction({
-		callerAgentName,
+		callerRuntimeAgentName,
 		responseFormat,
 		callerMetadata: caller,
 	});
@@ -1446,33 +1478,6 @@ function extractRequestSessionPayload(payload: Record<string, unknown>): Record<
 	);
 }
 
-function extractBackendSessionWorkflowKey(
-	payload: Record<string, unknown>,
-	sessionMetadata: Record<string, unknown> | null,
-): string | null {
-	return (
-		extractStringProperty(
-			sessionMetadata ?? {},
-			"workflow_key",
-			"workflowKey",
-			"agent_name",
-			"agentName",
-		) ??
-		extractStringProperty(
-			payload,
-			"workflow_key",
-			"workflowKey",
-			"agent_name",
-			"agentName",
-		) ??
-		(() => {
-			const agentRecord = extractObjectPropertyRecord(payload, "agent");
-			if (!agentRecord) return null;
-			return extractStringProperty(agentRecord, "name", "agent_name", "agentName");
-		})()
-	);
-}
-
 function extractBackendSessionThreadId(
 	payload: Record<string, unknown>,
 	sessionMetadata: Record<string, unknown> | null,
@@ -1514,9 +1519,13 @@ function buildRequestA2AEnvelope(input: {
 		version: 1,
 		enabled: true,
 		userOrigin: "agent",
-		callerAgentName:
-			extractStringProperty(input.caller, "agent_name", "agentName", "name") ??
-			extractStringProperty(input.a2aContext, "caller_agent_name", "callerAgentName") ??
+		callerRuntimeAgentName:
+			extractStringProperty(input.caller, "runtime_agent_name", "runtimeAgentName") ??
+			extractStringProperty(
+				input.a2aContext,
+				"caller_runtime_agent_name",
+				"callerRuntimeAgentName",
+			) ??
 			null,
 		callerMetadata: Object.keys(input.caller).length > 0 ? input.caller : null,
 		responseFormat,
@@ -1701,7 +1710,7 @@ async function attachHydratedBackendSession(options: {
 		logStructuredEvent({
 			severity: "ERROR",
 			component: "astro-stream",
-			event: "backend_session_hydration_missing_agent_name",
+			event: "backend_session_hydration_missing_runtime_agent_name",
 			message: "Backend session hydration failed because the backend payload had no usable agent/workflow identity.",
 			data: {
 				agentSessionId: normalizedAgentSessionId,
@@ -1725,7 +1734,7 @@ async function attachHydratedBackendSession(options: {
 			threadId: metadata.threadId,
 			agentUniqueId: metadata.agentUniqueId,
 			startedAt: metadata.startedAt,
-			agentName: metadata.agentName,
+			runtimeAgentName: metadata.runtimeAgentName,
 			hasSessionModelBinding: Boolean(metadata.sessionModelBinding),
 		},
 	});
@@ -1797,50 +1806,50 @@ type SpecialistAgentResolution = {
 	agentConfig: AgentConfig | null;
 	discoveryRoot: string;
 	projectAgentsDir: string | null;
-	availableAgentNames: string[];
+	availableRuntimeAgentNames: string[];
 };
 
-function resolveSpecialistAgent(agentName: string, cwd?: string | null): SpecialistAgentResolution {
+function resolveSpecialistAgent(runtimeAgentName: string, cwd?: string | null): SpecialistAgentResolution {
 	const discoveryRoot = cwd ? path.resolve(cwd) : repoRoot;
 	const projectDiscovery = discoverAgents(discoveryRoot, "project");
 	const projectAgentConfig =
-		projectDiscovery.agents.find((candidate) => candidate.name === agentName) ?? null;
-	const fixedAgentName = resolveFixedAgentName();
+		projectDiscovery.agents.find((candidate) => candidate.promptAgentName === runtimeAgentName) ?? null;
+	const fixedRuntimeAgentName = resolveFixedRuntimeAgentName();
 
-	if (isRemoteProjectWorkerMode() && fixedAgentName === "mainsequence-project-executor") {
+	if (isRemoteProjectWorkerMode() && fixedRuntimeAgentName === "mainsequence-project-executor") {
 		const bundledDiscovery = discoverAgents(repoRoot, "project");
 		const bundledAgentConfig =
-			bundledDiscovery.agents.find((candidate) => candidate.name === fixedAgentName) ?? null;
+			bundledDiscovery.agents.find((candidate) => candidate.promptAgentName === fixedRuntimeAgentName) ?? null;
 		const agentConfig = projectAgentConfig ?? bundledAgentConfig;
-		const availableAgentNames = Array.from(
+		const availableRuntimeAgentNames = Array.from(
 			new Set([
-				...projectDiscovery.agents.map((candidate) => candidate.name),
-				...bundledDiscovery.agents.map((candidate) => candidate.name),
+				...projectDiscovery.agents.map((candidate) => candidate.promptAgentName),
+				...bundledDiscovery.agents.map((candidate) => candidate.promptAgentName),
 			]),
 		).sort();
 		return {
 			agentConfig,
 			discoveryRoot,
 			projectAgentsDir: projectDiscovery.projectAgentsDir,
-			availableAgentNames,
+			availableRuntimeAgentNames,
 		};
 	}
 
 	const discovery = projectAgentConfig ? projectDiscovery : discoverAgents(discoveryRoot, "both");
 	const agentConfig =
 		projectAgentConfig ??
-		discovery.agents.find((candidate) => candidate.name === agentName) ??
+		discovery.agents.find((candidate) => candidate.promptAgentName === runtimeAgentName) ??
 		null;
 	return {
 		agentConfig,
 		discoveryRoot,
 		projectAgentsDir: discovery.projectAgentsDir,
-		availableAgentNames: discovery.agents.map((candidate) => candidate.name).sort(),
+		availableRuntimeAgentNames: discovery.agents.map((candidate) => candidate.promptAgentName).sort(),
 	};
 }
 
-function writePromptToTempFile(agentName: string, prompt: string): string {
-	const tempDir = mkdtempSync(path.join(tmpdir(), `astro-stream-${agentName.replace(/[^\w.-]+/g, "_")}-`));
+function writePromptToTempFile(promptAgentName: string, prompt: string): string {
+	const tempDir = mkdtempSync(path.join(tmpdir(), `astro-stream-${promptAgentName.replace(/[^\w.-]+/g, "_")}-`));
 	const promptPath = path.join(tempDir, "append-system-prompt.md");
 	writeFileSync(promptPath, prompt, { encoding: "utf8", mode: 0o600 });
 	return promptPath;
@@ -1921,7 +1930,14 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 		const rawAgentSessionId = (parsed as { agentSessionId?: unknown }).agentSessionId;
 		const rawThreadId = (parsed as { threadId?: unknown }).threadId;
 		const rawStartedAt = (parsed as { startedAt?: unknown }).startedAt;
-		const rawAgentName = (parsed as { agentName?: unknown }).agentName;
+		const rawRuntimeAgentName =
+			(parsed as { runtimeAgentName?: unknown }).runtimeAgentName ??
+			(parsed as { runtime_agent_name?: unknown }).runtime_agent_name;
+		const rawBackendAgentType =
+			(parsed as { backendAgentType?: unknown }).backendAgentType ??
+			(parsed as { backend_agent_type?: unknown }).backend_agent_type ??
+			(parsed as { agentType?: unknown }).agentType ??
+			(parsed as { agent_type?: unknown }).agent_type;
 		const rawProjectId = (parsed as { projectId?: unknown }).projectId;
 		const rawCwd = (parsed as { cwd?: unknown }).cwd;
 		const rawRepoRoot = (parsed as { repoRoot?: unknown }).repoRoot;
@@ -1950,8 +1966,10 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 			typeof rawThreadId === "string" && rawThreadId.trim() ? rawThreadId.trim() : null;
 		const normalizedStartedAt =
 			typeof rawStartedAt === "string" && rawStartedAt.trim() ? rawStartedAt.trim() : null;
-		const normalizedAgentName =
-			typeof rawAgentName === "string" && rawAgentName.trim() ? rawAgentName.trim() : null;
+		const normalizedRuntimeAgentName =
+			typeof rawRuntimeAgentName === "string" && rawRuntimeAgentName.trim() ? rawRuntimeAgentName.trim() : null;
+		const normalizedBackendAgentType =
+			typeof rawBackendAgentType === "string" && rawBackendAgentType.trim() ? rawBackendAgentType.trim() : null;
 		const normalizedProjectId = normalizeProjectId(rawProjectId);
 		const normalizedCwd = normalizeProjectCwd(rawCwd);
 		const normalizedRepoRoot = normalizeRepoRoot(rawRepoRoot);
@@ -1968,7 +1986,8 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 				: null,
 			threadId: normalizedThreadId,
 			startedAt: normalizedStartedAt,
-			agentName: normalizedAgentName,
+			runtimeAgentName: normalizedRuntimeAgentName,
+			backendAgentType: normalizedBackendAgentType,
 			projectId: normalizedProjectId,
 			cwd: normalizedCwd,
 			repoRoot: normalizedRepoRoot,
@@ -2036,7 +2055,7 @@ function syncRuntimeReportedSessionModelBinding(ctx: RequestContext) {
 			sessionKey: ctx.sessionKey,
 			threadId: ctx.threadId,
 			agentSessionId: ctx.agentSessionId,
-			agentName: ctx.agentName,
+			runtimeAgentName: ctx.runtimeAgentName,
 			previousProvider,
 			previousModel,
 			nextProvider: nextBinding.provider,
@@ -2856,11 +2875,11 @@ function buildSessionMetadataFromBackendCheckpoint(input: {
 		: {};
 	const historyAnnotations = normalizeHistoryAnnotations(bundleMetadata.history_annotations);
 	const agentRecord = extractObjectPropertyRecord(input.sessionPayload, "agent");
-	const agentName =
-		extractStringProperty(bundleMetadata, "agentName", "agent_name") ??
-		extractStringProperty(input.sessionPayload, "agent_name", "agentName") ??
-		(agentRecord ? extractStringProperty(agentRecord, "name", "agent_name", "agentName") : null) ??
-		extractBackendSessionWorkflowKey(input.sessionPayload, sessionMetadata);
+	const runtimeAgentName =
+		extractStringProperty(bundleMetadata, "runtimeAgentName", "runtime_agent_name") ??
+		extractRuntimeAgentNameFromSessionPayload(input.sessionPayload, sessionMetadata);
+	const backendAgentType =
+		extractBackendAgentType(bundleMetadata, agentRecord, input.sessionPayload, sessionMetadata);
 	const agentId =
 		extractNumericProperty(bundleMetadata, "agentId", "agent_id") ??
 		extractBackendSessionAgentId(input.sessionPayload);
@@ -2883,7 +2902,8 @@ function buildSessionMetadataFromBackendCheckpoint(input: {
 		agentSessionId: input.agentSessionId,
 		threadId,
 		startedAt,
-		agentName,
+		runtimeAgentName,
+		backendAgentType,
 		projectId: normalizeProjectId(bundleMetadata.projectId ?? sessionMetadata?.project_id),
 		cwd: normalizeProjectCwd(bundleMetadata.cwd ?? sessionMetadata?.project_cwd),
 		repoRoot: normalizeRepoRoot(bundleMetadata.repoRoot ?? sessionMetadata?.project_repo_root),
@@ -2905,17 +2925,19 @@ function buildSessionMetadataFromRequestSessionPayload(input: {
 	sessionKey: string;
 	sessionPayload: Record<string, unknown>;
 	requestedThreadId: string | null;
-	fallbackAgentName: string;
+	fallbackRuntimeAgentName: string;
 	existingMetadata?: SessionMetadata | null;
 }): SessionMetadata {
 	const sessionMetadata = extractObjectPropertyRecord(input.sessionPayload, "session_metadata", "sessionMetadata");
 	const agentRecord = extractObjectPropertyRecord(input.sessionPayload, "agent");
-	const agentName =
-		extractStringProperty(input.sessionPayload, "agent_name", "agentName") ??
-		(agentRecord ? extractStringProperty(agentRecord, "name", "agent_name", "agentName") : null) ??
-		extractBackendSessionWorkflowKey(input.sessionPayload, sessionMetadata) ??
-		input.existingMetadata?.agentName ??
-		input.fallbackAgentName;
+	const runtimeAgentName =
+		extractRuntimeAgentNameFromSessionPayload(input.sessionPayload, sessionMetadata) ??
+		input.existingMetadata?.runtimeAgentName ??
+		input.fallbackRuntimeAgentName;
+	const backendAgentType =
+		extractBackendAgentType(agentRecord, input.sessionPayload, sessionMetadata) ??
+		input.existingMetadata?.backendAgentType ??
+		null;
 	const agentId = extractBackendSessionAgentId(input.sessionPayload) ?? input.existingMetadata?.agentId ?? null;
 	const agentUniqueId =
 		(agentRecord ? extractStringProperty(agentRecord, "agent_unique_id", "agentUniqueId") : null) ??
@@ -2945,7 +2967,8 @@ function buildSessionMetadataFromRequestSessionPayload(input: {
 		agentSessionId: normalizedAgentSessionId,
 		threadId,
 		startedAt,
-		agentName,
+		runtimeAgentName,
+		backendAgentType,
 		projectId: normalizeProjectId(sessionMetadata?.project_id ?? input.existingMetadata?.projectId),
 		cwd: normalizeProjectCwd(sessionMetadata?.project_cwd ?? input.existingMetadata?.cwd),
 		repoRoot: normalizeRepoRoot(sessionMetadata?.project_repo_root ?? input.existingMetadata?.repoRoot),
@@ -2971,13 +2994,15 @@ function buildSessionMetadataFromBackendSessionPayload(input: {
 }): SessionMetadata | null {
 	const sessionMetadata = extractObjectPropertyRecord(input.sessionPayload, "session_metadata", "sessionMetadata");
 	const agentRecord = extractObjectPropertyRecord(input.sessionPayload, "agent");
-	const agentName =
-		extractStringProperty(input.sessionPayload, "agent_name", "agentName") ??
-		(agentRecord ? extractStringProperty(agentRecord, "name", "agent_name", "agentName") : null) ??
-		extractBackendSessionWorkflowKey(input.sessionPayload, sessionMetadata) ??
-		input.existingMetadata?.agentName ??
+	const runtimeAgentName =
+		extractRuntimeAgentNameFromSessionPayload(input.sessionPayload, sessionMetadata) ??
+		input.existingMetadata?.runtimeAgentName ??
 		null;
-	if (!agentName) return null;
+	if (!runtimeAgentName) return null;
+	const backendAgentType =
+		extractBackendAgentType(agentRecord, input.sessionPayload, sessionMetadata) ??
+		input.existingMetadata?.backendAgentType ??
+		null;
 
 	const agentId = extractBackendSessionAgentId(input.sessionPayload) ?? input.existingMetadata?.agentId ?? null;
 	const agentUniqueId =
@@ -3008,7 +3033,8 @@ function buildSessionMetadataFromBackendSessionPayload(input: {
 		agentSessionId: normalizedAgentSessionId,
 		threadId,
 		startedAt,
-		agentName,
+		runtimeAgentName,
+		backendAgentType,
 		projectId: normalizeProjectId(sessionMetadata?.project_id ?? input.existingMetadata?.projectId),
 		cwd: normalizeProjectCwd(sessionMetadata?.project_cwd ?? input.existingMetadata?.cwd),
 		repoRoot: normalizeRepoRoot(sessionMetadata?.project_repo_root ?? input.existingMetadata?.repoRoot),
@@ -4008,7 +4034,7 @@ function formatLoggedModel(ctx: Pick<RequestContext, "responseProvider" | "respo
 
 function getOutgoingLogPrefix(ctx: RequestContext): string {
 	const model = formatLoggedModel(ctx);
-	return `[astro-stream] OUT agent=${ctx.agentName} session=${ctx.sessionKey} thread=${ctx.threadId}${model ? ` model=${model}` : ""}`;
+	return `[astro-stream] OUT agent=${ctx.runtimeAgentName} session=${ctx.sessionKey} thread=${ctx.threadId}${model ? ` model=${model}` : ""}`;
 }
 
 function resolveToolCallLogEntry(
@@ -4162,7 +4188,7 @@ function shouldSuppressClientChunk(chunk: ReturnType<typeof attachAgentId>): boo
 function abortStreamOnPersistenceFailure(ctx: RequestContext, error: unknown) {
 	const message = error instanceof Error ? error.message : String(error);
 	console.error(
-		`[astro-stream] conversation persistence failed agent=${ctx.agentName} session=${ctx.sessionKey} thread=${ctx.threadId}: ${message}`,
+		`[astro-stream] conversation persistence failed agent=${ctx.runtimeAgentName} session=${ctx.sessionKey} thread=${ctx.threadId}: ${message}`,
 	);
 	clearActiveStreamSession(ctx);
 	ctx.finished = true;
@@ -4439,7 +4465,8 @@ function isPlainObject(value: any): value is Record<string, unknown> {
 
 const ASTRO_SESSION_METADATA_RESERVED_KEYS = new Set([
 	"source",
-	"workflow_key",
+	"runtime_agent_name",
+	"backend_agent_type",
 	"created_by_user",
 	"project_id",
 	"project_cwd",
@@ -4778,7 +4805,7 @@ async function runPiPrompt(
 			event: "pi_launch_model_ready",
 			message: "Pi launch has a resolved model configuration.",
 			data: {
-				agentName: ctx.agentName,
+				runtimeAgentName: ctx.runtimeAgentName,
 				sessionKey: ctx.sessionKey,
 				threadId: ctx.threadId ?? null,
 				userId: ctx.userId,
@@ -4800,7 +4827,7 @@ async function runPiPrompt(
 			message:
 				"Pi is launching without a bound model argument or agent-config model; execution may fail with no available models.",
 			data: {
-				agentName: ctx.agentName,
+				runtimeAgentName: ctx.runtimeAgentName,
 				sessionKey: ctx.sessionKey,
 				threadId: ctx.threadId ?? null,
 				userId: ctx.userId,
@@ -4972,7 +4999,7 @@ async function runPiPrompt(
 		}
 		const builtInTools = options.agentConfig.tools?.filter((tool) => PI_BUILT_IN_TOOL_NAMES.has(tool)) ?? [];
 		if (builtInTools.length) args.push("--tools", builtInTools.join(","));
-		promptPath = writePromptToTempFile(options.agentConfig.name, options.agentConfig.systemPrompt);
+		promptPath = writePromptToTempFile(options.agentConfig.promptAgentName, options.agentConfig.systemPrompt);
 		args.push("--append-system-prompt", promptPath);
 	} else if (boundModelArg) {
 		args.push("--model", boundModelArg);
@@ -4992,7 +5019,7 @@ async function runPiPrompt(
 			...(options.agentConfig
 				? {
 						ASTRO_SUBAGENT_CHILD: "1",
-						ASTRO_ACTIVE_SPECIALIST: options.agentConfig.name,
+						ASTRO_ACTIVE_SPECIALIST: options.agentConfig.promptAgentName,
 				  }
 				: {}),
 			...(options.projectId ? { ASTRO_TARGET_PROJECT_ID: options.projectId } : {}),
@@ -5014,7 +5041,7 @@ async function runPiPrompt(
 		} catch {
 			if (logTraffic) {
 				console.log(
-					`[astro-stream] NONJSON agent=${ctx.agentName} session=${ctx.sessionKey} thread=${ctx.threadId}: ${line}`,
+					`[astro-stream] NONJSON agent=${ctx.runtimeAgentName} session=${ctx.sessionKey} thread=${ctx.threadId}: ${line}`,
 				);
 			}
 			return;
@@ -5064,7 +5091,7 @@ async function runPiPrompt(
 		}
 		if (logTraffic) {
 			console.log(
-				`[astro-stream] STDERR agent=${ctx.agentName} session=${ctx.sessionKey} thread=${ctx.threadId}: ${line}`,
+				`[astro-stream] STDERR agent=${ctx.runtimeAgentName} session=${ctx.sessionKey} thread=${ctx.threadId}: ${line}`,
 			);
 		}
 		if (isNodeRuntimeWarningLine(line)) {
@@ -5074,7 +5101,7 @@ async function runPiPrompt(
 				severity: "warning",
 				error: new Error(line),
 				context: {
-					agentName: ctx.agentName,
+					runtimeAgentName: ctx.runtimeAgentName,
 					sessionKey: ctx.sessionKey,
 					threadId: ctx.threadId,
 				},
@@ -5091,7 +5118,7 @@ async function runPiPrompt(
 			event: "pi_child_stderr",
 			message: "Pi child process wrote to stderr; treating it as diagnostic output unless the child exits unsuccessfully.",
 			data: {
-				agentName: ctx.agentName,
+				runtimeAgentName: ctx.runtimeAgentName,
 				sessionKey: ctx.sessionKey,
 				threadId: ctx.threadId,
 				line,
@@ -5129,7 +5156,7 @@ async function runPiPrompt(
 					severity: "error",
 					error: new Error(reason),
 					context: {
-						agentName: ctx.agentName,
+						runtimeAgentName: ctx.runtimeAgentName,
 						sessionKey: ctx.sessionKey,
 						threadId: ctx.threadId,
 					},
@@ -5164,7 +5191,7 @@ async function runPiPrompt(
 			severity: "error",
 			error,
 			context: {
-				agentName: ctx.agentName,
+				runtimeAgentName: ctx.runtimeAgentName,
 				sessionKey: ctx.sessionKey,
 				threadId: ctx.threadId,
 			},
@@ -5267,7 +5294,7 @@ async function handleStreamRequest(
 				path: url.pathname,
 				userId,
 				executionMode: process.env.ASTRO_EXECUTION_MODE ?? null,
-				fixedAgentName: process.env.ASTRO_FIXED_AGENT_NAME ?? null,
+				fixedRuntimeAgentName: process.env.ASTRO_FIXED_AGENT_NAME ?? null,
 			},
 		});
 		if (!userId) {
@@ -5903,25 +5930,25 @@ async function handleStreamRequest(
 		caller: a2aCaller,
 	});
 
-	const fixedAgentName = resolveFixedAgentName();
-	const rawRequestedAgentName = normalizeAgentName(body.agentName);
-	if (fixedAgentName && rawRequestedAgentName && rawRequestedAgentName !== fixedAgentName) {
+	const fixedRuntimeAgentName = resolveFixedRuntimeAgentName();
+	const rawRequestedRuntimeAgentName = normalizeRuntimeAgentName(body.runtimeAgentName);
+	if (fixedRuntimeAgentName && rawRequestedRuntimeAgentName && rawRequestedRuntimeAgentName !== fixedRuntimeAgentName) {
 		json(res, 409, {
 			error: "fixed_agent_mismatch",
-			message: `This runtime is pinned to agent "${fixedAgentName}".`,
+			message: `This runtime is pinned to agent "${fixedRuntimeAgentName}".`,
 		});
 		return;
 	}
-	const requestedAgentName = rawRequestedAgentName ?? fixedAgentName;
-	if (!requestedAgentName) {
-		badRequest(res, "Missing agentName.");
+	const requestedRuntimeAgentName = rawRequestedRuntimeAgentName ?? fixedRuntimeAgentName;
+	if (!requestedRuntimeAgentName) {
+		badRequest(res, "Missing runtimeAgentName.");
 		return;
 	}
-	if (!ALLOWED_AGENTS.has(requestedAgentName)) {
-		json(res, 400, { error: "unknown_agent", message: `Unknown agent "${requestedAgentName}".` });
+	if (!ALLOWED_AGENTS.has(requestedRuntimeAgentName)) {
+		json(res, 400, { error: "unknown_agent", message: `Unknown agent "${requestedRuntimeAgentName}".` });
 		return;
 	}
-	let agentName = requestedAgentName;
+	let runtimeAgentName = requestedRuntimeAgentName;
 
 	const userId = resolveUserId(body.userId);
 	if (!userId) {
@@ -5967,7 +5994,7 @@ async function handleStreamRequest(
 			message:
 				"Astro ignored `newChat` because backend-owned session attach now requires an explicit runtime_session_id.",
 			data: {
-				agentName,
+				runtimeAgentName,
 				userId,
 				runtimeSessionId,
 				requestedThreadId,
@@ -5983,7 +6010,7 @@ async function handleStreamRequest(
 			sessionKey: runtimeSessionId,
 			sessionPayload: requestSessionPayload,
 			requestedThreadId,
-			fallbackAgentName: agentName,
+			fallbackRuntimeAgentName: runtimeAgentName,
 			existingMetadata: localSessionMetadata,
 		});
 		const effectiveRequestSessionMetadata =
@@ -6009,7 +6036,7 @@ async function handleStreamRequest(
 			message: "Astro materialized local session metadata from the request-carried session serializer.",
 			data: {
 				runtimeSessionId,
-				agentName: effectiveRequestSessionMetadata.agentName,
+				runtimeAgentName: effectiveRequestSessionMetadata.runtimeAgentName,
 				threadId: effectiveRequestSessionMetadata.threadId,
 				agentId: effectiveRequestSessionMetadata.agentId,
 				agentSessionId: effectiveRequestSessionMetadata.agentSessionId,
@@ -6025,7 +6052,7 @@ async function handleStreamRequest(
 			message: "Local session files were missing or incomplete, so Astro is hydrating from backend checkpoint state.",
 			data: {
 				runtimeSessionId,
-				agentName,
+				runtimeAgentName,
 				userId,
 				requestedThreadId,
 			},
@@ -6066,7 +6093,7 @@ async function handleStreamRequest(
 					message: "Astro attached hydrated backend session metadata to the current request.",
 					data: {
 						runtimeSessionId,
-						agentName: hydratedBackendSession.metadata.agentName,
+						runtimeAgentName: hydratedBackendSession.metadata.runtimeAgentName,
 						threadId: hydratedBackendSession.metadata.threadId,
 						agentId: hydratedBackendSession.agentId,
 						agentSessionId: hydratedBackendSession.metadata.agentSessionId,
@@ -6088,7 +6115,7 @@ async function handleStreamRequest(
 				data: {
 					runtimeSessionId,
 					threadId: checkpointHydration.metadata.threadId,
-					agentName: checkpointHydration.metadata.agentName,
+					runtimeAgentName: checkpointHydration.metadata.runtimeAgentName,
 					agentId: checkpointHydration.metadata.agentId,
 					agentSessionId: checkpointHydration.metadata.agentSessionId,
 				},
@@ -6134,7 +6161,7 @@ async function handleStreamRequest(
 			message: "Astro refreshed local session metadata from backend authority before Pi launch.",
 			data: {
 				runtimeSessionId,
-				agentName: hydratedBackendSession.metadata.agentName,
+				runtimeAgentName: hydratedBackendSession.metadata.runtimeAgentName,
 				threadId: hydratedBackendSession.metadata.threadId,
 				agentId: hydratedBackendSession.agentId,
 				agentSessionId: hydratedBackendSession.metadata.agentSessionId,
@@ -6157,8 +6184,8 @@ async function handleStreamRequest(
 		};
 		writeSessionMetadata(runtimeSessionId, existingSessionMetadata);
 	}
-		if (existingSessionMetadata?.agentName) {
-			if (existingSessionMetadata.agentName !== agentName) {
+		if (existingSessionMetadata?.runtimeAgentName) {
+			if (existingSessionMetadata.runtimeAgentName !== runtimeAgentName) {
 				json(res, 409, {
 					error: "session_mismatch",
 					message: "runtime_session_id does not match the requested agent.",
@@ -6175,7 +6202,7 @@ async function handleStreamRequest(
 				message:
 					"Astro ignored the message-level `model` field because session-first model authority now comes from the request-carried session serializer, stored session metadata, or backend session authority.",
 				data: {
-					agentName,
+					runtimeAgentName,
 					userId,
 					threadId: existingSessionMetadata?.threadId ?? requestedThreadId ?? null,
 					runtimeSessionId,
@@ -6199,7 +6226,7 @@ async function handleStreamRequest(
 					? "session_metadata"
 					: "none";
 		const sessionModelBindingLogData = {
-			agentName,
+			runtimeAgentName,
 			userId,
 			threadId: existingSessionMetadata?.threadId ?? requestedThreadId ?? null,
 			runtimeSessionId,
@@ -6239,7 +6266,7 @@ async function handleStreamRequest(
 		const fixedProjectCwd = resolveFixedProjectCwd();
 	const requestedProjectId = normalizeProjectId(body.projectId);
 	const requestedCwd = normalizeProjectCwd(body.cwd);
-	const fixedProjectId = isImageBackedProjectExecutor(agentName) ? null : resolveFixedProjectId();
+	const fixedProjectId = isImageBackedProjectExecutor(runtimeAgentName) ? null : resolveFixedProjectId();
 	if (fixedProjectId && requestedProjectId && requestedProjectId !== fixedProjectId) {
 		json(res, 409, {
 			error: "fixed_project_mismatch",
@@ -6258,8 +6285,8 @@ async function handleStreamRequest(
 	const effectiveRequestedCwd = requestedCwd ?? fixedProjectCwd;
 	const configuredProjectImageRef = resolveConfiguredProjectImageRef();
 	if (
-		isProjectSessionAgentName(agentName) &&
-		!isImageBackedProjectExecutor(agentName) &&
+		isProjectSessionRuntimeAgentName(runtimeAgentName) &&
+		!isImageBackedProjectExecutor(runtimeAgentName) &&
 		existingSessionMetadata?.projectId &&
 		effectiveRequestedProjectId &&
 		effectiveRequestedProjectId !== existingSessionMetadata.projectId
@@ -6271,7 +6298,7 @@ async function handleStreamRequest(
 		return;
 	}
 	if (
-		isProjectSessionAgentName(agentName) &&
+		isProjectSessionRuntimeAgentName(runtimeAgentName) &&
 		existingSessionMetadata?.cwd &&
 		effectiveRequestedCwd &&
 		effectiveRequestedCwd !== existingSessionMetadata.cwd
@@ -6284,43 +6311,43 @@ async function handleStreamRequest(
 	}
 
 	const projectId =
-		isProjectSessionAgentName(agentName)
-			? isImageBackedProjectExecutor(agentName)
+		isProjectSessionRuntimeAgentName(runtimeAgentName)
+			? isImageBackedProjectExecutor(runtimeAgentName)
 				? requestedProjectId ?? existingSessionMetadata?.projectId ?? null
 				: effectiveRequestedProjectId ?? existingSessionMetadata?.projectId ?? null
 			: null;
 	const agentCwd =
-		isProjectSessionAgentName(agentName)
+		isProjectSessionRuntimeAgentName(runtimeAgentName)
 			? effectiveRequestedCwd ?? existingSessionMetadata?.cwd ?? null
 			: resolveOrchestratorRuntimeCwd();
 	const specialistAgent =
-		isProjectSessionAgentName(agentName) && agentCwd
-			? resolveSpecialistAgent(agentName, agentCwd)
+		isProjectSessionRuntimeAgentName(runtimeAgentName) && agentCwd
+			? resolveSpecialistAgent(runtimeAgentName, agentCwd)
 			: null;
 	const agentConfig = specialistAgent?.agentConfig ?? null;
 	const projectImageRef =
-		isProjectSessionAgentName(agentName)
+		isProjectSessionRuntimeAgentName(runtimeAgentName)
 			? configuredProjectImageRef ?? existingSessionMetadata?.projectImageRef ?? null
 			: null;
-	if (isProjectSessionAgentName(agentName)) {
-		if (!projectId && !isImageBackedProjectExecutor(agentName)) {
+	if (isProjectSessionRuntimeAgentName(runtimeAgentName)) {
+		if (!projectId && !isImageBackedProjectExecutor(runtimeAgentName)) {
 			json(res, 409, {
 				error: "missing_project_id",
-				message: `${agentName} requires projectId.`,
+				message: `${runtimeAgentName} requires projectId.`,
 			});
 			return;
 		}
 		if (!agentCwd) {
 			json(res, 409, {
 				error: "missing_cwd",
-				message: `${agentName} requires cwd.`,
+				message: `${runtimeAgentName} requires cwd.`,
 			});
 			return;
 		}
 		if (!isExistingDirectory(agentCwd)) {
 			json(res, 409, {
 				error: "invalid_cwd",
-				message: `${agentName} requires cwd to be an existing project directory.`,
+				message: `${runtimeAgentName} requires cwd to be an existing project directory.`,
 			});
 			return;
 		}
@@ -6331,18 +6358,18 @@ async function handleStreamRequest(
 				event: "specialist_agent_not_found",
 				message: "Astro could not discover the requested specialist prompt for the active project session.",
 				data: {
-					agentName,
+					runtimeAgentName,
 					userId,
 					runtimeSessionId,
 					agentCwd,
 					discoveryRoot: specialistAgent?.discoveryRoot ?? null,
 					projectAgentsDir: specialistAgent?.projectAgentsDir ?? null,
-					availableAgentNames: specialistAgent?.availableAgentNames ?? [],
+					availableRuntimeAgentNames: specialistAgent?.availableRuntimeAgentNames ?? [],
 				},
 			});
 			json(res, 500, {
 				error: "agent_prompt_not_found",
-				message: `Could not load the ${agentName} specialist prompt.`,
+				message: `Could not load the ${runtimeAgentName} specialist prompt.`,
 			});
 			return;
 		}
@@ -6374,7 +6401,7 @@ async function handleStreamRequest(
 	let sessionKey: string;
 	let agentSessionId: number | null = null;
 	let startedAt: string | null = null;
-	let responseAgentName = existingSessionMetadata?.agentName ?? agentName;
+	let responseRuntimeAgentName = existingSessionMetadata?.runtimeAgentName ?? runtimeAgentName;
 	let responseThreadId = threadId;
 	const effectiveA2AEnvelope =
 		existingSessionMetadata?.a2a || requestA2AEnvelope
@@ -6383,7 +6410,7 @@ async function handleStreamRequest(
 						version: 1,
 						enabled: true,
 						userOrigin: "agent",
-						callerAgentName: null,
+						callerRuntimeAgentName: null,
 						callerMetadata: null,
 						responseFormat: null,
 						handleUniqueId: null,
@@ -6397,9 +6424,9 @@ async function handleStreamRequest(
 						null,
 			  })
 			: null;
-	const persistedCwd = isProjectSessionAgentName(agentName) ? agentCwd : null;
+	const persistedCwd = isProjectSessionRuntimeAgentName(runtimeAgentName) ? agentCwd : null;
 	const frozenRepoRoot =
-		isProjectSessionAgentName(agentName)
+		isProjectSessionRuntimeAgentName(runtimeAgentName)
 			? existingSessionMetadata?.repoRoot ?? (agentCwd ? resolveGitRepoRoot(agentCwd) : null)
 			: null;
 	if (
@@ -6423,7 +6450,8 @@ async function handleStreamRequest(
 		agentSessionId,
 		threadId,
 		startedAt,
-		agentName: responseAgentName,
+		runtimeAgentName: responseRuntimeAgentName,
+		backendAgentType: existingSessionMetadata?.backendAgentType ?? null,
 		projectId,
 		cwd: persistedCwd,
 		repoRoot: frozenRepoRoot,
@@ -6444,7 +6472,7 @@ async function handleStreamRequest(
 				sessionKey,
 				threadId: activeRun.threadId,
 				agentSessionId: activeRun.agentSessionId,
-				agentName: activeRun.agentName,
+				runtimeAgentName: activeRun.runtimeAgentName,
 				messageId: activeRun.messageId,
 				startedAt: activeRun.startedAt,
 				clientAttached: activeRun.clientAttached,
@@ -6481,7 +6509,7 @@ async function handleStreamRequest(
 				sessionModelBinding,
 			}) ?? agentConfig?.model ?? null;
 		console.log(
-			`[astro-stream] SESSION agent=${responseAgentName} session=${sessionKey} thread=${responseThreadId} agent_id=${agentId} agent_session_id=${agentSessionId ?? "n/a"}${selectedModelForLog ? ` model=${selectedModelForLog}` : ""}`,
+			`[astro-stream] SESSION agent=${responseRuntimeAgentName} session=${sessionKey} thread=${responseThreadId} agent_id=${agentId} agent_session_id=${agentSessionId ?? "n/a"}${selectedModelForLog ? ` model=${selectedModelForLog}` : ""}`,
 		);
 	}
 
@@ -6491,7 +6519,7 @@ async function handleStreamRequest(
 			sessionDir,
 			sessionKey,
 			threadId: responseThreadId,
-			agentName: responseAgentName,
+			runtimeAgentName: responseRuntimeAgentName,
 			agentId,
 			agentSessionId,
 			startedAt,
@@ -6540,7 +6568,7 @@ async function handleStreamRequest(
 		agentId,
 		agentUniqueId,
 		agentSessionId,
-		agentName,
+		runtimeAgentName,
 		userId,
 		conversationStore,
 		logState: {
@@ -6580,14 +6608,15 @@ async function handleStreamRequest(
 
 	const prompt = buildPrompt(system, latestUserMessage, context, tools);
 
-	if (isProjectSessionAgentName(agentName)) {
+	if (isProjectSessionRuntimeAgentName(runtimeAgentName)) {
 		writeSessionMetadata(sessionKey, {
 			agentId,
 			agentUniqueId,
 			agentSessionId,
 			threadId,
 			startedAt,
-			agentName,
+			runtimeAgentName,
+			backendAgentType: existingSessionMetadata?.backendAgentType ?? null,
 			projectId,
 			cwd: persistedCwd,
 			repoRoot: frozenRepoRoot,

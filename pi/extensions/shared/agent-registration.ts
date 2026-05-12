@@ -10,7 +10,8 @@ type AgentSessionResult = {
 	error: string | null;
 	agentSessionId: number | null;
 	agentId: number | null;
-	agentName: string | null;
+	backendAgentType: string | null;
+	runtimeAgentName: string | null;
 	agentUniqueId: string | null;
 	threadId: string | null;
 	startedAt: string | null;
@@ -78,16 +79,16 @@ export function resolveMainsequenceUserId(options: {
 }
 
 export function buildAgentUniqueId(options: {
-	agentName: string;
+	runtimeAgentName: string;
 	userId: string;
 	projectId?: string | number | null;
 }): string {
-	if (options.agentName === "mainsequence-project-executor") {
+	if (options.runtimeAgentName === "mainsequence-project-executor") {
 		return "project-executor";
 	}
 	const projectId = normalizeIdPart(options.projectId);
-	const safeAgentName = sanitizeId(options.agentName);
-	return projectId ? `${safeAgentName}_${options.userId}_${projectId}` : `${safeAgentName}_${options.userId}`;
+	const safeRuntimeAgentName = sanitizeId(options.runtimeAgentName);
+	return projectId ? `${safeRuntimeAgentName}_${options.userId}_${projectId}` : `${safeRuntimeAgentName}_${options.userId}`;
 }
 
 function buildMainsequenceSdkEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -235,6 +236,27 @@ function parseStringField(payload: any, ...keys: string[]): string | null {
 	return null;
 }
 
+function parseObjectField(payload: any, ...keys: string[]): Record<string, unknown> | null {
+	if (!payload || typeof payload !== "object" || Array.isArray(payload)) return null;
+	for (const key of keys) {
+		const value = payload[key];
+		if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+	}
+	return null;
+}
+
+function parseBackendAgentType(agentPayload: any): string | null {
+	return parseStringField(agentPayload, "agent_type", "agentType");
+}
+
+function parseRuntimeAgentName(sessionPayload: any): string | null {
+	const sessionMetadata = parseObjectField(sessionPayload, "session_metadata", "sessionMetadata");
+	return (
+		parseStringField(sessionMetadata, "runtime_agent_name", "runtimeAgentName") ??
+		parseStringField(sessionPayload, "runtime_agent_name", "runtimeAgentName")
+	);
+}
+
 function stringifyBackendErrorValue(value: unknown): string | null {
 	if (typeof value === "string" && value.trim()) return value.trim();
 	if (value === undefined || value === null) return null;
@@ -287,7 +309,8 @@ export async function startBackendAgentSession(options: {
 				error: authHeadersResult.error ?? "Missing backend auth headers for agent session creation.",
 				agentSessionId: null,
 				agentId: null,
-				agentName: null,
+				backendAgentType: null,
+				runtimeAgentName: null,
 				agentUniqueId: null,
 				threadId: null,
 				startedAt: null,
@@ -339,7 +362,8 @@ export async function startBackendAgentSession(options: {
 			error: String(message),
 			agentSessionId: null,
 			agentId: null,
-			agentName: null,
+			backendAgentType: null,
+			runtimeAgentName: null,
 			agentUniqueId: null,
 			threadId: null,
 			startedAt: null,
@@ -358,7 +382,8 @@ export async function startBackendAgentSession(options: {
 			error: "Agent session start did not return an `id`.",
 			agentSessionId: null,
 			agentId: null,
-			agentName: null,
+			backendAgentType: null,
+			runtimeAgentName: null,
 			agentUniqueId: null,
 			threadId: null,
 			startedAt: null,
@@ -375,7 +400,8 @@ export async function startBackendAgentSession(options: {
 		error: null,
 		agentSessionId,
 		agentId: parseAgentId(responseAgent),
-		agentName: parseStringField(responseAgent, "name", "agent_name", "agentName"),
+		backendAgentType: parseBackendAgentType(responseAgent),
+		runtimeAgentName: parseRuntimeAgentName(parsedBody),
 		agentUniqueId: parseStringField(responseAgent, "agent_unique_id", "agentUniqueId"),
 		threadId: parseStringField(parsedBody, "thread_id", "threadId"),
 		startedAt: parseStringField(parsedBody, "started_at", "startedAt"),

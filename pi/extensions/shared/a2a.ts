@@ -1,4 +1,4 @@
-export function resolveCurrentAstroAgentName(env: NodeJS.ProcessEnv = process.env): string {
+export function resolveCurrentRuntimeAgentName(env: NodeJS.ProcessEnv = process.env): string {
 	const fixed = env.ASTRO_FIXED_AGENT_NAME?.trim();
 	if (fixed) return fixed;
 	const activeSpecialist = env.ASTRO_ACTIVE_SPECIALIST?.trim();
@@ -19,14 +19,14 @@ export function normalizeA2AResponseFormat(
 }
 
 export function buildA2ASystemInstruction(options: {
-	callerAgentName: string;
+	callerRuntimeAgentName: string;
 	responseFormat: string | Record<string, unknown> | null;
 	callerMetadata?: Record<string, unknown> | null;
 }): string {
 	const lines = [
 		"This request arrived through Astro's A2A channel.",
 		"Load and follow the injected `a2a_communication` skill.",
-		`Caller agent: ${options.callerAgentName}`,
+		`Caller runtime agent: ${options.callerRuntimeAgentName}`,
 	];
 
 	if (options.callerMetadata && Object.keys(options.callerMetadata).length > 0) {

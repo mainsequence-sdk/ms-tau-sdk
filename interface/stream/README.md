@@ -43,7 +43,7 @@ Send a request compatible with assistant-ui's `ui-message-stream` runtime:
 ```json
 {
   "runtime_session_id": "456",
-  "agentName": "astro-orchestrator",
+  "runtimeAgentName": "astro-orchestrator",
   "userId": "user_123",
   "system": "optional system prompt",
   "messages": [
@@ -79,7 +79,7 @@ To start a project-scoped executor session directly, use:
 ```json
 {
   "runtime_session_id": "87",
-  "agentName": "mainsequence-project-executor",
+  "runtimeAgentName": "mainsequence-project-executor",
   "userId": "user_123",
   "projectId": "42",
   "cwd": "/absolute/path/to/checked-out-project",
@@ -198,14 +198,14 @@ Canonical request fields accepted by Astro include:
 {
   "runtime_session_id": "123",
   "userId": "user_123",
-  "agentName": "mainsequence-project-executor",
+  "runtimeAgentName": "mainsequence-project-executor",
   "session": {
     "id": 123,
     "thread_id": "123",
     "llm_provider": "openai-codex",
     "llm_model": "gpt-5.3-codex-spark",
     "session_metadata": {
-      "workflow_key": "mainsequence-project-executor"
+      "runtime_agent_name": "mainsequence-project-executor"
     }
   },
   "messages": [
@@ -216,7 +216,7 @@ Canonical request fields accepted by Astro include:
   ],
   "response_format": "Return a concise machine-facing status summary with blockers and next actions.",
   "caller": {
-    "agent_name": "astro-orchestrator"
+    "runtime_agent_name": "astro-orchestrator"
   }
 }
 ```
@@ -225,8 +225,8 @@ The example session object above is abbreviated for readability. In real non-deb
 caller should forward the full backend session JSON serialization under `session`, not a trimmed
 subset.
 
-Astro also accepts legacy task-style aliases such as `task`, `message`, `input`, `prompt`, or
-`request`. When canonical `messages` are present, they win.
+Astro also accepts task-style fields such as `task`, `message`, `input`, `prompt`, or `request`.
+When canonical `messages` are present, they win.
 For real A2A execution, that backend session identity is mandatory. Astro must not create the
 executor session on behalf of the caller. The caller should also include the full backend session
 serializer for that target session on every outbound A2A request so session/model/provider metadata

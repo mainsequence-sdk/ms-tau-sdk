@@ -126,8 +126,8 @@ Backend:
 
 `mainsequence-project-coder` is no longer a valid:
 
-- frontend `agentName`
-- backend `workflow_key`
+- frontend `runtimeAgentName`
+- backend `runtime_agent_name`
 - project-session target
 - old project-session handoff target
 - direct specialist-launch target
@@ -233,13 +233,13 @@ Docs must stop presenting coder as a current agent or valid public contract:
 
 ## Backend Contract Changes
 
-The backend should no longer need a `mainsequence-project-coder` workflow key for new Astro project
+The backend should no longer need a `mainsequence-project-coder` runtime routing key for new Astro project
 work.
 
 New executor sessions should use:
 
 ```text
-workflow_key = "mainsequence-project-executor"
+runtime_agent_name = "mainsequence-project-executor"
 ```
 
 The backend session serializer should remain session-first for model and runtime configuration.
@@ -276,10 +276,10 @@ The goal of this phase is to make coder non-authoritative before the replacement
 
 ### Phase 2: Stop Creating New Coder Sessions
 
-- stop creating backend sessions with `workflow_key = "mainsequence-project-coder"`
-- remove executor-to-coder workflow-key aliasing
+- stop creating backend sessions with `runtime_agent_name = "mainsequence-project-coder"`
+- remove executor-to-coder runtime routing aliases
 - remove the old project-session handoff path completely
-- stop treating coder as a valid frontend `agentName` for new work
+- stop treating coder as a valid frontend `runtimeAgentName` for new work
 - keep old coder sessions readable as history only
 
 The goal of this phase is to ensure no new live work enters coder, even before all old code is
@@ -357,14 +357,14 @@ Mitigation:
 - update prompts before removing code
 - add tests or prompt checks for banned coder references in active runtime prompts
 
-### Backend Workflow-Key Drift
+### Backend Runtime Routing Drift
 
 Executor currently has places where workflow metadata maps back to coder.
 
 Mitigation:
 
 - remove executor-to-coder aliases before disabling coder
-- assert new executor sessions use `workflow_key = "mainsequence-project-executor"`
+- assert new executor sessions use `runtime_agent_name = "mainsequence-project-executor"`
 
 ## Verification Plan
 
@@ -374,7 +374,7 @@ Mitigation:
 - confirm orchestrator copies `project_blueprint.md` into the initialized checked-out project root
 - confirm the copied `project_blueprint.md` is committed
 - confirm the copied `project_blueprint.md` is pushed
-- confirm no new backend sessions are created with `workflow_key = "mainsequence-project-coder"`
+- confirm no new backend sessions are created with `runtime_agent_name = "mainsequence-project-coder"`
 - confirm `mainsequence-project-coder` is not listed in available runtime agents
 - confirm `delegate_specialist` is no longer part of the active tool surface
 - confirm there is no active direct `run_specialist`-style launcher for project implementation
@@ -409,7 +409,7 @@ This verifies the intended stop condition for the current phase:
 - [x] Remove executor from normal child-specialist guidance and discovery surfaces.
 - [x] Remove `delegate_specialist` from the active tool surface.
 - [x] Stop mapping executor backend workflow keys to coder.
-- [x] Stop creating new backend sessions with `workflow_key = "mainsequence-project-coder"`.
+- [x] Stop creating new backend sessions with `runtime_agent_name = "mainsequence-project-coder"`.
 - [x] Remove coder from `delegate_specialist`.
 - [x] Remove the old direct `run_specialist` launcher surface.
 - [x] Copy `project_blueprint.md` into the initialized checked-out project root for new project creation.

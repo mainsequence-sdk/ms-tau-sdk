@@ -89,12 +89,12 @@ Astro may hydrate a session when all of the following are true:
 - backend registration is enabled
 - the requested `runtime_session_id` is a backend `AgentSession.id`
 - the backend session record exists
-- the backend session record resolves to `workflow_key = astro-orchestrator`
+- the backend session record resolves to `runtime_agent_name = astro-orchestrator`
 - the backend session record exposes enough metadata to recover the orchestrator runtime contract
 
 At minimum, Astro must recover or derive:
 
-- `agentName = astro-orchestrator`
+- `runtimeAgentName = astro-orchestrator`
 - `agentSessionId`
 - `agentId`
 - `threadId`
@@ -105,7 +105,7 @@ Astro may additionally recover:
 
 Astro may derive without backend storage:
 
-- `agentUniqueId` from the incoming request user id plus `agentName`
+- `agentUniqueId` from the incoming request user id plus `runtimeAgentName`
 
 Hydration for `mainsequence-project-coder` is explicitly out of scope for this ADR and must fail
 closed.
@@ -126,19 +126,19 @@ Expected backend fields:
 - `thread_id`
 - `llm_provider`
 - `llm_model`
-- `session_metadata.workflow_key`
+- `session_metadata.runtime_agent_name`
 - `session_metadata.session_model_binding` when present as cached Astro runtime state
 
 Astro may derive some fields from stable runtime context when needed:
 
-- `agentUniqueId` from the requested user id plus `agentName`
+- `agentUniqueId` from the requested user id plus `runtimeAgentName`
 
 Astro must not invent project-local specialist metadata during orchestrator hydration.
 
 The current request already supplies the runtime context needed for this branch:
 
 - `messages` / `latestUserMessage`
-- `agentName`
+- `runtimeAgentName`
 - `userId`
 - `runtime_session_id`
 - optional full backend `AgentSession` serializer under `session`
@@ -201,7 +201,7 @@ Hydration must fail with a precise error when:
 - the backend session does not exist
 - the provided runtime session id cannot be queried as a backend `AgentSession.id`
 - backend lookup is disabled, so Astro cannot ask the backend authority
-- the backend session exists but does not resolve to `workflow_key = astro-orchestrator`
+- the backend session exists but does not resolve to `runtime_agent_name = astro-orchestrator`
 - the backend session exists but required orchestrator metadata is missing
 - the recovered session agent does not match the requested agent
 - no `threadId` can be recovered from backend metadata or the current request
@@ -259,9 +259,9 @@ when the backend session exists but could not be reconstructed safely.
    - `runtime_session_id` is provided
    - local session files are missing
    - backend registration is enabled
-4. Only proceed when the backend session resolves to `workflow_key = astro-orchestrator`.
+4. Only proceed when the backend session resolves to `runtime_agent_name = astro-orchestrator`.
 5. Do not call `registerMainsequenceAgent(...)` or `startBackendAgentSession(...)` on this path.
-6. Reuse the existing request-scoped `latestUserMessage`, `agentName`, `userId`, and optional
+6. Reuse the existing request-scoped `latestUserMessage`, `runtimeAgentName`, `userId`, and optional
    `threadId`; do not require any new request fields.
 7. Write local `.meta.json` from backend session metadata.
 8. Create minimal local history/conversation files for future turns.
