@@ -31,7 +31,7 @@ These env vars are used by image-backed `mainsequence-project-executor` pods:
 
 - `ASTRO_EXECUTION_MODE`
   - set this to `remote_project_worker` for image-backed executor pods
-- `ASTRO_FIXED_AGENT_NAME`
+- `ASTRO_FIXED_AGENT_TYPE`
   - recommended value: `mainsequence-project-executor`
 - `ASTRO_FIXED_PROJECT_CWD`
   - fixed project path inside the image, for example `/usr/local/share/user-skel/app`

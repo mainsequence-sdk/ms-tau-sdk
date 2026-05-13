@@ -133,8 +133,7 @@ Session-scoped `astro-stream` events commonly include:
 - `session_id`
 - `threadId`
 - `agentSessionId`
-- `runtimeAgentName`
-- `backendAgentType`
+- `agentType`
 - `userId`
 - `projectId`
 - `cwd`
@@ -145,7 +144,7 @@ Request-scoped events may also include:
 
 - `path`
 - `executionMode`
-- `fixedAgentName`
+- `fixedAgentType`
 - `status`
 - `error`
 
@@ -170,7 +169,7 @@ Current emitted `astro-stream` event keys:
 - `backend_session_hydration_succeeded`
 - `backend_session_hydration_unavailable`
 - `backend_session_hydration_wrong_user`
-- `backend_session_hydration_wrong_workflow`
+- `backend_session_hydration_missing_agent_type`
 - `chat_history_blocked_during_active_stream`
 - `chat_history_checkpoint_bundle_invalid`
 - `chat_history_checkpoint_fetch_failed`

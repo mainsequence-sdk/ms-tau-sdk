@@ -124,7 +124,7 @@ executor mode without extra image edits.
 
 - `ASTRO_EXECUTION_MODE=remote_project_worker`
   - tells Astro this is an image-backed project worker
-- `ASTRO_FIXED_AGENT_NAME=mainsequence-project-executor`
+- `ASTRO_FIXED_AGENT_TYPE=mainsequence-project-executor`
   - pins the runtime to the executor specialist
 - `ASTRO_FIXED_PROJECT_CWD=${SKEL_APP_DIR}`
   - tells Astro where the project code lives inside the image
@@ -159,9 +159,9 @@ These are not baked into the Dockerfile because they depend on the specific back
 
 For `mainsequence-project-executor`, Astro uses a fixed backend registration identity:
 
-- backend agent name: `project-executor`
+- backend `agent_type`: `mainsequence-project-executor`
 - backend `agent_unique_id`: `project-executor`
-- runtime agent name remains `mainsequence-project-executor`
+- runtime prompt selector: `mainsequence-project-executor`
 
 ## Filesystem layout and writable directories
 

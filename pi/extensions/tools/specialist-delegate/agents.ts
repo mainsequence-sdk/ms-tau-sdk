@@ -5,7 +5,7 @@ import { getAgentDir, parseFrontmatter } from "@mariozechner/pi-coding-agent";
 export type AgentScope = "user" | "project" | "both";
 
 export interface AgentConfig {
-	promptAgentName: string;
+	promptName: string;
 	description: string;
 	tools?: string[];
 	model?: string;
@@ -82,10 +82,10 @@ function loadAgentsFromDir(directory: string, source: "user" | "project"): Agent
 		}
 
 		const { frontmatter, body } = parseFrontmatter<Record<string, string>>(content);
-		const promptAgentName = frontmatter.name?.trim();
+		const promptName = frontmatter.name?.trim();
 		const description = frontmatter.description?.trim();
 
-		if (!promptAgentName || !description) continue;
+		if (!promptName || !description) continue;
 
 		const tools = frontmatter.tools
 			?.split(",")
@@ -104,7 +104,7 @@ ${outputFormat}`;
 		}
 
 		agents.push({
-			promptAgentName,
+			promptName,
 			description,
 			tools: tools?.length ? tools : undefined,
 			model: frontmatter.model?.trim() || undefined,
@@ -143,12 +143,12 @@ export function discoverAgents(cwd: string, scope: AgentScope): AgentDiscoveryRe
 	const byName = new Map<string, AgentConfig>();
 
 	if (scope === "user") {
-		for (const agent of userAgents) byName.set(agent.promptAgentName, agent);
+		for (const agent of userAgents) byName.set(agent.promptName, agent);
 	} else if (scope === "project") {
-		for (const agent of projectAgents) byName.set(agent.promptAgentName, agent);
+		for (const agent of projectAgents) byName.set(agent.promptName, agent);
 	} else {
-		for (const agent of userAgents) byName.set(agent.promptAgentName, agent);
-		for (const agent of projectAgents) byName.set(agent.promptAgentName, agent);
+		for (const agent of userAgents) byName.set(agent.promptName, agent);
+		for (const agent of projectAgents) byName.set(agent.promptName, agent);
 	}
 
 	return {

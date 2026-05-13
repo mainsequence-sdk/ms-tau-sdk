@@ -177,7 +177,7 @@ Relevant existing request values:
 ```python
 chat_request_values = {
     "threadId": str,
-    "runtimeAgentName": "astro-orchestrator | mainsequence-project-executor",
+    "agentType": "astro-orchestrator | mainsequence-project-executor",
     "userId": str,
     "messages": list,
     "newChat": bool,
@@ -191,7 +191,7 @@ chat_request_values = {
 
 Astro owns validation of frontend intent:
 
-- `runtimeAgentName`
+- `agentType`
 - `newChat` versus `runtime_session_id`
 - `projectId` and `cwd` requirements for `mainsequence-project-executor` when the runtime is not already pinned
 - model binding
@@ -269,8 +269,8 @@ Astro-owned session metadata is sent inside `session_metadata` and stored unchan
 ```python
 orchestrator_session_metadata = {
     "source": "frontend",
-    "runtime_agent_name": "astro-orchestrator",
-    "backend_agent_type": str,
+    "agent_type": "astro-orchestrator",
+    "agent_type": str,
     "created_by_user": str,
     "session_model_binding": dict | None,
     "session_config_overrides": dict | None,
@@ -278,8 +278,8 @@ orchestrator_session_metadata = {
 
 project_executor_session_metadata = {
     "source": "frontend",
-    "runtime_agent_name": "mainsequence-project-executor",
-    "backend_agent_type": str,
+    "agent_type": "mainsequence-project-executor",
+    "agent_type": str,
     "created_by_user": str,
     "project_id": str,
     "project_cwd": str,
@@ -342,8 +342,8 @@ new_session = {
     "session_key": str(response["agent_session_id"]),
     "runtime_session_id": str(response["agent_session_id"]),
     "agent_id": response["agent"]["id"],
-    "runtime_agent_name": response["session_metadata"]["runtime_agent_name"],
-    "backend_agent_type": response["agent"]["agent_type"],
+    "agent_type": response["session_metadata"]["agent_type"],
+    "agent_type": response["agent"]["agent_type"],
     "agent_unique_id": response["agent"]["agent_unique_id"],
     "thread_id": response["thread_id"] or str(response["agent_session_id"]),
 }

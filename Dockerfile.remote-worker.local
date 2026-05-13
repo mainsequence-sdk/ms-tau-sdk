@@ -65,7 +65,7 @@ ENV APP_USER=appuser \
     ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence \
     PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent \
     ASTRO_EXECUTION_MODE=remote_project_worker \
-    ASTRO_FIXED_AGENT_NAME=mainsequence-project-executor \
+    ASTRO_FIXED_AGENT_TYPE=mainsequence-project-executor \
     ASTRO_FIXED_PROJECT_CWD=/workspace/project \
     ASTRO_PROJECT_IMAGE_REF=local-mounted-project
 

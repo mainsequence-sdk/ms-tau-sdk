@@ -26,7 +26,7 @@ The hook delegates serialization to [`emitTelemetryEvent`](../shared/telemetry.m
 - event name
 - timestamp
 - parent or child role
-- active child agent name when present
+- active child agent type when present
 - event-specific data
 
 ## Related files

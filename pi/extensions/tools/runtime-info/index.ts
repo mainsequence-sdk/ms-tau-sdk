@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 import { Type } from "@sinclair/typebox";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { resolveCurrentRuntimeAgentName } from "../../shared/a2a.js";
+import { resolveCurrentAgentType } from "../../shared/a2a.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..", "..", "..", "..");
@@ -138,7 +138,7 @@ export default function (pi: ExtensionAPI) {
 				mainsequence_cli_version: mainsequenceCli.ok ? mainsequenceCli.value : null,
 				python_version: pythonVersion.ok ? pythonVersion.value : null,
 				node_version: process.versions.node,
-				runtime_agent_name: resolveCurrentRuntimeAgentName(process.env),
+				agent_type: resolveCurrentAgentType(process.env),
 				execution_mode: executionMode,
 				project_image_ref: process.env.ASTRO_PROJECT_IMAGE_REF?.trim() || null,
 				auth_mode: process.env.MAINSEQUENCE_AUTH_MODE?.trim() || null,
@@ -171,7 +171,7 @@ export default function (pi: ExtensionAPI) {
 			const lines = [
 				`Versions: ${versionTags.join(" | ")}`,
 				`Astro package ${details.astro_package_version ?? "unknown"}`,
-				`Agent: ${details.runtime_agent_name}`,
+				`Runtime: ${details.agent_type}`,
 				`Execution mode: ${details.execution_mode}`,
 			];
 

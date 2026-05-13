@@ -17,7 +17,7 @@ export type StreamEvent =
 				agent_session_id: number;
 				session_key: string;
 				runtime_session_id: string;
-				runtime_agent_name: string;
+				agent_type: string;
 				agent_unique_id?: string;
 				thread_id: string;
 				agent_id: number;

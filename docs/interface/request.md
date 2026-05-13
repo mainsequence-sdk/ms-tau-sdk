@@ -7,7 +7,7 @@ currently stored for that runtime session.
 
 ## Required fields
 
-- `runtimeAgentName` (string)
+- `agentType` (string)
 - `userId` (string | number)
 - `runtime_session_id` (string; accepted aliases: `runtimeSessionId`, `sessionId`) for every real
   non-mock execution request
@@ -46,8 +46,8 @@ currently stored for that runtime session.
   `runtime_session_id` before Pi launch instead of proceeding with no model binding.
 - `threadId` is informational/client-bookkeeping only when backend registration is enabled; it does
   not control session continuity.
-- `runtimeAgentName` is the Astro runtime/prompt selector, not backend `Agent.agent_type`
-  (unknown runtime names return `error: unknown_agent`).
+- `agentType` is the backend `Agent.agent_type` value and the Astro prompt selector
+  (unknown values return `error: unknown_agent_type`).
 - When backend registration is enabled, `runtime_session_id` is the backend `AgentSession.id` string.
 - `mainsequence-project-executor` is the only project implementation runtime.
 - Project-scoped executor requests may rely on a deployment-pinned project cwd or supply `cwd`
@@ -61,7 +61,7 @@ currently stored for that runtime session.
 - `GET /api/chat/get_available_models` remains a control-plane discovery endpoint. It is not part
   of the normal message hot path.
 - `sessionMetadata` is stored only for non-reserved keys. Astro owns reserved metadata such as
-  `runtime_agent_name`, `backend_agent_type`, `created_by_user`, `project_id`, `project_cwd`, `project_repo_root`,
+  `agent_type`, `created_by_user`, `project_id`, `project_cwd`, `project_repo_root`,
   and `session_model_binding`.
 ## Example request
 
@@ -69,7 +69,7 @@ currently stored for that runtime session.
 {
   "threadId": "thread-001",
   "runtime_session_id": "456",
-  "runtimeAgentName": "astro-orchestrator",
+  "agentType": "astro-orchestrator",
   "userId": "user_123",
   "system": "optional system prompt",
   "messages": [
@@ -94,7 +94,7 @@ Example resume request with session authority:
 ```json
 {
   "threadId": "thread-001",
-  "runtimeAgentName": "astro-orchestrator",
+  "agentType": "astro-orchestrator",
   "userId": "user_123",
   "runtime_session_id": "456",
   "session": {
@@ -106,7 +106,7 @@ Example resume request with session authority:
       "reasoning_effort": "on"
     },
     "session_metadata": {
-      "runtime_agent_name": "astro-orchestrator",
+      "agent_type": "astro-orchestrator",
       "session_model_binding": {
         "source": "pi-model-registry",
         "provider": "openai-codex",
@@ -129,7 +129,7 @@ Example resume request with session authority:
     },
     "agent": {
       "id": 123,
-      "agent_type": "backend-owned-agent-type"
+      "agent_type": "astro-orchestrator"
     }
   },
   "messages": [
@@ -153,7 +153,7 @@ Example project-executor request:
 {
   "threadId": "thread-hope30",
   "runtime_session_id": "87",
-  "runtimeAgentName": "mainsequence-project-executor",
+  "agentType": "mainsequence-project-executor",
   "userId": "user_123",
   "session": {
     "id": 87,
@@ -161,7 +161,7 @@ Example project-executor request:
     "llm_provider": "openai-codex",
     "llm_model": "gpt-5.3-codex-spark",
     "session_metadata": {
-      "runtime_agent_name": "mainsequence-project-executor"
+      "agent_type": "mainsequence-project-executor"
     }
   },
   "projectId": "42",

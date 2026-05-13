@@ -166,7 +166,7 @@ That path will be mounted into a fixed container path:
 
 The local executor runtime will then use:
 
-- `ASTRO_FIXED_AGENT_NAME=mainsequence-project-executor`
+- `ASTRO_FIXED_AGENT_TYPE=mainsequence-project-executor`
 - `ASTRO_FIXED_PROJECT_CWD=/workspace/project`
 - `ASTRO_EXECUTION_MODE=remote_project_worker`
 

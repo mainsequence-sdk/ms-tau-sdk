@@ -120,7 +120,7 @@ Required for real runs:
 ```json
 {
   "runtime_session_id": "456",
-  "runtimeAgentName": "astro-orchestrator",
+  "agentType": "astro-orchestrator",
   "userId": "user_123",
   "messages": [...]
 }
@@ -144,7 +144,7 @@ Required for all real executor requests:
 ```json
 {
   "runtime_session_id": "87",
-  "runtimeAgentName": "mainsequence-project-executor",
+  "agentType": "mainsequence-project-executor",
   "userId": "user_123",
   "session": { "...full backend AgentSession serializer..." },
   "messages": [...],

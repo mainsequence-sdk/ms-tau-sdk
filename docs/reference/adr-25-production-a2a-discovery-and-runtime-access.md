@@ -269,7 +269,7 @@ The canonical non-debug A2A runtime payload is:
     "llm_provider": "openai-codex",
     "llm_model": "gpt-5.3-codex-spark",
     "session_metadata": {
-      "runtime_agent_name": "mainsequence-project-executor"
+      "agent_type": "mainsequence-project-executor"
     }
   },
   "messages": [
@@ -281,7 +281,7 @@ The canonical non-debug A2A runtime payload is:
   "response_format": "Return a concise machine-facing status summary.",
   "caller": {
     "agent_id": 12,
-    "runtime_agent_name": "astro-orchestrator"
+    "agent_type": "astro-orchestrator"
   }
 }
 ```

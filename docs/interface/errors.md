@@ -3,7 +3,7 @@
 Typical error responses:
 
 - `400` — invalid JSON, missing `messages`, or missing latest user message
-- `400` — missing `runtimeAgentName` or `userId`
+- `400` — missing `agentType` or `userId`
 - `400` — missing user identity for provider status/sign-in/sign-off requests. Astro accepts
   `userId`, `user_id`, `created_by_user`, `createdByUser`, supported user-id headers, Bearer JWT
   user claims, or `ASTRO_MAINSEQUENCE_USER_ID`.

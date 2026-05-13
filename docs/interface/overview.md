@@ -1,11 +1,11 @@
 # Interface Overview
 
 This interface exposes Astro over HTTP using assistant-ui's `ui-message-stream` protocol over SSE.
-Clients must identify the Astro runtime agent (`runtimeAgentName`) and user (`userId`) on each
-request.
+Clients must identify the backend `Agent.agent_type` / prompt selector (`agentType`) and user
+(`userId`) on each request.
 The normal entry point is `astro-orchestrator`. Project implementation runs through
 `mainsequence-project-executor`; image-backed remote worker pods can pin that runtime with
-`ASTRO_FIXED_AGENT_NAME` plus fixed project env vars when the project image already contains the
+`ASTRO_FIXED_AGENT_TYPE` plus fixed project env vars when the project image already contains the
 prepared runtime.
 
 ## Base URL

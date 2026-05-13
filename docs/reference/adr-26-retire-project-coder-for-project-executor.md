@@ -126,8 +126,8 @@ Backend:
 
 `mainsequence-project-coder` is no longer a valid:
 
-- frontend `runtimeAgentName`
-- backend `runtime_agent_name`
+- frontend `agentType`
+- backend `agent_type`
 - project-session target
 - old project-session handoff target
 - direct specialist-launch target
@@ -187,7 +187,7 @@ or replaced.
 
 ### Stream Runtime
 
-- `PROJECT_SESSION_AGENT_NAMES` currently includes coder and executor.
+- `PROJECT_SESSION_AGENT_TYPES` currently includes coder and executor.
 - `resolveBackendWorkflowKeyForAgent(...)` maps executor sessions back to the coder workflow key.
 - `parseSessionSwitchRequest(...)` only accepts coder session switches.
 - `handleProjectSessionSwitch(...)` creates and continues a coder session in the same stream.
@@ -239,7 +239,7 @@ work.
 New executor sessions should use:
 
 ```text
-runtime_agent_name = "mainsequence-project-executor"
+agent_type = "mainsequence-project-executor"
 ```
 
 The backend session serializer should remain session-first for model and runtime configuration.
@@ -276,10 +276,10 @@ The goal of this phase is to make coder non-authoritative before the replacement
 
 ### Phase 2: Stop Creating New Coder Sessions
 
-- stop creating backend sessions with `runtime_agent_name = "mainsequence-project-coder"`
+- stop creating backend sessions with `agent_type = "mainsequence-project-coder"`
 - remove executor-to-coder runtime routing aliases
 - remove the old project-session handoff path completely
-- stop treating coder as a valid frontend `runtimeAgentName` for new work
+- stop treating coder as a valid frontend `agentType` for new work
 - keep old coder sessions readable as history only
 
 The goal of this phase is to ensure no new live work enters coder, even before all old code is
@@ -364,7 +364,7 @@ Executor currently has places where workflow metadata maps back to coder.
 Mitigation:
 
 - remove executor-to-coder aliases before disabling coder
-- assert new executor sessions use `runtime_agent_name = "mainsequence-project-executor"`
+- assert new executor sessions use `agent_type = "mainsequence-project-executor"`
 
 ## Verification Plan
 
@@ -374,7 +374,7 @@ Mitigation:
 - confirm orchestrator copies `project_blueprint.md` into the initialized checked-out project root
 - confirm the copied `project_blueprint.md` is committed
 - confirm the copied `project_blueprint.md` is pushed
-- confirm no new backend sessions are created with `runtime_agent_name = "mainsequence-project-coder"`
+- confirm no new backend sessions are created with `agent_type = "mainsequence-project-coder"`
 - confirm `mainsequence-project-coder` is not listed in available runtime agents
 - confirm `delegate_specialist` is no longer part of the active tool surface
 - confirm there is no active direct `run_specialist`-style launcher for project implementation
@@ -409,7 +409,7 @@ This verifies the intended stop condition for the current phase:
 - [x] Remove executor from normal child-specialist guidance and discovery surfaces.
 - [x] Remove `delegate_specialist` from the active tool surface.
 - [x] Stop mapping executor backend workflow keys to coder.
-- [x] Stop creating new backend sessions with `runtime_agent_name = "mainsequence-project-coder"`.
+- [x] Stop creating new backend sessions with `agent_type = "mainsequence-project-coder"`.
 - [x] Remove coder from `delegate_specialist`.
 - [x] Remove the old direct `run_specialist` launcher surface.
 - [x] Copy `project_blueprint.md` into the initialized checked-out project root for new project creation.

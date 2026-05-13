@@ -26,7 +26,7 @@ export type A2AEnvelope = {
 	version: 1;
 	enabled: true;
 	userOrigin: "agent";
-	callerRuntimeAgentName: string | null;
+	callerAgentType: string | null;
 	callerMetadata: Record<string, unknown> | null;
 	responseFormat: A2AResponseFormat;
 	handleUniqueId: string | null;
@@ -37,7 +37,7 @@ export type A2AEnvelope = {
 export type UserMessageProvenance = {
 	origin: "agent";
 	channel: "a2a";
-	callerRuntimeAgentName: string | null;
+	callerAgentType: string | null;
 	handleUniqueId: string | null;
 	callerAgentSessionId: number | null;
 	targetAgentId: number | null;
@@ -77,11 +77,11 @@ export function normalizeA2AEnvelope(value: unknown): A2AEnvelope | null {
 		isPlainObject(value.caller_metadata) ? cloneRecord(value.caller_metadata) :
 		isPlainObject(value.caller) ? cloneRecord(value.caller) :
 		null;
-	const callerRuntimeAgentName =
-		normalizeString(value.callerRuntimeAgentName) ??
-		normalizeString(value.caller_runtime_agent_name) ??
-		normalizeString(callerMetadata?.runtimeAgentName) ??
-		normalizeString(callerMetadata?.runtime_agent_name);
+	const callerAgentType =
+		normalizeString(value.callerAgentType) ??
+		normalizeString(value.caller_agent_type) ??
+		normalizeString(callerMetadata?.agentType) ??
+		normalizeString(callerMetadata?.agent_type);
 	const responseFormat = normalizeA2AResponseFormat(value.responseFormat ?? value.response_format);
 	const handleUniqueId =
 		normalizeString(value.handleUniqueId) ?? normalizeString(value.handle_unique_id);
@@ -99,7 +99,7 @@ export function normalizeA2AEnvelope(value: unknown): A2AEnvelope | null {
 		version: 1,
 		enabled: true,
 		userOrigin: "agent",
-		callerRuntimeAgentName: callerRuntimeAgentName ?? null,
+		callerAgentType: callerAgentType ?? null,
 		callerMetadata,
 		responseFormat,
 		handleUniqueId: handleUniqueId ?? null,
@@ -118,7 +118,7 @@ export function mergeA2AEnvelopes(
 		version: 1,
 		enabled: true,
 		userOrigin: "agent",
-		callerRuntimeAgentName: overlay.callerRuntimeAgentName ?? base.callerRuntimeAgentName,
+		callerAgentType: overlay.callerAgentType ?? base.callerAgentType,
 		callerMetadata: overlay.callerMetadata ?? base.callerMetadata,
 		responseFormat: overlay.responseFormat ?? base.responseFormat,
 		handleUniqueId: overlay.handleUniqueId ?? base.handleUniqueId,
@@ -132,7 +132,7 @@ export function a2aEnvelopeToUserProvenance(value: A2AEnvelope | null): UserMess
 	return {
 		origin: "agent",
 		channel: "a2a",
-		callerRuntimeAgentName: value.callerRuntimeAgentName,
+		callerAgentType: value.callerAgentType,
 		handleUniqueId: value.handleUniqueId,
 		callerAgentSessionId: value.callerAgentSessionId,
 		targetAgentId: value.targetAgentId,

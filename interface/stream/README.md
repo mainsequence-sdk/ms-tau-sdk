@@ -43,7 +43,7 @@ Send a request compatible with assistant-ui's `ui-message-stream` runtime:
 ```json
 {
   "runtime_session_id": "456",
-  "runtimeAgentName": "astro-orchestrator",
+  "agentType": "astro-orchestrator",
   "userId": "user_123",
   "system": "optional system prompt",
   "messages": [
@@ -79,7 +79,7 @@ To start a project-scoped executor session directly, use:
 ```json
 {
   "runtime_session_id": "87",
-  "runtimeAgentName": "mainsequence-project-executor",
+  "agentType": "mainsequence-project-executor",
   "userId": "user_123",
   "projectId": "42",
   "cwd": "/absolute/path/to/checked-out-project",
@@ -198,14 +198,14 @@ Canonical request fields accepted by Astro include:
 {
   "runtime_session_id": "123",
   "userId": "user_123",
-  "runtimeAgentName": "mainsequence-project-executor",
+  "agentType": "mainsequence-project-executor",
   "session": {
     "id": 123,
     "thread_id": "123",
     "llm_provider": "openai-codex",
     "llm_model": "gpt-5.3-codex-spark",
     "session_metadata": {
-      "runtime_agent_name": "mainsequence-project-executor"
+      "agent_type": "mainsequence-project-executor"
     }
   },
   "messages": [
@@ -216,7 +216,7 @@ Canonical request fields accepted by Astro include:
   ],
   "response_format": "Return a concise machine-facing status summary with blockers and next actions.",
   "caller": {
-    "runtime_agent_name": "astro-orchestrator"
+    "agent_type": "astro-orchestrator"
   }
 }
 ```

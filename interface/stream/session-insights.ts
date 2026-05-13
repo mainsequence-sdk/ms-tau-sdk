@@ -23,8 +23,7 @@ import {
 
 type SessionMetadataLike = {
 	threadId: string | null;
-	runtimeAgentName: string | null;
-	backendAgentType: string | null;
+	agentType: string | null;
 	agentId: number | null;
 	agentSessionId: number | null;
 	startedAt: string | null;
@@ -43,8 +42,7 @@ export type SessionUsageResponse = {
 	session: {
 		sessionId: string;
 		threadId: string | null;
-		runtimeAgentName: string | null;
-		backendAgentType: string | null;
+		agentType: string | null;
 		agentId: number | null;
 		agentSessionId: number | null;
 		status: "running" | "completed" | "error";
@@ -189,8 +187,7 @@ function buildSessionSummary(
 	return {
 		sessionId: sessionKey,
 		threadId: history?.session.threadId ?? metadata.threadId,
-		runtimeAgentName: history?.session.runtimeAgentName ?? metadata.runtimeAgentName,
-		backendAgentType: metadata.backendAgentType,
+		agentType: history?.session.agentType ?? metadata.agentType,
 		agentId: history?.session.agentId ?? metadata.agentId,
 		agentSessionId: history?.session.agentSessionId ?? metadata.agentSessionId,
 		status: history?.session.status ?? "running",
