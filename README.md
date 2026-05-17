@@ -25,10 +25,11 @@ docker build --target astro-pi -t astro:pi .
 docker build --target astro-pi-stream -t astro:pi-stream .
 ```
 
-To bump the Astro project patch version before publishing a deployable image:
+To bump the Astro project version before publishing a deployable image, use the release level that
+matches the change. For a major runtime contract upgrade:
 
 ```bash
-npm run version:patch
+npm run version:major
 ```
 
 Review and commit the version change, then publish the image:
@@ -74,14 +75,14 @@ docker compose restart astro-pi-stream
 The compose file now keeps active session files in a shared tmpfs-backed `/session-state` volume and
 leaves container runtime state rebuildable:
 
-- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`
-- `PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`
+- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/jovyan/.astro-container-data/.config/mainsequence`
+- `PI_CODING_AGENT_DIR=/home/jovyan/.astro-container-data/.pi/agent`
 - `ASTRO_STREAM_SESSION_DIR=/session-state/sessions`
 
 At startup, Astro prepares only container-local runtime state. Provider auth, provider signin state,
 and stream session files have no host or repo-local source path in the container. Backend
-checkpoints are the durable source for session continuity. The image runs as non-root `appuser`;
-rebuildable runtime state lives under `/home/appuser/.astro-container-data`.
+checkpoints are the durable source for session continuity. The image runs as non-root `jovyan`;
+rebuildable runtime state lives under `/home/jovyan/.astro-container-data`.
 
 That keeps Linux virtualenvs isolated from macOS host paths and makes Docker behave closer to the
 pod-local `emptyDir` session model.

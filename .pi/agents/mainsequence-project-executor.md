@@ -28,8 +28,7 @@ Rules:
   - report the exact command, working directory when relevant, exit code or signal, CLI version or version lookup failure, stderr, stdout, and concrete blocker or next action
   - do not retry guessed command variants or interactive alternatives unless help output or local docs show the exact corrected command
 - Stay inside the prepared project runtime and work only in the current project folder.
-- Keep environment changes minimal. Prefer editing project files over mutating the image runtime itself unless the task explicitly requires it.
-- You are the only project implementation agent. Do not refer to or rely on `mainsequence-project-coder`.
+- The image runtime and prepared environment are immutable for normal project work. Edit project files only; report environment/runtime blockers instead of mutating the environmen
 
 For any A2A discovery or communication, load and follow the injected `a2a_communication` skill.
 When you send an outbound A2A request after backend session allocation, always include the target

@@ -384,12 +384,14 @@ Mitigation:
 
 The current repo state closes the ADR 26 migration at the code-and-contract level:
 
-- [`scripts/mainsequence_project_finalize_creation.ts`](../../scripts/mainsequence_project_finalize_creation.ts)
-  copies `project_blueprint.md` into the initialized checkout, stages it, commits it, and pushes it
 - [`../getting-started/request-lifecycle.md`](../getting-started/request-lifecycle.md)
   defines the current flow as orchestrator-owned project creation with no session switch
 - active project-session handoff, `delegate_specialist`, and direct `run_specialist` launch
   surfaces were removed from the codebase
+
+Later runtime-profile work removed the local checkout finalization helper; project implementation is
+owned by backend-mediated `mainsequence-project-executor` sessions rather than orchestrator-local
+checkout setup.
 - coder-only diff/session endpoints were removed from the active API surface
 - public request/response docs and backend session-allocation docs now describe the
   executor-first contract instead of the retired coder flow

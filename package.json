@@ -1,6 +1,6 @@
 {
   "name": "astro",
-  "version": "0.1.17",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "Astro orchestrator for Main Sequence project assistants with generated docs context and standard Pi web access.",
@@ -18,9 +18,9 @@
   "scripts": {
     "check": "tsc --noEmit -p tsconfig.json",
     "version:show": "node -p \"require('./package.json').version\"",
+    "version:major": "npm version major --no-git-tag-version",
     "version:patch": "npm version patch --no-git-tag-version",
     "build:gcp": "gcloud builds submit --config deployment/gcp/cloudbuild.yaml .",
-    "mainsequence:project-setup": "tsx scripts/mainsequence_project_set_up_locally.ts",
     "pi": "node scripts/start_pi.mjs",
     "pi:stream": "tsx scripts/start_pi_stream.ts",
     "checkpoint:sidecar": "tsx scripts/session_checkpoint_sidecar.ts"

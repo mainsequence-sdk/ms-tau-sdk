@@ -41,5 +41,4 @@ The tool calls Astro's deterministic auth bootstrap in `scripts/mainsequence_run
 
 - [`../../../scripts/mainsequence_runtime_auth.ts`](../../../scripts/mainsequence_runtime_auth.ts)
 - [`../../../.pi/APPEND_SYSTEM.md`](../../../.pi/APPEND_SYSTEM.md)
-- [`../../../.pi/agents/mainsequence-project-executor.md`](../../../.pi/agents/mainsequence-project-executor.md)
 - [`../../prompts/verify-mainsequence-tutorial.md`](../../prompts/verify-mainsequence-tutorial.md)

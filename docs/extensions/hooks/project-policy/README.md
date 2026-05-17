@@ -17,7 +17,7 @@ Append Astro's child runtime policy to runtime-owned child processes before the 
 2. Reads the child-runtime policy markdown.
 3. Appends that policy to the child system prompt under an `Astro child runtime policy` section.
 
-This keeps the parent prompt and the child runtime policy separate.
+This keeps the shared Astro prompt and the child runtime policy separate.
 
 ## Environment
 

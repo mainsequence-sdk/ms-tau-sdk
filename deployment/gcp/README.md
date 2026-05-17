@@ -4,7 +4,7 @@
 
 The Astro stream container is stateless. Runtime files under:
 
-- `/home/appuser/.astro-container-data`
+- `/home/jovyan/.astro-container-data`
 - `/session-state`
 
 are rebuildable pod/container-local state. Session continuity is owned by backend `AgentSession`
@@ -109,11 +109,11 @@ They belong to the already-deployed GKE workload outside this repo's image publi
 These are container contract values from the repo and should usually stay fixed in the running
 service instead of varying per environment:
 
-- `HOME=/home/appuser`
+- `HOME=/home/jovyan`
 - `ASTRO_STREAM_HOST=0.0.0.0`
-- `ASTRO_CONTAINER_DATA_DIR=/home/appuser/.astro-container-data`
-- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`
-- `PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`
+- `ASTRO_CONTAINER_DATA_DIR=/home/jovyan/.astro-container-data`
+- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/jovyan/.astro-container-data/.config/mainsequence`
+- `PI_CODING_AGENT_DIR=/home/jovyan/.astro-container-data/.pi/agent`
 - `ASTRO_STREAM_SESSION_DIR=/session-state/sessions`
 - `ASTRO_SESSION_OVERRIDES_DIR=/session-state/session-overrides`
 
@@ -196,10 +196,11 @@ The final published image is also labeled with exact full versions:
 - `org.opencontainers.image.python.version=<python-full-version>`
 - `org.opencontainers.image.node.version=<node-full-version>`
 
-Before publishing a deployable image, bump the Astro project patch version locally and commit it:
+Before publishing a deployable image, bump the Astro project version locally according to the
+release level and commit it. For a major runtime contract upgrade:
 
 ```bash
-npm run version:patch
+npm run version:major
 ```
 
 After the version change is reviewed and committed, publish the image:
@@ -359,7 +360,7 @@ options:
 
 - `.env` is excluded by `.dockerignore`, which is good and should stay that way
 - the deploy target should use the `astro-pi-stream` Docker target, not `astro-pi`
-- the running service still needs writable container runtime state at `/home/appuser/.astro-container-data`
+- the running service still needs writable container runtime state at `/home/jovyan/.astro-container-data`
 - rebuilding without bumping the Astro package version will repoint that `astro-<version>` tag to
   the newly built image
 - the extra `python-...`, `node-...`, and `ms-sdk-...` tags are still just more

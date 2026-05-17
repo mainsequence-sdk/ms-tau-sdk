@@ -1,6 +1,6 @@
 # Decisions
 
-## 1. Keep the parent prompt static
+## 1. Keep the shared Astro prompt static
 
 Implementation:
 
@@ -8,8 +8,8 @@ Implementation:
 
 Why:
 
-- the parent role is mostly stable
-- static prompt files are easier to inspect than runtime-generated parent policy
+- the shared Main Sequence runtime contract is mostly stable
+- static prompt files are easier to inspect than runtime-generated policy
 
 ## 2. Keep child runtime policy dynamic
 
@@ -27,12 +27,15 @@ Why:
 
 Implementation:
 
-- `.pi/agents/mainsequence-project-executor.md`
+- `.pi/APPEND_SYSTEM.md`
+- `ASTRO_FIXED_AGENT_TYPE=mainsequence-project-executor`
 
 Why:
 
-- project implementation belongs on the dedicated executor runtime instead of the parent session
-- the orchestrator should remain the user-facing control plane rather than switching into a local coder session
+- project implementation happens inside a project-attached runtime when that runtime is already
+  pinned to the executor backend identity
+- the prompt contract is unified in `.pi/APPEND_SYSTEM.md`; the runtime profile decides whether the
+  current cwd is a prepared project
 
 ## 4. Keep repo-local runtime in TypeScript
 
@@ -61,7 +64,7 @@ Why:
 - the runtime should stay inspectable and avoid generating extra package state inside `.pi`
 - external Pi packages should live in normal npm dependency locations
 
-## 6. Keep tutorial verification out of the default parent-agent contract
+## 6. Keep tutorial verification out of the default shared prompt contract
 
 Implementation:
 
@@ -81,7 +84,7 @@ Implementation:
 
 Why:
 
-- the agent already has role instructions in `.pi/APPEND_SYSTEM.md` and `.pi/agents/*.md`
+- the agent already has role instructions in `.pi/APPEND_SYSTEM.md`
 - user-facing docs should not be mixed into the agent prompt by default
 
 ## 8. Keep inspectable runtime state outside ephemeral containers
@@ -403,3 +406,18 @@ Why:
   `astro-orchestrator` and `mainsequence-project-executor`
 - keeping `agentType` for communication and `promptName` for prompt-file frontmatter avoids future
   confusion in backend session hydration and prompt lookup code
+
+## 30. Keep backend `agent_type` distinct, but use runtime profiles inside Astro
+
+Implementation:
+
+- `reference/adr-30-runtime-profiles-vs-agent-type.md`
+
+Why:
+
+- backend session allocation, registration, runtime access, and analytics still depend on distinct
+  backend `agent_type` values
+- Astro runtime behavior should not keep re-encoding that same distinction through scattered
+  executor-specific `agentType` checks
+- explicit runtime profiles make fixed worker prompt loading, project cwd rules, model policy, and
+  sidecar parity easier to reason about

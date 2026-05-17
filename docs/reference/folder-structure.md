@@ -8,9 +8,7 @@ astro/
 │   └── stream-sessions/
 ├── .pi/
 │   ├── APPEND_SYSTEM.md
-│   ├── settings.json
-│   └── agents/
-│       └── mainsequence-project-executor.md
+│   └── settings.json
 ├── pi/
 │   ├── extensions/
 │   │   ├── hooks/
@@ -39,7 +37,7 @@ astro/
 
 ### `.pi/`
 
-Project-local Pi settings, parent prompt, and runtime agent prompts.
+Project-local Pi settings and the shared Astro prompt contract.
 
 ### `.astro/`
 
@@ -73,18 +71,17 @@ When Astro runs in containers, rebuildable runtime state is not the repo-local `
 lives under the container runtime root, while active session files live under `/session-state`:
 
 ```text
-/home/appuser/.astro-container-data/
+/home/jovyan/.astro-container-data/
 ├── .pi/
 │   ├── agent/
 │   │   ├── settings.json
 │   │   └── bin/
 │   └── project/
 │       ├── APPEND_SYSTEM.md
-│       ├── agents/
 │       ├── settings.json
 │       └── skills/
 ├── astro-orchestrator-runtime/
-│   └── .pi -> /home/appuser/.astro-container-data/.pi/project
+│   └── .pi -> /home/jovyan/.astro-container-data/.pi/project
 ├── .config/
 │   └── mainsequence/
 │       ├── auth.json

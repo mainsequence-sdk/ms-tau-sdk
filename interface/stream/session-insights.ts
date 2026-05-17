@@ -187,9 +187,9 @@ function buildSessionSummary(
 	return {
 		sessionId: sessionKey,
 		threadId: history?.session.threadId ?? metadata.threadId,
-		agentType: history?.session.agentType ?? metadata.agentType,
-		agentId: history?.session.agentId ?? metadata.agentId,
-		agentSessionId: history?.session.agentSessionId ?? metadata.agentSessionId,
+		agentType: metadata.agentType ?? history?.session.agentType ?? null,
+		agentId: metadata.agentId ?? history?.session.agentId ?? null,
+		agentSessionId: metadata.agentSessionId ?? history?.session.agentSessionId ?? null,
 		status: history?.session.status ?? "running",
 		startedAt: history?.session.startedAt ?? metadata.startedAt,
 		updatedAt: history?.session.updatedAt ?? metadata.startedAt,

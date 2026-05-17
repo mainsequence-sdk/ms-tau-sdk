@@ -21,7 +21,7 @@ Use this skill when adding new capabilities to the starter.
    - `description`
    - `tools`
    - optional `model`
-3. Update `.pi/APPEND_SYSTEM.md` if the parent agent should route to it
+3. Update `.pi/APPEND_SYSTEM.md` if the shared Astro prompt should route to it
 4. Update the relevant component or workflow docs under `docs/`
 5. Run `npm run check`
 

@@ -9,8 +9,8 @@ Astro's repo-owned reusable prompt templates live under `pi/prompts/` and are do
 
 ## Notes
 
-- These prompts guide parent-agent workflows.
-- They are different from specialist files under `.pi/agents/`, which define delegated child roles.
+- These prompts guide reusable Astro workflows.
+- They are different from project-local specialist files under `.pi/agents/`.
 
 ## Related pages
 

@@ -19,14 +19,15 @@ This file is what makes Astro a project-local Pi package rather than just a fold
 
 ## `.pi/APPEND_SYSTEM.md`
 
-This is the static parent prompt.
+This is the shared static Astro prompt.
 
-It defines Astro's main role:
+It defines Astro's Main Sequence contract:
 
-- orchestrate Main Sequence projects
 - use the Main Sequence CLI
-- keep project creation and setup on the orchestrator path
-- use A2A for executor communication when that later phase is active
+- use runtime profile rules to distinguish project-attached and non-project-attached sessions
+- handle project creation/selection when not project-attached
+- work in the prepared project cwd when project-attached
+- use A2A through the global A2A contract when cross-runtime communication is needed
 
 It also defines the global Main Sequence CLI failure contract. Any failed `mainsequence ...`
 command must be reported as a CLI error with the exact command, working directory when relevant,
@@ -34,7 +35,8 @@ exit code or signal, CLI version or version lookup failure, stderr, stdout, and 
 blocker or next action. Agents may retry auth failures once through `ensure_mainsequence_cli_auth`;
 for non-auth failures they must not invent causes or retry guessed command variants.
 
-The parent prompt is static on purpose. It is easier to inspect and reason about than generating parent policy dynamically every run.
+The shared prompt is static on purpose. It is easier to inspect and reason about than generating
+runtime policy dynamically every run.
 
 ## Child runtime policy
 
@@ -48,12 +50,9 @@ The `project-policy` extension appends this child-only policy at `before_agent_s
 
 ## Why the split exists
 
-Astro uses a deliberate split:
-
-- parent prompt: static in `.pi/APPEND_SYSTEM.md`
-- child guardrails: runtime-only
-
-That keeps the parent easy to inspect while still preventing runtime-owned child processes from acting like orchestrators.
+Astro keeps the shared prompt static and applies runtime-only child guardrails only to
+runtime-owned child processes. Core project executor behavior is now part of the shared prompt
+contract instead of a separate `.pi/agents` prompt file.
 
 ## Related pages
 

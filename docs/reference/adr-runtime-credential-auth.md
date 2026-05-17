@@ -89,7 +89,6 @@ Runtime credentials must be passed through unchanged to:
 
 - stream-spawned `pi` child processes
 - `scripts/run_specialist.ts`
-- `scripts/mainsequence_project_set_up_locally.ts`
 - delegated specialist runtimes
 - project runtime bootstrap helpers
 

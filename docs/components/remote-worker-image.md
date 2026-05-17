@@ -161,7 +161,7 @@ For `mainsequence-project-executor`, Astro uses a fixed backend registration ide
 
 - backend `agent_type`: `mainsequence-project-executor`
 - backend `agent_unique_id`: `project-executor`
-- runtime prompt selector: `mainsequence-project-executor`
+- runtime profile: `project_worker`
 
 ## Filesystem layout and writable directories
 
@@ -193,9 +193,8 @@ project flow:
 That is the core contract of the image-backed worker: the image should already contain the prepared
 project runtime, so Astro should execute work inside it instead of rebuilding it.
 
-The executor prompt itself still comes from Astro's bundled `.pi/agents` runtime prompt set unless
-the project image provides its own `.pi/agents/mainsequence-project-executor.md` override inside
-`${SKEL_APP_DIR}`.
+The executor runtime uses the shared `.pi/APPEND_SYSTEM.md` prompt contract. Project-attached
+behavior is selected by runtime profile, not by loading a separate bundled executor prompt file.
 
 ## What the backend should pass
 

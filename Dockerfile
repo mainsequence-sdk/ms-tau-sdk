@@ -45,16 +45,16 @@ RUN pip install --no-cache-dir "${MAINSEQUENCE_PIP_SPEC}" uv playwright \
 
 FROM astro-mainsequence AS astro-runtime
 
-ENV APP_USER=appuser \
-    APP_GROUP=appuser \
+ENV APP_USER=jovyan \
+    APP_GROUP=jovyan \
     APP_UID=10000 \
     APP_GID=10000 \
-    APP_HOME=/home/appuser \
-    HOME=/home/appuser \
-    ASTRO_CONTAINER_DATA_DIR=/home/appuser/.astro-container-data \
+    APP_HOME=/home/jovyan \
+    HOME=/home/jovyan \
+    ASTRO_CONTAINER_DATA_DIR=/home/jovyan/.astro-container-data \
     ASTRO_STREAM_SESSION_DIR=/session-state/sessions \
-    ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence \
-    PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent
+    ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/jovyan/.astro-container-data/.config/mainsequence \
+    PI_CODING_AGENT_DIR=/home/jovyan/.astro-container-data/.pi/agent
 
 RUN groupadd --gid "${APP_GID}" "${APP_GROUP}" \
  && useradd --uid "${APP_UID}" --gid "${APP_GID}" --create-home --home-dir "${APP_HOME}" --shell /bin/bash "${APP_USER}" \
@@ -70,7 +70,7 @@ RUN groupadd --gid "${APP_GID}" "${APP_GROUP}" \
     "${APP_HOME}/.astro" \
  && chown -R "${APP_USER}:${APP_GROUP}" "${APP_HOME}" /session-state /ms-playwright
 
-USER appuser
+USER jovyan
 
 FROM scratch AS project-executor-bundle
 

@@ -55,60 +55,6 @@ the hot path.
 Structured operational logs from this runtime follow the contract documented in
 [`../interface/logging.md`](../interface/logging.md).
 
-### `scripts/mainsequence_project_set_up_locally.ts`
-
-This is Astro's hardened wrapper around `mainsequence project set-up-locally`.
-
-Inside Astro, the orchestrator should call:
-
-```bash
-tsx /app/scripts/mainsequence_project_set_up_locally.ts <id>
-```
-
-instead of calling raw `mainsequence project set-up-locally <id>` directly.
-
-For the current new-project creation flow, prefer
-`tsx /app/scripts/mainsequence_project_finalize_creation.ts <id>` instead. That helper wraps this
-lower-level setup step and then persists `project_blueprint.md` into the created project.
-
-The wrapper:
-
-- bootstraps Astro's rebuildable SSH runtime first
-- creates a project-scoped checkout home under `/home/appuser/.astro-container-data/project-checkout-runtime/project-<id>/home`
-- keeps the checkout SSH key and `known_hosts` inside that project-scoped home so keys are not reused only by repo slug
-- symlinks the project-scoped home back to the shared Main Sequence CLI config under `/home/appuser/.astro-container-data/.config/mainsequence`
-- relies on SSH `StrictHostKeyChecking=accept-new` with a pod-local rebuildable `known_hosts`
-- retries bounded transient clone failures such as host-key verification or delayed deploy-key access
-
-### `scripts/mainsequence_project_finalize_creation.ts`
-
-This helper finalizes the current new-project creation workflow after `mainsequence project create`
-succeeds.
-
-Inside Astro, the orchestrator should call:
-
-```bash
-tsx /app/scripts/mainsequence_project_finalize_creation.ts <id>
-```
-
-The helper:
-
-- reuses Astro's project-scoped local setup wrapper
-- resolves the deterministic checked-out project path
-- copies `project_blueprint.md` into the checked-out project root
-- prints the exact signed-terminal git commands for `git add`, `git commit`, and `git push`
-
-After that helper finishes, Astro should open a signed terminal with:
-
-```bash
-mainsequence project open-signed-terminal <id>
-```
-
-and run the printed git commands inside that signed terminal.
-
-This is the current deterministic completion step for new project creation. It does not invoke
-executor and does not create a second handoff artifact.
-
 ## Container runtime note
 
 The repo root `Dockerfile` is the deployable app image definition.
@@ -148,22 +94,22 @@ The repo root `docker-compose.yml` wraps those targets as three services:
   - HTTP stream service
   - bind-mounts the editable Astro source paths into `/app` for live code iteration
   - mounts the tmpfs-backed `astro_session_emptydir` volume at `/session-state`
-  - sets `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`
-  - sets `PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`
+  - sets `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/jovyan/.astro-container-data/.config/mainsequence`
+  - sets `PI_CODING_AGENT_DIR=/home/jovyan/.astro-container-data/.pi/agent`
   - sets `ASTRO_STREAM_SESSION_DIR=/session-state/sessions`
-  - sets `ASTRO_CONTAINER_DATA_DIR=/home/appuser/.astro-container-data`
+  - sets `ASTRO_CONTAINER_DATA_DIR=/home/jovyan/.astro-container-data`
   - prepares container-local runtime state with no provider-auth source path from host or repo-local storage
   - prunes stale Pi provider auth/signin files from `PI_CODING_AGENT_DIR` before startup
-  - writes a runtime-local `settings.json` into `/home/appuser/.astro-container-data/.pi/agent`
-  - materializes the repo-local `/app/.pi` project settings into `/home/appuser/.astro-container-data/.pi/project`
-  - runs `astro-orchestrator` from `/home/appuser/.astro-container-data/astro-orchestrator-runtime`
+  - writes a runtime-local `settings.json` into `/home/jovyan/.astro-container-data/.pi/agent`
+  - materializes the repo-local `/app/.pi` project settings into `/home/jovyan/.astro-container-data/.pi/project`
+  - runs `astro-orchestrator` from `/home/jovyan/.astro-container-data/astro-orchestrator-runtime`
     with `.pi` symlinked to the writable project settings copy
   - preserves Astro package sources like `/app` and `pi-web-access`
   - keeps `node_modules` container-local from the image layer
   - keeps active session files in the shared tmpfs-backed session volume instead of durable local storage
-  - keeps helper binaries under `/home/appuser/.astro-container-data/.pi/agent/bin`
-  - runs as non-root `appuser`
-  - uses `/home/appuser/.astro-container-data` as the container runtime root
+  - keeps helper binaries under `/home/jovyan/.astro-container-data/.pi/agent/bin`
+  - runs as non-root `jovyan`
+  - uses `/home/jovyan/.astro-container-data` as the container runtime root
 - `astro-session-checkpoint-sidecar`
   - local Docker simulation of the Kubernetes checkpoint sidecar
   - mounts the same `astro_session_emptydir` volume at `/session-state`
@@ -178,16 +124,14 @@ backend checkpoint cycle:
 
 - mount an `emptyDir` at `/session-state`
 - do not rely on external SSH state mounted from outside the pod
-- let the pod generate rebuildable repo SSH keys under `/home/appuser/.astro-container-data/.ssh`
-- let Astro's checkout wrapper generate per-project SSH identities under `/home/appuser/.astro-container-data/project-checkout-runtime/project-<id>/home/.ssh`
-- let Astro run `astro-orchestrator` from `/home/appuser/.astro-container-data/astro-orchestrator-runtime`, not `/app`
+- let the pod generate rebuildable repo SSH keys under `/home/jovyan/.astro-container-data/.ssh`
+- let Astro run `astro-orchestrator` from `/home/jovyan/.astro-container-data/astro-orchestrator-runtime`, not `/app`
 - set `ASTRO_STREAM_SESSION_DIR=/session-state/sessions`
-- for newly created projects, use `tsx /app/scripts/mainsequence_project_finalize_creation.ts <id>` in production pods so setup, blueprint persistence, and signed-terminal commit instructions stay deterministic
 
 Operational guidance:
 
 - do not share one writable session filesystem across unrelated replicas
-- keep `/home/appuser/.astro-container-data/.ssh/known_hosts` writable inside the pod so first contact can be recorded with `accept-new`
+- keep `/home/jovyan/.astro-container-data/.ssh/known_hosts` writable inside the pod so first contact can be recorded with `accept-new`
 - do not treat project implementation as a session switch inside the orchestrator container
 
 When using containers, run Python commands inside this same app container (do not use a separate Python-only container).

@@ -96,6 +96,22 @@ function formatRuntimeVersionTag(
 	return options.prefixWithV ? `${label}${separator}v${version}` : `${label}${separator}${version}`;
 }
 
+function normalizeEnvString(value: string | undefined): string | null {
+	const trimmed = value?.trim();
+	return trimmed ? trimmed : null;
+}
+
+function resolveRuntimeProfile(env: NodeJS.ProcessEnv): "orchestrator" | "project_worker" {
+	const fixedAgentType = normalizeEnvString(env.ASTRO_FIXED_AGENT_TYPE);
+	if (fixedAgentType) {
+		return fixedAgentType === "mainsequence-project-executor" ? "project_worker" : "orchestrator";
+	}
+	return env.ASTRO_EXECUTION_MODE?.trim() === "remote_project_worker" ||
+		normalizeEnvString(env.ASTRO_FIXED_PROJECT_CWD)
+		? "project_worker"
+		: "orchestrator";
+}
+
 export default function (pi: ExtensionAPI) {
 	pi.registerTool({
 		name: "get_runtime_info",
@@ -124,11 +140,12 @@ export default function (pi: ExtensionAPI) {
 			const mainsequenceCli = readMainsequenceCliVersion();
 			const pythonVersion = readPythonVersion();
 			const includePaths = params.includePaths !== false;
-			const executionMode = process.env.ASTRO_EXECUTION_MODE?.trim() || "default";
+			const executionMode = normalizeEnvString(process.env.ASTRO_EXECUTION_MODE) ?? "default";
 			const processCwd = process.cwd();
-			const projectCwd = process.env.ASTRO_FIXED_PROJECT_CWD?.trim() || null;
-			const effectiveWorkspaceCwd =
-				executionMode === "remote_project_worker" && projectCwd ? projectCwd : processCwd;
+			const fixedAgentType = normalizeEnvString(process.env.ASTRO_FIXED_AGENT_TYPE);
+			const projectCwd = normalizeEnvString(process.env.ASTRO_FIXED_PROJECT_CWD);
+			const runtimeProfile = resolveRuntimeProfile(process.env);
+			const effectiveWorkspaceCwd = runtimeProfile === "project_worker" && projectCwd ? projectCwd : processCwd;
 
 			const details = {
 				astro_release_version: astroReleaseVersionEnv ?? astroPackageVersion,
@@ -139,9 +156,11 @@ export default function (pi: ExtensionAPI) {
 				python_version: pythonVersion.ok ? pythonVersion.value : null,
 				node_version: process.versions.node,
 				agent_type: resolveCurrentAgentType(process.env),
+				runtime_profile: runtimeProfile,
 				execution_mode: executionMode,
-				project_image_ref: process.env.ASTRO_PROJECT_IMAGE_REF?.trim() || null,
-				auth_mode: process.env.MAINSEQUENCE_AUTH_MODE?.trim() || null,
+				fixed_agent_type: fixedAgentType,
+				project_image_ref: normalizeEnvString(process.env.ASTRO_PROJECT_IMAGE_REF),
+				auth_mode: normalizeEnvString(process.env.MAINSEQUENCE_AUTH_MODE),
 				...(includePaths
 					? {
 							effective_workspace_cwd: effectiveWorkspaceCwd,
@@ -172,6 +191,7 @@ export default function (pi: ExtensionAPI) {
 				`Versions: ${versionTags.join(" | ")}`,
 				`Astro package ${details.astro_package_version ?? "unknown"}`,
 				`Runtime: ${details.agent_type}`,
+				`Runtime profile: ${details.runtime_profile}`,
 				`Execution mode: ${details.execution_mode}`,
 			];
 

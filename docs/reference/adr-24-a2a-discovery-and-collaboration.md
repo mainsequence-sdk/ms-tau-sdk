@@ -43,7 +43,7 @@ The new requirement is:
 - or it may ask another agent for bounded help through A2A
 - without changing the active session
 
-At the same time, Astro should not clutter the shared parent prompt with transport details or
+At the same time, Astro should not clutter the shared Astro prompt with transport details or
 rewrite all agent roles around A2A.
 
 ## Problem
@@ -70,7 +70,7 @@ But that behavior must stay disciplined:
 
 Astro will treat A2A as a shared collaboration modality, not as a new business role.
 
-The shared parent prompt will keep the existing five user-facing capabilities and add a sixth,
+The shared Astro prompt will keep the existing five user-facing capabilities and add a sixth,
 routing-only directive:
 
 1. Help the user interact with the Main Sequence platform.
@@ -130,7 +130,7 @@ coordination.
 To keep the implementation minimally intrusive, the rule should be split across the smallest useful
 set of prompt files.
 
-### Shared parent prompt
+### Shared Astro prompt
 
 `.pi/APPEND_SYSTEM.md` should:
 
@@ -139,19 +139,14 @@ set of prompt files.
 - define a short `A2A discovery guidelines` section
 - make the orchestrator confirmation rule explicit
 
-### Project-scoped agent prompts
+### Project-scoped prompt contract
 
-The prompts for:
-
-- `.pi/agents/mainsequence-project-coder.md`
-- `.pi/agents/mainsequence-project-executor.md`
-
-should include a short A2A section that:
+The shared `.pi/APPEND_SYSTEM.md` prompt contract should include a short A2A section that:
 
 - allows bounded A2A collaboration
 - states that A2A does not imply a session switch
 - states that the response format is a hard contract
-- states that these project-scoped agents do not need separate user confirmation for bounded A2A
+- states that project-attached runtimes do not need separate user confirmation for bounded A2A
 
 ### Child-specialist runtime policy
 
@@ -354,7 +349,7 @@ Astro must not silently invent a fallback production routing path.
 
 ### Negative
 
-- the parent prompt becomes slightly more complex
+- the shared Astro prompt becomes slightly more complex
 - refusal behavior becomes conditional on discovery instead of purely static
 - child-policy wording must be careful not to reopen uncontrolled recursive delegation
 - the A2A tool now needs explicit prod and local-debug modes
@@ -366,9 +361,7 @@ Astro must not silently invent a fallback production routing path.
 2. Add a short `A2A discovery guidelines` section to `.pi/APPEND_SYSTEM.md`.
 3. Update the parent out-of-scope behavior so it applies A2A discovery before refusal when
    appropriate.
-4. Add minimal A2A-collaboration sections to:
-   - `.pi/agents/mainsequence-project-coder.md`
-   - `.pi/agents/mainsequence-project-executor.md`
+4. Add minimal A2A-collaboration guidance to `.pi/APPEND_SYSTEM.md`.
 5. Update `pi/extensions/hooks/project-policy/child-policy.md` so bounded A2A is allowed without
    reopening unrestricted recursive specialist delegation.
 6. Add A2A discovery tooling that:
@@ -396,8 +389,7 @@ Astro must not silently invent a fallback production routing path.
 - confirm `.pi/APPEND_SYSTEM.md` contains directive 6 and a compact shared discovery section
 - confirm the orchestrator prompt now checks A2A discovery before direct refusal when appropriate
 - confirm the orchestrator prompt requires user confirmation before A2A initiation
-- confirm `mainsequence-project-coder` and `mainsequence-project-executor` can use bounded A2A
-  without separate user confirmation
+- confirm project-attached runtimes can use bounded A2A without separate user confirmation
 - confirm child-specialist runtime policy still blocks unrestricted recursive specialist delegation
   while allowing bounded A2A
 - confirm prompt wording keeps A2A distinct from project-session handoff behavior
@@ -415,8 +407,7 @@ Astro must not silently invent a fallback production routing path.
 - [x] Add a compact `A2A discovery guidelines` section to `.pi/APPEND_SYSTEM.md`.
 - [x] Update the parent out-of-scope rule so A2A discovery happens before refusal when
   appropriate.
-- [x] Add bounded A2A guidance to `mainsequence-project-coder`.
-- [x] Add bounded A2A guidance to `mainsequence-project-executor`.
+- [x] Add bounded A2A guidance to the shared prompt contract.
 - [x] Update child-specialist runtime policy for bounded A2A without reopening unrestricted
   recursive delegation.
 - [x] Add A2A discovery tooling for both discovery-only and discovery-plus-communication flows.

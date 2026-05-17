@@ -1,7 +1,7 @@
 # Interface Overview
 
 This interface exposes Astro over HTTP using assistant-ui's `ui-message-stream` protocol over SSE.
-Clients must identify the backend `Agent.agent_type` / prompt selector (`agentType`) and user
+Clients must identify the backend `Agent.agent_type` (`agentType`) and user
 (`userId`) on each request.
 The normal entry point is `astro-orchestrator`. Project implementation runs through
 `mainsequence-project-executor`; image-backed remote worker pods can pin that runtime with

@@ -17,9 +17,9 @@
 - `ASTRO_STREAM_LOG_HEALTH_TRAFFIC` (`1` enables `GET /health` access logs; health probe access
   lines are suppressed by default)
 - `ASTRO_STREAM_LOG_REQUEST_BODIES` (`1` enables request payload debug logging)
-- `ASTRO_MAINSEQUENCE_CONFIG_DIR` (container-local Main Sequence CLI config; in containers use `/home/appuser/.astro-container-data/.config/mainsequence`)
-- `PI_CODING_AGENT_DIR` (container-local Pi runtime state directory; in containers use `/home/appuser/.astro-container-data/.pi/agent`)
-- `ASTRO_CONTAINER_DATA_DIR` (container-local rebuildable runtime root; in containers use `/home/appuser/.astro-container-data`)
+- `ASTRO_MAINSEQUENCE_CONFIG_DIR` (container-local Main Sequence CLI config; in containers use `/home/jovyan/.astro-container-data/.config/mainsequence`)
+- `PI_CODING_AGENT_DIR` (container-local Pi runtime state directory; in containers use `/home/jovyan/.astro-container-data/.pi/agent`)
+- `ASTRO_CONTAINER_DATA_DIR` (container-local rebuildable runtime root; in containers use `/home/jovyan/.astro-container-data`)
 - `ASTRO_ORCHESTRATOR_CWD` (optional writable cwd override for `astro-orchestrator`; defaults to `<ASTRO_CONTAINER_DATA_DIR>/astro-orchestrator-runtime`)
 - `ASTRO_ORCHESTRATOR_PROJECT_PI_DIR` (optional writable project `.pi` override for `astro-orchestrator`; defaults to `<ASTRO_CONTAINER_DATA_DIR>/.pi/project`)
 - `BUILD_AGENTS_IN_BACKEND` (enable backend-backed session start, hydration, and checkpoint coordination)

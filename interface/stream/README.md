@@ -27,12 +27,12 @@ Environment overrides:
 configuration is `ASTRO_STREAM_TRUSTED_ORIGINS`.
 
 In `docker-compose.yml`, the stream service uses container-local runtime state under
-`/home/appuser/.astro-container-data` and mounts the shared tmpfs-backed `astro_session_emptydir`
+`/home/jovyan/.astro-container-data` and mounts the shared tmpfs-backed `astro_session_emptydir`
 volume at `/session-state`. It sets `ASTRO_STREAM_SESSION_DIR=/session-state/sessions` so local
 Docker follows the emptyDir checkpoint storage model instead of durable local session storage. The
 checkpoint sidecar shares the same `/session-state` mount, uses the same
 `ASTRO_CHECKPOINT_HOLDER_ID`, and flushes complete checkpoint bundles to the backend. The image runs
-as non-root `appuser`.
+as non-root `jovyan`.
 
 ## Endpoints
 
@@ -328,7 +328,7 @@ captured.
   "startedAt": "2026-04-20T12:00:00.000Z",
   "lastUpdatedAt": "2026-04-20T12:01:00.000Z",
   "uptimeSeconds": 60,
-  "healthStatePath": "/home/appuser/.astro-container-data/.astro/stream-health.json",
+  "healthStatePath": "/home/jovyan/.astro-container-data/.astro/stream-health.json",
   "issueCount": 0,
   "recentIssues": [],
   "previousRun": null

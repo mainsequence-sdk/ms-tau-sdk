@@ -31,6 +31,7 @@ export type A2AEnvelope = {
 	responseFormat: A2AResponseFormat;
 	handleUniqueId: string | null;
 	callerAgentSessionId: number | null;
+	targetAgentSessionId: number | null;
 	targetAgentId: number | null;
 };
 
@@ -40,6 +41,7 @@ export type UserMessageProvenance = {
 	callerAgentType: string | null;
 	handleUniqueId: string | null;
 	callerAgentSessionId: number | null;
+	targetAgentSessionId: number | null;
 	targetAgentId: number | null;
 };
 
@@ -94,6 +96,13 @@ export function normalizeA2AEnvelope(value: unknown): A2AEnvelope | null {
 		normalizeNumericId(callerMetadata?.session_id);
 	const targetAgentId =
 		normalizeNumericId(value.targetAgentId) ?? normalizeNumericId(value.target_agent_id);
+	const targetAgentSessionId =
+		normalizeNumericId(value.targetAgentSessionId) ??
+		normalizeNumericId(value.target_agent_session_id) ??
+		normalizeNumericId(value.runtimeSessionId) ??
+		normalizeNumericId(value.runtime_session_id) ??
+		normalizeNumericId(value.sessionId) ??
+		normalizeNumericId(value.session_id);
 
 	return {
 		version: 1,
@@ -104,6 +113,7 @@ export function normalizeA2AEnvelope(value: unknown): A2AEnvelope | null {
 		responseFormat,
 		handleUniqueId: handleUniqueId ?? null,
 		callerAgentSessionId,
+		targetAgentSessionId,
 		targetAgentId,
 	};
 }
@@ -123,6 +133,7 @@ export function mergeA2AEnvelopes(
 		responseFormat: overlay.responseFormat ?? base.responseFormat,
 		handleUniqueId: overlay.handleUniqueId ?? base.handleUniqueId,
 		callerAgentSessionId: overlay.callerAgentSessionId ?? base.callerAgentSessionId,
+		targetAgentSessionId: overlay.targetAgentSessionId ?? base.targetAgentSessionId,
 		targetAgentId: overlay.targetAgentId ?? base.targetAgentId,
 	};
 }
@@ -135,6 +146,7 @@ export function a2aEnvelopeToUserProvenance(value: A2AEnvelope | null): UserMess
 		callerAgentType: value.callerAgentType,
 		handleUniqueId: value.handleUniqueId,
 		callerAgentSessionId: value.callerAgentSessionId,
+		targetAgentSessionId: value.targetAgentSessionId,
 		targetAgentId: value.targetAgentId,
 	};
 }

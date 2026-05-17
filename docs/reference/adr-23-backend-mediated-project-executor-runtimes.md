@@ -336,8 +336,8 @@ a replacement for existing handoff/session-switch behavior.
 
 The minimal directive change should apply to:
 
-- the shared parent prompt for `astro-orchestrator`
-- the `mainsequence-project-executor` specialist prompt
+- the shared Astro prompt contract
+- the project-attached runtime-profile branch
 - the child-specialist runtime policy that currently forbids recursive delegation for remaining
   bounded child work
 
@@ -434,14 +434,14 @@ before the backend control-plane implementation is finished.
 ## Required Corrections To Current Direction
 
 This ADR means `mainsequence-project-executor` should not be modeled as a normal repo-local
-specialist in Astro's parent-agent flow.
+specialist in Astro's shared runtime flow.
 
 This does **not** mean removing every executor reference from Astro.
 
 The executor still needs to remain a valid runtime agent for:
 
 - direct executor-mode startup
-- executor prompt loading
+- executor runtime-profile loading
 - executor-specific streamer request handling
 - deterministic backend registration for executor sessions
 
@@ -449,13 +449,13 @@ The correction is narrower:
 
 - the parent-oriented specialist discovery and delegation surfaces must stop surfacing the executor
 - the old direct child-launch path must stop launching the executor
-- parent prompts and docs must stop teaching executor access through `delegate_specialist`
+- shared prompts and docs must stop teaching executor access through `delegate_specialist`
 
 In particular, executor-specific behavior should be removed or kept out of:
 
 - specialist delegation routing
 - specialist-specific local spawn paths
-- parent-agent specialist discovery semantics
+- shared-runtime specialist discovery semantics
 
 Executor runtime env handling inside the worker runtime may remain, but the parent runtime must not
 present the executor as a normal local child specialist.
@@ -468,14 +468,14 @@ The main delegation-path corrections from this ADR are already done:
 - the old `scripts/run_specialist.ts` direct-launch surface was removed
 - active prompts and workflow docs no longer teach executor access through specialist delegation
 
-The only remaining `.pi/agents` discovery usage is runtime-owned prompt resolution for direct
-executor-mode startup and direct executor session handling. That internal lookup is acceptable
-because it no longer creates a user-facing specialist-delegation path.
+Executor prompt loading has since moved to the unified `.pi/APPEND_SYSTEM.md` runtime-profile
+contract. Astro no longer relies on `.pi/agents` discovery for direct executor-mode startup or
+direct executor session handling.
 
 The intended end state is:
 
-- the executor prompt file may remain in `.pi/agents` so direct executor-mode Astro startup can
-  still load its system prompt
+- direct executor-mode Astro startup loads the shared prompt and enters the project-attached branch
+  through runtime profile
 - the executor may remain in runtime-owned allowlists needed for direct startup and registration
 - but normal parent specialist discovery and any direct child-launch surfaces must not
   present or launch the executor
@@ -493,10 +493,7 @@ The intended end state is:
    - `POST /api/a2a/cancel`
 6. Ensure `POST /api/a2a/chat` deterministically injects A2A context and enforces the requested
    response format contract.
-7. Add a minimal prompt-layer A2A directive to:
-   - `.pi/APPEND_SYSTEM.md`
-   - `.pi/agents/mainsequence-project-executor.md`
-   - `pi/extensions/hooks/project-policy/child-policy.md`
+7. Add a minimal prompt-layer A2A directive to `.pi/APPEND_SYSTEM.md` and child policy when needed.
 8. Define the backend executor-control contract around those streamer routes.
 9. Keep executor-specific runtime env handling only in the worker runtime path.
 10. Treat local mocked A2A discovery and direct-to-container communication as the test harness
@@ -515,8 +512,8 @@ The intended end state is:
 - confirm `POST /api/a2a/chat` always injects A2A runtime context even when the caller prompt does
   not mention that the request is machine-to-machine
 - confirm `POST /api/a2a/chat` responses follow the requested response format contract
-- confirm the orchestrator and project-executor prompts allow bounded A2A collaboration without
-  redefining their primary roles
+- confirm the shared prompt contract allows bounded A2A collaboration without redefining runtime
+  profiles as separate local roles
 - confirm the child runtime policy no longer blocks A2A collaboration while still
   preventing unrestricted recursive specialist orchestration
 - confirm `POST /api/a2a/cancel` stops the active executor run without requiring a separate
@@ -536,9 +533,8 @@ The intended end state is:
 - [x] Add `POST /api/a2a/cancel` to the Astro streamer for executor deployments.
 - [x] Inject deterministic A2A context and requested-response-format instructions on
   `POST /api/a2a/chat`.
-- [x] Add a minimal A2A-collaboration directive to the shared parent prompt, the
-  `mainsequence-project-executor` prompt, and the child runtime policy. Earlier coder
-  prompt wiring is superseded by ADR 26.
+- [x] Add a minimal A2A-collaboration directive to the shared prompt contract and child runtime
+  policy. Earlier coder prompt wiring is superseded by ADR 26.
 - [x] Update docs to distinguish:
   - remote image-backed executor runtime
   - local mounted-project executor runtime

@@ -33,11 +33,10 @@ flowchart LR
     EXT --> RC["recent-changes"]
 
     P --> PROMPTS["pi/prompts/"]
-    P --> AGENTS[".pi/agents/"]
     P --> CLI["mainsequence CLI"]
 
-AGENTS --> EXEC["mainsequence-project-executor"]
-    EXEC --> TARGET["Project runtime"]
+    P --> PROFILE["Runtime profile"]
+    PROFILE --> TARGET["Project runtime when project-attached"]
 
     P --> DOCKER["Dockerfile runtime for Python/Node tasks"]
 ```
@@ -64,7 +63,7 @@ AGENTS --> EXEC["mainsequence-project-executor"]
 - [`extensions/README.md`](./extensions/README.md)
   - per-file docs for hooks, tools, and shared helpers in `pi/extensions/`
 - [`components/agents.md`](./components/agents.md)
-  - runtime agent prompt files in `.pi/agents/`
+  - optional project-local specialist prompts and why the core executor prompt is unified
 - [`components/prompts.md`](./components/prompts.md)
   - reusable workflow prompts in `pi/prompts/`
 - [`prompts/README.md`](./prompts/README.md)

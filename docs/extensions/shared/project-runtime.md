@@ -11,4 +11,4 @@ prepared project runtime instead of relying on a coder-session bootstrap step.
 ## Related files
 
 - [`../../../interface/stream/server.ts`](../../../interface/stream/server.ts)
-- [`../../../.pi/agents/mainsequence-project-executor.md`](../../../.pi/agents/mainsequence-project-executor.md)
+- [`../../../.pi/APPEND_SYSTEM.md`](../../../.pi/APPEND_SYSTEM.md)

@@ -14,5 +14,5 @@ If you need context, use:
 
 - `docs/README.md`
 - the relevant component or workflow pages under `docs/`
-- `.pi/APPEND_SYSTEM.md` for the parent prompt
-- `.pi/agents/*.md` for specialist behavior
+- `.pi/APPEND_SYSTEM.md` for the shared Astro prompt contract
+- project-local `.pi/agents/*.md` only when a project defines optional specialist extensions

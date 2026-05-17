@@ -9,7 +9,6 @@ Astro does not modify Pi core. It shapes Pi from the outside using:
 - project-local settings
 - system prompts
 - extensions
-- runtime agent prompt files
 - reusable prompt templates
 - skills
 - repo-installed Pi packages
@@ -28,9 +27,9 @@ This tells Pi what to load from the repository:
 
 ### `.pi/APPEND_SYSTEM.md`
 
-This is Astro's always-on parent prompt.
+This is Astro's shared always-on prompt.
 
-It tells the default Pi session to behave as the Main Sequence orchestrator.
+It contains the Main Sequence contract for both normal and project-attached runtime profiles.
 
 ### Extensions
 
@@ -38,14 +37,6 @@ Extensions live under `pi/extensions/hooks/` and `pi/extensions/tools/` and do t
 
 - register custom tools
 - hook into agent lifecycle events such as `before_agent_start`
-
-### Runtime agent prompts
-
-Runtime agent prompts live in `.pi/agents/` as markdown files with frontmatter and a prompt body.
-
-Astro currently uses:
-
-- `mainsequence-project-executor`
 
 ### Prompt templates
 
@@ -63,22 +54,17 @@ This repository keeps `pi-web-access` in normal `node_modules` and loads it from
 
 ## The key mental model
 
-Astro has an orchestrator-runtime structure:
+Astro has a runtime-profile structure:
 
-- the parent session orchestrates
-- the dedicated executor runtime implements when that phase is used
+- non-project-attached sessions can handle platform, project creation, and workspace flows
+- project-attached sessions work inside the prepared project cwd
 
-The parent handles:
+The shared prompt handles:
 
 - intent translation
-- existing-project selection or new-project creation
 - loading deeper skills when a branch needs more detailed guidance, such as new-project intake
-- Main Sequence local setup and project preparation
-- deciding when to continue orchestration versus when a later A2A executor call is needed
-
-The dedicated executor runtime handles:
-
-- implementation inside the dedicated project runtime
+- Main Sequence platform and project workflows
+- current-project implementation when the runtime is already project-attached
 
 ## Read next
 

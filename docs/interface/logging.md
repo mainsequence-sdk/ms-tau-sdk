@@ -225,7 +225,6 @@ Current emitted `astro-stream` event keys:
 - `session_model_binding_repaired_from_session_history`
 - `session_model_binding_resolved`
 - `session_run_already_active`
-- `specialist_agent_not_found`
 - `stream_client_detached`
 - `stream_client_write_failed`
 - `stream_done_write_failed`

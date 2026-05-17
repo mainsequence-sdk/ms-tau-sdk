@@ -535,11 +535,6 @@ if [ "\${ASTRO_MAINSEQUENCE_BYPASS_SHIM:-0}" = "1" ]; then
   exec "$REAL_MAINSEQUENCE" "$@"
 fi
 
-if [ "\${1:-}" = "project" ] && [ "\${2:-}" = "set-up-locally" ]; then
-  shift 2
-  exec /app/node_modules/.bin/tsx "/app/scripts/mainsequence_project_set_up_locally.ts" "$@"
-fi
-
 exec "$REAL_MAINSEQUENCE" "$@"
 `;
 	fs.writeFileSync(shimPath, shimContents, { mode: 0o755 });

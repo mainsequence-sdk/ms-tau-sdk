@@ -84,7 +84,7 @@ import {
 	startModelProviderSignIn,
 	submitModelProviderSignInManualInput,
 } from "./model-provider-signin.js";
-import { discoverAgents, type AgentConfig } from "../../pi/extensions/tools/specialist-delegate/agents.js";
+import type { AgentConfig } from "../../pi/extensions/tools/specialist-delegate/agents.js";
 import {
 	fetchBackendAgentSession,
 	resolveMainsequenceUserId,
@@ -161,6 +161,35 @@ function resolveOrchestratorRuntimeCwd(): string {
 	return configured ? path.resolve(configured) : repoRoot;
 }
 
+type RuntimeProfileKind = "orchestrator" | "project_worker";
+
+type RuntimeProfile = {
+	kind: RuntimeProfileKind;
+	executionMode: string | null;
+	fixedAgentType: string | null;
+	fixedProjectId: string | null;
+	fixedProjectCwd: string | null;
+	projectImageRef: string | null;
+};
+
+type RuntimeProfileLogPayload = {
+	kind: RuntimeProfileKind;
+	executionMode: string | null;
+	fixedAgentType: string | null;
+	fixedProjectId: string | null;
+	fixedProjectCwd: string | null;
+	projectImageRef: string | null;
+};
+
+type RuntimeProfileValidationResult =
+	| { ok: true }
+	| {
+			ok: false;
+			statusCode: number;
+			error: string;
+			message: string;
+	  };
+
 type RuntimeHealthSeverity = "warning" | "error" | "fatal";
 
 type RuntimeHealthIssue = {
@@ -183,6 +212,7 @@ type RuntimeHealthSnapshot = {
 	lastUpdatedAt: string;
 	uptimeSeconds: number;
 	healthStatePath: string;
+	runtimeProfile: RuntimeProfileLogPayload;
 	issueCount: number;
 	recentIssues: RuntimeHealthIssue[];
 	previousRun: {
@@ -260,6 +290,7 @@ function buildRuntimeHealthSnapshot(): RuntimeHealthSnapshot {
 		lastUpdatedAt,
 		uptimeSeconds: Math.round(process.uptime()),
 		healthStatePath: runtimeHealthStatePath,
+		runtimeProfile: serializeRuntimeProfile(resolveRuntimeProfile()),
 		issueCount: runtimeHealthIssueCount,
 		recentIssues,
 		previousRun: previousRuntimeHealthSnapshot
@@ -1023,8 +1054,9 @@ function doesSessionModelIdentityMatch(
 
 async function ensureRequestCliAuth(
 	res: import("node:http").ServerResponse,
+	runtimeProfile: RuntimeProfile = resolveRuntimeProfile(),
 ): Promise<{ ok: true } | { ok: false }> {
-	if (isRemoteProjectWorkerMode()) {
+	if (runtimeProfile.kind === "project_worker") {
 		return { ok: true };
 	}
 
@@ -1080,12 +1112,14 @@ function isImageBackedProjectExecutor(agentType: string | null | undefined): boo
 	return agentType === "mainsequence-project-executor";
 }
 
-function isRemoteProjectWorkerMode(env: NodeJS.ProcessEnv = process.env): boolean {
-	return env[ASTRO_EXECUTION_MODE_ENV]?.trim() === "remote_project_worker";
-}
-
 function resolveFixedAgentType(env: NodeJS.ProcessEnv = process.env): string | null {
 	return normalizeAgentType(env[ASTRO_FIXED_AGENT_TYPE_ENV]);
+}
+
+function normalizeExecutionMode(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const trimmed = value.trim();
+	return trimmed ? trimmed : null;
 }
 
 function normalizeRuntimeSessionId(value: unknown): string | null {
@@ -1227,6 +1261,244 @@ function resolveFixedProjectCwd(env: NodeJS.ProcessEnv = process.env): string | 
 
 function resolveConfiguredProjectImageRef(env: NodeJS.ProcessEnv = process.env): string | null {
 	return normalizeProjectImageRef(env[ASTRO_PROJECT_IMAGE_REF_ENV]);
+}
+
+function resolveRuntimeProfile(env: NodeJS.ProcessEnv = process.env): RuntimeProfile {
+	const fixedAgentType = resolveFixedAgentType(env);
+	const executionMode = normalizeExecutionMode(env[ASTRO_EXECUTION_MODE_ENV]);
+	const fixedProjectId = resolveFixedProjectId(env);
+	const fixedProjectCwd = resolveFixedProjectCwd(env);
+	const projectImageRef = resolveConfiguredProjectImageRef(env);
+	const kind: RuntimeProfileKind = fixedAgentType
+		? isProjectSessionAgentType(fixedAgentType)
+			? "project_worker"
+			: "orchestrator"
+		: executionMode === "remote_project_worker" || fixedProjectCwd
+			? "project_worker"
+			: "orchestrator";
+
+	return {
+		kind,
+		executionMode,
+		fixedAgentType,
+		fixedProjectId,
+		fixedProjectCwd,
+		projectImageRef,
+	};
+}
+
+function serializeRuntimeProfile(profile: RuntimeProfile): RuntimeProfileLogPayload {
+	return {
+		kind: profile.kind,
+		executionMode: profile.executionMode,
+		fixedAgentType: profile.fixedAgentType,
+		fixedProjectId: profile.fixedProjectId,
+		fixedProjectCwd: profile.fixedProjectCwd,
+		projectImageRef: profile.projectImageRef,
+	};
+}
+
+function validateRuntimeProfile(profile: RuntimeProfile): RuntimeProfileValidationResult {
+	if (profile.fixedAgentType && !ALLOWED_AGENT_TYPES.has(profile.fixedAgentType)) {
+		return {
+			ok: false,
+			statusCode: 503,
+			error: "invalid_runtime_profile",
+			message: `${ASTRO_FIXED_AGENT_TYPE_ENV} is set to unknown agent type "${profile.fixedAgentType}".`,
+		};
+	}
+
+	if (
+		profile.executionMode === "remote_project_worker" &&
+		profile.fixedAgentType &&
+		!isProjectSessionAgentType(profile.fixedAgentType)
+	) {
+		return {
+			ok: false,
+			statusCode: 503,
+			error: "invalid_runtime_profile",
+			message: `${ASTRO_EXECUTION_MODE_ENV}=remote_project_worker requires a project-worker ${ASTRO_FIXED_AGENT_TYPE_ENV}.`,
+		};
+	}
+
+	if (profile.kind === "project_worker" && !profile.fixedAgentType) {
+		return {
+			ok: false,
+			statusCode: 503,
+			error: "invalid_runtime_profile",
+			message: `Project-worker runtime profile requires ${ASTRO_FIXED_AGENT_TYPE_ENV}.`,
+		};
+	}
+
+	if (profile.kind === "project_worker" && !profile.fixedProjectCwd) {
+		return {
+			ok: false,
+			statusCode: 503,
+			error: "invalid_runtime_profile",
+			message: `Project-worker runtime profile requires ${ASTRO_FIXED_PROJECT_CWD_ENV}.`,
+		};
+	}
+
+	if (profile.fixedProjectCwd && !isExistingDirectory(profile.fixedProjectCwd)) {
+		return {
+			ok: false,
+			statusCode: 503,
+			error: "invalid_runtime_profile",
+			message: `${ASTRO_FIXED_PROJECT_CWD_ENV} must point to an existing directory.`,
+		};
+	}
+
+	return { ok: true };
+}
+
+type ProjectAttachment = {
+	attached: boolean;
+	projectId: string | null;
+	cwd: string | null;
+	repoRoot: string | null;
+	projectImageRef: string | null;
+	requestedProjectId: string | null;
+	requestedCwd: string | null;
+	fixedProjectId: string | null;
+	fixedProjectCwd: string | null;
+};
+
+type ProjectAttachmentResolution =
+	| ({ ok: true } & ProjectAttachment)
+	| {
+			ok: false;
+			statusCode: number;
+			error: string;
+			message: string;
+	  };
+
+function resolveProjectAttachment(input: {
+	agentType: string;
+	body: Record<string, unknown>;
+	existingSessionMetadata: SessionMetadata;
+	runtimeProfile: RuntimeProfile;
+}): ProjectAttachmentResolution {
+	const requestedProjectId = normalizeProjectId(input.body.projectId);
+	const requestedCwd = normalizeProjectCwd(input.body.cwd);
+	const imageBackedProjectExecutor = isImageBackedProjectExecutor(input.agentType);
+	const fixedProjectId = imageBackedProjectExecutor ? null : input.runtimeProfile.fixedProjectId;
+	const fixedProjectCwd = input.runtimeProfile.fixedProjectCwd;
+	const effectiveRequestedProjectId = requestedProjectId ?? fixedProjectId;
+	const effectiveRequestedCwd = requestedCwd ?? fixedProjectCwd;
+	const projectImageRef =
+		input.runtimeProfile.projectImageRef ?? input.existingSessionMetadata.projectImageRef ?? null;
+	const projectAttachmentRequired =
+		input.runtimeProfile.kind === "project_worker" || isProjectSessionAgentType(input.agentType);
+	const attached =
+		projectAttachmentRequired ||
+		Boolean(effectiveRequestedCwd ?? input.existingSessionMetadata.cwd);
+
+	if (fixedProjectId && requestedProjectId && requestedProjectId !== fixedProjectId) {
+		return {
+			ok: false,
+			statusCode: 409,
+			error: "fixed_project_mismatch",
+			message: `This runtime is pinned to projectId "${fixedProjectId}".`,
+		};
+	}
+
+	if (fixedProjectCwd && requestedCwd && requestedCwd !== fixedProjectCwd) {
+		return {
+			ok: false,
+			statusCode: 409,
+			error: "fixed_project_cwd_mismatch",
+			message: `This runtime is pinned to cwd "${fixedProjectCwd}".`,
+		};
+	}
+
+	if (
+		attached &&
+		!imageBackedProjectExecutor &&
+		input.existingSessionMetadata.projectId &&
+		effectiveRequestedProjectId &&
+		effectiveRequestedProjectId !== input.existingSessionMetadata.projectId
+	) {
+		return {
+			ok: false,
+			statusCode: 409,
+			error: "session_mismatch",
+			message: "runtime_session_id does not match the requested projectId.",
+		};
+	}
+
+	if (
+		attached &&
+		input.existingSessionMetadata.cwd &&
+		effectiveRequestedCwd &&
+		effectiveRequestedCwd !== input.existingSessionMetadata.cwd
+	) {
+		return {
+			ok: false,
+			statusCode: 409,
+			error: "session_mismatch",
+			message: "runtime_session_id does not match the requested cwd.",
+		};
+	}
+
+	if (!attached) {
+		return {
+			ok: true,
+			attached: false,
+			projectId: null,
+			cwd: resolveOrchestratorRuntimeCwd(),
+			repoRoot: null,
+			projectImageRef: null,
+			requestedProjectId,
+			requestedCwd,
+			fixedProjectId,
+			fixedProjectCwd,
+		};
+	}
+
+	const projectId = imageBackedProjectExecutor
+		? requestedProjectId ?? input.existingSessionMetadata.projectId ?? fixedProjectId ?? null
+		: effectiveRequestedProjectId ?? input.existingSessionMetadata.projectId ?? null;
+	const cwd = effectiveRequestedCwd ?? input.existingSessionMetadata.cwd ?? null;
+
+	if (!projectId && !imageBackedProjectExecutor) {
+		return {
+			ok: false,
+			statusCode: 409,
+			error: "missing_project_id",
+			message: `${input.agentType} requires projectId.`,
+		};
+	}
+
+	if (!cwd) {
+		return {
+			ok: false,
+			statusCode: 409,
+			error: "missing_cwd",
+			message: `${input.agentType} requires cwd.`,
+		};
+	}
+
+	if (!isExistingDirectory(cwd)) {
+		return {
+			ok: false,
+			statusCode: 409,
+			error: "invalid_cwd",
+			message: `${input.agentType} requires cwd to be an existing project directory.`,
+		};
+	}
+
+	return {
+		ok: true,
+		attached: true,
+		projectId,
+		cwd,
+		repoRoot: input.existingSessionMetadata.repoRoot ?? resolveGitRepoRoot(cwd),
+		projectImageRef,
+		requestedProjectId,
+		requestedCwd,
+		fixedProjectId,
+		fixedProjectCwd,
+	};
 }
 
 function normalizeRepoRoot(value: unknown): string | null {
@@ -1462,6 +1734,59 @@ function extractRequestSessionPayload(payload: Record<string, unknown>): Record<
 	);
 }
 
+function validateRequestSessionPayloadAuthority(input: {
+	sessionPayload: Record<string, unknown>;
+	runtimeSessionId: string;
+	agentType: string;
+}):
+	| { ok: true }
+	| { ok: false; statusCode: 409; error: string; message: string; details: Record<string, unknown> } {
+	const requestedRuntimeSessionId = normalizeNumericId(input.runtimeSessionId);
+	const payloadAgentSessionId = extractNumericProperty(
+		input.sessionPayload,
+		"id",
+		"agent_session_id",
+		"agentSessionId",
+	);
+	if (
+		requestedRuntimeSessionId != null &&
+		payloadAgentSessionId != null &&
+		payloadAgentSessionId !== requestedRuntimeSessionId
+	) {
+		return {
+			ok: false,
+			statusCode: 409,
+			error: "session_payload_mismatch",
+			message: "Request-carried session serializer does not match runtime_session_id.",
+			details: {
+				runtimeSessionId: input.runtimeSessionId,
+				payloadAgentSessionId,
+			},
+		};
+	}
+
+	const sessionMetadata = extractObjectPropertyRecord(
+		input.sessionPayload,
+		"session_metadata",
+		"sessionMetadata",
+	);
+	const payloadAgentType = extractAgentTypeFromSessionPayload(input.sessionPayload, sessionMetadata);
+	if (payloadAgentType && payloadAgentType !== input.agentType) {
+		return {
+			ok: false,
+			statusCode: 409,
+			error: "session_payload_mismatch",
+			message: "Request-carried session serializer does not match requested agentType.",
+			details: {
+				agentType: input.agentType,
+				payloadAgentType,
+			},
+		};
+	}
+
+	return { ok: true };
+}
+
 function extractBackendSessionThreadId(
 	payload: Record<string, unknown>,
 	sessionMetadata: Record<string, unknown> | null,
@@ -1520,6 +1845,12 @@ function buildRequestA2AEnvelope(input: {
 		callerAgentSessionId:
 			extractNumericProperty(input.body, "caller_agent_session_id", "callerAgentSessionId") ??
 			extractNumericProperty(input.caller, "agent_session_id", "agentSessionId", "session_id", "sessionId") ??
+			null,
+		targetAgentSessionId:
+			extractNumericProperty(input.body, "target_agent_session_id", "targetAgentSessionId") ??
+			extractNumericProperty(input.a2aContext, "target_agent_session_id", "targetAgentSessionId") ??
+			extractNumericProperty(input.body, "runtime_session_id", "runtimeSessionId", "sessionId") ??
+			extractNumericProperty(input.a2aContext, "runtime_session_id", "runtimeSessionId", "sessionId") ??
 			null,
 		targetAgentId:
 			extractNumericProperty(input.body, "target_agent_id", "targetAgentId") ??
@@ -1786,52 +2117,6 @@ function isExistingDirectory(candidate: string): boolean {
 	}
 }
 
-type SpecialistAgentResolution = {
-	agentConfig: AgentConfig | null;
-	discoveryRoot: string;
-	projectAgentsDir: string | null;
-	availableAgentTypes: string[];
-};
-
-function resolveSpecialistAgent(agentType: string, cwd?: string | null): SpecialistAgentResolution {
-	const discoveryRoot = cwd ? path.resolve(cwd) : repoRoot;
-	const projectDiscovery = discoverAgents(discoveryRoot, "project");
-	const projectAgentConfig =
-		projectDiscovery.agents.find((candidate) => candidate.promptName === agentType) ?? null;
-	const fixedAgentType = resolveFixedAgentType();
-
-	if (isRemoteProjectWorkerMode() && fixedAgentType === "mainsequence-project-executor") {
-		const bundledDiscovery = discoverAgents(repoRoot, "project");
-		const bundledAgentConfig =
-			bundledDiscovery.agents.find((candidate) => candidate.promptName === fixedAgentType) ?? null;
-		const agentConfig = projectAgentConfig ?? bundledAgentConfig;
-		const availableAgentTypes = Array.from(
-			new Set([
-				...projectDiscovery.agents.map((candidate) => candidate.promptName),
-				...bundledDiscovery.agents.map((candidate) => candidate.promptName),
-			]),
-		).sort();
-		return {
-			agentConfig,
-			discoveryRoot,
-			projectAgentsDir: projectDiscovery.projectAgentsDir,
-			availableAgentTypes,
-		};
-	}
-
-	const discovery = projectAgentConfig ? projectDiscovery : discoverAgents(discoveryRoot, "both");
-	const agentConfig =
-		projectAgentConfig ??
-		discovery.agents.find((candidate) => candidate.promptName === agentType) ??
-		null;
-	return {
-		agentConfig,
-		discoveryRoot,
-		projectAgentsDir: discovery.projectAgentsDir,
-		availableAgentTypes: discovery.agents.map((candidate) => candidate.promptName).sort(),
-	};
-}
-
 function writePromptToTempFile(promptName: string, prompt: string): string {
 	const tempDir = mkdtempSync(path.join(tmpdir(), `astro-stream-${promptName.replace(/[^\w.-]+/g, "_")}-`));
 	const promptPath = path.join(tempDir, "append-system-prompt.md");
@@ -1909,11 +2194,18 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 	try {
 		const parsed = JSON.parse(readFileSync(metadataPath, "utf8"));
 		if (!parsed || typeof parsed !== "object") return null;
-		const rawAgentId = (parsed as { agentId?: unknown }).agentId;
-		const rawAgentUniqueId = (parsed as { agentUniqueId?: unknown }).agentUniqueId;
-		const rawAgentSessionId = (parsed as { agentSessionId?: unknown }).agentSessionId;
-		const rawThreadId = (parsed as { threadId?: unknown }).threadId;
-		const rawStartedAt = (parsed as { startedAt?: unknown }).startedAt;
+		const rawAgentId =
+			(parsed as { agentId?: unknown }).agentId ?? (parsed as { agent_id?: unknown }).agent_id;
+		const rawAgentUniqueId =
+			(parsed as { agentUniqueId?: unknown }).agentUniqueId ??
+			(parsed as { agent_unique_id?: unknown }).agent_unique_id;
+		const rawAgentSessionId =
+			(parsed as { agentSessionId?: unknown }).agentSessionId ??
+			(parsed as { agent_session_id?: unknown }).agent_session_id;
+		const rawThreadId =
+			(parsed as { threadId?: unknown }).threadId ?? (parsed as { thread_id?: unknown }).thread_id;
+		const rawStartedAt =
+			(parsed as { startedAt?: unknown }).startedAt ?? (parsed as { started_at?: unknown }).started_at;
 		const rawAgentType =
 			(parsed as { agentType?: unknown }).agentType ??
 			(parsed as { agent_type?: unknown }).agent_type;
@@ -1982,6 +2274,11 @@ function writeSessionMetadata(sessionKey: string, metadata: SessionMetadata) {
 	mkdirSync(sessionDir, { recursive: true });
 	const metadataPath = getSessionMetadataPath(sessionKey);
 	const nextMetadata: Record<string, unknown> = { ...metadata };
+	if (metadata.agentType) nextMetadata.agent_type = metadata.agentType;
+	if (metadata.agentId != null) nextMetadata.agent_id = metadata.agentId;
+	if (metadata.agentUniqueId) nextMetadata.agent_unique_id = metadata.agentUniqueId;
+	if (metadata.agentSessionId != null) nextMetadata.agent_session_id = metadata.agentSessionId;
+	if (metadata.threadId) nextMetadata.thread_id = metadata.threadId;
 	if (!Object.prototype.hasOwnProperty.call(nextMetadata, "history_annotations")) {
 		const existingAnnotations = normalizeHistoryAnnotations(
 			readJsonFileObject(metadataPath)?.history_annotations,
@@ -2851,15 +3148,13 @@ function buildSessionMetadataFromBackendCheckpoint(input: {
 		: {};
 	const historyAnnotations = normalizeHistoryAnnotations(bundleMetadata.history_annotations);
 	const agentRecord = extractObjectPropertyRecord(input.sessionPayload, "agent");
-	const agentType =
-		extractStringProperty(bundleMetadata, "agentType", "agent_type") ??
-		extractAgentTypeFromSessionPayload(input.sessionPayload, sessionMetadata);
+	const agentType = extractAgentTypeFromSessionPayload(input.sessionPayload, sessionMetadata);
 	const agentId =
-		extractNumericProperty(bundleMetadata, "agentId", "agent_id") ??
-		extractBackendSessionAgentId(input.sessionPayload);
+		extractBackendSessionAgentId(input.sessionPayload) ??
+		extractNumericProperty(bundleMetadata, "agentId", "agent_id");
 	const agentUniqueId =
-		extractStringProperty(bundleMetadata, "agentUniqueId", "agent_unique_id") ??
-		(agentRecord ? extractStringProperty(agentRecord, "agent_unique_id", "agentUniqueId") : null);
+		(agentRecord ? extractStringProperty(agentRecord, "agent_unique_id", "agentUniqueId") : null) ??
+		extractStringProperty(bundleMetadata, "agentUniqueId", "agent_unique_id");
 	const threadId =
 		extractStringProperty(bundleMetadata, "threadId", "thread_id") ??
 		extractBackendSessionThreadId(input.sessionPayload, sessionMetadata, input.requestedThreadId) ??
@@ -3124,6 +3419,14 @@ async function hydrateLocalSessionFilesForRead(input: {
 		checkpointBundle: bundle,
 		requestedThreadId: input.requestedThreadId,
 	});
+	if (!metadata.agentType) {
+		return {
+			ok: false,
+			statusCode: 502,
+			error: "session_hydration_failed",
+			message: "Backend AgentSession response did not include a usable agent_type identity.",
+		};
+	}
 	writeSessionMetadata(input.sessionKey, metadata);
 	const threadBinding = isPlainObject(bundle.thread_binding_json)
 		? bundle.thread_binding_json
@@ -3133,7 +3436,19 @@ async function hydrateLocalSessionFilesForRead(input: {
 				updatedAt: new Date().toISOString(),
 		  };
 	const threadId = extractStringProperty(threadBinding, "threadId", "thread_id") ?? metadata.threadId ?? input.sessionKey;
-	writeFileSync(getThreadBindingPath(threadId), JSON.stringify(threadBinding, null, 2));
+	const threadBindingUpdatedAt =
+		extractStringProperty(threadBinding, "updatedAt", "updated_at") ??
+		new Date().toISOString();
+	const normalizedThreadBinding = {
+		...threadBinding,
+		threadId,
+		thread_id: threadId,
+		runtimeSessionId: input.sessionKey,
+		runtime_session_id: input.sessionKey,
+		updatedAt: threadBindingUpdatedAt,
+		updated_at: threadBindingUpdatedAt,
+	};
+	writeFileSync(getThreadBindingPath(threadId), JSON.stringify(normalizedThreadBinding, null, 2));
 
 	logStructuredEvent({
 		severity: "INFO",
@@ -3143,6 +3458,8 @@ async function hydrateLocalSessionFilesForRead(input: {
 		data: {
 			sessionId: input.sessionKey,
 			agentSessionId: fetched.agentSessionId ?? agentSessionId,
+			agentType: metadata.agentType,
+			threadId,
 			reason: input.reason,
 			checkpointVersion: checkpoint.body.checkpoint_version,
 			bundleHash: checkpoint.body.bundle_hash,
@@ -5249,6 +5566,7 @@ async function handleStreamRequest(
 
 	if (req.method === "GET" && url.pathname === "/api/chat/get_available_models") {
 		const userId = resolveUserIdFromRequest(req, url);
+		const runtimeProfile = resolveRuntimeProfile();
 		logStructuredEvent({
 			component: "astro-stream",
 			event: "available_models_request_started",
@@ -5256,8 +5574,7 @@ async function handleStreamRequest(
 			data: {
 				path: url.pathname,
 				userId,
-				executionMode: process.env.ASTRO_EXECUTION_MODE ?? null,
-				fixedAgentType: process.env.ASTRO_FIXED_AGENT_TYPE ?? null,
+				runtimeProfile: serializeRuntimeProfile(runtimeProfile),
 			},
 		});
 		if (!userId) {
@@ -5869,7 +6186,39 @@ async function handleStreamRequest(
 		return;
 	}
 
-	if (!(await ensureRequestCliAuth(res)).ok) {
+	const runtimeProfile = resolveRuntimeProfile();
+	const runtimeProfileValidation = validateRuntimeProfile(runtimeProfile);
+	if (runtimeProfileValidation.ok === false) {
+		logStructuredEvent({
+			severity: "ERROR",
+			component: "astro-stream",
+			event: "runtime_profile_invalid",
+			message: "Astro rejected a request because the runtime profile configuration is invalid.",
+			data: {
+				path: url.pathname,
+				runtimeProfile: serializeRuntimeProfile(runtimeProfile),
+				error: runtimeProfileValidation.error,
+				statusCode: runtimeProfileValidation.statusCode,
+			},
+		});
+		json(res, runtimeProfileValidation.statusCode, {
+			error: runtimeProfileValidation.error,
+			message: runtimeProfileValidation.message,
+			runtime_profile: serializeRuntimeProfile(runtimeProfile),
+		});
+		return;
+	}
+	logStructuredEvent({
+		component: "astro-stream",
+		event: "request_runtime_profile_resolved",
+		message: "Astro resolved the runtime profile for the request.",
+		data: {
+			path: url.pathname,
+			runtimeProfile: serializeRuntimeProfile(runtimeProfile),
+		},
+	});
+
+	if (!(await ensureRequestCliAuth(res, runtimeProfile)).ok) {
 		return;
 	}
 
@@ -5893,7 +6242,7 @@ async function handleStreamRequest(
 		caller: a2aCaller,
 	});
 
-	const fixedAgentType = resolveFixedAgentType();
+	const fixedAgentType = runtimeProfile.fixedAgentType;
 	const rawRequestedAgentType = normalizeAgentType(body.agentType);
 	if (fixedAgentType && rawRequestedAgentType && rawRequestedAgentType !== fixedAgentType) {
 		json(res, 409, {
@@ -5969,6 +6318,32 @@ async function handleStreamRequest(
 	let localSessionExists = sessionExists(runtimeSessionId);
 	let localSessionMetadata = readSessionMetadata(runtimeSessionId);
 	if (requestSessionPayload) {
+		const authorityValidation = validateRequestSessionPayloadAuthority({
+			sessionPayload: requestSessionPayload,
+			runtimeSessionId,
+			agentType,
+		});
+		if (authorityValidation.ok === false) {
+			logStructuredEvent({
+				severity: "WARNING",
+				component: "astro-stream",
+				event: "request_session_payload_mismatch",
+				message:
+					"Astro rejected a request-carried session serializer that did not match the target backend session authority.",
+				data: {
+					agentType,
+					userId,
+					runtimeSessionId,
+					...authorityValidation.details,
+				},
+			});
+			json(res, authorityValidation.statusCode, {
+				error: authorityValidation.error,
+				message: authorityValidation.message,
+				...authorityValidation.details,
+			});
+			return;
+		}
 		const requestSessionMetadata = buildSessionMetadataFromRequestSessionPayload({
 			sessionKey: runtimeSessionId,
 			sessionPayload: requestSessionPayload,
@@ -6089,10 +6464,12 @@ async function handleStreamRequest(
 	if (!existingSessionMetadata && hydratedBackendSession) {
 		existingSessionMetadata = hydratedBackendSession.metadata;
 	}
+	const fixedWorkerRequiresBackendSessionAuthority = runtimeProfile.kind === "project_worker";
 	if (
 		!existingSessionMetadata ||
 		!existingSessionMetadata.sessionModelBinding ||
-		existingSessionMetadata.agentId == null
+		existingSessionMetadata.agentId == null ||
+		fixedWorkerRequiresBackendSessionAuthority
 	) {
 		const hydrationResult = await attachHydratedBackendSession({
 			runtimeSessionId,
@@ -6172,22 +6549,42 @@ async function handleStreamRequest(
 			},
 		});
 	}
+	if (body.runConfig !== undefined) {
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "request_run_config_ignored_session_first",
+			message:
+				"Astro ignored the message-level `runConfig` field because session-first model policy is resolved from the target backend session.",
+			data: {
+				agentType,
+				userId,
+				threadId: existingSessionMetadata?.threadId ?? requestedThreadId ?? null,
+				runtimeSessionId,
+			},
+		});
+	}
 
+	const requestSessionModelBinding = requestSessionPayload
+		? deriveSessionModelBindingFromSessionPayload({
+				sessionPayload: requestSessionPayload,
+				existingBinding: existingSessionMetadata?.sessionModelBinding ?? null,
+		  })
+		: null;
 	const sessionModelBinding =
-		deriveSessionModelBindingFromSessionPayload({
-			sessionPayload: requestSessionPayload,
-			existingBinding: existingSessionMetadata?.sessionModelBinding ?? null,
-		}) ??
-		existingSessionMetadata?.sessionModelBinding ??
-		null;
-	const requestModelSource =
-		hydratedBackendSession
-			? "backend_session_authority"
-			: requestSessionPayload
-				? "request_session_serializer"
-				: existingSessionMetadata?.sessionModelBinding
-					? "session_metadata"
-					: "none";
+		fixedWorkerRequiresBackendSessionAuthority
+			? existingSessionMetadata?.sessionModelBinding ?? requestSessionModelBinding ?? null
+			: requestSessionModelBinding ?? existingSessionMetadata?.sessionModelBinding ?? null;
+	let requestModelSource = "none";
+	if (hydratedBackendSession) {
+		requestModelSource = "backend_session_authority";
+	} else if (fixedWorkerRequiresBackendSessionAuthority && existingSessionMetadata?.sessionModelBinding) {
+		requestModelSource = "target_session_metadata";
+	} else if (requestSessionModelBinding) {
+		requestModelSource = "request_session_serializer";
+	} else if (existingSessionMetadata?.sessionModelBinding) {
+		requestModelSource = "session_metadata";
+	}
 	const sessionModelBindingLogData = {
 		agentType,
 		userId,
@@ -6226,117 +6623,44 @@ async function handleStreamRequest(
 		return;
 	}
 
-	const fixedProjectCwd = resolveFixedProjectCwd();
-	const requestedProjectId = normalizeProjectId(body.projectId);
-	const requestedCwd = normalizeProjectCwd(body.cwd);
-	const fixedProjectId = isImageBackedProjectExecutor(agentType) ? null : resolveFixedProjectId();
-	if (fixedProjectId && requestedProjectId && requestedProjectId !== fixedProjectId) {
-		json(res, 409, {
-			error: "fixed_project_mismatch",
-			message: `This runtime is pinned to projectId "${fixedProjectId}".`,
-		});
-		return;
-	}
-	if (fixedProjectCwd && requestedCwd && requestedCwd !== fixedProjectCwd) {
-		json(res, 409, {
-			error: "fixed_project_cwd_mismatch",
-			message: `This runtime is pinned to cwd "${fixedProjectCwd}".`,
-		});
-		return;
-	}
-	const effectiveRequestedProjectId = requestedProjectId ?? fixedProjectId;
-	const effectiveRequestedCwd = requestedCwd ?? fixedProjectCwd;
-	const configuredProjectImageRef = resolveConfiguredProjectImageRef();
-	if (
-		isProjectSessionAgentType(agentType) &&
-		!isImageBackedProjectExecutor(agentType) &&
-		existingSessionMetadata?.projectId &&
-		effectiveRequestedProjectId &&
-		effectiveRequestedProjectId !== existingSessionMetadata.projectId
-	) {
-		json(res, 409, {
-			error: "session_mismatch",
-			message: "runtime_session_id does not match the requested projectId.",
-		});
-		return;
-	}
-	if (
-		isProjectSessionAgentType(agentType) &&
-		existingSessionMetadata?.cwd &&
-		effectiveRequestedCwd &&
-		effectiveRequestedCwd !== existingSessionMetadata.cwd
-	) {
-		json(res, 409, {
-			error: "session_mismatch",
-			message: "runtime_session_id does not match the requested cwd.",
+	const projectAttachment = resolveProjectAttachment({
+		agentType,
+		body,
+		existingSessionMetadata,
+		runtimeProfile,
+	});
+	if (projectAttachment.ok === false) {
+		json(res, projectAttachment.statusCode, {
+			error: projectAttachment.error,
+			message: projectAttachment.message,
 		});
 		return;
 	}
 
-	const projectId =
-		isProjectSessionAgentType(agentType)
-			? isImageBackedProjectExecutor(agentType)
-				? requestedProjectId ?? existingSessionMetadata?.projectId ?? null
-				: effectiveRequestedProjectId ?? existingSessionMetadata?.projectId ?? null
-			: null;
-	const agentCwd =
-		isProjectSessionAgentType(agentType)
-			? effectiveRequestedCwd ?? existingSessionMetadata?.cwd ?? null
-			: resolveOrchestratorRuntimeCwd();
-	const specialistAgent =
-		isProjectSessionAgentType(agentType) && agentCwd
-			? resolveSpecialistAgent(agentType, agentCwd)
-			: null;
-	const agentConfig = specialistAgent?.agentConfig ?? null;
-	const projectImageRef =
-		isProjectSessionAgentType(agentType)
-			? configuredProjectImageRef ?? existingSessionMetadata?.projectImageRef ?? null
-			: null;
-	if (isProjectSessionAgentType(agentType)) {
-		if (!projectId && !isImageBackedProjectExecutor(agentType)) {
-			json(res, 409, {
-				error: "missing_project_id",
-				message: `${agentType} requires projectId.`,
-			});
-			return;
-		}
-		if (!agentCwd) {
-			json(res, 409, {
-				error: "missing_cwd",
-				message: `${agentType} requires cwd.`,
-			});
-			return;
-		}
-		if (!isExistingDirectory(agentCwd)) {
-			json(res, 409, {
-				error: "invalid_cwd",
-				message: `${agentType} requires cwd to be an existing project directory.`,
-			});
-			return;
-		}
-		if (!agentConfig) {
-			logStructuredEvent({
-				severity: "WARNING",
-				component: "astro-stream",
-				event: "specialist_agent_not_found",
-				message: "Astro could not discover the requested specialist prompt for the active project session.",
-				data: {
-					agentType,
-					userId,
-					runtimeSessionId,
-					agentCwd,
-					discoveryRoot: specialistAgent?.discoveryRoot ?? null,
-					projectAgentsDir: specialistAgent?.projectAgentsDir ?? null,
-					availableAgentTypes: specialistAgent?.availableAgentTypes ?? [],
-				},
-			});
-			json(res, 500, {
-				error: "runtime_prompt_not_found",
-				message: `Could not load the ${agentType} specialist prompt.`,
-			});
-			return;
-		}
-	}
+	const projectId = projectAttachment.projectId;
+	const agentCwd = projectAttachment.cwd;
+	logStructuredEvent({
+		component: "astro-stream",
+		event: "request_project_attachment_resolved",
+		message: "Astro resolved project attachment for the request.",
+		data: {
+			agentType,
+			userId,
+			runtimeSessionId,
+			runtimeProfile: serializeRuntimeProfile(runtimeProfile),
+			attached: projectAttachment.attached,
+			projectId,
+			cwd: agentCwd,
+			repoRoot: projectAttachment.repoRoot,
+			projectImageRef: projectAttachment.projectImageRef,
+			requestedProjectId: projectAttachment.requestedProjectId,
+			requestedCwd: projectAttachment.requestedCwd,
+			fixedProjectId: projectAttachment.fixedProjectId,
+			fixedProjectCwd: projectAttachment.fixedProjectCwd,
+		},
+	});
+	const projectImageRef = projectAttachment.projectImageRef;
+	const agentConfig: AgentConfig | null = null;
 
 	const system = typeof body.system === "string" ? body.system : undefined;
 
@@ -6378,8 +6702,15 @@ async function handleStreamRequest(
 						responseFormat: null,
 						handleUniqueId: null,
 						callerAgentSessionId: null,
+						targetAgentSessionId: null,
 						targetAgentId: null,
 					}),
+					targetAgentSessionId:
+						requestA2AEnvelope?.targetAgentSessionId ??
+						existingSessionMetadata?.a2a?.targetAgentSessionId ??
+						agentSessionId ??
+						normalizeNumericId(runtimeSessionId) ??
+						null,
 					targetAgentId:
 						requestA2AEnvelope?.targetAgentId ??
 						existingSessionMetadata?.a2a?.targetAgentId ??
@@ -6387,11 +6718,8 @@ async function handleStreamRequest(
 						null,
 			  })
 			: null;
-	const persistedCwd = isProjectSessionAgentType(agentType) ? agentCwd : null;
-	const frozenRepoRoot =
-		isProjectSessionAgentType(agentType)
-			? existingSessionMetadata?.repoRoot ?? (agentCwd ? resolveGitRepoRoot(agentCwd) : null)
-			: null;
+	const persistedCwd = projectAttachment.attached ? agentCwd : null;
+	const frozenRepoRoot = projectAttachment.repoRoot;
 	if (
 		existingSessionMetadata?.agentUniqueId &&
 		agentUniqueId &&
@@ -6570,7 +6898,7 @@ async function handleStreamRequest(
 
 	const prompt = buildPrompt(system, latestUserMessage, context, tools);
 
-	if (isProjectSessionAgentType(agentType)) {
+	if (projectAttachment.attached) {
 		writeSessionMetadata(sessionKey, {
 			agentId,
 			agentUniqueId,
@@ -6635,6 +6963,36 @@ server.on("error", (error) => {
 	});
 	console.error(`[astro-stream] server error issue=${issue.id}: ${issue.message}`);
 });
+
+const startupRuntimeProfile = resolveRuntimeProfile();
+const startupRuntimeProfileValidation = validateRuntimeProfile(startupRuntimeProfile);
+const startupRuntimeProfileValidationDetails: Record<string, unknown> = {};
+if (startupRuntimeProfileValidation.ok === false) {
+	startupRuntimeProfileValidationDetails.error = startupRuntimeProfileValidation.error;
+	startupRuntimeProfileValidationDetails.statusCode = startupRuntimeProfileValidation.statusCode;
+	startupRuntimeProfileValidationDetails.message = startupRuntimeProfileValidation.message;
+}
+logStructuredEvent({
+	component: "astro-stream",
+	event: "runtime_profile_resolved",
+	message: "Astro resolved the runtime profile for this process.",
+	data: {
+		runtimeProfile: serializeRuntimeProfile(startupRuntimeProfile),
+		validationOk: startupRuntimeProfileValidation.ok,
+		...startupRuntimeProfileValidationDetails,
+	},
+});
+if (startupRuntimeProfileValidation.ok === false) {
+	recordRuntimeHealthIssue({
+		source: "runtime_profile",
+		severity: "error",
+		error: new Error(startupRuntimeProfileValidation.message),
+		context: {
+			runtimeProfile: serializeRuntimeProfile(startupRuntimeProfile),
+			error: startupRuntimeProfileValidation.error,
+		},
+	});
+}
 
 server.listen(port, host, () => {
 	console.log(`[astro-stream] Listening on http://${host}:${port}`);

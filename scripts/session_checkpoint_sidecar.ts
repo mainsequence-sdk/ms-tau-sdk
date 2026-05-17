@@ -334,7 +334,14 @@ function materializeNormalizedCheckpointBundle(sessionKey: string, bundle: Check
 			: typeof bundle.thread_binding_json.thread_id === "string" && bundle.thread_binding_json.thread_id.trim()
 				? bundle.thread_binding_json.thread_id.trim()
 				: metadataThreadId ?? sessionKey;
-	writeJsonObject(getThreadBindingPath(threadId), bundle.thread_binding_json);
+	writeJsonObject(
+		getThreadBindingPath(threadId),
+		normalizeThreadBindingForBackendSession({
+			sessionKey,
+			metadata: bundle.astro_metadata_json,
+			threadBinding: bundle.thread_binding_json,
+		}),
+	);
 
 	const overridesPath = getSessionOverridesPath(sessionKey);
 	if (isPlainObject(bundle.session_overrides_json)) {
@@ -756,12 +763,67 @@ function readCompleteJsonl(filePath: string): JsonlReadResult {
 }
 
 function resolveAgentSessionId(sessionKey: string, manifest: CheckpointManifest, metadata: Record<string, unknown>): number | null {
-	return normalizeNumericId(sessionKey) ?? normalizeNumericId(manifest.session_id) ?? normalizeNumericId(metadata.agentSessionId);
+	return (
+		normalizeNumericId(sessionKey) ??
+		normalizeNumericId(manifest.session_id) ??
+		normalizeNumericId(metadata.agentSessionId) ??
+		normalizeNumericId(metadata.agent_session_id)
+	);
+}
+
+function resolveMetadataAgentType(metadata: Record<string, unknown>): string | null {
+	return normalizeOptionalString(metadata.agentType) ?? normalizeOptionalString(metadata.agent_type);
+}
+
+function normalizeCheckpointMetadataForBackendIdentity(input: {
+	sessionKey: string;
+	agentSessionId: number;
+	metadata: Record<string, unknown>;
+}): { ok: true; metadata: Record<string, unknown> } | { ok: false; error: string; retryable: boolean } {
+	const agentType = resolveMetadataAgentType(input.metadata);
+	if (!agentType) {
+		return { ok: false, error: "missing_agent_type", retryable: false };
+	}
+
+	const metadataAgentSessionId =
+		normalizeNumericId(input.metadata.agentSessionId) ??
+		normalizeNumericId(input.metadata.agent_session_id);
+	if (metadataAgentSessionId != null && metadataAgentSessionId !== input.agentSessionId) {
+		return { ok: false, error: "agent_session_id_mismatch", retryable: false };
+	}
+
+	const normalized: Record<string, unknown> = {
+		...input.metadata,
+		agentType,
+		agent_type: agentType,
+		agentSessionId: input.agentSessionId,
+		agent_session_id: input.agentSessionId,
+	};
+	const agentId = normalizeNumericId(input.metadata.agentId) ?? normalizeNumericId(input.metadata.agent_id);
+	if (agentId != null) {
+		normalized.agentId = agentId;
+		normalized.agent_id = agentId;
+	}
+	const agentUniqueId =
+		normalizeOptionalString(input.metadata.agentUniqueId) ??
+		normalizeOptionalString(input.metadata.agent_unique_id);
+	if (agentUniqueId) {
+		normalized.agentUniqueId = agentUniqueId;
+		normalized.agent_unique_id = agentUniqueId;
+	}
+	const threadId =
+		normalizeOptionalString(input.metadata.threadId) ??
+		normalizeOptionalString(input.metadata.thread_id);
+	if (threadId) {
+		normalized.threadId = threadId;
+		normalized.thread_id = threadId;
+	}
+	return { ok: true, metadata: normalized };
 }
 
 function findThreadBinding(sessionKey: string, metadata: Record<string, unknown>): Record<string, unknown> | null {
 	const metadataThreadId =
-		typeof metadata.threadId === "string" && metadata.threadId.trim() ? metadata.threadId.trim() : null;
+		normalizeOptionalString(metadata.threadId) ?? normalizeOptionalString(metadata.thread_id);
 	if (metadataThreadId) {
 		const directBinding = readJsonObject(getThreadBindingPath(metadataThreadId));
 		if (directBinding) return directBinding;
@@ -772,13 +834,38 @@ function findThreadBinding(sessionKey: string, metadata: Record<string, unknown>
 		if (!entry.isFile() || !entry.name.endsWith(".thread.json")) continue;
 		const binding = readJsonObject(path.join(sessionDir, entry.name));
 		if (!binding) continue;
-		const runtimeSessionId =
-			typeof binding.runtimeSessionId === "string" && binding.runtimeSessionId.trim()
-				? binding.runtimeSessionId.trim()
-				: null;
-		if (runtimeSessionId === sessionKey) return binding;
+			const runtimeSessionId =
+				normalizeOptionalString(binding.runtimeSessionId) ??
+				normalizeOptionalString(binding.runtime_session_id);
+			if (runtimeSessionId === sessionKey) return binding;
 	}
 	return null;
+}
+
+function normalizeThreadBindingForBackendSession(input: {
+	sessionKey: string;
+	metadata: Record<string, unknown>;
+	threadBinding: Record<string, unknown>;
+}): Record<string, unknown> {
+	const threadId =
+		normalizeOptionalString(input.threadBinding.threadId) ??
+		normalizeOptionalString(input.threadBinding.thread_id) ??
+		normalizeOptionalString(input.metadata.threadId) ??
+		normalizeOptionalString(input.metadata.thread_id) ??
+		input.sessionKey;
+	const updatedAt =
+		normalizeOptionalString(input.threadBinding.updatedAt) ??
+		normalizeOptionalString(input.threadBinding.updated_at) ??
+		new Date().toISOString();
+	return {
+		...input.threadBinding,
+		threadId,
+		thread_id: threadId,
+		runtimeSessionId: input.sessionKey,
+		runtime_session_id: input.sessionKey,
+		updatedAt,
+		updated_at: updatedAt,
+	};
 }
 
 function buildCheckpointBundle(sessionKey: string): BundleBuildResult {
@@ -793,11 +880,25 @@ function buildCheckpointBundle(sessionKey: string): BundleBuildResult {
 	const metadata = readJsonObject(getSessionMetadataPath(sessionKey));
 	if (!metadata) return { ok: false, error: "missing_or_invalid_astro_metadata_json", retryable: false };
 
-	const threadBinding = findThreadBinding(sessionKey, metadata);
-	if (!threadBinding) return { ok: false, error: "missing_or_invalid_thread_binding_json", retryable: false };
-
 	const agentSessionId = resolveAgentSessionId(sessionKey, manifest, metadata);
 	if (agentSessionId == null) return { ok: false, error: "invalid_agent_session_id", retryable: false };
+
+	const normalizedMetadata = normalizeCheckpointMetadataForBackendIdentity({
+		sessionKey,
+		agentSessionId,
+		metadata,
+	});
+	if (normalizedMetadata.ok === false) {
+		return normalizedMetadata;
+	}
+
+	const threadBinding = findThreadBinding(sessionKey, normalizedMetadata.metadata);
+	if (!threadBinding) return { ok: false, error: "missing_or_invalid_thread_binding_json", retryable: false };
+	const normalizedThreadBinding = normalizeThreadBindingForBackendSession({
+		sessionKey,
+		metadata: normalizedMetadata.metadata,
+		threadBinding,
+	});
 
 	const overridesPath = getSessionOverridesPath(sessionKey);
 	const sessionOverrides = existsSync(overridesPath) ? readJsonObject(overridesPath) : null;
@@ -807,8 +908,8 @@ function buildCheckpointBundle(sessionKey: string): BundleBuildResult {
 
 	const bundle: CheckpointBundle = {
 		pi_session_jsonl: jsonl.content,
-		astro_metadata_json: metadata,
-		thread_binding_json: threadBinding,
+		astro_metadata_json: normalizedMetadata.metadata,
+		thread_binding_json: normalizedThreadBinding,
 		session_overrides_json: sessionOverrides,
 	};
 	return {
@@ -848,11 +949,28 @@ async function uploadSessionInsights(input: {
 		});
 		return;
 	}
+	const normalizedMetadata = normalizeCheckpointMetadataForBackendIdentity({
+		sessionKey: input.sessionKey,
+		agentSessionId: input.agentSessionId,
+		metadata,
+	});
+	if (normalizedMetadata.ok === false) {
+		insightsUploadSkippedCount += 1;
+		logEvent("session_insights_upload_skipped", {
+			session_id: input.sessionKey,
+			agent_session_id: input.agentSessionId,
+			checkpoint_version: input.checkpointVersion,
+			bundle_hash: input.bundleHash,
+			reason: input.reason,
+			error: normalizedMetadata.error,
+		});
+		return;
+	}
 
 	const insights = readSessionInsights({
 		sessionDir,
 		sessionKey: input.sessionKey,
-		metadata: metadata as Parameters<typeof readSessionInsights>[0]["metadata"],
+		metadata: normalizedMetadata.metadata as Parameters<typeof readSessionInsights>[0]["metadata"],
 	});
 	if (!insights) {
 		insightsUploadSkippedCount += 1;

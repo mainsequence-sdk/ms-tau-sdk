@@ -10,10 +10,10 @@ services:
     env_file:
       - .env
     environment:
-      HOME: /home/appuser
-      ASTRO_CONTAINER_DATA_DIR: /home/appuser/.astro-container-data
-      ASTRO_MAINSEQUENCE_CONFIG_DIR: /home/appuser/.astro-container-data/.config/mainsequence
-      PI_CODING_AGENT_DIR: /home/appuser/.astro-container-data/.pi/agent
+      HOME: /home/jovyan
+      ASTRO_CONTAINER_DATA_DIR: /home/jovyan/.astro-container-data
+      ASTRO_MAINSEQUENCE_CONFIG_DIR: /home/jovyan/.astro-container-data/.config/mainsequence
+      PI_CODING_AGENT_DIR: /home/jovyan/.astro-container-data/.pi/agent
       ASTRO_STREAM_HOST: 0.0.0.0
       ASTRO_STREAM_PORT: ${ASTRO_STREAM_PORT:-8787}
       ASTRO_SESSION_STATE_DIR: /session-state
@@ -50,10 +50,10 @@ services:
   #   env_file:
   #     - .env
   #   environment:
-  #     HOME: /home/appuser
-  #     ASTRO_CONTAINER_DATA_DIR: /home/appuser/.astro-container-data
-  #     ASTRO_MAINSEQUENCE_CONFIG_DIR: /home/appuser/.astro-container-data/.config/mainsequence
-  #     PI_CODING_AGENT_DIR: /home/appuser/.astro-container-data/.pi/agent
+  #     HOME: /home/jovyan
+  #     ASTRO_CONTAINER_DATA_DIR: /home/jovyan/.astro-container-data
+  #     ASTRO_MAINSEQUENCE_CONFIG_DIR: /home/jovyan/.astro-container-data/.config/mainsequence
+  #     PI_CODING_AGENT_DIR: /home/jovyan/.astro-container-data/.pi/agent
   #     ASTRO_STREAM_HOST: 0.0.0.0
   #     ASTRO_STREAM_PORT: 8787
   #     ASTRO_SESSION_STATE_DIR: /session-state
@@ -103,10 +103,10 @@ services:
     env_file:
       - .env
     environment:
-      HOME: /home/appuser
-      ASTRO_CONTAINER_DATA_DIR: /home/appuser/.astro-container-data
-      ASTRO_MAINSEQUENCE_CONFIG_DIR: /home/appuser/.astro-container-data/.config/mainsequence
-      PI_CODING_AGENT_DIR: /home/appuser/.astro-container-data/.pi/agent
+      HOME: /home/jovyan
+      ASTRO_CONTAINER_DATA_DIR: /home/jovyan/.astro-container-data
+      ASTRO_MAINSEQUENCE_CONFIG_DIR: /home/jovyan/.astro-container-data/.config/mainsequence
+      PI_CODING_AGENT_DIR: /home/jovyan/.astro-container-data/.pi/agent
       ASTRO_SESSION_STATE_DIR: /session-state
       ASTRO_STREAM_SESSION_DIR: /session-state/sessions
       ASTRO_SESSION_OVERRIDES_DIR: /session-state/session-overrides
@@ -138,10 +138,10 @@ services:
   #   env_file:
   #     - .env
   #   environment:
-  #     HOME: /home/appuser
-  #     ASTRO_CONTAINER_DATA_DIR: /home/appuser/.astro-container-data
-  #     ASTRO_MAINSEQUENCE_CONFIG_DIR: /home/appuser/.astro-container-data/.config/mainsequence
-  #     PI_CODING_AGENT_DIR: /home/appuser/.astro-container-data/.pi/agent
+  #     HOME: /home/jovyan
+  #     ASTRO_CONTAINER_DATA_DIR: /home/jovyan/.astro-container-data
+  #     ASTRO_MAINSEQUENCE_CONFIG_DIR: /home/jovyan/.astro-container-data/.config/mainsequence
+  #     PI_CODING_AGENT_DIR: /home/jovyan/.astro-container-data/.pi/agent
   #     ASTRO_SESSION_STATE_DIR: /session-state
   #     ASTRO_STREAM_SESSION_DIR: /session-state/sessions
   #     ASTRO_SESSION_OVERRIDES_DIR: /session-state/session-overrides

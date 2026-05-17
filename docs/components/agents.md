@@ -1,22 +1,27 @@
-# Agents
+# Project-local Agent Prompts
 
-Astro ships bundled runtime agent prompts and allows project-local `.pi/agents/` prompts to
-override them when a project provides its own version.
+Astro no longer ships a bundled `mainsequence-project-executor` prompt file. The shared runtime
+contract lives in `.pi/APPEND_SYSTEM.md`, and the active runtime profile decides whether the current
+cwd is already a prepared project.
 
-## What a runtime agent prompt looks like
+Project-local `.pi/agents/` files are reserved for real project-local specialist extensions, not for
+the core executor runtime contract.
 
-Each runtime agent prompt is a markdown file with frontmatter and a prompt body.
+## What a project-local specialist prompt looks like
+
+When a project defines an optional local specialist, each prompt is a markdown file with
+frontmatter and a prompt body.
 
 Example shape:
 
 ```md
 ---
-name: mainsequence-project-executor
-description: Executes project-scoped work inside a Main Sequence project runtime
+name: project-reviewer
+description: Reviews project-scoped work inside this repository
 tools: read, grep, find, ls, bash, edit, write
 ---
 
-Runtime agent instructions here.
+Project-local specialist instructions here.
 ```
 
 ## Frontmatter fields used in Astro
@@ -26,41 +31,10 @@ Runtime agent instructions here.
 - `tools`
 - `model`
 
-The body becomes the runtime agent's appended system prompt.
+The body becomes the local specialist's appended system prompt.
 
-For image-backed executor runtimes, Astro loads the bundled
-`mainsequence-project-executor` prompt from its own Pi bundle by default. If the target project
-contains `.pi/agents/mainsequence-project-executor.md`, that project-local prompt overrides the
-bundled one.
-
-## Current runtime agents
-
-### `mainsequence-project-executor`
-
-Use when:
-
-- a Main Sequence project runtime needs concrete implementation work
-- the orchestrator has already selected and prepared the project context
-- the task should run inside the dedicated project runtime rather than in the user-facing orchestrator session
-
-Important rule:
-
-- it should treat the target project's `AGENTS.md` and `.agents/skills/mainsequence-project/SKILL.md` as canonical when they exist
-- it follows the same global Main Sequence CLI failure contract as the parent: failed
-  `mainsequence ...` commands are reported with the exact command, working directory when relevant,
-  exit code or signal, CLI version or version lookup failure, stderr, stdout, and the concrete
-  blocker or next action
-- it is the only project implementation agent; Astro no longer routes implementation through `mainsequence-project-coder`
-- it is reached only through the dedicated executor runtime flow, not through any removed child-launch surface
-
-## Runtime split
-
-Astro intentionally keeps an orchestrator-runtime split:
-
-- parent orchestrates
-- executor implements when that later phase is introduced
-
-That keeps the parent focused on Main Sequence operations and keeps implementation on the dedicated project runtime.
+Core project execution is not loaded from `.pi/agents`. It uses `.pi/APPEND_SYSTEM.md` plus
+`ASTRO_FIXED_AGENT_TYPE=mainsequence-project-executor` to enter the project-attached branch.
 
 ## Related pages
 

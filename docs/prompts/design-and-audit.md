@@ -24,4 +24,4 @@ Provide a compact review workflow for a checked-out project.
 
 ## Related files
 
-- [`../../.pi/agents/mainsequence-project-executor.md`](../../.pi/agents/mainsequence-project-executor.md)
+- [`../../.pi/APPEND_SYSTEM.md`](../../.pi/APPEND_SYSTEM.md)

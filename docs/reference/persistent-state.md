@@ -9,7 +9,7 @@ continuity comes from backend checkpoints as described in
 - Any state required for session continuity must be restored from and flushed to backend checkpoints.
 - Disposable container storage is allowed for active session files, temporary files, ephemeral
   prompts, and caches that can be safely rebuilt.
-- Containerized Astro services must treat `/home/appuser/.astro-container-data` as rebuildable
+- Containerized Astro services must treat `/home/jovyan/.astro-container-data` as rebuildable
   runtime state, not a PVC or durable user/session store.
 - Provider auth, provider signin state, and stream session files must have no host or repo-local
   source path in the container.
@@ -24,35 +24,32 @@ continuity comes from backend checkpoints as described in
 The canonical container runtime root is:
 
 ```text
-/home/appuser/.astro-container-data
+/home/jovyan/.astro-container-data
 ```
 
 In local Docker, this path is container-local. Active session files live under
 `/session-state/sessions`, backed by tmpfs in Compose and by `emptyDir` in Kubernetes. The image runs
-as non-root `appuser`.
+as non-root `jovyan`.
 
 Current runtime subpaths:
 
-- `/home/appuser/.astro-container-data/.ssh`
+- `/home/jovyan/.astro-container-data/.ssh`
   - pod/container-owned SSH keys
   - rebuildable `known_hosts`
   - runtime SSH `config`
-- `/home/appuser/.astro-container-data/project-checkout-runtime`
-  - per-project checkout homes used by Astro's `set-up-locally` wrapper
-  - project-scoped `.ssh` keys and `known_hosts` so checkout keys are not reused only by slug
-- `/home/appuser/.astro-container-data/.pi/agent`
+- `/home/jovyan/.astro-container-data/.pi/agent`
   - container-local Pi runtime state
   - includes runtime `settings.json` and helper binaries
   - provider `auth.json` and Pi `sessions/` are pruned at startup and must not be used as durable
     state
-- `/home/appuser/.astro-container-data/.pi/project`
+- `/home/jovyan/.astro-container-data/.pi/project`
   - writable materialized copy of Astro's repo-local `/app/.pi` project settings
   - used by `astro-orchestrator` so Pi project settings lock files are never written under `/app`
   - follows Pi's standard project settings contract: project settings are loaded from `<cwd>/.pi/settings.json`
-- `/home/appuser/.astro-container-data/astro-orchestrator-runtime`
+- `/home/jovyan/.astro-container-data/astro-orchestrator-runtime`
   - writable cwd for `astro-orchestrator` Pi processes
-  - contains `.pi -> /home/appuser/.astro-container-data/.pi/project`
-- `/home/appuser/.astro-container-data/.config/mainsequence`
+  - contains `.pi -> /home/jovyan/.astro-container-data/.pi/project`
+- `/home/jovyan/.astro-container-data/.config/mainsequence`
   - Main Sequence CLI auth/config
 - `/session-state/sessions`
   - Astro HTTP stream session metadata
@@ -68,9 +65,9 @@ Current runtime subpaths:
   - restored checkpoint version, bundle hash, and active lease data for local files
 - `/session-state/checkpoints`
   - explicit checkpoint marker files written by Astro at stream boundaries
-- `/home/appuser/.astro-container-data/mainsequence`
-- `/home/appuser/.astro-container-data/mainsequence-dev`
-- `/home/appuser/.astro-container-data/uv`
+- `/home/jovyan/.astro-container-data/mainsequence`
+- `/home/jovyan/.astro-container-data/mainsequence-dev`
+- `/home/jovyan/.astro-container-data/uv`
 
 ## Kubernetes guidance
 
@@ -81,7 +78,7 @@ For Kubernetes deployments, use the same session runtime contract as local Docke
 - expose `POD_UID` to the Astro container; Astro derives the checkpoint holder as `pod/<POD_UID>`
   when `ASTRO_CHECKPOINT_HOLDER_ID` is not explicitly set
 - do not mount a host `~/.ssh`
-- allow the pod to generate rebuildable repo SSH keys under `/home/appuser/.astro-container-data/.ssh`
+- allow the pod to generate rebuildable repo SSH keys under `/home/jovyan/.astro-container-data/.ssh`
 - keep `known_hosts` writable inside the pod so first-contact trust can be recorded
 - do not share one writable session filesystem across unrelated replicas
 
@@ -98,17 +95,17 @@ The following may remain ephemeral:
 
 For containerized Astro services:
 
-- set `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`
-- set `PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`
+- set `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/jovyan/.astro-container-data/.config/mainsequence`
+- set `PI_CODING_AGENT_DIR=/home/jovyan/.astro-container-data/.pi/agent`
 - set `ASTRO_SESSION_STATE_DIR=/session-state`
 - set `ASTRO_STREAM_SESSION_DIR=/session-state/sessions`
 - set `ASTRO_SESSION_OVERRIDES_DIR=/session-state/session-overrides`
 - set `ASTRO_PROVIDER_CREDENTIAL_DIR=/session-state/pi-agent-auth`
 - in Kubernetes, mount an `emptyDir` at `/session-state`
-- let Astro materialize `/app/.pi` into `/home/appuser/.astro-container-data/.pi/project`
-- run `astro-orchestrator` from `/home/appuser/.astro-container-data/astro-orchestrator-runtime`
+- let Astro materialize `/app/.pi` into `/home/jovyan/.astro-container-data/.pi/project`
+- run `astro-orchestrator` from `/home/jovyan/.astro-container-data/astro-orchestrator-runtime`
 - do not mount repo-local or host auth/session directories into the runtime container
 
 If a future feature introduces new runtime scratch, it may live under
-`/home/appuser/.astro-container-data` in containers, but anything required for continuity must move
+`/home/jovyan/.astro-container-data` in containers, but anything required for continuity must move
 through backend-owned storage.

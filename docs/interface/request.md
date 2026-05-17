@@ -46,7 +46,7 @@ currently stored for that runtime session.
   `runtime_session_id` before Pi launch instead of proceeding with no model binding.
 - `threadId` is informational/client-bookkeeping only when backend registration is enabled; it does
   not control session continuity.
-- `agentType` is the backend `Agent.agent_type` value and the Astro prompt selector
+- `agentType` is the backend `Agent.agent_type` value
   (unknown values return `error: unknown_agent_type`).
 - When backend registration is enabled, `runtime_session_id` is the backend `AgentSession.id` string.
 - `mainsequence-project-executor` is the only project implementation runtime.

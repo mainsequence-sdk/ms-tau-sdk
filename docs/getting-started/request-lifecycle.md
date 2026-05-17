@@ -37,16 +37,16 @@ The deployable Docker targets boot the same runtime by copying only:
 - tmpfs-backed `astro_session_emptydir` volume at `/session-state` for pod-local session files
 
 For the HTTP stream service, compose also sets
-`ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`,
-`PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`, and
+`ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/jovyan/.astro-container-data/.config/mainsequence`,
+`PI_CODING_AGENT_DIR=/home/jovyan/.astro-container-data/.pi/agent`, and
 `ASTRO_STREAM_SESSION_DIR=/session-state/sessions` so local Docker follows the emptyDir session model.
 Astro also materializes repo-local `/app/.pi` into
-`/home/appuser/.astro-container-data/.pi/project` and runs `astro-orchestrator` from
-`/home/appuser/.astro-container-data/astro-orchestrator-runtime`, where `.pi` points to that
+`/home/jovyan/.astro-container-data/.pi/project` and runs `astro-orchestrator` from
+`/home/jovyan/.astro-container-data/astro-orchestrator-runtime`, where `.pi` points to that
 writable copy. This uses Pi's normal project settings mechanism: Pi reads project settings from
 the process cwd's `.pi/settings.json`.
 
-The stream/runtime contract uses `/home/appuser/.astro-container-data` for rebuildable container
+The stream/runtime contract uses `/home/jovyan/.astro-container-data` for rebuildable container
 runtime state and `/session-state/sessions` for active session files.
 
 For the normal parent session, Pi also loads `.pi/APPEND_SYSTEM.md` through the writable runtime
@@ -88,15 +88,15 @@ Resume requests can reuse the stored session metadata.
 
 ## 2. Before the agent starts
 
-Astro keeps the parent prompt static and avoids auto-injecting repo docs into the agent context.
+Astro keeps the shared prompt static and avoids auto-injecting repo docs into the agent context.
 
 The only runtime policy injection that remains is for runtime-owned child processes:
 
 - `project-policy` appends child-only policy when the process is a child runtime process
 
-## 3. Parent session decides what to do
+## 3. The shared runtime contract decides what to do
 
-The parent agent reads:
+The active Astro runtime reads:
 
 - the user request
 - Astro docs context
@@ -110,62 +110,44 @@ Then it decides whether the task is:
 - an Astro-internal review task
 - an explicitly requested standalone workflow prompt
 
-## 4. Parent session prepares the created project
+## 4. Runtime profile tracks project context
 
-For a normal Main Sequence project, the parent:
+For a normal Main Sequence project, the active runtime:
 
-1. decides whether to select an existing project or create a new one
-   - for an existing project, the parent treats "work on/open this project" as selection and setup, not automatic task intake
-   - if the user wants a new project, the parent loads the project-creation skill and uses it to collect the missing intake before creation
-2. after project creation succeeds, runs `tsx /app/scripts/mainsequence_project_finalize_creation.ts <id>`
-   - `mainsequence project create` already waits until `is_initialized=true`
-   - the finalize helper sets the project up locally, resolves the checked-out path, copies
-     `project_blueprint.md` into the project root, and prints the exact signed-terminal git steps
-   - before committing or pushing the project checkout, open a signed terminal with
-     `mainsequence project open-signed-terminal <id>`
-   - run the printed `git add`, `git commit`, and `git push` commands inside that signed terminal
-3. prepares any needed project-local task or status context for the checked-out project
-   - use the target project's own instructions, planning files, and status files when they exist
-   - do not assume an Astro-owned `astro/` file contract by default
-   - for existing projects, do not invent or require `project_blueprint.md` by default
-4. continues orchestration without any session switch
-   - the active user conversation stays in the orchestrator session
-   - if `mainsequence-project-executor` is used later, that communication is A2A-only and does not transfer session ownership
-   - when there is no concrete implementation task yet, the orchestrator should establish project-local context and readiness instead of asking the user to restate a first task
+1. uses the non-project-attached branch for project selection or creation
+   - if the user wants a new project, the runtime loads the project-creation skill and uses it to collect the missing intake before creation
+2. uses the project-attached branch when `ASTRO_FIXED_AGENT_TYPE=mainsequence-project-executor`
+   and the cwd is already the prepared project root
+3. keeps session identity backend-owned
+   - A2A communication does not transfer session ownership
 
-## 5. Orchestrator stays active
+## 5. Runtime profile stays explicit
 
 There is no longer an active `delegate_specialist` tool in the normal project workflow.
 
 For the current creation-first flow:
 
-1. the orchestrator selects or creates the project
-2. the orchestrator finalizes the local checkout with `tsx /app/scripts/mainsequence_project_finalize_creation.ts <id>`
-3. the orchestrator keeps the active user conversation
-4. the workflow stops after `project_blueprint.md` is copied and the signed-terminal commit/push instructions are ready
+1. non-project-attached runtime handles project creation or selection
+2. project-attached runtime works in the prepared project cwd
+3. A2A, when needed, connects backend-owned sessions without changing local runtime identity
 
-If executor is used in a later phase, the orchestrator communicates with it through A2A and stays
-the owner of the user-facing conversation.
+If another runtime is used in a later phase, communication happens through A2A and backend session
+identity remains the source of truth.
 
-## 6. Parent reviews and responds
+## 6. Astro reviews and responds
 
-The parent may:
+The active runtime may:
 
-- continue orchestrating
-- review status directly using the checked-out project's available evidence
+- continue the project workflow
+- review status from platform/backend context or A2A results
 
 Then it returns:
 
 - project context or workflow status
-- the local path
 - blockers or next actions
 
 Project work should no longer rely on switching the active user session into a separate coder
-runtime. For the current new-project flow, the orchestrator remains the user-facing session and
-uses `tsx /app/scripts/mainsequence_project_finalize_creation.ts <id>` to persist the creation
-blueprint into the initialized checkout, then uses `mainsequence project open-signed-terminal <id>`
-for the actual git commit/push step. If executor is involved later, the orchestrator communicates
-with it through A2A and remains the owner of the user-facing conversation.
+runtime. If another backend-owned runtime is involved later, Astro communicates with it through A2A.
 
 ## Read next
 

@@ -110,34 +110,34 @@ The compose file mounts:
 
 It also sets:
 
-- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`
-- `PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`
+- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/jovyan/.astro-container-data/.config/mainsequence`
+- `PI_CODING_AGENT_DIR=/home/jovyan/.astro-container-data/.pi/agent`
 - `ASTRO_STREAM_SESSION_DIR=/session-state/sessions`
 - `ASTRO_SESSION_OVERRIDES_DIR=/session-state/session-overrides`
 - `ASTRO_CHECKPOINT_HOLDER_ID=pod/local-compose-astro-pi-stream`
-- `ASTRO_CONTAINER_DATA_DIR=/home/appuser/.astro-container-data`
+- `ASTRO_CONTAINER_DATA_DIR=/home/jovyan/.astro-container-data`
 
 At boot, Astro prepares container-local runtime state. Provider auth, provider signin state, and
 stream session files have no host or repo-local source path in the container; backend-owned
 checkpoints are the durable session source of truth. Container startup also removes stale Pi
 provider auth/signin files from `PI_CODING_AGENT_DIR`.
 
-At runtime, Astro runs as non-root `appuser`. Rebuildable runtime state lives under
-`/home/appuser/.astro-container-data`; active session files live under `/session-state/sessions` and
+At runtime, Astro runs as non-root `jovyan`. Rebuildable runtime state lives under
+`/home/jovyan/.astro-container-data`; active session files live under `/session-state/sessions` and
 are shared with the checkpoint sidecar.
 
 That means:
 
 - Astro code changes on the host are visible in the container without rebuilding the image
 - restart the service after code edits with `docker compose restart astro-pi-stream`
-- Pi runtime state lives under `/home/appuser/.astro-container-data/.pi/agent`
-- the orchestrator project `.pi` copy lives under `/home/appuser/.astro-container-data/.pi/project`
-- the orchestrator runs from `/home/appuser/.astro-container-data/astro-orchestrator-runtime`, not `/app`
-- Main Sequence CLI auth lives under `/home/appuser/.astro-container-data/.config/mainsequence`
+- Pi runtime state lives under `/home/jovyan/.astro-container-data/.pi/agent`
+- the orchestrator project `.pi` copy lives under `/home/jovyan/.astro-container-data/.pi/project`
+- the orchestrator runs from `/home/jovyan/.astro-container-data/astro-orchestrator-runtime`, not `/app`
+- Main Sequence CLI auth lives under `/home/jovyan/.astro-container-data/.config/mainsequence`
 - stream session artifacts live under `/session-state/sessions`
 - auth/session files have no host or repo-local source path into the container runtime
 - `node_modules` stay container-local and Linux-native
-- helper binaries such as `rg` persist under `/home/appuser/.astro-container-data/.pi/agent/bin`
+- helper binaries such as `rg` persist under `/home/jovyan/.astro-container-data/.pi/agent/bin`
 - those helper binaries remain container-managed and Linux-native instead of being reused from the
   host's general Pi install
 

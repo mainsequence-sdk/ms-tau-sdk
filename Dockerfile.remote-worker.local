@@ -51,19 +51,19 @@ RUN pip install --no-cache-dir "${MAINSEQUENCE_PIP_SPEC}" uv playwright \
 # =============================================================================
 # [ASTRO] Create the local executor runtime layout
 # =============================================================================
-ENV APP_USER=appuser \
-    APP_GROUP=appuser \
+ENV APP_USER=jovyan \
+    APP_GROUP=jovyan \
     APP_UID=10000 \
     APP_GID=10000 \
-    APP_HOME=/home/appuser \
-    HOME=/home/appuser \
-    ASTRO_CONTAINER_DATA_DIR=/home/appuser/.astro-container-data \
+    APP_HOME=/home/jovyan \
+    HOME=/home/jovyan \
+    ASTRO_CONTAINER_DATA_DIR=/home/jovyan/.astro-container-data \
     ASTRO_STREAM_HOST=0.0.0.0 \
     ASTRO_STREAM_PORT=8787 \
     ASTRO_STREAM_SESSION_DIR=/session-state/sessions \
     ASTRO_SESSION_OVERRIDES_DIR=/session-state/session-overrides \
-    ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence \
-    PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent \
+    ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/jovyan/.astro-container-data/.config/mainsequence \
+    PI_CODING_AGENT_DIR=/home/jovyan/.astro-container-data/.pi/agent \
     ASTRO_EXECUTION_MODE=remote_project_worker \
     ASTRO_FIXED_AGENT_TYPE=mainsequence-project-executor \
     ASTRO_FIXED_PROJECT_CWD=/workspace/project \
@@ -85,7 +85,7 @@ RUN groupadd --gid "${APP_GID}" "${APP_GROUP}" \
     "/workspace/project" \
  && chown -R "${APP_USER}:${APP_GROUP}" "${APP_HOME}" /session-state /ms-playwright /workspace/project /app
 
-USER appuser
+USER jovyan
 
 WORKDIR /workspace/project
 

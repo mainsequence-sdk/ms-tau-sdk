@@ -33,13 +33,13 @@ spec:
                 fieldRef:
                   fieldPath: metadata.uid
             - name: HOME
-              value: /home/appuser
+              value: /home/jovyan
             - name: ASTRO_CONTAINER_DATA_DIR
-              value: /home/appuser/.astro-container-data
+              value: /home/jovyan/.astro-container-data
             - name: ASTRO_MAINSEQUENCE_CONFIG_DIR
-              value: /home/appuser/.astro-container-data/.config/mainsequence
+              value: /home/jovyan/.astro-container-data/.config/mainsequence
             - name: PI_CODING_AGENT_DIR
-              value: /home/appuser/.astro-container-data/.pi/agent
+              value: /home/jovyan/.astro-container-data/.pi/agent
             - name: ASTRO_STREAM_HOST
               value: 0.0.0.0
             - name: ASTRO_STREAM_PORT
@@ -69,13 +69,13 @@ spec:
                 name: astro-mainsequence-runtime-credentials
           env:
             - name: HOME
-              value: /home/appuser
+              value: /home/jovyan
             - name: ASTRO_CONTAINER_DATA_DIR
-              value: /home/appuser/.astro-container-data
+              value: /home/jovyan/.astro-container-data
             - name: ASTRO_MAINSEQUENCE_CONFIG_DIR
-              value: /home/appuser/.astro-container-data/.config/mainsequence
+              value: /home/jovyan/.astro-container-data/.config/mainsequence
             - name: PI_CODING_AGENT_DIR
-              value: /home/appuser/.astro-container-data/.pi/agent
+              value: /home/jovyan/.astro-container-data/.pi/agent
             - name: ASTRO_SESSION_STATE_DIR
               value: /session-state
             - name: ASTRO_STREAM_SESSION_DIR
