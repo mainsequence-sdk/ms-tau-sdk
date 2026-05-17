@@ -104,7 +104,7 @@ function normalizeEnvString(value: string | undefined): string | null {
 function resolveRuntimeProfile(env: NodeJS.ProcessEnv): "orchestrator" | "project_worker" {
 	const fixedAgentType = normalizeEnvString(env.ASTRO_FIXED_AGENT_TYPE);
 	if (fixedAgentType) {
-		return fixedAgentType === "mainsequence-project-executor" ? "project_worker" : "orchestrator";
+		return fixedAgentType === "project-executor" ? "project_worker" : "orchestrator";
 	}
 	return env.ASTRO_EXECUTION_MODE?.trim() === "remote_project_worker" ||
 		normalizeEnvString(env.ASTRO_FIXED_PROJECT_CWD)

@@ -144,7 +144,7 @@ Required for all real executor requests:
 ```json
 {
   "runtime_session_id": "87",
-  "agentType": "mainsequence-project-executor",
+  "agentType": "project-executor",
   "userId": "user_123",
   "session": { "...full backend AgentSession serializer..." },
   "messages": [...],

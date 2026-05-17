@@ -107,7 +107,7 @@ The CLI returns search results like:
   {
     "orm_class": "AgentSemanticSearchResult",
     "id": 25,
-    "name": "mainsequence-project-executor",
+    "name": "project-executor",
     "agent_unique_id": "project-executor_81",
     "description": "A testing-only project that exposes two CLI-backed capabilities: return the current time and return the authenticated user.",
     "semantic_score": 0.7781205009695902,
@@ -126,7 +126,7 @@ To preserve Astro's existing A2A discovery shape, each CLI result should be norm
   "agent_id": 25,
   "agent_description": "A testing-only project that exposes two CLI-backed capabilities: return the current time and return the authenticated user.",
   "a2a_card": {
-    "name": "mainsequence-project-executor",
+    "name": "project-executor",
     "agent_unique_id": "project-executor_81",
     "semantic_score": 0.7781205009695902,
     "text_score": 0.04040404,
@@ -269,7 +269,7 @@ The canonical non-debug A2A runtime payload is:
     "llm_provider": "openai-codex",
     "llm_model": "gpt-5.3-codex-spark",
     "session_metadata": {
-      "agent_type": "mainsequence-project-executor"
+      "agent_type": "project-executor"
     }
   },
   "messages": [

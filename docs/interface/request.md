@@ -49,7 +49,7 @@ currently stored for that runtime session.
 - `agentType` is the backend `Agent.agent_type` value
   (unknown values return `error: unknown_agent_type`).
 - When backend registration is enabled, `runtime_session_id` is the backend `AgentSession.id` string.
-- `mainsequence-project-executor` is the only project implementation runtime.
+- `project-executor` is the only project implementation runtime.
 - Project-scoped executor requests may rely on a deployment-pinned project cwd or supply `cwd`
   explicitly when the runtime is not already pinned.
 - `POST /api/chat` no longer uses a message-level `model` field as session authority.
@@ -153,7 +153,7 @@ Example project-executor request:
 {
   "threadId": "thread-hope30",
   "runtime_session_id": "87",
-  "agentType": "mainsequence-project-executor",
+  "agentType": "project-executor",
   "userId": "user_123",
   "session": {
     "id": 87,
@@ -161,7 +161,7 @@ Example project-executor request:
     "llm_provider": "openai-codex",
     "llm_model": "gpt-5.3-codex-spark",
     "session_metadata": {
-      "agent_type": "mainsequence-project-executor"
+      "agent_type": "project-executor"
     }
   },
   "projectId": "42",

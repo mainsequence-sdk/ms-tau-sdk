@@ -9,7 +9,7 @@ Accepted
 Astro currently has two project implementation roles:
 
 - `mainsequence-project-coder`
-- `mainsequence-project-executor`
+- `project-executor`
 
 That split is no longer the desired architecture.
 
@@ -18,7 +18,7 @@ selected or created a project, checked it out locally, then switched the active 
 new project-scoped coder session. Astro also bootstrapped that coder runtime by running project SDK
 checks, creating a local virtualenv, running `uv sync`, and then launching Pi inside the checkout.
 
-`mainsequence-project-executor` is the newer runtime shape. It is a separate project execution
+`project-executor` is the newer runtime shape. It is a separate project execution
 runtime, launched and routed through backend-owned session and runtime-access contracts. It runs in
 a prepared project environment, either from an image-backed worker or a mounted local debug worker.
 
@@ -33,7 +33,7 @@ Keeping both roles creates a confused architecture:
 The target architecture is simpler:
 
 - `astro-orchestrator` remains the user-facing control plane
-- `mainsequence-project-executor` remains the only project implementation runtime
+- `project-executor` remains the only project implementation runtime
 - `mainsequence-project-coder` is retired completely
 
 ## Problem
@@ -64,7 +64,7 @@ as the implementation agent. The orchestrator remains the conversation owner, an
 replacement milestone is blueprint persistence in the created project checkout rather than immediate
 executor invocation.
 
-When `mainsequence-project-executor` is used later, orchestrator-to-executor communication is
+When `project-executor` is used later, orchestrator-to-executor communication is
 A2A-only. That communication does not transfer session ownership or move the active user
 conversation into executor.
 
@@ -72,7 +72,7 @@ conversation into executor.
 
 Astro will retire `mainsequence-project-coder`.
 
-`mainsequence-project-executor` remains and becomes the only project implementation agent.
+`project-executor` remains and becomes the only project implementation agent.
 
 The orchestrator will no longer use project-session handoff to move the active conversation into a
 project-local coding agent. For the immediate migration scope, the orchestrator will use the
@@ -82,7 +82,7 @@ phase after that deterministic creation workflow is live.
 
 ## Non-Goals
 
-- Do not remove `mainsequence-project-executor`.
+- Do not remove `project-executor`.
 - Do not make `astro-orchestrator` the main code implementer.
 - Do not keep `mainsequence-project-coder` as a hidden compatibility specialist.
 - Do not create a second handoff artifact for newly created projects.
@@ -108,7 +108,7 @@ phase after that deterministic creation workflow is live.
 - if executor is used later, communicates with it only through A2A while remaining the owner of the
   user-facing session
 
-`mainsequence-project-executor`:
+`project-executor`:
 
 - remains the future project implementation runtime
 - is retained as part of the target architecture
@@ -163,7 +163,7 @@ chore(mainsequence): add project blueprint
 
 ## Deferred Executor Invocation
 
-`mainsequence-project-executor` remains the intended implementation runtime, but executor
+`project-executor` remains the intended implementation runtime, but executor
 invocation is not part of this immediate workflow.
 
 If executor is introduced in a later phase, the contract is:
@@ -197,7 +197,7 @@ or replaced.
 
 Target state:
 
-- only `astro-orchestrator` and `mainsequence-project-executor` remain valid runtime agents
+- only `astro-orchestrator` and `project-executor` remain valid runtime agents
 - executor workflow metadata uses executor identity directly
 - session switch is removed from the project implementation flow
 - coder bootstrap state is removed
@@ -239,7 +239,7 @@ work.
 New executor sessions should use:
 
 ```text
-agent_type = "mainsequence-project-executor"
+agent_type = "project-executor"
 ```
 
 The backend session serializer should remain session-first for model and runtime configuration.
@@ -294,7 +294,7 @@ deleted.
 
 ### Phase 4: Defer Executor Invocation
 
-- keep `mainsequence-project-executor` as the retained implementation runtime
+- keep `project-executor` as the retained implementation runtime
 - do not wire executor invocation into this immediate project-creation workflow yet
 - revisit ADR 25 only after the blueprint copy/commit/push workflow is live
 
@@ -364,7 +364,7 @@ Executor currently has places where workflow metadata maps back to coder.
 Mitigation:
 
 - remove executor-to-coder aliases before disabling coder
-- assert new executor sessions use `agent_type = "mainsequence-project-executor"`
+- assert new executor sessions use `agent_type = "project-executor"`
 
 ## Verification Plan
 
@@ -390,7 +390,7 @@ The current repo state closes the ADR 26 migration at the code-and-contract leve
   surfaces were removed from the codebase
 
 Later runtime-profile work removed the local checkout finalization helper; project implementation is
-owned by backend-mediated `mainsequence-project-executor` sessions rather than orchestrator-local
+owned by backend-mediated `project-executor` sessions rather than orchestrator-local
 checkout setup.
 - coder-only diff/session endpoints were removed from the active API surface
 - public request/response docs and backend session-allocation docs now describe the

@@ -116,7 +116,7 @@ For a normal Main Sequence project, the active runtime:
 
 1. uses the non-project-attached branch for project selection or creation
    - if the user wants a new project, the runtime loads the project-creation skill and uses it to collect the missing intake before creation
-2. uses the project-attached branch when `ASTRO_FIXED_AGENT_TYPE=mainsequence-project-executor`
+2. uses the project-attached branch when `ASTRO_FIXED_AGENT_TYPE=project-executor`
    and the cwd is already the prepared project root
 3. keeps session identity backend-owned
    - A2A communication does not transfer session ownership

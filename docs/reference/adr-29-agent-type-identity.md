@@ -7,7 +7,7 @@ Date: 2026-05-12
 
 Backend `Agent.name` is no longer part of the Agent contract. Astro must identify agents with
 `Agent.agent_type`, and the values must match the local prompt/frontmatter identities such as
-`astro-orchestrator` and `mainsequence-project-executor`.
+`astro-orchestrator` and `project-executor`.
 
 Previous code blurred that contract by using broad name-based fields and by introducing a separate
 runtime-name vocabulary. That made request routing, backend session hydration, stream metadata, and
@@ -34,7 +34,7 @@ Markdown prompt files keep their existing frontmatter key:
 
 ```markdown
 ---
-name: mainsequence-project-executor
+name: project-executor
 description: ...
 ---
 ```

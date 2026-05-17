@@ -1,7 +1,7 @@
 # Remote worker image
 
 This page documents [`Dockerfile.remote-worker`](../../Dockerfile.remote-worker), the image used for
-image-backed `mainsequence-project-executor` pods.
+image-backed `project-executor` pods.
 
 For the local mounted-project executor harness, see:
 
@@ -20,7 +20,7 @@ It exists for the separate runtime where:
 - the backend already chose a project image
 - that image already contains the canonical cloned project repository at `${SKEL_APP_DIR}`
 - that image already installs the project's Python dependencies
-- Astro should be layered on top so the pod can run `mainsequence-project-executor`
+- Astro should be layered on top so the pod can run `project-executor`
 
 The resulting container has two distinct roots:
 
@@ -124,7 +124,7 @@ executor mode without extra image edits.
 
 - `ASTRO_EXECUTION_MODE=remote_project_worker`
   - tells Astro this is an image-backed project worker
-- `ASTRO_FIXED_AGENT_TYPE=mainsequence-project-executor`
+- `ASTRO_FIXED_AGENT_TYPE=project-executor`
   - pins the runtime to the executor specialist
 - `ASTRO_FIXED_PROJECT_CWD=${SKEL_APP_DIR}`
   - tells Astro where the project code lives inside the image
@@ -157,9 +157,9 @@ These are not baked into the Dockerfile because they depend on the specific back
 - Main Sequence runtime credential env vars when backend-backed auth is still required by the
   runtime
 
-For `mainsequence-project-executor`, Astro uses a fixed backend registration identity:
+For `project-executor`, Astro uses a fixed backend registration identity:
 
-- backend `agent_type`: `mainsequence-project-executor`
+- backend `agent_type`: `project-executor`
 - backend `agent_unique_id`: `project-executor`
 - runtime profile: `project_worker`
 
@@ -180,11 +180,11 @@ The Dockerfile creates those directories and assigns ownership to `${NB_UID}:${N
 The current repo changes make the worker runtime behave differently from the old local checked-out
 project flow:
 
-- the runtime can be pinned to `mainsequence-project-executor`
+- the runtime can be pinned to `project-executor`
 - request-time Main Sequence CLI auth bootstrap is skipped when
   `ASTRO_EXECUTION_MODE=remote_project_worker`
 - project sessions still require a deterministic `projectId`
-- `mainsequence-project-executor` skips the checked-out-project bootstrap path that normally runs:
+- `project-executor` skips the checked-out-project bootstrap path that normally runs:
   - `mainsequence project sdk-status --path . --json`
   - `mainsequence project build_local_venv --path .`
   - `uv sync`

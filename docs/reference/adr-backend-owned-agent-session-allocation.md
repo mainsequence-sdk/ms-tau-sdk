@@ -16,7 +16,7 @@ The current project-implementation architecture is defined by:
 - [`adr-26-retire-project-coder-for-project-executor.md`](./adr-26-retire-project-coder-for-project-executor.md)
 
 The backend-owned allocation contract remains valid, but the current runtime examples use
-`mainsequence-project-executor` instead of the retired coder session-switch flow.
+`project-executor` instead of the retired coder session-switch flow.
 
 ## Status
 
@@ -177,7 +177,7 @@ Relevant existing request values:
 ```python
 chat_request_values = {
     "threadId": str,
-    "agentType": "astro-orchestrator | mainsequence-project-executor",
+    "agentType": "astro-orchestrator | project-executor",
     "userId": str,
     "messages": list,
     "newChat": bool,
@@ -193,7 +193,7 @@ Astro owns validation of frontend intent:
 
 - `agentType`
 - `newChat` versus `runtime_session_id`
-- `projectId` and `cwd` requirements for `mainsequence-project-executor` when the runtime is not already pinned
+- `projectId` and `cwd` requirements for `project-executor` when the runtime is not already pinned
 - model binding
 - session metadata semantics
 
@@ -222,7 +222,7 @@ Deterministic ids remain Astro-owned:
 
 ```python
 astro_orchestrator_agent_unique_id = f"astro-orchestrator_{created_by_user}"
-project_executor_agent_unique_id = f"mainsequence-project-executor_{created_by_user}_{project_id}"
+project_executor_agent_unique_id = f"project-executor_{created_by_user}_{project_id}"
 ```
 
 Astro then calls the existing Agent-scoped session route:
@@ -278,7 +278,7 @@ orchestrator_session_metadata = {
 
 project_executor_session_metadata = {
     "source": "frontend",
-    "agent_type": "mainsequence-project-executor",
+    "agent_type": "project-executor",
     "agent_type": str,
     "created_by_user": str,
     "project_id": str,
@@ -377,7 +377,7 @@ Astro owns workflow semantics:
 Project-scoped executor allocation is Astro workflow logic.
 
 For the backend allocation route, it is just another `start_new_session` call against the already
-resolved `mainsequence-project-executor` Agent. Astro includes:
+resolved `project-executor` Agent. Astro includes:
 
 - `thread_id`
 - `session_metadata`

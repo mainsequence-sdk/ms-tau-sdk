@@ -79,7 +79,7 @@ To start a project-scoped executor session directly, use:
 ```json
 {
   "runtime_session_id": "87",
-  "agentType": "mainsequence-project-executor",
+  "agentType": "project-executor",
   "userId": "user_123",
   "projectId": "42",
   "cwd": "/absolute/path/to/checked-out-project",
@@ -198,14 +198,14 @@ Canonical request fields accepted by Astro include:
 {
   "runtime_session_id": "123",
   "userId": "user_123",
-  "agentType": "mainsequence-project-executor",
+  "agentType": "project-executor",
   "session": {
     "id": 123,
     "thread_id": "123",
     "llm_provider": "openai-codex",
     "llm_model": "gpt-5.3-codex-spark",
     "session_metadata": {
-      "agent_type": "mainsequence-project-executor"
+      "agent_type": "project-executor"
     }
   },
   "messages": [

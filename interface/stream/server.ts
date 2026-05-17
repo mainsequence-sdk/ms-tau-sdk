@@ -108,7 +108,7 @@ const ASTRO_FIXED_AGENT_TYPE_ENV = "ASTRO_FIXED_AGENT_TYPE";
 const ASTRO_FIXED_PROJECT_ID_ENV = "ASTRO_FIXED_PROJECT_ID";
 const ASTRO_FIXED_PROJECT_CWD_ENV = "ASTRO_FIXED_PROJECT_CWD";
 const ASTRO_PROJECT_IMAGE_REF_ENV = "ASTRO_PROJECT_IMAGE_REF";
-const PROJECT_SESSION_AGENT_TYPES = new Set(["mainsequence-project-executor"]);
+const PROJECT_SESSION_AGENT_TYPES = new Set(["project-executor"]);
 const ALLOWED_AGENT_TYPES = new Set(["astro-orchestrator", ...PROJECT_SESSION_AGENT_TYPES]);
 const PI_BUILT_IN_TOOL_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
 
@@ -1109,7 +1109,7 @@ function isProjectSessionAgentType(agentType: string | null | undefined): boolea
 }
 
 function isImageBackedProjectExecutor(agentType: string | null | undefined): boolean {
-	return agentType === "mainsequence-project-executor";
+	return agentType === "project-executor";
 }
 
 function resolveFixedAgentType(env: NodeJS.ProcessEnv = process.env): string | null {

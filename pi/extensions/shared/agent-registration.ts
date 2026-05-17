@@ -82,7 +82,7 @@ export function buildAgentUniqueId(options: {
 	userId: string;
 	projectId?: string | number | null;
 }): string {
-	if (options.agentType === "mainsequence-project-executor") {
+	if (options.agentType === "project-executor") {
 		return "project-executor";
 	}
 	const projectId = normalizeIdPart(options.projectId);

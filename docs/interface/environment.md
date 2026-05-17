@@ -27,12 +27,12 @@
 
 ## Remote project worker mode
 
-These env vars are used by image-backed `mainsequence-project-executor` pods:
+These env vars are used by image-backed `project-executor` pods:
 
 - `ASTRO_EXECUTION_MODE`
   - set this to `remote_project_worker` for image-backed executor pods
 - `ASTRO_FIXED_AGENT_TYPE`
-  - recommended value: `mainsequence-project-executor`
+  - recommended value: `project-executor`
 - `ASTRO_FIXED_PROJECT_CWD`
   - fixed project path inside the image, for example `/usr/local/share/user-skel/app`
   - this tells Astro where the mounted or baked project lives for executor-mode work
@@ -52,7 +52,7 @@ with Docker `WORKDIR /app`, and the startup command then changes into
 `/usr/local/share/user-skel/app` before Astro starts so the live process cwd matches the real
 project workspace.
 
-For `mainsequence-project-executor`, incoming `/api/chat` and `/api/a2a/chat` requests do not need
+For `project-executor`, incoming `/api/chat` and `/api/a2a/chat` requests do not need
 to provide `projectId`. The streamer no longer tries to resolve `projectId` from the request path
 for executor-mode requests and continues using the fixed project runtime even when request-side
 `projectId` is absent.

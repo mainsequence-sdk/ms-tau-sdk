@@ -13,7 +13,7 @@ The concrete non-debug production discovery and runtime-access flow is now speci
 - [`adr-25-production-a2a-discovery-and-runtime-access.md`](./adr-25-production-a2a-discovery-and-runtime-access.md)
 
 The follow-up decision to retire `mainsequence-project-coder` and keep
-`mainsequence-project-executor` as the only project implementation runtime is specified in:
+`project-executor` as the only project implementation runtime is specified in:
 
 - [`adr-26-retire-project-coder-for-project-executor.md`](./adr-26-retire-project-coder-for-project-executor.md)
 
@@ -23,7 +23,7 @@ Astro now needs a general agent-to-agent collaboration model that applies across
 
 - `astro-orchestrator`
 - `mainsequence-project-coder`
-- `mainsequence-project-executor`
+- `project-executor`
 
 This is separate from session switching.
 
@@ -113,7 +113,7 @@ communication.
 This preserves the orchestrator's role as the user-facing control plane and prevents silent hidden
 delegation from the main conversation.
 
-### `mainsequence-project-coder` and `mainsequence-project-executor`
+### `mainsequence-project-coder` and `project-executor`
 
 Project-scoped agents do not require separate user confirmation before bounded A2A requests, as
 long as:

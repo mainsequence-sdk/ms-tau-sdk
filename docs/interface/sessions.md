@@ -32,7 +32,7 @@ is not the intended production contract for chat or A2A.
   route resume behavior and it is not a unique session key.
 - `newChat` is deprecated as a routing mechanism. Older clients may still send it as a UI hint, but
   Astro must not interpret it as permission to allocate a new backend `AgentSession`.
-- `mainsequence-project-executor` sessions persist selected project context such as `projectId` and
+- `project-executor` sessions persist selected project context such as `projectId` and
   project `cwd` in local runtime metadata so later requests against the same `runtime_session_id`
   can keep using the same project context.
 - Read endpoints that require session metadata or Pi JSONL hydrate from backend checkpoint state

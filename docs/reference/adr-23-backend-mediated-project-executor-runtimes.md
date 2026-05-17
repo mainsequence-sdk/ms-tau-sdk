@@ -6,7 +6,7 @@ Proposed
 
 ## Note
 
-This ADR established `mainsequence-project-executor` as a backend-mediated runtime.
+This ADR established `project-executor` as a backend-mediated runtime.
 
 The follow-up decision to retire `mainsequence-project-coder` and make executor the only project
 implementation runtime is specified in:
@@ -18,14 +18,14 @@ implementation runtime is specified in:
 Astro now has two distinct concerns that should not share the same runtime topology:
 
 - the user-facing `astro-orchestrator`
-- the project-scoped `mainsequence-project-executor`
+- the project-scoped `project-executor`
 
 The orchestrator is a conversational control-plane runtime. The executor is a project-specific
 execution runtime that should run against a prepared project environment.
 
 This ADR originally left existing project-coder flows in place while executor isolation was being
 introduced. ADR 26 supersedes that coexistence plan: project implementation should move to
-`mainsequence-project-executor`, `mainsequence-project-coder` should be retired, and the
+`project-executor`, `mainsequence-project-coder` should be retired, and the
 orchestrator should no longer present project implementation through the old child-specialist
 surface.
 
@@ -78,19 +78,19 @@ That local loop should still preserve the same architectural rule as production:
 
 ## Decision
 
-Astro will treat `mainsequence-project-executor` as a backend-mediated runtime, not as a normal
+Astro will treat `project-executor` as a backend-mediated runtime, not as a normal
 Astro specialist.
 
-Astro will also treat `mainsequence-project-executor` as a **launch modality** of the Astro
+Astro will also treat `project-executor` as a **launch modality** of the Astro
 runtime itself.
 
 That means:
 
 - in the normal mode, Astro starts with `astro-orchestrator` as the main agent
-- in executor mode, Astro starts with `mainsequence-project-executor` as the main agent
+- in executor mode, Astro starts with `project-executor` as the main agent
 
 This ADR does not require the orchestrator to expose a generic child-specialist delegation surface.
-It only states that `mainsequence-project-executor` is not a normal orchestrator-specialist target
+It only states that `project-executor` is not a normal orchestrator-specialist target
 and must stay behind the backend-mediated executor boundary.
 
 The architecture will have three layers:
@@ -100,11 +100,11 @@ The architecture will have three layers:
    - talks only to backend APIs
    - keeps its existing orchestrator behavior for normal specialist flows
    - never directly launches, switches into, or specialist-delegates to
-     `mainsequence-project-executor`
+     `project-executor`
 2. backend executor control plane
    - owns session allocation, executor lifecycle, and message routing
    - chooses whether the executor runs remotely or locally
-3. `mainsequence-project-executor`
+3. `project-executor`
    - runs as a separate runtime
    - serves executor requests for one prepared project environment
    - does not participate in normal orchestrator specialist routing
@@ -122,7 +122,7 @@ That runtime is represented by:
 In that path:
 
 - Astro is launched directly in executor mode
-- `mainsequence-project-executor` is the main runtime agent, not `astro-orchestrator`
+- `project-executor` is the main runtime agent, not `astro-orchestrator`
 - Astro runtime files live under `/app`
 - the project runtime lives at the project image's configured project root
 - the backend launches the executor container or pod
@@ -147,7 +147,7 @@ has a project checkout on the host machine.
 - install the Astro runtime
 - install the minimum container dependencies needed to bootstrap and run a mounted project
 - avoid baking a specific project checkout into the image
-- launch Astro directly in executor mode, with `mainsequence-project-executor` as the main agent
+- launch Astro directly in executor mode, with `project-executor` as the main agent
 
 ### Local project mount
 
@@ -166,7 +166,7 @@ That path will be mounted into a fixed container path:
 
 The local executor runtime will then use:
 
-- `ASTRO_FIXED_AGENT_TYPE=mainsequence-project-executor`
+- `ASTRO_FIXED_AGENT_TYPE=project-executor`
 - `ASTRO_FIXED_PROJECT_CWD=/workspace/project`
 - `ASTRO_EXECUTION_MODE=remote_project_worker`
 
@@ -176,7 +176,7 @@ shapes.
 ## Local Mounted-Project Rule
 
 The local executor harness assumes the mounted host project directory is already the project root
-that `mainsequence-project-executor` should work against.
+that `project-executor` should work against.
 
 In that local mode:
 
@@ -197,7 +197,7 @@ These rules are mandatory.
 `astro-orchestrator`:
 
 - remains the user-facing control plane
-- must not directly spawn `mainsequence-project-executor`
+- must not directly spawn `project-executor`
 - must not treat the executor as a normal child-specialist target
 - must not use any project-session handoff to enter the executor runtime
 - must not rely on repo-local executor-only startup assumptions
@@ -206,7 +206,7 @@ The orchestrator may only call backend APIs that represent executor operations.
 
 ### Executor rules
 
-`mainsequence-project-executor`:
+`project-executor`:
 
 - runs as its own runtime
 - may use Astro's stream runtime internals for its own request handling
@@ -233,7 +233,7 @@ The orchestrator does not address executor pods or containers directly.
 
 This is intentionally different from the older in-process orchestrator-to-specialist flows. ADR 26
 completes that transition by retiring `mainsequence-project-coder` and keeping project
-implementation on `mainsequence-project-executor`.
+implementation on `project-executor`.
 
 This ADR intentionally prefers a backend mailbox or control-plane contract over direct runtime
 discovery between Astro processes.
@@ -253,7 +253,7 @@ These routes are intentionally separate from the current human-facing stream con
 - `POST /api/a2a/chat` becomes the machine-oriented executor surface
 
 The executor deployment is already a specific Astro runtime launched in
-`mainsequence-project-executor` mode, so the route family does **not** need a `/runs/:id`
+`project-executor` mode, so the route family does **not** need a `/runs/:id`
 resource layer.
 
 The backend already knows which executor deployment it is calling. The pod does not need to be
@@ -370,7 +370,7 @@ session-switch behavior.
 ADR 26 narrows the project implementation path further:
 
 - `astro-orchestrator` remains the user-facing control plane
-- `mainsequence-project-executor` remains the only project implementation runtime
+- `project-executor` remains the only project implementation runtime
 - `mainsequence-project-coder` is removed from the target steady state
 
 ## Compose And Local Launching
@@ -398,7 +398,7 @@ Astro should be considered ready for local pre-backend testing when all of the f
 - the local executor container can be launched from `Dockerfile.remote-worker.local`
 - the local executor container is available from the normal `docker-compose.yml` stack
 - the mounted host project is visible at `/workspace/project`
-- the executor starts in `mainsequence-project-executor` mode
+- the executor starts in `project-executor` mode
 - `POST /api/a2a/chat` and `POST /api/a2a/cancel` behave correctly on the executor runtime
 - deterministic A2A context injection is active
 - local A2A discovery and communication can be mocked without a backend round trip
@@ -433,7 +433,7 @@ before the backend control-plane implementation is finished.
 
 ## Required Corrections To Current Direction
 
-This ADR means `mainsequence-project-executor` should not be modeled as a normal repo-local
+This ADR means `project-executor` should not be modeled as a normal repo-local
 specialist in Astro's shared runtime flow.
 
 This does **not** mean removing every executor reference from Astro.
@@ -518,7 +518,7 @@ The intended end state is:
   preventing unrestricted recursive specialist orchestration
 - confirm `POST /api/a2a/cancel` stops the active executor run without requiring a separate
   Astro-local run id
-- confirm `mainsequence-project-executor` is no longer exposed as a normal orchestrator specialist
+- confirm `project-executor` is no longer exposed as a normal orchestrator specialist
 - confirm there is no active `delegate_specialist` tool surface for project implementation routing
 - confirm there is no active direct `run_specialist`-style launcher for project implementation
 - confirm local executor testing works with mocked A2A discovery and direct-to-container
@@ -543,7 +543,7 @@ The intended end state is:
   discovery and routing are implemented.
 - [ ] Define the backend executor-control API contract around the A2A streamer routes.
 - [x] Remove the active `delegate_specialist` tool surface for project implementation routing.
-- [x] Remove `mainsequence-project-executor` from normal parent specialist guidance and discovery
+- [x] Remove `project-executor` from normal parent specialist guidance and discovery
   surfaces.
 - [x] Remove the old direct `run_specialist` launcher surface.
 - [x] Update prompts and docs that previously implied executor access through specialist

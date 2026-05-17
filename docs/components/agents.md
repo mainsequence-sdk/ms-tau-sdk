@@ -1,6 +1,6 @@
 # Project-local Agent Prompts
 
-Astro no longer ships a bundled `mainsequence-project-executor` prompt file. The shared runtime
+Astro no longer ships a bundled `project-executor` prompt file. The shared runtime
 contract lives in `.pi/APPEND_SYSTEM.md`, and the active runtime profile decides whether the current
 cwd is already a prepared project.
 
@@ -34,7 +34,7 @@ Project-local specialist instructions here.
 The body becomes the local specialist's appended system prompt.
 
 Core project execution is not loaded from `.pi/agents`. It uses `.pi/APPEND_SYSTEM.md` plus
-`ASTRO_FIXED_AGENT_TYPE=mainsequence-project-executor` to enter the project-attached branch.
+`ASTRO_FIXED_AGENT_TYPE=project-executor` to enter the project-attached branch.
 
 ## Related pages
 

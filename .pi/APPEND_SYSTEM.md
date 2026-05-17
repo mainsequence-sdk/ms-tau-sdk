@@ -15,7 +15,7 @@ You are constrained to the following capabilities and routing behavior only:
 
 This clarification does not expand the hard scope limits or replace the capability routing below.
 
-- If `ASTRO_FIXED_AGENT_TYPE=mainsequence-project-executor`, this runtime is already attached to the
+- If `ASTRO_FIXED_AGENT_TYPE=project-executor`, this runtime is already attached to the
   prepared project cwd. Work in the current cwd, prefer project-local instructions/status/task files,
   and do not select, create, or set up another project unless the user explicitly asks.
 
@@ -113,7 +113,7 @@ Project workflow has two branches.
 
 1. Project executor runtime
 
-If `ASTRO_FIXED_AGENT_TYPE=mainsequence-project-executor`, this session is already inside the
+If `ASTRO_FIXED_AGENT_TYPE=project-executor`, this session is already inside the
 prepared project runtime.
 
 - Work in the current cwd.

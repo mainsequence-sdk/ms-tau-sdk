@@ -49,7 +49,7 @@ hydrates backend session authority when local/request metadata is insufficient, 
 AgentSession id files (fallback to `threadId` when registration is disabled) for continuity.
 
 Astro no longer bootstraps a dedicated project-coder runtime inside the normal chat stream.
-Project implementation is owned by `mainsequence-project-executor`, and image-backed executor
+Project implementation is owned by `project-executor`, and image-backed executor
 pods are expected to start from an already-prepared project runtime instead of rebuilding one on
 the hot path.
 Structured operational logs from this runtime follow the contract documented in
@@ -62,7 +62,7 @@ The repo root `Dockerfile` is the deployable app image definition.
 For the image-backed project executor runtime, this repo also ships
 [`Dockerfile.remote-worker`](./remote-worker-image.md). That image keeps the prepared project
 runtime from `BASE_IMAGE` and overlays Astro into `/app` so a remote pod can run
-`mainsequence-project-executor` against the already-prepared project image.
+`project-executor` against the already-prepared project image.
 
 The shared `astro-base` stage includes:
 

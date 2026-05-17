@@ -98,7 +98,7 @@ docker compose up astro-project-executor
 
 That local executor harness:
 
-- starts Astro directly in `mainsequence-project-executor` mode
+- starts Astro directly in `project-executor` mode
 - mounts `A2A_DEV_PROJECT` into `/workspace/project`
 - lives in the normal `docker-compose.yml` stack
 - keeps the orchestrator and executor as separate runtimes

@@ -9,7 +9,7 @@ Implementation Status: Complete for the Astro runtime repository
 Astro currently uses backend-visible `agent_type` values such as:
 
 - `astro-orchestrator`
-- `mainsequence-project-executor`
+- `project-executor`
 
 That distinction is important at the backend boundary. Backend session allocation, runtime access,
 registration identity, analytics, and session ownership all need a stable `agent_type`.
@@ -27,13 +27,13 @@ ways:
 That overlap makes the implementation heavier than necessary and has already created regressions.
 Examples include:
 
-- treating `mainsequence-project-executor` as a normal local specialist instead of a fixed worker
+- treating `project-executor` as a normal local specialist instead of a fixed worker
   runtime
 - letting executor prompt loading fall through generic specialist discovery
 - scattering executor-only cwd, prompt, model, and image assumptions across request handling
 - mixing backend identity concerns with local runtime-behavior concerns
 
-ADR 23 established that `mainsequence-project-executor` is a backend-mediated runtime rather than a
+ADR 23 established that `project-executor` is a backend-mediated runtime rather than a
 normal orchestrator specialist. ADR 29 established that backend and request identity should use
 `agent_type` / `agentType`. This ADR refines the implementation boundary inside Astro itself.
 
@@ -66,7 +66,7 @@ behavior only.
 The backend-facing identities remain:
 
 - `astro-orchestrator`
-- `mainsequence-project-executor`
+- `project-executor`
 
 These values continue to be used for:
 
@@ -122,7 +122,7 @@ Session ownership must not be treated as a separate runtime-profile boundary.
 Ownership is already determined by the backend session attached to the request:
 
 - `astro-orchestrator` sessions are orchestrator-owned sessions
-- `mainsequence-project-executor` sessions are executor-owned sessions
+- `project-executor` sessions are executor-owned sessions
 
 The fact that an executor session may be delegated from an orchestrator flow does not create a new
 Astro-local ownership abstraction. It is simply a backend/session relationship expressed through
@@ -130,7 +130,7 @@ distinct `agent_type` and `AgentSession` records.
 
 ### Executor is not a generic local specialist
 
-`mainsequence-project-executor` must not be treated as a normal local specialist peer of
+`project-executor` must not be treated as a normal local specialist peer of
 `astro-orchestrator`.
 
 For executor runtime behavior:
@@ -224,7 +224,7 @@ The following runtime behavior belongs to runtime profile, not to scattered `age
 
 This ADR does not:
 
-- remove `mainsequence-project-executor` as a backend `agent_type`
+- remove `project-executor` as a backend `agent_type`
 - make executor a child-specialist of orchestrator
 - remove backend session ownership distinctions between orchestrator and executor sessions
 - change the frontend/backend request contract away from `agentType`
@@ -239,7 +239,7 @@ This ADR does not:
 Backend-facing identity remains explicit and distinct:
 
 - `agent_type = astro-orchestrator`
-- `agent_type = mainsequence-project-executor`
+- `agent_type = project-executor`
 
 Session ownership follows those backend session identities directly. It is not a separate
 runtime-profile concept.
@@ -382,7 +382,7 @@ Implemented in the first pass:
 Implemented in the prompt-contract pass:
 
 - `.pi/APPEND_SYSTEM.md` is the single bundled Astro prompt contract.
-- Project-attached behavior is selected by `ASTRO_FIXED_AGENT_TYPE=mainsequence-project-executor`
+- Project-attached behavior is selected by `ASTRO_FIXED_AGENT_TYPE=project-executor`
   and the runtime profile, not by a separate executor prompt file.
 - The standalone executor prompt file was deleted.
 - Project-local `.pi/agents` files, if present, are treated as optional specialist extensions
@@ -458,7 +458,7 @@ Cleanup result:
 - No one-time local metadata migration is required. The runtime reads both camel-case and snake-case
   backend identity fields where persisted files may contain either, and writes normalized
   `agentType` / `agent_type` plus `agentSessionId` / `agent_session_id` going forward.
-- The standalone `mainsequence-project-executor` prompt file has been removed from the prompt
+- The standalone `project-executor` prompt file has been removed from the prompt
   contract. The shared `.pi/APPEND_SYSTEM.md` contract now owns base behavior.
 - ADR 29 compatibility is preserved by keeping `agentType` / `agent_type` as the identity language
   and not reintroducing request/session aliases such as `agentName`.
@@ -487,7 +487,7 @@ Verification completed:
 - targeted `npx tsx` A2A envelope/provenance check confirming `targetAgentSessionId` survives into
   user-message provenance
 - static repo checks confirming no runtime dependency on the deleted
-  `.pi/agents/mainsequence-project-executor.md`
+  `.pi/agents/project-executor.md`
 - static repo checks confirming repo-owned deployment files no longer reference `/home/appuser`
 - static repo checks confirming old `agentName` aliases are not reintroduced in runtime code
 

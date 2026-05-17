@@ -28,7 +28,7 @@ Why:
 Implementation:
 
 - `.pi/APPEND_SYSTEM.md`
-- `ASTRO_FIXED_AGENT_TYPE=mainsequence-project-executor`
+- `ASTRO_FIXED_AGENT_TYPE=project-executor`
 
 Why:
 
@@ -317,7 +317,7 @@ Implementation:
 
 Why:
 
-- `mainsequence-project-executor` is a separate execution runtime, not a normal orchestrator
+- `project-executor` is a separate execution runtime, not a normal orchestrator
   specialist
 - local development needs a mounted-project executor harness without changing the backend control
   plane shape
@@ -359,7 +359,7 @@ Implementation:
 Why:
 
 - `mainsequence-project-coder` duplicates the project implementation role now owned by
-  `mainsequence-project-executor`
+  `project-executor`
 - the orchestrator should remain the user-facing session instead of switching the active
   conversation into a local coder session
 - project implementation handoff should be a committed project artifact consumed by the
@@ -403,7 +403,7 @@ Why:
 
 - backend classification uses `Agent.agent_type`
 - Astro request routing uses `agentType`, and those values match prompt frontmatter names such as
-  `astro-orchestrator` and `mainsequence-project-executor`
+  `astro-orchestrator` and `project-executor`
 - keeping `agentType` for communication and `promptName` for prompt-file frontmatter avoids future
   confusion in backend session hydration and prompt lookup code
 

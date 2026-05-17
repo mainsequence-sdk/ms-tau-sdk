@@ -4,7 +4,7 @@ This interface exposes Astro over HTTP using assistant-ui's `ui-message-stream` 
 Clients must identify the backend `Agent.agent_type` (`agentType`) and user
 (`userId`) on each request.
 The normal entry point is `astro-orchestrator`. Project implementation runs through
-`mainsequence-project-executor`; image-backed remote worker pods can pin that runtime with
+`project-executor`; image-backed remote worker pods can pin that runtime with
 `ASTRO_FIXED_AGENT_TYPE` plus fixed project env vars when the project image already contains the
 prepared runtime.
 
