@@ -42,7 +42,7 @@ Send a request compatible with assistant-ui's `ui-message-stream` runtime:
 
 ```json
 {
-  "runtime_session_id": "456",
+  "runtime_session_uid": "session_456_uid",
   "agentType": "astro-orchestrator",
   "userId": "user_123",
   "system": "optional system prompt",
@@ -78,7 +78,7 @@ To start a project-scoped executor session directly, use:
 
 ```json
 {
-  "runtime_session_id": "87",
+  "runtime_session_uid": "session_87_uid",
   "agentType": "project-executor",
   "userId": "user_123",
   "projectId": "42",
@@ -120,9 +120,9 @@ To bind or override the session model on the same request, include:
 
 The response includes `X-Thread-Id`. When the backend session authority provides the fields, it also includes:
 
-- `X-Agent-Id`
+- `X-Agent-Uid`
 - `X-Agent-Unique-Id`
-- `X-Agent-Session-Id`
+- `X-Agent-Session-Uid`
 - `X-Session-Key`
 
 This endpoint expects `messages` to contain the current user turn only. The server reads only the
@@ -130,8 +130,8 @@ last message entry and treats it as the exact latest user message, plus optional
 `context`.
 
 Conversation continuity comes from the backend agent session key. For real non-mock execution, the
-client must send `runtime_session_id` to resume the existing session.
-If the request includes an explicit `runtime_session_id`, the server resumes that session even when
+client must send `runtime_session_uid` to resume the existing session.
+If the request includes an explicit `runtime_session_uid`, the server resumes that session even when
 the request still arrives with `newChat: true`.
 `threadId` is informational for the frontend when backend-backed sessions are enabled and does not
 control which session is resumed.
@@ -150,7 +150,7 @@ The stream wrapper injects:
 - `tools` as optional UI tool metadata
 - optional request-carried backend `session` serializer for session-first metadata/model refresh
 - only the last `messages` entry as the turn input
-- backend-owned `runtime_session_id` as the identity Astro must attach to
+- backend-owned `runtime_session_uid` as the identity Astro must attach to
 
 Normal chat execution is session-first:
 
@@ -158,7 +158,7 @@ Normal chat execution is session-first:
 - when the request includes `session`, Astro refreshes local session metadata and model binding from
   that backend session serializer before continuing the turn
 - when request-carried `session` JSON is absent or insufficient, Astro must fetch backend session
-  authority from `runtime_session_id` before Pi launch rather than proceeding with no model binding
+  authority from `runtime_session_uid` before Pi launch rather than proceeding with no model binding
 - `GET /api/chat/get_available_models` remains control-plane discovery and is not required on the
   normal message hot path
 
@@ -166,7 +166,7 @@ Response headers include:
 
 - `Content-Type: text/event-stream`
 - `X-Stream-Protocol: ui-message-stream`
-- `X-Agent-Id` when the backend returned an Agent `id` for the thread
+- `X-Agent-Uid` when the backend returned an Agent `uid` for the thread
 
 The stream ends with a final `data: [DONE]` marker after the `finish` or `error` chunk.
 
@@ -176,7 +176,7 @@ Each stream chunk now has this envelope:
 {
   "type": "text-delta",
   "textDelta": "hello",
-  "agent_id": 123
+  "agent_uid": "agent_123_uid"
 }
 ```
 
@@ -196,11 +196,11 @@ Canonical request fields accepted by Astro include:
 
 ```json
 {
-  "runtime_session_id": "123",
+  "runtime_session_uid": "session_123_uid",
   "userId": "user_123",
   "agentType": "project-executor",
   "session": {
-    "id": 123,
+    "uid": "session_123_uid",
     "thread_id": "123",
     "llm_provider": "openai-codex",
     "llm_model": "gpt-5.3-codex-spark",
@@ -237,7 +237,7 @@ does not have to be recovered through fallback.
 Requests cancellation of an active A2A-backed runtime session. This is an out-of-band control path,
 not part of the streamed `POST /api/a2a/chat` response itself.
 
-### `GET /api/chat/session-model?sessionId=<runtime_session_id>`
+### `GET /api/chat/session-model?sessionUid=<runtime_session_uid>`
 
 Returns the model binding stored for the runtime session.
 
@@ -309,8 +309,8 @@ When a new session is created, the stream emits a `new_session` chunk before `st
 
 Session files are stored at:
 
-`ASTRO_STREAM_SESSION_DIR/<agent_session_id>.jsonl`
-`ASTRO_STREAM_SESSION_DIR/<agent_session_id>.meta.json`
+`ASTRO_STREAM_SESSION_DIR/<agent_session_uid>.jsonl`
+`ASTRO_STREAM_SESSION_DIR/<agent_session_uid>.meta.json`
 
 ### `GET /health`
 

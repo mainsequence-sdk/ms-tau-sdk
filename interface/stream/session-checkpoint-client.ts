@@ -12,7 +12,7 @@ export type CheckpointBundle = {
 };
 
 export type CheckpointLeaseResponse = {
-	agent_session_id: number;
+	agent_session_uid: string;
 	holder_id: string;
 	lease_token: string;
 	lease_expires_at: string;
@@ -25,7 +25,7 @@ export type CheckpointLeaseResponse = {
 };
 
 export type CheckpointRestoreResponse = {
-	agent_session_id: number;
+	agent_session_uid: string;
 	checkpoint_version: number;
 	bundle_hash: string;
 	updated_at: string | null;
@@ -46,7 +46,7 @@ export type CheckpointRetention = {
 };
 
 export type CheckpointFlushResponse = {
-	agent_session_id: number;
+	agent_session_uid: string;
 	checkpoint_version: number;
 	bundle_hash: string;
 	noop: boolean;
@@ -83,7 +83,7 @@ export type RuntimeCancelActiveLease = {
 };
 
 export type RuntimeCancelResponse = {
-	agent_session_id: number;
+	agent_session_uid: string;
 	status: string;
 	runtime_state: string;
 	working: boolean;
@@ -94,7 +94,7 @@ export type RuntimeCancelResponse = {
 };
 
 export type SessionInsightsUpdateResponse = {
-	agent_session_id: number;
+	agent_session_uid: string;
 	checkpoint_version: number;
 	bundle_hash: string;
 	computed_at: string;
@@ -128,8 +128,8 @@ async function readResponseBody(response: Response): Promise<{ text: string; jso
 	}
 }
 
-function endpoint(backendUrl: string, agentSessionId: number, suffix: string): string {
-	return `${backendUrl}/orm/api/agents/v1/sessions/${agentSessionId}/${suffix}`;
+function endpoint(backendUrl: string, agentSessionUid: string, suffix: string): string {
+	return `${backendUrl}/orm/api/agents/v1/sessions/${encodeURIComponent(agentSessionUid)}/${suffix}`;
 }
 
 export class SessionCheckpointClient {
@@ -144,13 +144,13 @@ export class SessionCheckpointClient {
 	}
 
 	async acquireLease(input: {
-		agentSessionId: number;
+		agentSessionUid: string;
 		holderId: string;
 		ttlSeconds: number;
 		leasePurpose: CheckpointLeasePurpose;
 	}): Promise<SessionCheckpointClientResult<CheckpointLeaseResponse>> {
 		return this.postJson<CheckpointLeaseResponse>(
-			endpoint(this.backendUrl, input.agentSessionId, "checkpoint_lease/acquire/"),
+			endpoint(this.backendUrl, input.agentSessionUid, "checkpoint_lease/acquire/"),
 			{
 				holder_id: input.holderId,
 				ttl_seconds: input.ttlSeconds,
@@ -160,14 +160,14 @@ export class SessionCheckpointClient {
 	}
 
 	async renewLease(input: {
-		agentSessionId: number;
+		agentSessionUid: string;
 		holderId: string;
 		leaseToken: string;
 		ttlSeconds: number;
 		leasePurpose: CheckpointLeasePurpose;
 	}): Promise<SessionCheckpointClientResult<CheckpointLeaseResponse>> {
 		return this.postJson<CheckpointLeaseResponse>(
-			endpoint(this.backendUrl, input.agentSessionId, "checkpoint_lease/renew/"),
+			endpoint(this.backendUrl, input.agentSessionUid, "checkpoint_lease/renew/"),
 			{
 				holder_id: input.holderId,
 				lease_token: input.leaseToken,
@@ -178,12 +178,12 @@ export class SessionCheckpointClient {
 	}
 
 	async releaseLease(input: {
-		agentSessionId: number;
+		agentSessionUid: string;
 		holderId: string;
 		leaseToken: string;
 		reason: string;
-	}): Promise<SessionCheckpointClientResult<{ agent_session_id: number; released: boolean }>> {
-		return this.postJson(endpoint(this.backendUrl, input.agentSessionId, "checkpoint_lease/release/"), {
+	}): Promise<SessionCheckpointClientResult<{ agent_session_uid: string; released: boolean }>> {
+		return this.postJson(endpoint(this.backendUrl, input.agentSessionUid, "checkpoint_lease/release/"), {
 			holder_id: input.holderId,
 			lease_token: input.leaseToken,
 			reason: input.reason,
@@ -191,12 +191,12 @@ export class SessionCheckpointClient {
 	}
 
 	async restore(input: {
-		agentSessionId: number;
+		agentSessionUid: string;
 		holderId: string;
 		leaseToken: string;
 	}): Promise<SessionCheckpointClientResult<CheckpointRestoreResponse>> {
 		return this.postJson<CheckpointRestoreResponse>(
-			endpoint(this.backendUrl, input.agentSessionId, "checkpoint/restore/"),
+			endpoint(this.backendUrl, input.agentSessionUid, "checkpoint/restore/"),
 			{
 				holder_id: input.holderId,
 				lease_token: input.leaseToken,
@@ -205,15 +205,15 @@ export class SessionCheckpointClient {
 	}
 
 	async latest(input: {
-		agentSessionId: number;
+		agentSessionUid: string;
 	}): Promise<SessionCheckpointClientResult<CheckpointLatestResponse>> {
 		return this.getJson<CheckpointLatestResponse>(
-			endpoint(this.backendUrl, input.agentSessionId, "checkpoint/latest/"),
+			endpoint(this.backendUrl, input.agentSessionUid, "checkpoint/latest/"),
 		);
 	}
 
 	async flush(input: {
-		agentSessionId: number;
+		agentSessionUid: string;
 		holderId: string;
 		leaseToken: string;
 		expectedCheckpointVersion: number;
@@ -223,7 +223,7 @@ export class SessionCheckpointClient {
 		agentSessionTerminalState?: AgentSessionTerminalState | null;
 	}): Promise<SessionCheckpointClientResult<CheckpointFlushResponse>> {
 		return this.postJson<CheckpointFlushResponse>(
-			endpoint(this.backendUrl, input.agentSessionId, "checkpoint/flush/"),
+			endpoint(this.backendUrl, input.agentSessionUid, "checkpoint/flush/"),
 			{
 				holder_id: input.holderId,
 				lease_token: input.leaseToken,
@@ -240,7 +240,7 @@ export class SessionCheckpointClient {
 	}
 
 	async requestRuntimeCancel(input: {
-		agentSessionId: number;
+		agentSessionUid: string;
 		requestedByHolderId?: string | null;
 		reason?: string | null;
 		message?: string | null;
@@ -250,13 +250,13 @@ export class SessionCheckpointClient {
 		if (input.reason) payload.reason = input.reason;
 		if (input.message !== undefined) payload.message = input.message;
 		return this.postJson<RuntimeCancelResponse>(
-			endpoint(this.backendUrl, input.agentSessionId, "runtime_cancel_request/"),
+			endpoint(this.backendUrl, input.agentSessionUid, "runtime_cancel_request/"),
 			payload,
 		);
 	}
 
 	async updateInsights(input: {
-		agentSessionId: number;
+		agentSessionUid: string;
 		checkpointVersion: number;
 		bundleHash: string;
 		computedAt: string;
@@ -264,7 +264,7 @@ export class SessionCheckpointClient {
 		insights: Record<string, unknown>;
 	}): Promise<SessionCheckpointClientResult<SessionInsightsUpdateResponse>> {
 		return this.putJson<SessionInsightsUpdateResponse>(
-			endpoint(this.backendUrl, input.agentSessionId, "insights/"),
+			endpoint(this.backendUrl, input.agentSessionUid, "insights/"),
 			{
 				checkpoint_version: input.checkpointVersion,
 				bundle_hash: input.bundleHash,

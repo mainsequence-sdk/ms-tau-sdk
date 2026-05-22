@@ -59,7 +59,7 @@ type ActiveSignInAttempt = {
 	attemptId: string;
 	provider: string;
 	createdByUser: string;
-	agentSessionId: number | null;
+	agentSessionId: string | null;
 	env: NodeJS.ProcessEnv;
 	scopedPiAgentDir: string;
 	abortController: AbortController;
@@ -475,7 +475,7 @@ async function runInteractiveSignIn(
 		const flush = await flushScopedProviderCredential({
 			scopedPiAgentDir: activeAttempt.scopedPiAgentDir,
 			createdByUser: activeAttempt.createdByUser,
-			agentSessionId: activeAttempt.agentSessionId,
+			agentSessionUid: activeAttempt.agentSessionId,
 			provider: attempt.provider,
 			reason: "signin_completed",
 			env,
@@ -518,7 +518,7 @@ export async function startModelProviderSignIn(
 	provider: string,
 	options: {
 		createdByUser: string;
-		agentSessionId?: number | null;
+		agentSessionId?: string | null;
 		env?: NodeJS.ProcessEnv;
 	},
 ): Promise<StartImmediateSignInSuccess | StartInteractiveSignInSuccess | SignInFailure> {
@@ -592,7 +592,7 @@ export async function startModelProviderSignIn(
 		const flush = await flushScopedProviderCredential({
 			scopedPiAgentDir,
 			createdByUser: options.createdByUser,
-			agentSessionId,
+			agentSessionUid: agentSessionId,
 			provider,
 			reason: "api_key_synced",
 			env: scopedEnv,

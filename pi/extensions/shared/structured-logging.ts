@@ -21,11 +21,13 @@ type StructuredLogPayload = {
 const STRUCTURED_LOG_SESSION_ID_KEYS = [
 	"session_id",
 	"sessionId",
+	"sessionUid",
+	"session_uid",
 	"sessionKey",
-	"runtime_session_id",
-	"runtimeSessionId",
-	"agent_session_id",
-	"agentSessionId",
+	"runtime_session_uid",
+	"runtimeSessionUid",
+	"agent_session_uid",
+	"agentSessionUid",
 ] as const;
 
 function isTruthyEnvValue(value: string | undefined): boolean {

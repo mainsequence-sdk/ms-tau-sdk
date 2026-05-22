@@ -5,7 +5,7 @@
 This is a control-plane endpoint.
 It does not send a chat message to Pi.
 
-`GET` accepts `sessionId`, `runtime_session_id`, or `runtimeSessionId` as query parameters.
+`GET` accepts `sessionUid`, `runtime_session_uid`, or `runtimeSessionUid` as query parameters.
 
 Model authority is session-first.
 Normal chat turns should carry the current backend `AgentSession` serializer, and Astro derives or
@@ -17,7 +17,7 @@ refreshes its local binding from that session data.
 
 ```json
 {
-  "sessionId": "456",
+  "sessionUid": "session_456_uid",
   "model": {
     "source": "ollama",
     "provider": "ollama",

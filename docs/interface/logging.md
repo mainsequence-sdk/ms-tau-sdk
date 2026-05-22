@@ -34,7 +34,7 @@ Canonical top-level shape:
   "data": {
     "session_id": "52",
     "threadId": "52",
-    "agentSessionId": 52,
+    "agentSessionUid": "session_52_uid",
     "reason": "finish"
   }
 }
@@ -62,18 +62,18 @@ Field contract:
 For session-scoped logs, Astro must emit top-level:
 
 ```json
-"session_id": "<runtime_session_id>"
+"session_id": "<runtime_session_uid>"
 ```
 
 The shared logger normalizes `session_id` automatically from any of these payload keys:
 
 - `session_id`
-- `sessionId`
+- `sessionUid`
 - `sessionKey`
-- `runtime_session_id`
-- `runtimeSessionId`
-- `agent_session_id`
-- `agentSessionId`
+- `runtime_session_uid`
+- `runtimeSessionUid`
+- `agent_session_uid`
+- `agentSessionUid`
 
 Rules:
 
@@ -132,7 +132,7 @@ Session-scoped `astro-stream` events commonly include:
 
 - `session_id`
 - `threadId`
-- `agentSessionId`
+- `agentSessionUid`
 - `agentType`
 - `userId`
 - `projectId`
@@ -162,9 +162,9 @@ Current emitted `astro-stream` event keys:
 - `backend_session_hydration_attached`
 - `backend_session_hydration_attempt`
 - `backend_session_hydration_fetch_failed`
-- `backend_session_hydration_invalid_id`
+- `backend_session_hydration_invalid_uid`
 - `backend_session_hydration_invalid_payload`
-- `backend_session_hydration_missing_agent_id`
+- `backend_session_hydration_missing_agent_uid`
 - `backend_session_hydration_not_found`
 - `backend_session_hydration_succeeded`
 - `backend_session_hydration_unavailable`
@@ -235,7 +235,7 @@ Current emitted `astro-stream` event keys:
   free-form `message`.
 - `message` may be reworded without changing the contract.
 - session-scoped events should carry enough identifiers to correlate with the active runtime
-  session, especially `session_id`, `threadId`, and `agentSessionId` when available.
+  session, especially `session_id`, `threadId`, and `agentSessionUid` when available.
 
 ## Service: `astro-checkpoint-sidecar`
 
@@ -257,7 +257,7 @@ Every structured log from this service uses:
 Session-scoped sidecar events commonly include:
 
 - `session_id`
-- `agent_session_id`
+- `agent_session_uid`
 - `reason`
 - `checkpoint_version`
 - `bundle_hash`
@@ -338,7 +338,7 @@ Every structured log from this service uses:
 Common payload fields include:
 
 - `session_id` when the event is session-scoped
-- `agentSessionId`
+- `agentSessionUid`
 - `endpoint`
 - `status`
 - `error`
@@ -350,7 +350,7 @@ Current emitted `agent-registration` event keys:
 
 - `backend_session_fetch_attempt`
 - `backend_session_fetch_endpoint_not_found`
-- `backend_session_fetch_invalid_id`
+- `backend_session_fetch_invalid_uid`
 - `backend_session_fetch_missing_auth_headers`
 - `backend_session_fetch_not_found`
 - `backend_session_fetch_rejected`
@@ -360,7 +360,7 @@ Current emitted `agent-registration` event keys:
 
 - events in this component are mostly backend-fetch lifecycle events
 - when an event is about a specific backend AgentSession, the normalized top-level `session_id`
-  comes from the passed `agentSessionId`
+  comes from the passed `agentSessionUid`
 
 ## Startup-only structured logs
 

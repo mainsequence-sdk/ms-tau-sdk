@@ -91,7 +91,7 @@ type JsonlReadResult =
 type BundleBuildResult =
 	| {
 			ok: true;
-			agentSessionId: number;
+			agentSessionId: string;
 			manifest: CheckpointManifest;
 			bundle: CheckpointBundle;
 			bundleHash: string;
@@ -188,6 +188,10 @@ function normalizeNumericId(value: unknown): number | null {
 
 function normalizeOptionalString(value: unknown): string | null {
 	return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function normalizeOpaqueUid(value: unknown): string | null {
+	return normalizeOptionalString(value);
 }
 
 function parseAgentSessionTerminalState(value: unknown): AgentSessionTerminalState | null {
@@ -428,6 +432,7 @@ function summarizeBackendErrorBody(body: unknown): unknown {
 		"error_detail",
 		"detail",
 		"error",
+		"agent_session_uid",
 		"agent_session_id",
 		"checkpoint_version",
 		"bundle_hash",
@@ -642,7 +647,7 @@ function shouldReleaseLeaseAfterFlush(reason: CheckpointReason): boolean {
 
 async function releaseCheckpointLeaseAfterFlush(input: {
 	sessionKey: string;
-	agentSessionId: number;
+	agentSessionId: string;
 	manifest: CheckpointManifest;
 	reason: CheckpointReason;
 	marker: CheckpointMarker | null;
@@ -654,7 +659,7 @@ async function releaseCheckpointLeaseAfterFlush(input: {
 			: input.reason;
 	for (let attempt = 1; attempt <= 3; attempt += 1) {
 		const result = await checkpointClient.releaseLease({
-			agentSessionId: input.agentSessionId,
+			agentSessionUid: input.agentSessionId,
 			holderId: input.manifest.lease_holder_id,
 			leaseToken: input.manifest.lease_token,
 			reason: releaseReason,
@@ -666,7 +671,7 @@ async function releaseCheckpointLeaseAfterFlush(input: {
 				session_id: input.sessionKey,
 				reason: input.reason,
 				release_reason: releaseReason,
-				agent_session_id: input.agentSessionId,
+				agent_session_uid: input.agentSessionId,
 				released: result.body.released,
 				attempt,
 			});
@@ -676,7 +681,7 @@ async function releaseCheckpointLeaseAfterFlush(input: {
 			session_id: input.sessionKey,
 			reason: input.reason,
 			release_reason: releaseReason,
-			agent_session_id: input.agentSessionId,
+			agent_session_uid: input.agentSessionId,
 			attempt,
 			status: result.status,
 			error: result.error,
@@ -762,12 +767,16 @@ function readCompleteJsonl(filePath: string): JsonlReadResult {
 	return { ok: true, content, latestCompactionId };
 }
 
-function resolveAgentSessionId(sessionKey: string, manifest: CheckpointManifest, metadata: Record<string, unknown>): number | null {
+function resolveAgentSessionId(
+	sessionKey: string,
+	manifest: CheckpointManifest,
+	metadata: Record<string, unknown>,
+): string | null {
 	return (
-		normalizeNumericId(sessionKey) ??
-		normalizeNumericId(manifest.session_id) ??
-		normalizeNumericId(metadata.agentSessionId) ??
-		normalizeNumericId(metadata.agent_session_id)
+		normalizeOpaqueUid(metadata.agentSessionUid) ??
+		normalizeOpaqueUid(metadata.agent_session_uid) ??
+		normalizeOpaqueUid(sessionKey) ??
+		normalizeOpaqueUid(manifest.session_id)
 	);
 }
 
@@ -777,7 +786,7 @@ function resolveMetadataAgentType(metadata: Record<string, unknown>): string | n
 
 function normalizeCheckpointMetadataForBackendIdentity(input: {
 	sessionKey: string;
-	agentSessionId: number;
+	agentSessionId: string;
 	metadata: Record<string, unknown>;
 }): { ok: true; metadata: Record<string, unknown> } | { ok: false; error: string; retryable: boolean } {
 	const agentType = resolveMetadataAgentType(input.metadata);
@@ -786,23 +795,33 @@ function normalizeCheckpointMetadataForBackendIdentity(input: {
 	}
 
 	const metadataAgentSessionId =
-		normalizeNumericId(input.metadata.agentSessionId) ??
-		normalizeNumericId(input.metadata.agent_session_id);
+		normalizeOpaqueUid(input.metadata.agentSessionUid) ??
+		normalizeOpaqueUid(input.metadata.agent_session_uid) ??
+		normalizeOpaqueUid(input.metadata.agentSessionId) ??
+		normalizeOpaqueUid(input.metadata.agent_session_id);
 	if (metadataAgentSessionId != null && metadataAgentSessionId !== input.agentSessionId) {
-		return { ok: false, error: "agent_session_id_mismatch", retryable: false };
+		return { ok: false, error: "agent_session_uid_mismatch", retryable: false };
 	}
 
 	const normalized: Record<string, unknown> = {
 		...input.metadata,
 		agentType,
 		agent_type: agentType,
-		agentSessionId: input.agentSessionId,
-		agent_session_id: input.agentSessionId,
+		agentSessionUid: input.agentSessionId,
+		agent_session_uid: input.agentSessionId,
 	};
-	const agentId = normalizeNumericId(input.metadata.agentId) ?? normalizeNumericId(input.metadata.agent_id);
+	delete normalized.agentId;
+	delete normalized.agent_id;
+	delete normalized.agentSessionId;
+	delete normalized.agent_session_id;
+	const agentId =
+		normalizeOpaqueUid(input.metadata.agentUid) ??
+		normalizeOpaqueUid(input.metadata.agent_uid) ??
+		normalizeOpaqueUid(input.metadata.agentId) ??
+		normalizeOpaqueUid(input.metadata.agent_id);
 	if (agentId != null) {
-		normalized.agentId = agentId;
-		normalized.agent_id = agentId;
+		normalized.agentUid = agentId;
+		normalized.agent_uid = agentId;
 	}
 	const agentUniqueId =
 		normalizeOptionalString(input.metadata.agentUniqueId) ??
@@ -835,6 +854,8 @@ function findThreadBinding(sessionKey: string, metadata: Record<string, unknown>
 		const binding = readJsonObject(path.join(sessionDir, entry.name));
 		if (!binding) continue;
 			const runtimeSessionId =
+				normalizeOptionalString(binding.runtimeSessionUid) ??
+				normalizeOptionalString(binding.runtime_session_uid) ??
 				normalizeOptionalString(binding.runtimeSessionId) ??
 				normalizeOptionalString(binding.runtime_session_id);
 			if (runtimeSessionId === sessionKey) return binding;
@@ -857,12 +878,17 @@ function normalizeThreadBindingForBackendSession(input: {
 		normalizeOptionalString(input.threadBinding.updatedAt) ??
 		normalizeOptionalString(input.threadBinding.updated_at) ??
 		new Date().toISOString();
+	const {
+		runtimeSessionId: _legacyRuntimeSessionId,
+		runtime_session_id: _legacyRuntimeSessionIdSnake,
+		...threadBindingRest
+	} = input.threadBinding;
 	return {
-		...input.threadBinding,
+		...threadBindingRest,
 		threadId,
 		thread_id: threadId,
-		runtimeSessionId: input.sessionKey,
-		runtime_session_id: input.sessionKey,
+		runtimeSessionUid: input.sessionKey,
+		runtime_session_uid: input.sessionKey,
 		updatedAt,
 		updated_at: updatedAt,
 	};
@@ -881,7 +907,7 @@ function buildCheckpointBundle(sessionKey: string): BundleBuildResult {
 	if (!metadata) return { ok: false, error: "missing_or_invalid_astro_metadata_json", retryable: false };
 
 	const agentSessionId = resolveAgentSessionId(sessionKey, manifest, metadata);
-	if (agentSessionId == null) return { ok: false, error: "invalid_agent_session_id", retryable: false };
+	if (agentSessionId == null) return { ok: false, error: "invalid_agent_session_uid", retryable: false };
 
 	const normalizedMetadata = normalizeCheckpointMetadataForBackendIdentity({
 		sessionKey,
@@ -928,7 +954,7 @@ function insightsUploadKey(checkpointVersion: number, bundleHash: string): strin
 
 async function uploadSessionInsights(input: {
 	sessionKey: string;
-	agentSessionId: number;
+	agentSessionId: string;
 	checkpointVersion: number;
 	bundleHash: string;
 	reason: CheckpointReason;
@@ -941,7 +967,7 @@ async function uploadSessionInsights(input: {
 		insightsUploadSkippedCount += 1;
 		logEvent("session_insights_upload_skipped", {
 			session_id: input.sessionKey,
-			agent_session_id: input.agentSessionId,
+			agent_session_uid: input.agentSessionId,
 			checkpoint_version: input.checkpointVersion,
 			bundle_hash: input.bundleHash,
 			reason: input.reason,
@@ -958,7 +984,7 @@ async function uploadSessionInsights(input: {
 		insightsUploadSkippedCount += 1;
 		logEvent("session_insights_upload_skipped", {
 			session_id: input.sessionKey,
-			agent_session_id: input.agentSessionId,
+			agent_session_uid: input.agentSessionId,
 			checkpoint_version: input.checkpointVersion,
 			bundle_hash: input.bundleHash,
 			reason: input.reason,
@@ -976,7 +1002,7 @@ async function uploadSessionInsights(input: {
 		insightsUploadSkippedCount += 1;
 		logEvent("session_insights_upload_skipped", {
 			session_id: input.sessionKey,
-			agent_session_id: input.agentSessionId,
+			agent_session_uid: input.agentSessionId,
 			checkpoint_version: input.checkpointVersion,
 			bundle_hash: input.bundleHash,
 			reason: input.reason,
@@ -989,7 +1015,7 @@ async function uploadSessionInsights(input: {
 	const payload = buildSessionInsightsResponse(insights) as unknown as Record<string, unknown>;
 	insightsUploadAttemptCount += 1;
 	const result = await checkpointClient.updateInsights({
-		agentSessionId: input.agentSessionId,
+		agentSessionUid: input.agentSessionId,
 		checkpointVersion: input.checkpointVersion,
 		bundleHash: input.bundleHash,
 		computedAt,
@@ -1001,7 +1027,7 @@ async function uploadSessionInsights(input: {
 		insightsUploadFailureCount += 1;
 		logEvent("session_insights_upload_failed", {
 			session_id: input.sessionKey,
-			agent_session_id: input.agentSessionId,
+			agent_session_uid: input.agentSessionId,
 			checkpoint_version: input.checkpointVersion,
 			bundle_hash: input.bundleHash,
 			reason: input.reason,
@@ -1020,7 +1046,7 @@ async function uploadSessionInsights(input: {
 	insightsUploadSuccessCount += 1;
 	logEvent("session_insights_uploaded", {
 		session_id: input.sessionKey,
-		agent_session_id: input.agentSessionId,
+		agent_session_uid: input.agentSessionId,
 		checkpoint_version: result.body.checkpoint_version,
 		bundle_hash: result.body.bundle_hash,
 		reason: result.body.reason ?? input.reason,
@@ -1157,14 +1183,14 @@ async function flushSession(sessionKey: string, reason: CheckpointReason) {
 		logEvent("checkpoint_flush_started", {
 			session_id: sessionKey,
 			reason,
-			agent_session_id: built.agentSessionId,
+			agent_session_uid: built.agentSessionId,
 			checkpoint_version: built.manifest.checkpoint_version,
 			bundle_hash: built.bundleHash,
 			dirty_age_ms: dirtyAgeMs,
 			local_bundle_summary: summarizeCheckpointBundle(built.bundle, built.latestCompactionId),
 		});
 		const result = await checkpointClient.flush({
-			agentSessionId: built.agentSessionId,
+			agentSessionUid: built.agentSessionId,
 			holderId: built.manifest.lease_holder_id,
 			leaseToken: built.manifest.lease_token,
 			expectedCheckpointVersion: built.manifest.checkpoint_version,
@@ -1184,7 +1210,7 @@ async function flushSession(sessionKey: string, reason: CheckpointReason) {
 			logEvent("checkpoint_flush_rejected", {
 				session_id: sessionKey,
 				reason,
-				agent_session_id: built.agentSessionId,
+				agent_session_uid: built.agentSessionId,
 				status: result.status,
 				error: result.error,
 				backend_request_url: result.url,
@@ -1284,7 +1310,7 @@ async function recordSuccessfulFlush(
 	});
 	await uploadSessionInsights({
 		sessionKey,
-		agentSessionId: response.agent_session_id,
+		agentSessionId: response.agent_session_uid,
 		checkpointVersion: response.checkpoint_version,
 		bundleHash: response.bundle_hash,
 		reason,

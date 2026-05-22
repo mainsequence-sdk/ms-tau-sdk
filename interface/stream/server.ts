@@ -16,7 +16,7 @@ import {
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import {
-	attachAgentId,
+	attachAgentUid,
 	serializeSse,
 	type StreamErrorSource,
 	type StreamEvent,
@@ -148,7 +148,7 @@ let checkpointRestoreCount = 0;
 type ActiveScopedProviderCredential = {
 	scopedPiAgentDir: string;
 	createdByUser: string;
-	agentSessionId: number | null;
+	agentSessionId: string | null;
 	provider: string;
 	env: NodeJS.ProcessEnv;
 	sessionKey: string;
@@ -340,7 +340,7 @@ async function flushActiveScopedProviderCredentialsForShutdown(signal: string) {
 			const flushed = await flushScopedProviderCredential({
 				scopedPiAgentDir: record.scopedPiAgentDir,
 				createdByUser: record.createdByUser,
-				agentSessionId: record.agentSessionId,
+				agentSessionUid: record.agentSessionId,
 				provider: record.provider,
 				reason: "shutdown_flush",
 				env: record.env,
@@ -514,9 +514,9 @@ type RequestContext = {
 	messageId: string;
 	threadId: string;
 	sessionKey: string;
-	agentId: number | null;
+	agentId: string | null;
 	agentUniqueId: string | null;
-	agentSessionId: number | null;
+	agentSessionId: string | null;
 	agentType: string;
 	userId: string;
 	conversationStore: ConversationStore;
@@ -563,7 +563,7 @@ type RequestLogState = {
 type ActiveStreamSession = {
 	sessionKey: string;
 	threadId: string;
-	agentSessionId: number | null;
+	agentSessionId: string | null;
 	messageId: string;
 	agentType: string;
 	startedAt: string;
@@ -578,7 +578,7 @@ type ActiveStreamSession = {
 const activeStreamSessions = new Map<string, ActiveStreamSession>();
 const activeStreamContexts = new Map<string, RequestContext>();
 
-function getActiveStreamSessionKey(sessionKey: string, agentSessionId: number | null): string {
+function getActiveStreamSessionKey(sessionKey: string, agentSessionId: string | null): string {
 	return agentSessionId == null ? `session:${sessionKey}` : `agent_session:${agentSessionId}`;
 }
 
@@ -622,7 +622,7 @@ function updateActiveStreamSession(ctx: RequestContext, updates: Partial<ActiveS
 	});
 }
 
-function getActiveStreamSession(sessionKey: string, agentSessionId: number | null = normalizeNumericId(sessionKey)): ActiveStreamSession | null {
+function getActiveStreamSession(sessionKey: string, agentSessionId: string | null = null): ActiveStreamSession | null {
 	return (
 		activeStreamSessions.get(getActiveStreamSessionKey(sessionKey, agentSessionId)) ??
 		activeStreamSessions.get(getActiveStreamSessionKey(sessionKey, null)) ??
@@ -630,7 +630,7 @@ function getActiveStreamSession(sessionKey: string, agentSessionId: number | nul
 	);
 }
 
-function getActiveStreamContext(sessionKey: string, agentSessionId: number | null = normalizeNumericId(sessionKey)): RequestContext | null {
+function getActiveStreamContext(sessionKey: string, agentSessionId: string | null = null): RequestContext | null {
 	return (
 		activeStreamContexts.get(getActiveStreamSessionKey(sessionKey, agentSessionId)) ??
 		activeStreamContexts.get(getActiveStreamSessionKey(sessionKey, null)) ??
@@ -639,9 +639,9 @@ function getActiveStreamContext(sessionKey: string, agentSessionId: number | nul
 }
 
 type SessionMetadata = {
-	agentId: number | null;
+	agentId: string | null;
 	agentUniqueId: string | null;
-	agentSessionId: number | null;
+	agentSessionId: string | null;
 	threadId: string | null;
 	startedAt: string | null;
 	agentType: string | null;
@@ -708,7 +708,7 @@ type ThreadSessionBinding = {
 };
 
 type HydratedBackendSession = {
-	agentId: number;
+	agentId: string;
 	agentUniqueId: string | null;
 	metadata: SessionMetadata;
 };
@@ -1216,16 +1216,16 @@ function resolveUserIdFromRequest(
 function resolveOptionalAgentSessionIdFromBodyOrSearch(
 	body: Record<string, unknown>,
 	url: URL,
-): number | null {
-	return normalizeNumericId(
-		body.agent_session_id ??
-			body.agentSessionId ??
-			body.session_id ??
-			body.sessionId ??
-			url.searchParams.get("agent_session_id") ??
-			url.searchParams.get("agentSessionId") ??
-			url.searchParams.get("session_id") ??
-			url.searchParams.get("sessionId"),
+): string | null {
+	return normalizeRuntimeSessionId(
+		(body.agent_session_uid as unknown) ??
+			(body.agentSessionUid as unknown) ??
+			(body.session_uid as unknown) ??
+			(body.sessionUid as unknown) ??
+			(url.searchParams.get("agent_session_uid") as unknown) ??
+			(url.searchParams.get("agentSessionUid") as unknown) ??
+			(url.searchParams.get("session_uid") as unknown) ??
+			(url.searchParams.get("sessionUid") as unknown),
 	);
 }
 
@@ -1422,7 +1422,7 @@ function resolveProjectAttachment(input: {
 			ok: false,
 			statusCode: 409,
 			error: "session_mismatch",
-			message: "runtime_session_id does not match the requested projectId.",
+			message: "runtime_session_uid does not match the requested projectId.",
 		};
 	}
 
@@ -1436,7 +1436,7 @@ function resolveProjectAttachment(input: {
 			ok: false,
 			statusCode: 409,
 			error: "session_mismatch",
-			message: "runtime_session_id does not match the requested cwd.",
+			message: "runtime_session_uid does not match the requested cwd.",
 		};
 	}
 
@@ -1571,6 +1571,14 @@ function extractNumericProperty(record: Record<string, unknown>, ...keys: string
 	return null;
 }
 
+function extractUidProperty(record: Record<string, unknown>, ...keys: string[]): string | null {
+	for (const key of keys) {
+		const value = normalizeRuntimeSessionId(record[key]);
+		if (value) return value;
+	}
+	return null;
+}
+
 function mergeSystemPrompt(base: string | undefined, injected: string): string {
 	const parts = [typeof base === "string" ? base.trim() : "", injected.trim()].filter(Boolean);
 	return parts.join("\n\n");
@@ -1604,7 +1612,7 @@ function normalizeA2AChatRequestBody(
 	body: Record<string, unknown>,
 ): { ok: true; body: Record<string, unknown> } | { ok: false; statusCode: number; error: string; message: string } {
 	const runtimeSessionId =
-		extractStringProperty(body, "runtime_session_id", "runtimeSessionId", "sessionId") ?? null;
+		extractStringProperty(body, "runtime_session_uid", "runtimeSessionUid") ?? null;
 	const normalizedMessages = normalizeA2AChatMessages(body.messages);
 	const task = extractStringProperty(body, "task", "message", "input", "prompt", "request");
 	if (!normalizedMessages && !task) {
@@ -1650,7 +1658,7 @@ function normalizeA2AChatRequestBody(
 		ok: true,
 		body: {
 			...body,
-			...(runtimeSessionId ? { runtime_session_id: runtimeSessionId } : {}),
+			...(runtimeSessionId ? { runtime_session_uid: runtimeSessionId } : {}),
 			...(body.newChat !== undefined ? { newChat: body.newChat } : {}),
 			...(runtimeSessionId ? { newChat: false } : {}),
 			system: mergeSystemPrompt(
@@ -1676,21 +1684,20 @@ function normalizeA2AChatRequestBody(
 	};
 }
 
-function extractBackendSessionAgentId(payload: Record<string, unknown>): number | null {
+function extractBackendSessionAgentId(payload: Record<string, unknown>): string | null {
 	return (
-		extractNumericProperty(payload, "agent", "agent_id", "agentId") ??
-		extractNumericProperty(payload, "agent_id", "agentId") ??
+		extractUidProperty(payload, "agent_uid", "agentUid") ??
 		(() => {
 			const agentRecord = extractObjectPropertyRecord(payload, "agent");
 			if (!agentRecord) return null;
-			return extractNumericProperty(agentRecord, "id", "agent_id", "agentId");
+			return extractUidProperty(agentRecord, "uid", "agent_uid", "agentUid");
 		})()
 	);
 }
 
-function extractRequestedAgentId(payload: Record<string, unknown>): number | null {
+function extractRequestedAgentId(payload: Record<string, unknown>): string | null {
 	return (
-		extractNumericProperty(payload, "agent_id", "agentId") ??
+		extractUidProperty(payload, "agent_uid", "agentUid") ??
 		(() => {
 			const sessionPayload = extractRequestSessionPayload(payload);
 			if (!sessionPayload) return null;
@@ -1699,7 +1706,7 @@ function extractRequestedAgentId(payload: Record<string, unknown>): number | nul
 		(() => {
 			const sessionMetadata = extractObjectPropertyRecord(payload, "sessionMetadata", "session_metadata");
 			if (!sessionMetadata) return null;
-			return extractNumericProperty(sessionMetadata, "agent_id", "agentId");
+			return extractUidProperty(sessionMetadata, "agent_uid", "agentUid");
 		})()
 	);
 }
@@ -1741,15 +1748,15 @@ function validateRequestSessionPayloadAuthority(input: {
 }):
 	| { ok: true }
 	| { ok: false; statusCode: 409; error: string; message: string; details: Record<string, unknown> } {
-	const requestedRuntimeSessionId = normalizeNumericId(input.runtimeSessionId);
-	const payloadAgentSessionId = extractNumericProperty(
+	const requestedRuntimeSessionId = normalizeRuntimeSessionId(input.runtimeSessionId);
+	const payloadAgentSessionId = extractUidProperty(
 		input.sessionPayload,
-		"id",
-		"agent_session_id",
-		"agentSessionId",
+		"uid",
+		"agent_session_uid",
+		"agentSessionUid",
 	);
 	if (
-		requestedRuntimeSessionId != null &&
+		requestedRuntimeSessionId &&
 		payloadAgentSessionId != null &&
 		payloadAgentSessionId !== requestedRuntimeSessionId
 	) {
@@ -1757,10 +1764,10 @@ function validateRequestSessionPayloadAuthority(input: {
 			ok: false,
 			statusCode: 409,
 			error: "session_payload_mismatch",
-			message: "Request-carried session serializer does not match runtime_session_id.",
+			message: "Request-carried session serializer does not match runtime_session_uid.",
 			details: {
-				runtimeSessionId: input.runtimeSessionId,
-				payloadAgentSessionId,
+				runtimeSessionUid: input.runtimeSessionId,
+				payloadAgentSessionUid: payloadAgentSessionId,
 			},
 		};
 	}
@@ -1842,19 +1849,19 @@ function buildRequestA2AEnvelope(input: {
 			extractStringProperty(input.body, "handle_unique_id", "handleUniqueId") ??
 			extractStringProperty(input.a2aContext, "handle_unique_id", "handleUniqueId") ??
 			null,
-		callerAgentSessionId:
-			extractNumericProperty(input.body, "caller_agent_session_id", "callerAgentSessionId") ??
-			extractNumericProperty(input.caller, "agent_session_id", "agentSessionId", "session_id", "sessionId") ??
+		callerAgentSessionUid:
+			extractUidProperty(input.body, "caller_agent_session_uid", "callerAgentSessionUid") ??
+			extractUidProperty(input.caller, "agent_session_uid", "agentSessionUid", "session_uid", "sessionUid") ??
 			null,
-		targetAgentSessionId:
-			extractNumericProperty(input.body, "target_agent_session_id", "targetAgentSessionId") ??
-			extractNumericProperty(input.a2aContext, "target_agent_session_id", "targetAgentSessionId") ??
-			extractNumericProperty(input.body, "runtime_session_id", "runtimeSessionId", "sessionId") ??
-			extractNumericProperty(input.a2aContext, "runtime_session_id", "runtimeSessionId", "sessionId") ??
+		targetAgentSessionUid:
+			extractUidProperty(input.body, "target_agent_session_uid", "targetAgentSessionUid") ??
+			extractUidProperty(input.a2aContext, "target_agent_session_uid", "targetAgentSessionUid") ??
+			extractUidProperty(input.body, "runtime_session_uid", "runtimeSessionUid") ??
+			extractUidProperty(input.a2aContext, "runtime_session_uid", "runtimeSessionUid") ??
 			null,
-		targetAgentId:
-			extractNumericProperty(input.body, "target_agent_id", "targetAgentId") ??
-			extractNumericProperty(input.a2aContext, "target_agent_id", "targetAgentId") ??
+		targetAgentUid:
+			extractUidProperty(input.body, "target_agent_uid", "targetAgentUid") ??
+			extractUidProperty(input.a2aContext, "target_agent_uid", "targetAgentUid") ??
 			null,
 	};
 }
@@ -1869,7 +1876,7 @@ async function attachHydratedBackendSession(options: {
 	| { ok: true; hydrated: HydratedBackendSession }
 	| { ok: false; error: string; message: string; statusCode: number }
 > {
-	const normalizedAgentSessionId = normalizeNumericId(options.runtimeSessionId);
+	const normalizedAgentSessionId = normalizeRuntimeSessionId(options.runtimeSessionId);
 	logStructuredEvent({
 		component: "astro-stream",
 		event: "backend_session_hydration_attempt",
@@ -1881,27 +1888,26 @@ async function attachHydratedBackendSession(options: {
 			userId: options.userId,
 		},
 	});
-	if (normalizedAgentSessionId == null) {
+	if (!normalizedAgentSessionId) {
 		logStructuredEvent({
 			severity: "WARNING",
 			component: "astro-stream",
-			event: "backend_session_hydration_invalid_id",
-			message: "Backend session hydration was aborted because runtime_session_id was not numeric.",
+			event: "backend_session_hydration_invalid_uid",
+			message: "Backend session hydration was aborted because runtime_session_uid was invalid.",
 			data: {
 				runtimeSessionId: options.runtimeSessionId,
 			},
 		});
 		return {
 			ok: false,
-			error: "invalid_runtime_session_id",
-			message:
-				"The provided runtime_session_id is not a numeric backend AgentSession id, so Astro cannot hydrate it without local session files.",
+			error: "invalid_runtime_session_uid",
+			message: "The provided runtime_session_uid is not a valid backend AgentSession uid.",
 			statusCode: 400,
 		};
 	}
 
 	const fetched = await fetchBackendAgentSession({
-		agentSessionId: normalizedAgentSessionId,
+		agentSessionUid: normalizedAgentSessionId,
 		env: process.env,
 		log: options.log,
 	});
@@ -1914,14 +1920,14 @@ async function attachHydratedBackendSession(options: {
 				event: "backend_session_hydration_not_found",
 				message: "Backend session hydration failed because the backend session does not exist.",
 				data: {
-					agentSessionId: normalizedAgentSessionId,
+					agentSessionUid: normalizedAgentSessionId,
 				},
 			});
 			return {
 				ok: false,
 				error: "session_not_found",
 				message:
-					"The backend AgentSession for the provided runtime_session_id was not found, and no local session files exist.",
+					"The backend AgentSession for the provided runtime_session_uid was not found, and no local session files exist.",
 				statusCode: 409,
 			};
 		}
@@ -1931,7 +1937,7 @@ async function attachHydratedBackendSession(options: {
 			event: "backend_session_hydration_fetch_failed",
 			message: "Backend session hydration failed during backend session fetch.",
 			data: {
-				agentSessionId: normalizedAgentSessionId,
+				agentSessionUid: normalizedAgentSessionId,
 				error: fetched.error ?? "unknown fetch error",
 				status: fetched.status,
 				endpoint: fetched.endpoint,
@@ -1952,7 +1958,7 @@ async function attachHydratedBackendSession(options: {
 			event: "backend_session_hydration_invalid_payload",
 			message: "Backend session hydration failed because the backend response body was not an object.",
 			data: {
-				agentSessionId: normalizedAgentSessionId,
+				agentSessionUid: normalizedAgentSessionId,
 			},
 		});
 		return {
@@ -1970,16 +1976,16 @@ async function attachHydratedBackendSession(options: {
 		logStructuredEvent({
 			severity: "ERROR",
 			component: "astro-stream",
-			event: "backend_session_hydration_missing_agent_id",
-			message: "Backend session hydration failed because the backend payload had no usable agent id.",
+			event: "backend_session_hydration_missing_agent_uid",
+			message: "Backend session hydration failed because the backend payload had no usable agent uid.",
 			data: {
-				agentSessionId: normalizedAgentSessionId,
+				agentSessionUid: normalizedAgentSessionId,
 			},
 		});
 		return {
 			ok: false,
 			error: "session_hydration_failed",
-			message: "The backend session did not include a valid agent id.",
+			message: "The backend session did not include a valid agent uid.",
 			statusCode: 409,
 		};
 	}
@@ -2002,7 +2008,7 @@ async function attachHydratedBackendSession(options: {
 			event: "backend_session_hydration_wrong_user",
 			message: "Backend session hydration was rejected because the backend session belongs to a different user.",
 			data: {
-				agentSessionId: normalizedAgentSessionId,
+				agentSessionUid: normalizedAgentSessionId,
 				createdByUser,
 				requestUserId: options.userId,
 			},
@@ -2042,9 +2048,9 @@ async function attachHydratedBackendSession(options: {
 	logStructuredEvent({
 		component: "astro-stream",
 		event: "backend_session_hydration_succeeded",
-		message: "Backend session hydration succeeded.",
-		data: {
-			agentSessionId: normalizedAgentSessionId,
+			message: "Backend session hydration succeeded.",
+			data: {
+			agentSessionUid: normalizedAgentSessionId,
 			agentId,
 			threadId: metadata.threadId,
 			agentUniqueId: metadata.agentUniqueId,
@@ -2061,7 +2067,7 @@ async function attachHydratedBackendSession(options: {
 			agentUniqueId: metadata.agentUniqueId,
 			metadata: {
 				...metadata,
-				agentSessionId: fetched.agentSessionId ?? normalizedAgentSessionId,
+				agentSessionId: fetched.agentSessionUid ?? normalizedAgentSessionId,
 			},
 		},
 	};
@@ -2133,8 +2139,8 @@ function cleanupPromptFile(promptPath: string | null) {
 	}
 }
 
-function buildBackendRuntimeSessionId(agentSessionId: number): string {
-	return sanitizeSessionKey(String(agentSessionId));
+function buildBackendRuntimeSessionId(agentSessionUid: string): string {
+	return sanitizeSessionKey(agentSessionUid);
 }
 
 function sessionExists(sessionKey: string): boolean {
@@ -2195,11 +2201,16 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 		const parsed = JSON.parse(readFileSync(metadataPath, "utf8"));
 		if (!parsed || typeof parsed !== "object") return null;
 		const rawAgentId =
-			(parsed as { agentId?: unknown }).agentId ?? (parsed as { agent_id?: unknown }).agent_id;
+			(parsed as { agentUid?: unknown }).agentUid ??
+			(parsed as { agent_uid?: unknown }).agent_uid ??
+			(parsed as { agentId?: unknown }).agentId ??
+			(parsed as { agent_id?: unknown }).agent_id;
 		const rawAgentUniqueId =
 			(parsed as { agentUniqueId?: unknown }).agentUniqueId ??
 			(parsed as { agent_unique_id?: unknown }).agent_unique_id;
 		const rawAgentSessionId =
+			(parsed as { agentSessionUid?: unknown }).agentSessionUid ??
+			(parsed as { agent_session_uid?: unknown }).agent_session_uid ??
 			(parsed as { agentSessionId?: unknown }).agentSessionId ??
 			(parsed as { agent_session_id?: unknown }).agent_session_id;
 		const rawThreadId =
@@ -2218,17 +2229,11 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 		const rawA2A = (parsed as { a2a?: unknown }).a2a;
 		const rawHistoryAnnotations = (parsed as { history_annotations?: unknown }).history_annotations;
 		const normalizedAgentId =
-			typeof rawAgentId === "number" && Number.isFinite(rawAgentId)
-				? rawAgentId
-				: typeof rawAgentId === "string" && rawAgentId.trim()
-					? Number.parseInt(rawAgentId, 10)
-					: null;
+			typeof rawAgentId === "string" && rawAgentId.trim() ? rawAgentId.trim() : null;
 		const normalizedAgentSessionId =
-			typeof rawAgentSessionId === "number" && Number.isFinite(rawAgentSessionId)
-				? rawAgentSessionId
-				: typeof rawAgentSessionId === "string" && rawAgentSessionId.trim()
-					? Number.parseInt(rawAgentSessionId, 10)
-					: null;
+			typeof rawAgentSessionId === "string" && rawAgentSessionId.trim()
+				? rawAgentSessionId.trim()
+				: null;
 		const normalizedAgentUniqueId =
 			typeof rawAgentUniqueId === "string" && rawAgentUniqueId.trim()
 				? rawAgentUniqueId.trim()
@@ -2248,11 +2253,9 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 		const normalizedA2A = normalizeA2AEnvelope(rawA2A);
 		const normalizedHistoryAnnotations = normalizeHistoryAnnotations(rawHistoryAnnotations);
 		return {
-			agentId: Number.isFinite(normalizedAgentId as number) ? (normalizedAgentId as number) : null,
+			agentId: normalizedAgentId,
 			agentUniqueId: normalizedAgentUniqueId,
-			agentSessionId: Number.isFinite(normalizedAgentSessionId as number)
-				? (normalizedAgentSessionId as number)
-				: null,
+			agentSessionId: normalizedAgentSessionId,
 			threadId: normalizedThreadId,
 			startedAt: normalizedStartedAt,
 			agentType: normalizedAgentType,
@@ -2274,10 +2277,20 @@ function writeSessionMetadata(sessionKey: string, metadata: SessionMetadata) {
 	mkdirSync(sessionDir, { recursive: true });
 	const metadataPath = getSessionMetadataPath(sessionKey);
 	const nextMetadata: Record<string, unknown> = { ...metadata };
+	delete nextMetadata.agentId;
+	delete nextMetadata.agent_id;
+	delete nextMetadata.agentSessionId;
+	delete nextMetadata.agent_session_id;
 	if (metadata.agentType) nextMetadata.agent_type = metadata.agentType;
-	if (metadata.agentId != null) nextMetadata.agent_id = metadata.agentId;
+	if (metadata.agentId != null) {
+		nextMetadata.agentUid = metadata.agentId;
+		nextMetadata.agent_uid = metadata.agentId;
+	}
 	if (metadata.agentUniqueId) nextMetadata.agent_unique_id = metadata.agentUniqueId;
-	if (metadata.agentSessionId != null) nextMetadata.agent_session_id = metadata.agentSessionId;
+	if (metadata.agentSessionId != null) {
+		nextMetadata.agentSessionUid = metadata.agentSessionId;
+		nextMetadata.agent_session_uid = metadata.agentSessionId;
+	}
 	if (metadata.threadId) nextMetadata.thread_id = metadata.threadId;
 	if (!Object.prototype.hasOwnProperty.call(nextMetadata, "history_annotations")) {
 		const existingAnnotations = normalizeHistoryAnnotations(
@@ -2726,7 +2739,7 @@ function materializeCheckpointBundle(ctx: RequestContext, bundle: CheckpointBund
 function logPiSessionRepairs(input: {
 	sessionKey: string;
 	threadId: string;
-	agentSessionId: number | null;
+	agentSessionId: string | null;
 	phase: string;
 	source: StreamErrorSource;
 	repairs: PiSessionJsonlRepair[];
@@ -2766,7 +2779,7 @@ function logPiSessionRepairs(input: {
 function normalizePiSessionJsonlForRuntime(input: {
 	sessionKey: string;
 	threadId: string;
-	agentSessionId: number | null;
+	agentSessionId: string | null;
 	phase: string;
 	piSessionJsonl: string;
 	source: StreamErrorSource;
@@ -2837,7 +2850,7 @@ function startCheckpointLeaseRenewal(ctx: RequestContext, client: SessionCheckpo
 		}
 		void client
 			.renewLease({
-				agentSessionId: ctx.agentSessionId,
+				agentSessionUid: ctx.agentSessionId,
 				holderId: activeLease.holderId,
 				leaseToken: activeLease.leaseToken,
 				ttlSeconds,
@@ -3038,14 +3051,14 @@ function checkpointLatestRouteMissing(
 }
 
 async function fetchCheckpointForHistoryHydration(input: {
-	agentSessionId: number;
+	agentSessionId: string;
 	sessionKey: string;
 }): Promise<SessionCheckpointClientResult<CheckpointLatestResponse>> {
 	const client = new SessionCheckpointClient({
 		env: process.env,
 		log: (message) => console.log(`[astro-stream] ${message}`),
 	});
-	const latestCheckpoint = await client.latest({ agentSessionId: input.agentSessionId });
+	const latestCheckpoint = await client.latest({ agentSessionUid: input.agentSessionId });
 	if (latestCheckpoint.ok === true) {
 		return latestCheckpoint;
 	}
@@ -3062,13 +3075,13 @@ async function fetchCheckpointForHistoryHydration(input: {
 		message: "Backend checkpoint/latest route is missing; Astro is using lease + restore for history hydration.",
 		data: {
 			sessionId: input.sessionKey,
-			agentSessionId: input.agentSessionId,
+			agentSessionUid: input.agentSessionId,
 			latestUrl: latestCheckpoint.url,
 		},
 	});
 
 	const leaseResult = await client.acquireLease({
-		agentSessionId: input.agentSessionId,
+		agentSessionUid: input.agentSessionId,
 		holderId,
 		ttlSeconds,
 		leasePurpose: "read_restore",
@@ -3087,14 +3100,14 @@ async function fetchCheckpointForHistoryHydration(input: {
 	let restoreResult: SessionCheckpointClientResult<CheckpointLatestResponse>;
 	try {
 		restoreResult = await client.restore({
-			agentSessionId: input.agentSessionId,
+			agentSessionUid: input.agentSessionId,
 			holderId,
 			leaseToken: leaseResult.body.lease_token,
 		});
 	} finally {
 		client
 			.releaseLease({
-				agentSessionId: input.agentSessionId,
+				agentSessionUid: input.agentSessionId,
 				holderId,
 				leaseToken: leaseResult.body.lease_token,
 				reason: "history_hydration",
@@ -3108,7 +3121,7 @@ async function fetchCheckpointForHistoryHydration(input: {
 						message: "History hydration restore fallback could not release its checkpoint lease.",
 						data: {
 							sessionId: input.sessionKey,
-							agentSessionId: input.agentSessionId,
+							agentSessionUid: input.agentSessionId,
 							status: releaseResult.status,
 							error: releaseResult.error,
 							backendResponseText: releaseResult.responseText,
@@ -3125,7 +3138,7 @@ async function fetchCheckpointForHistoryHydration(input: {
 					message: "History hydration restore fallback hit an unexpected error while releasing its lease.",
 					data: {
 						sessionId: input.sessionKey,
-						agentSessionId: input.agentSessionId,
+						agentSessionUid: input.agentSessionId,
 						error: error instanceof Error ? error.message : String(error),
 					},
 				});
@@ -3137,7 +3150,7 @@ async function fetchCheckpointForHistoryHydration(input: {
 
 function buildSessionMetadataFromBackendCheckpoint(input: {
 	sessionKey: string;
-	agentSessionId: number;
+	agentSessionId: string;
 	sessionPayload: Record<string, unknown>;
 	checkpointBundle: CheckpointBundle;
 	requestedThreadId: string | null;
@@ -3151,7 +3164,7 @@ function buildSessionMetadataFromBackendCheckpoint(input: {
 	const agentType = extractAgentTypeFromSessionPayload(input.sessionPayload, sessionMetadata);
 	const agentId =
 		extractBackendSessionAgentId(input.sessionPayload) ??
-		extractNumericProperty(bundleMetadata, "agentId", "agent_id");
+		extractUidProperty(bundleMetadata, "agentUid", "agent_uid");
 	const agentUniqueId =
 		(agentRecord ? extractStringProperty(agentRecord, "agent_unique_id", "agentUniqueId") : null) ??
 		extractStringProperty(bundleMetadata, "agentUniqueId", "agent_unique_id");
@@ -3217,9 +3230,9 @@ function buildSessionMetadataFromRequestSessionPayload(input: {
 		input.existingMetadata?.startedAt ??
 		null;
 	const normalizedAgentSessionId =
-		normalizeNumericId(
-			extractNumericProperty(input.sessionPayload, "id", "agent_session_id", "agentSessionId") ?? input.sessionKey,
-		) ?? input.existingMetadata?.agentSessionId ?? null;
+		extractUidProperty(input.sessionPayload, "uid", "agent_session_uid", "agentSessionUid") ??
+		input.existingMetadata?.agentSessionId ??
+		input.sessionKey;
 	const a2a =
 		extractCanonicalA2AEnvelope(sessionMetadata, input.sessionPayload) ??
 		input.existingMetadata?.a2a ??
@@ -3278,9 +3291,9 @@ function buildSessionMetadataFromBackendSessionPayload(input: {
 		input.existingMetadata?.startedAt ??
 		null;
 	const normalizedAgentSessionId =
-		normalizeNumericId(
-			extractNumericProperty(input.sessionPayload, "id", "agent_session_id", "agentSessionId") ?? input.sessionKey,
-		) ?? input.existingMetadata?.agentSessionId ?? null;
+		extractUidProperty(input.sessionPayload, "uid", "agent_session_uid", "agentSessionUid") ??
+		input.existingMetadata?.agentSessionId ??
+		input.sessionKey;
 	const a2a =
 		extractCanonicalA2AEnvelope(sessionMetadata, input.sessionPayload) ??
 		input.existingMetadata?.a2a ??
@@ -3318,18 +3331,17 @@ async function hydrateLocalSessionFilesForRead(input: {
 	| { ok: true; metadata: SessionMetadata }
 	| { ok: false; statusCode: number; error: string; message: string; errorDetail?: string | null }
 > {
-	const agentSessionId = normalizeNumericId(input.sessionKey);
-	if (agentSessionId == null || !shouldRegisterAgents(process.env)) {
+	if (!shouldRegisterAgents(process.env)) {
 		return {
 			ok: false,
 			statusCode: 404,
 			error: "session_not_found",
-			message: "No local session found for the provided session id.",
+			message: "No local session found for the provided session uid.",
 		};
 	}
 
 	const fetched = await fetchBackendAgentSession({
-		agentSessionId,
+		agentSessionUid: input.sessionKey,
 		env: process.env,
 		log: (message) => console.log(`[astro-stream] ${message}`),
 	});
@@ -3355,7 +3367,7 @@ async function hydrateLocalSessionFilesForRead(input: {
 	}
 
 	const checkpoint = await fetchCheckpointForHistoryHydration({
-		agentSessionId: fetched.agentSessionId ?? agentSessionId,
+		agentSessionId: fetched.agentSessionUid ?? input.sessionKey,
 		sessionKey: input.sessionKey,
 	});
 	if (checkpoint.ok === false) {
@@ -3366,7 +3378,7 @@ async function hydrateLocalSessionFilesForRead(input: {
 			message: "Astro could not hydrate local session files from the backend checkpoint for a read endpoint.",
 			data: {
 				sessionId: input.sessionKey,
-				agentSessionId: fetched.agentSessionId ?? agentSessionId,
+				agentSessionUid: fetched.agentSessionUid ?? input.sessionKey,
 				reason: input.reason,
 				status: checkpoint.status,
 				error: checkpoint.error,
@@ -3395,7 +3407,7 @@ async function hydrateLocalSessionFilesForRead(input: {
 	const normalized = normalizePiSessionJsonlForRuntime({
 		sessionKey: input.sessionKey,
 		threadId: input.requestedThreadId ?? input.sessionKey,
-		agentSessionId: fetched.agentSessionId ?? agentSessionId,
+		agentSessionId: fetched.agentSessionUid ?? input.sessionKey,
 		phase: `read_hydration:${input.reason}`,
 		piSessionJsonl: bundle.pi_session_jsonl,
 		source: "checkpoint",
@@ -3414,7 +3426,7 @@ async function hydrateLocalSessionFilesForRead(input: {
 	writeFileSync(getSessionPath(input.sessionKey), normalized.piSessionJsonl);
 	const metadata = buildSessionMetadataFromBackendCheckpoint({
 		sessionKey: input.sessionKey,
-		agentSessionId: fetched.agentSessionId ?? agentSessionId,
+		agentSessionId: fetched.agentSessionUid ?? input.sessionKey,
 		sessionPayload: fetched.body,
 		checkpointBundle: bundle,
 		requestedThreadId: input.requestedThreadId,
@@ -3439,12 +3451,17 @@ async function hydrateLocalSessionFilesForRead(input: {
 	const threadBindingUpdatedAt =
 		extractStringProperty(threadBinding, "updatedAt", "updated_at") ??
 		new Date().toISOString();
+	const {
+		runtimeSessionId: _legacyRuntimeSessionId,
+		runtime_session_id: _legacyRuntimeSessionIdSnake,
+		...threadBindingRest
+	} = threadBinding;
 	const normalizedThreadBinding = {
-		...threadBinding,
+		...threadBindingRest,
 		threadId,
 		thread_id: threadId,
-		runtimeSessionId: input.sessionKey,
-		runtime_session_id: input.sessionKey,
+		runtimeSessionUid: input.sessionKey,
+		runtime_session_uid: input.sessionKey,
 		updatedAt: threadBindingUpdatedAt,
 		updated_at: threadBindingUpdatedAt,
 	};
@@ -3457,7 +3474,7 @@ async function hydrateLocalSessionFilesForRead(input: {
 		message: "Astro hydrated local session files from backend checkpoint for a read endpoint.",
 		data: {
 			sessionId: input.sessionKey,
-			agentSessionId: fetched.agentSessionId ?? agentSessionId,
+			agentSessionUid: fetched.agentSessionUid ?? input.sessionKey,
 			agentType: metadata.agentType,
 			threadId,
 			reason: input.reason,
@@ -3530,7 +3547,7 @@ async function prepareCheckpointBeforePiLaunch(
 	let leaseResult: Awaited<ReturnType<SessionCheckpointClient["acquireLease"]>>;
 	if (leaseAction === "renew") {
 		leaseResult = await client.renewLease({
-			agentSessionId: ctx.agentSessionId,
+			agentSessionUid: ctx.agentSessionId,
 			holderId,
 			leaseToken: existingManifest.lease_token,
 			ttlSeconds,
@@ -3552,7 +3569,7 @@ async function prepareCheckpointBeforePiLaunch(
 			});
 			leaseAction = "renew_then_acquire";
 			leaseResult = await client.acquireLease({
-				agentSessionId: ctx.agentSessionId,
+				agentSessionUid: ctx.agentSessionId,
 				holderId,
 				ttlSeconds,
 				leasePurpose: "runtime_run",
@@ -3560,7 +3577,7 @@ async function prepareCheckpointBeforePiLaunch(
 		}
 	} else {
 		leaseResult = await client.acquireLease({
-			agentSessionId: ctx.agentSessionId,
+			agentSessionUid: ctx.agentSessionId,
 			holderId,
 			ttlSeconds,
 			leasePurpose: "runtime_run",
@@ -3645,7 +3662,7 @@ async function prepareCheckpointBeforePiLaunch(
 			},
 		});
 		const restoreResult = await client.restore({
-			agentSessionId: ctx.agentSessionId,
+			agentSessionUid: ctx.agentSessionId,
 			holderId,
 			leaseToken: lease.lease_token,
 		});
@@ -3664,7 +3681,7 @@ async function prepareCheckpointBeforePiLaunch(
 				},
 			});
 			const releaseResult = await client.releaseLease({
-				agentSessionId: ctx.agentSessionId,
+				agentSessionUid: ctx.agentSessionId,
 				holderId,
 				leaseToken: lease.lease_token,
 				reason: "restore_failed",
@@ -3710,7 +3727,7 @@ async function prepareCheckpointBeforePiLaunch(
 		});
 		if (normalizedRestore.ok === false) {
 			const releaseResult = await client.releaseLease({
-				agentSessionId: ctx.agentSessionId,
+				agentSessionUid: ctx.agentSessionId,
 				holderId,
 				leaseToken: lease.lease_token,
 				reason: "restore_invalid_history",
@@ -3802,7 +3819,7 @@ async function prepareCheckpointBeforePiLaunch(
 		localPiSessionJsonl = readFileSync(getSessionPath(ctx.sessionKey), "utf8");
 	} catch (error) {
 		const releaseResult = await client.releaseLease({
-			agentSessionId: ctx.agentSessionId,
+			agentSessionUid: ctx.agentSessionId,
 			holderId,
 			leaseToken: lease.lease_token,
 			reason: "prelaunch_session_read_failed",
@@ -3842,7 +3859,7 @@ async function prepareCheckpointBeforePiLaunch(
 	});
 	if (normalizedLocal.ok === false) {
 		const releaseResult = await client.releaseLease({
-			agentSessionId: ctx.agentSessionId,
+			agentSessionUid: ctx.agentSessionId,
 			holderId,
 			leaseToken: lease.lease_token,
 			reason: "prelaunch_invalid_history",
@@ -3929,7 +3946,7 @@ function writeCheckpointMarker(ctx: RequestContext, reason: "finish" | "error" |
 		const checkpointLease = ctx.checkpointLease;
 		const marker = {
 			session_id: ctx.sessionKey,
-			agent_session_id: ctx.agentSessionId,
+			agent_session_uid: ctx.agentSessionId,
 			thread_id: ctx.threadId,
 			reason,
 			written_at: new Date().toISOString(),
@@ -4004,7 +4021,7 @@ function writeMockStreamResponse(
 	res.write("retry: 1000\n\n");
 
 	let eventId = 0;
-	const writeMockChunk = (chunk: ReturnType<typeof attachAgentId>) => {
+	const writeMockChunk = (chunk: ReturnType<typeof attachAgentUid>) => {
 		eventId += 1;
 		res.write(serializeSse(eventId, chunk));
 		if (logTraffic) {
@@ -4018,7 +4035,7 @@ function writeMockStreamResponse(
 		`Received message: ${input.latestUserMessage}`;
 
 	writeMockChunk(
-		attachAgentId(
+		attachAgentUid(
 			{
 				type: "start",
 				messageId,
@@ -4027,10 +4044,10 @@ function writeMockStreamResponse(
 			null,
 		),
 	);
-	writeMockChunk(attachAgentId({ type: "text-start", id: "t1" }, null));
-	writeMockChunk(attachAgentId({ type: "text-delta", textDelta: mockText }, null));
-	writeMockChunk(attachAgentId({ type: "text-end" }, null));
-	writeMockChunk(attachAgentId({ type: "finish", finishReason: "stop" }, null));
+	writeMockChunk(attachAgentUid({ type: "text-start", id: "t1" }, null));
+	writeMockChunk(attachAgentUid({ type: "text-delta", textDelta: mockText }, null));
+	writeMockChunk(attachAgentUid({ type: "text-end" }, null));
+	writeMockChunk(attachAgentUid({ type: "finish", finishReason: "stop" }, null));
 	res.write("data: [DONE]\n\n");
 	if (logTraffic) {
 		console.log(`[astro-stream] MOCK thread=${input.threadId}: [DONE]`);
@@ -4045,11 +4062,19 @@ function readThreadBinding(threadId: string): ThreadSessionBinding | null {
 	try {
 		const parsed = JSON.parse(readFileSync(bindingPath, "utf8"));
 		if (!parsed || typeof parsed !== "object") return null;
-		const runtimeSessionId =
-			typeof (parsed as { runtimeSessionId?: unknown }).runtimeSessionId === "string" &&
-			(parsed as { runtimeSessionId?: string }).runtimeSessionId?.trim()
-				? (parsed as { runtimeSessionId: string }).runtimeSessionId.trim()
-				: null;
+			const runtimeSessionId =
+				(typeof (parsed as { runtimeSessionUid?: unknown }).runtimeSessionUid === "string" &&
+				(parsed as { runtimeSessionUid?: string }).runtimeSessionUid?.trim()
+					? (parsed as { runtimeSessionUid: string }).runtimeSessionUid.trim()
+					: null) ??
+				(typeof (parsed as { runtime_session_uid?: unknown }).runtime_session_uid === "string" &&
+				(parsed as { runtime_session_uid?: string }).runtime_session_uid?.trim()
+					? (parsed as { runtime_session_uid: string }).runtime_session_uid.trim()
+					: null) ??
+				(typeof (parsed as { runtimeSessionId?: unknown }).runtimeSessionId === "string" &&
+				(parsed as { runtimeSessionId?: string }).runtimeSessionId?.trim()
+					? (parsed as { runtimeSessionId: string }).runtimeSessionId.trim()
+					: null);
 		const normalizedThreadId =
 			typeof (parsed as { threadId?: unknown }).threadId === "string" &&
 			(parsed as { threadId?: string }).threadId?.trim()
@@ -4073,7 +4098,21 @@ function readThreadBinding(threadId: string): ThreadSessionBinding | null {
 
 function writeThreadBinding(binding: ThreadSessionBinding) {
 	mkdirSync(sessionDir, { recursive: true });
-	writeFileSync(getThreadBindingPath(binding.threadId), JSON.stringify(binding, null, 2));
+	writeFileSync(
+		getThreadBindingPath(binding.threadId),
+		JSON.stringify(
+			{
+				threadId: binding.threadId,
+				thread_id: binding.threadId,
+				runtimeSessionUid: binding.runtimeSessionId,
+				runtime_session_uid: binding.runtimeSessionId,
+				updatedAt: binding.updatedAt,
+				updated_at: binding.updatedAt,
+			},
+			null,
+			2,
+		),
+	);
 }
 
 function compactLogValue(value: string, maxLength = 240): string {
@@ -4362,7 +4401,7 @@ function flushPendingReadableLogs(ctx: RequestContext, label = "partial") {
 	ctx.logState.toolCalls.clear();
 }
 
-function logReadableChunk(ctx: RequestContext, chunk: ReturnType<typeof attachAgentId>) {
+function logReadableChunk(ctx: RequestContext, chunk: ReturnType<typeof attachAgentUid>) {
 	if (!logTraffic) return;
 
 	const prefix = getOutgoingLogPrefix(ctx);
@@ -4370,7 +4409,7 @@ function logReadableChunk(ctx: RequestContext, chunk: ReturnType<typeof attachAg
 	switch (chunk.type) {
 		case "new_session":
 			console.log(
-				`${prefix}: new_session agent_session_id=${chunk.new_session.agent_session_id} session_key=${chunk.new_session.session_key}`,
+				`${prefix}: new_session agent_session_uid=${chunk.new_session.agent_session_uid} session_key=${chunk.new_session.session_key}`,
 			);
 			return;
 		case "start":
@@ -4461,7 +4500,7 @@ function logReadableChunk(ctx: RequestContext, chunk: ReturnType<typeof attachAg
 	}
 }
 
-function shouldSuppressClientChunk(chunk: ReturnType<typeof attachAgentId>): boolean {
+function shouldSuppressClientChunk(chunk: ReturnType<typeof attachAgentUid>): boolean {
 	return false;
 }
 
@@ -4475,10 +4514,10 @@ function abortStreamOnPersistenceFailure(ctx: RequestContext, error: unknown) {
 	ctx.res.destroy(error instanceof Error ? error : new Error(message));
 }
 
-function writeChunkWithAgentId(ctx: RequestContext, chunk: StreamEvent, agentId: number | null) {
+function writeChunkWithAgentId(ctx: RequestContext, chunk: StreamEvent, agentId: string | null) {
 	if (ctx.finished) return;
 	ctx.eventId += 1;
-	const enrichedChunk = attachAgentId(normalizeStreamErrorChunk(chunk), agentId);
+	const enrichedChunk = attachAgentUid(normalizeStreamErrorChunk(chunk), agentId);
 	if (enrichedChunk.type === "error") {
 		ctx.terminalError = {
 			errorCode: enrichedChunk.error_code ?? null,
@@ -4639,7 +4678,7 @@ function finalizeOpenReasoningAnnotation(ctx: RequestContext) {
 	recordReasoningAnnotationEnd(ctx);
 }
 
-function emitAssistantText(ctx: RequestContext, text: string, agentId: number | null = ctx.agentId) {
+function emitAssistantText(ctx: RequestContext, text: string, agentId: string | null = ctx.agentId) {
 	const trimmed = text.trim();
 	if (!trimmed) return;
 	ctx.textCounter += 1;
@@ -5139,7 +5178,7 @@ async function runPiPrompt(
 	if (ctx.sessionModelBinding && resolveProviderDefinition(ctx.sessionModelBinding.provider)) {
 		const hydratedProviderCredentials = await hydrateScopedProviderCredentials({
 			createdByUser: ctx.userId,
-			agentSessionId: ctx.agentSessionId,
+			agentSessionUid: ctx.agentSessionId,
 			sessionKey: ctx.sessionKey,
 			provider: ctx.sessionModelBinding.provider,
 			holderId: `astro-pi-stream/${process.pid}/${ctx.sessionKey}`,
@@ -5210,7 +5249,7 @@ async function runPiPrompt(
 		const flushed = await flushScopedProviderCredential({
 			scopedPiAgentDir,
 			createdByUser: ctx.userId,
-			agentSessionId: ctx.agentSessionId,
+			agentSessionUid: ctx.agentSessionId,
 			provider: scopedProviderCredentialProvider,
 			reason,
 			env: {
@@ -5873,12 +5912,12 @@ async function handleStreamRequest(
 
 	if (req.method === "GET" && url.pathname === "/api/chat/session-model") {
 		const sessionKey = normalizeRuntimeSessionId(
-			url.searchParams.get("sessionId") ??
-				url.searchParams.get("runtime_session_id") ??
-				url.searchParams.get("runtimeSessionId"),
+			url.searchParams.get("sessionUid") ??
+				url.searchParams.get("runtime_session_uid") ??
+				url.searchParams.get("runtimeSessionUid"),
 		);
 		if (!sessionKey) {
-			badRequest(res, "Missing sessionId.");
+			badRequest(res, "Missing sessionUid.");
 			return;
 		}
 
@@ -5888,7 +5927,7 @@ async function handleStreamRequest(
 		}
 		if (activeCtx?.sessionModelBinding) {
 			json(res, 200, {
-				sessionId: sessionKey,
+				sessionUid: sessionKey,
 				model: activeCtx.sessionModelBinding,
 			});
 			return;
@@ -5949,7 +5988,7 @@ async function handleStreamRequest(
 		}
 
 		json(res, 200, {
-			sessionId: sessionKey,
+			sessionUid: sessionKey,
 			model: metadata.sessionModelBinding,
 		});
 		return;
@@ -5965,10 +6004,10 @@ async function handleStreamRequest(
 		}
 
 		const sessionKey = normalizeRuntimeSessionId(
-			body?.sessionId ?? body?.runtime_session_id ?? body?.runtimeSessionId,
+			body?.sessionUid ?? body?.runtime_session_uid ?? body?.runtimeSessionUid,
 		);
 		if (!sessionKey) {
-			badRequest(res, "Missing sessionId.");
+			badRequest(res, "Missing sessionUid.");
 			return;
 		}
 
@@ -6017,7 +6056,7 @@ async function handleStreamRequest(
 
 		json(res, 200, {
 			ok: true,
-			sessionId: sessionKey,
+			sessionUid: sessionKey,
 			updatedAt: new Date().toISOString(),
 			updatedFields: patchResult.updatedFields,
 		});
@@ -6038,20 +6077,13 @@ async function handleStreamRequest(
 		}
 
 		const sessionKey = normalizeRuntimeSessionId(
-			body.runtime_session_id ?? body.runtimeSessionId ?? body.sessionId,
+			body.runtime_session_uid ?? body.runtimeSessionUid ?? body.sessionUid,
 		);
 		if (!sessionKey) {
-			badRequest(res, "Missing runtime_session_id.");
+			badRequest(res, "Missing runtime_session_uid.");
 			return;
 		}
-		const agentSessionId = normalizeNumericId(sessionKey);
-		if (agentSessionId == null) {
-			json(res, 400, {
-				error: "invalid_runtime_session_id",
-				message: "runtime_session_id must be the backend AgentSession id.",
-			});
-			return;
-		}
+		const agentSessionId = sessionKey;
 		const activeCtx = getActiveStreamContext(sessionKey, agentSessionId);
 		const requestedByHolderId = activeCtx?.checkpointLease?.holderId ?? resolveCheckpointHolderId();
 		const cancelMessage =
@@ -6061,7 +6093,7 @@ async function handleStreamRequest(
 			log: (message) => console.log(`[astro-stream] ${message}`),
 		});
 		const cancelResult = await client.requestRuntimeCancel({
-			agentSessionId,
+			agentSessionUid: agentSessionId,
 			requestedByHolderId,
 			reason: "user_requested",
 			message: cancelMessage,
@@ -6109,8 +6141,8 @@ async function handleStreamRequest(
 
 		json(res, 200, {
 			ok: true,
-			session_id: sessionKey,
-			agent_session_id: agentSessionId,
+			sessionUid: sessionKey,
+			agentSessionUid: agentSessionId,
 			state,
 			working: cancelResult.body.working,
 			cancellation_id: cancelResult.body.cancellation_id,
@@ -6273,20 +6305,13 @@ async function handleStreamRequest(
 		return;
 	}
 	const explicitRuntimeSessionId = normalizeRuntimeSessionId(
-		(body.runtime_session_id as unknown) ?? (body.runtimeSessionId as unknown),
+		(body.runtime_session_uid as unknown) ?? (body.runtimeSessionUid as unknown),
 	);
 	const runtimeSessionId = explicitRuntimeSessionId;
 	if (!runtimeSessionId) {
 		json(res, 400, {
-			error: "missing_runtime_session_id",
-			message: "runtime_session_id is required for real chat and A2A execution requests.",
-		});
-		return;
-	}
-	if (normalizeNumericId(runtimeSessionId) == null) {
-		json(res, 400, {
-			error: "invalid_runtime_session_id",
-			message: "runtime_session_id must be the backend AgentSession id.",
+			error: "missing_runtime_session_uid",
+			message: "runtime_session_uid is required for real chat and A2A execution requests.",
 		});
 		return;
 	}
@@ -6304,7 +6329,7 @@ async function handleStreamRequest(
 			component: "astro-stream",
 			event: "request_new_chat_ignored_backend_session_required",
 			message:
-				"Astro ignored `newChat` because backend-owned session attach now requires an explicit runtime_session_id.",
+				"Astro ignored `newChat` because backend-owned session attach now requires an explicit runtime_session_uid.",
 			data: {
 				agentType,
 				userId,
@@ -6513,7 +6538,7 @@ async function handleStreamRequest(
 	if (!existingSessionMetadata) {
 		json(res, 409, {
 			error: "session_hydration_failed",
-			message: "Astro could not hydrate session metadata for the provided runtime_session_id.",
+			message: "Astro could not hydrate session metadata for the provided runtime_session_uid.",
 		});
 		return;
 	}
@@ -6528,7 +6553,7 @@ async function handleStreamRequest(
 		if (existingSessionMetadata.agentType !== agentType) {
 			json(res, 409, {
 				error: "session_mismatch",
-				message: "runtime_session_id does not match the requested agentType.",
+				message: "runtime_session_uid does not match the requested agentType.",
 			});
 			return;
 		}
@@ -6665,7 +6690,7 @@ async function handleStreamRequest(
 	const system = typeof body.system === "string" ? body.system : undefined;
 
 	const threadId = existingSessionMetadata?.threadId ?? requestedThreadId ?? runtimeSessionId;
-	let agentId: number | null = null;
+	let agentId: string | null = null;
 	let agentUniqueId: string | null = null;
 	const explicitAgentId = extractRequestedAgentId(isPlainObject(body) ? body : {});
 	const explicitAgentUniqueId = extractRequestedAgentUniqueId(isPlainObject(body) ? body : {});
@@ -6679,14 +6704,14 @@ async function handleStreamRequest(
 
 	if (agentId == null) {
 		json(res, 409, {
-			error: "missing_agent_id",
-			message: "Astro could not resolve the backend Agent id for the provided session.",
+			error: "missing_agent_uid",
+			message: "Astro could not resolve the backend Agent uid for the provided session.",
 		});
 		return;
 	}
 
 	let sessionKey: string;
-	let agentSessionId: number | null = null;
+	let agentSessionId: string | null = null;
 	let startedAt: string | null = null;
 	const responseAgentType = existingSessionMetadata?.agentType ?? agentType;
 	const responseThreadId = threadId;
@@ -6701,19 +6726,19 @@ async function handleStreamRequest(
 						callerMetadata: null,
 						responseFormat: null,
 						handleUniqueId: null,
-						callerAgentSessionId: null,
-						targetAgentSessionId: null,
-						targetAgentId: null,
+						callerAgentSessionUid: null,
+						targetAgentSessionUid: null,
+						targetAgentUid: null,
 					}),
-					targetAgentSessionId:
-						requestA2AEnvelope?.targetAgentSessionId ??
-						existingSessionMetadata?.a2a?.targetAgentSessionId ??
+					targetAgentSessionUid:
+						requestA2AEnvelope?.targetAgentSessionUid ??
+						existingSessionMetadata?.a2a?.targetAgentSessionUid ??
 						agentSessionId ??
-						normalizeNumericId(runtimeSessionId) ??
+						runtimeSessionId ??
 						null,
-					targetAgentId:
-						requestA2AEnvelope?.targetAgentId ??
-						existingSessionMetadata?.a2a?.targetAgentId ??
+					targetAgentUid:
+						requestA2AEnvelope?.targetAgentUid ??
+						existingSessionMetadata?.a2a?.targetAgentUid ??
 						agentId ??
 						null,
 			  })
@@ -6727,12 +6752,12 @@ async function handleStreamRequest(
 	) {
 		json(res, 409, {
 			error: "session_mismatch",
-			message: "runtime_session_id does not match the active agent.",
+			message: "runtime_session_uid does not match the active agent.",
 		});
 		return;
 	}
 	agentSessionId =
-		existingSessionMetadata?.agentSessionId ?? normalizeNumericId(runtimeSessionId) ?? null;
+		existingSessionMetadata?.agentSessionId ?? runtimeSessionId;
 	startedAt = existingSessionMetadata?.startedAt ?? null;
 	sessionKey = runtimeSessionId;
 	writeSessionMetadata(sessionKey, {
@@ -6775,9 +6800,9 @@ async function handleStreamRequest(
 			status: 409,
 			error_code: "session_run_already_active",
 			error_detail: "Wait for the active run to finish, then retry.",
-			sessionId: sessionKey,
+			sessionUid: sessionKey,
 			threadId: activeRun.threadId,
-			agentSessionId: activeRun.agentSessionId,
+			agentSessionUid: activeRun.agentSessionId,
 			messageId: activeRun.messageId,
 			startedAt: activeRun.startedAt,
 			clientAttached: activeRun.clientAttached,
@@ -6799,7 +6824,7 @@ async function handleStreamRequest(
 				sessionModelBinding,
 			}) ?? agentConfig?.model ?? null;
 		console.log(
-			`[astro-stream] SESSION agent_type=${responseAgentType} session=${sessionKey} thread=${responseThreadId} agent_id=${agentId} agent_session_id=${agentSessionId ?? "n/a"}${selectedModelForLog ? ` model=${selectedModelForLog}` : ""}`,
+			`[astro-stream] SESSION agent_type=${responseAgentType} session_uid=${sessionKey} thread=${responseThreadId} agent_uid=${agentId} agent_session_uid=${agentSessionId ?? "n/a"}${selectedModelForLog ? ` model=${selectedModelForLog}` : ""}`,
 		);
 	}
 
@@ -6810,8 +6835,8 @@ async function handleStreamRequest(
 			sessionKey,
 			threadId: responseThreadId,
 			agentType: responseAgentType,
-			agentId,
-			agentSessionId,
+			agentUid: agentId,
+			agentSessionUid: agentSessionId,
 			startedAt,
 			...(effectiveA2AEnvelope ? { a2a: effectiveA2AEnvelope } : {}),
 		});
@@ -6839,9 +6864,9 @@ async function handleStreamRequest(
 		"Cache-Control": "no-cache",
 		Connection: "keep-alive",
 		"X-Thread-Id": responseThreadId,
-		...(agentId != null ? { "X-Agent-Id": String(agentId) } : {}),
+		...(agentId != null ? { "X-Agent-Uid": String(agentId) } : {}),
 		...(agentUniqueId ? { "X-Agent-Unique-Id": agentUniqueId } : {}),
-		...(agentSessionId != null ? { "X-Agent-Session-Id": String(agentSessionId) } : {}),
+		...(agentSessionId != null ? { "X-Agent-Session-Uid": String(agentSessionId) } : {}),
 		"X-Session-Key": sessionKey,
 		"X-Stream-Protocol": "ui-message-stream",
 		Protocol: "ui-message-stream",

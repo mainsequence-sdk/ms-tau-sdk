@@ -421,3 +421,17 @@ Why:
   executor-specific `agentType` checks
 - explicit runtime profiles make fixed worker prompt loading, project cwd rules, model policy, and
   sidecar parity easier to reason about
+
+## 31. Replace backend `id` resource identity with `uid`
+
+Implementation:
+
+- `reference/adr-31-backend-uid-identity.md`
+
+Why:
+
+- backend resource lookup is moving away from deprecated numeric/id-shaped identity
+- Astro currently still parses serializer field `id`, validates some backend session identity as
+  numeric, and addresses backend resources through id-based helpers
+- `uid`, `agent_type`, and `agent_unique_id` need to stay distinct so backend lookup identity does
+  not get confused with semantic agent identity

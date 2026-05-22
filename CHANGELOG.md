@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0 - 2026-05-22
+
+### Strict Backend UID Contract
+
+- Replaced backend resource lookup identity from deprecated backend `id` values to backend `uid` values across session hydration, checkpoint, cancellation, A2A envelope, and provider-credential runtime helpers.
+- Changed the active request contract to require `runtime_session_uid` for real chat and A2A attach, with backend session serializers expected to expose `uid` instead of `id`.
+- Updated runtime response surfaces to emit backend uid terminology, including `X-Agent-Uid`, `X-Agent-Session-Uid`, `agent_uid` stream chunks, and `sessionUid` / `agentSessionUid` JSON response fields on control-plane endpoints.
+- Aligned active docs, session insights metadata, and ADR 31 with the strict uid cutover, while keeping `agent_type` and `agent_unique_id` distinct from backend resource identity.
+
 ## 1.0.2 - 2026-05-17
 
 ### Strict Project Executor Identity

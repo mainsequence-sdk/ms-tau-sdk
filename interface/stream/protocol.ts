@@ -14,13 +14,13 @@ export type StreamEvent =
 	| {
 			type: "new_session";
 			new_session: {
-				agent_session_id: number;
+				agent_session_uid: string;
 				session_key: string;
-				runtime_session_id: string;
+				runtime_session_uid: string;
 				agent_type: string;
 				agent_unique_id?: string;
 				thread_id: string;
-				agent_id: number;
+				agent_uid: string;
 			};
 	  }
 	| { type: "reasoning-start"; id: string }
@@ -52,7 +52,7 @@ export type StreamEvent =
 	};
 
 export type StreamChunk = StreamEvent & {
-	agent_id: number | null;
+	agent_uid: string | null;
 };
 
 export type SessionStatus = {
@@ -61,10 +61,10 @@ export type SessionStatus = {
 	signal: string | null;
 };
 
-export function attachAgentId(chunk: StreamEvent, agentId: number | null): StreamChunk {
+export function attachAgentUid(chunk: StreamEvent, agentUid: string | null): StreamChunk {
 	return {
 		...chunk,
-		agent_id: agentId,
+		agent_uid: agentUid,
 	};
 }
 

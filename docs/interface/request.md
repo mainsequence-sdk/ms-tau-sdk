@@ -9,7 +9,7 @@ currently stored for that runtime session.
 
 - `agentType` (string)
 - `userId` (string | number)
-- `runtime_session_id` (string; accepted aliases: `runtimeSessionId`, `sessionId`) for every real
+- `runtime_session_uid` (string; accepted camel-case alias: `runtimeSessionUid`) for every real
   non-mock execution request
 - `messages` (array) — the last entry must be the current user message
 
@@ -32,7 +32,7 @@ currently stored for that runtime session.
 - The last entry must be a `user` role message.
 - If the latest user message contains the word `MOCK`, the server returns a synthetic response
   immediately for frontend testing and skips agent/session setup.
-- `runtime_session_id` is mandatory for real non-mock execution. Astro must attach to that existing
+- `runtime_session_uid` is mandatory for real non-mock execution. Astro must attach to that existing
   backend session and must not create a new one.
 - `newChat` is deprecated as routing input. Older clients may still send it, but Astro must ignore
   it for allocation decisions.
@@ -40,15 +40,15 @@ currently stored for that runtime session.
   treats that request-carried session object as the preferred authority for model/provider binding
   and local metadata refresh.
 - Outbound A2A requests should always include the full backend `AgentSession` serializer in
-  `session` together with `runtime_session_id` because the sender already has the backend session
+  `session` together with `runtime_session_uid` because the sender already has the backend session
   allocation response for the target session.
 - If `session` is absent or insufficient, Astro must fetch backend session authority from
-  `runtime_session_id` before Pi launch instead of proceeding with no model binding.
+  `runtime_session_uid` before Pi launch instead of proceeding with no model binding.
 - `threadId` is informational/client-bookkeeping only when backend registration is enabled; it does
   not control session continuity.
 - `agentType` is the backend `Agent.agent_type` value
   (unknown values return `error: unknown_agent_type`).
-- When backend registration is enabled, `runtime_session_id` is the backend `AgentSession.id` string.
+- When backend registration is enabled, `runtime_session_uid` is the backend `AgentSession.uid` string.
 - `project-executor` is the only project implementation runtime.
 - Project-scoped executor requests may rely on a deployment-pinned project cwd or supply `cwd`
   explicitly when the runtime is not already pinned.
@@ -68,7 +68,7 @@ currently stored for that runtime session.
 ```json
 {
   "threadId": "thread-001",
-  "runtime_session_id": "456",
+  "runtime_session_uid": "session_456_uid",
   "agentType": "astro-orchestrator",
   "userId": "user_123",
   "system": "optional system prompt",
@@ -96,9 +96,9 @@ Example resume request with session authority:
   "threadId": "thread-001",
   "agentType": "astro-orchestrator",
   "userId": "user_123",
-  "runtime_session_id": "456",
+  "runtime_session_uid": "session_456_uid",
   "session": {
-    "id": 456,
+    "uid": "session_456_uid",
     "thread_id": "thread-001",
     "llm_provider": "openai-codex",
     "llm_model": "gpt-5.3-codex-spark",
@@ -128,7 +128,7 @@ Example resume request with session authority:
       }
     },
     "agent": {
-      "id": 123,
+      "uid": "agent_123_uid",
       "agent_type": "astro-orchestrator"
     }
   },
@@ -152,11 +152,11 @@ Example project-executor request:
 ```json
 {
   "threadId": "thread-hope30",
-  "runtime_session_id": "87",
+  "runtime_session_uid": "session_87_uid",
   "agentType": "project-executor",
   "userId": "user_123",
   "session": {
-    "id": 87,
+    "uid": "session_87_uid",
     "thread_id": "87",
     "llm_provider": "openai-codex",
     "llm_model": "gpt-5.3-codex-spark",

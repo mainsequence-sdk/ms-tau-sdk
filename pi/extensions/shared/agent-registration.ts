@@ -8,8 +8,8 @@ type AgentSessionResult = {
 	responseText?: string | null;
 	url?: string | null;
 	error: string | null;
-	agentSessionId: number | null;
-	agentId: number | null;
+	agentSessionUid: string | null;
+	agentUid: string | null;
 	agentType: string | null;
 	agentUniqueId: string | null;
 	threadId: string | null;
@@ -21,7 +21,7 @@ export type BackendAgentSessionFetchResult = {
 	status: number | null;
 	body: unknown;
 	error: string | null;
-	agentSessionId: number | null;
+	agentSessionUid: string | null;
 	notFound: boolean;
 	endpoint: string | null;
 };
@@ -175,10 +175,10 @@ export async function resolveBackendAuthHeaders(
 async function postStartAgentSession(options: {
 	backendUrl: string;
 	authHeaders: BackendAuthHeaders;
-	agentId: number;
+	agentUid: string;
 	payload: Record<string, unknown>;
 }): Promise<Response> {
-	return fetch(agentStartSessionEndpoint(options.backendUrl, options.agentId), {
+	return fetch(agentStartSessionEndpoint(options.backendUrl, options.agentUid), {
 		method: "POST",
 		headers: {
 			...options.authHeaders,
@@ -188,8 +188,8 @@ async function postStartAgentSession(options: {
 	});
 }
 
-function agentStartSessionEndpoint(backendUrl: string, agentId: number): string {
-	return `${backendUrl}/orm/api/agents/v1/agents/${agentId}/start_new_session/`;
+function agentStartSessionEndpoint(backendUrl: string, agentUid: string): string {
+	return `${backendUrl}/orm/api/agents/v1/agents/${encodeURIComponent(agentUid)}/start_new_session/`;
 }
 
 async function getAgentSessionByEndpoint(options: {
@@ -205,26 +205,16 @@ async function getAgentSessionByEndpoint(options: {
 	});
 }
 
-function parseAgentId(payload: any): number | null {
-	if (typeof payload?.id === "number" && Number.isFinite(payload.id)) {
-		return payload.id;
-	}
-	if (typeof payload?.id === "string" && payload.id.trim()) {
-		const parsed = Number.parseInt(payload.id, 10);
-		return Number.isFinite(parsed) ? parsed : null;
-	}
-	return null;
+function normalizeBackendUid(value: unknown): string | null {
+	return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function parseAgentSessionId(payload: any): number | null {
-	if (typeof payload?.id === "number" && Number.isFinite(payload.id)) {
-		return payload.id;
-	}
-	if (typeof payload?.id === "string" && payload.id.trim()) {
-		const parsed = Number.parseInt(payload.id, 10);
-		return Number.isFinite(parsed) ? parsed : null;
-	}
-	return null;
+function parseAgentUid(payload: any): string | null {
+	return parseStringField(payload, "uid", "agent_uid", "agentUid");
+}
+
+function parseAgentSessionUid(payload: any): string | null {
+	return parseStringField(payload, "uid", "agent_session_uid", "agentSessionUid");
 }
 
 function parseStringField(payload: any, ...keys: string[]): string | null {
@@ -276,26 +266,19 @@ function extractBackendErrorMessage(body: any, responseText: string, fallback: s
 	return responseText || fallback;
 }
 
-function normalizeAgentSessionLookupId(value: unknown): number | null {
-	if (typeof value === "number" && Number.isFinite(value)) {
-		return Math.trunc(value);
-	}
-	if (typeof value === "string" && /^\d+$/.test(value.trim())) {
-		const parsed = Number.parseInt(value.trim(), 10);
-		return Number.isFinite(parsed) ? parsed : null;
-	}
-	return null;
+function normalizeBackendLookupUid(value: unknown): string | null {
+	return normalizeBackendUid(value);
 }
 
 export async function startBackendAgentSession(options: {
-	agentId: number;
+	agentUid: string;
 	payload: Record<string, unknown>;
 	env?: NodeJS.ProcessEnv;
 	log?: (message: string) => void;
 }): Promise<AgentSessionResult> {
 	const runtimeEnv = options.env ?? process.env;
 	const backendUrl = resolveBackendUrl(runtimeEnv);
-	const url = agentStartSessionEndpoint(backendUrl, options.agentId);
+	const url = agentStartSessionEndpoint(backendUrl, options.agentUid);
 	const authHeadersResult = await resolveBackendAuthHeaders(runtimeEnv, options.log);
 
 	if (!authHeadersResult.headers) {
@@ -306,8 +289,8 @@ export async function startBackendAgentSession(options: {
 				responseText: null,
 				url,
 				error: authHeadersResult.error ?? "Missing backend auth headers for agent session creation.",
-				agentSessionId: null,
-				agentId: null,
+				agentSessionUid: null,
+				agentUid: null,
 				agentType: null,
 				agentUniqueId: null,
 				threadId: null,
@@ -318,7 +301,7 @@ export async function startBackendAgentSession(options: {
 	let response = await postStartAgentSession({
 		backendUrl,
 		authHeaders: authHeadersResult.headers,
-		agentId: options.agentId,
+		agentUid: options.agentUid,
 		payload: options.payload,
 	});
 
@@ -328,7 +311,7 @@ export async function startBackendAgentSession(options: {
 			response = await postStartAgentSession({
 				backendUrl,
 				authHeaders: retryAuthHeaders.headers,
-				agentId: options.agentId,
+				agentUid: options.agentUid,
 				payload: options.payload,
 			});
 		}
@@ -349,7 +332,7 @@ export async function startBackendAgentSession(options: {
 			`Agent session start failed with status ${response.status}.`,
 		);
 		options.log?.(
-			`Agent session start failed (${response.status}) backend=${backendUrl} agentId=${options.agentId}: ${message}`,
+			`Agent session start failed (${response.status}) backend=${backendUrl} agentUid=${options.agentUid}: ${message}`,
 		);
 		return {
 			ok: false,
@@ -358,8 +341,8 @@ export async function startBackendAgentSession(options: {
 			responseText,
 			url,
 			error: String(message),
-			agentSessionId: null,
-			agentId: null,
+			agentSessionUid: null,
+			agentUid: null,
 			agentType: null,
 			agentUniqueId: null,
 			threadId: null,
@@ -367,18 +350,18 @@ export async function startBackendAgentSession(options: {
 		};
 	}
 
-	const agentSessionId = parseAgentSessionId(parsedBody);
-	if (agentSessionId == null) {
-		options.log?.("Agent session start succeeded but no `id` was returned.");
+	const agentSessionUid = parseAgentSessionUid(parsedBody);
+	if (agentSessionUid == null) {
+		options.log?.("Agent session start succeeded but no `uid` was returned.");
 		return {
 			ok: false,
 			status: response.status,
 			body: parsedBody,
 			responseText,
 			url,
-			error: "Agent session start did not return an `id`.",
-			agentSessionId: null,
-			agentId: null,
+			error: "Agent session start did not return a `uid`.",
+			agentSessionUid: null,
+			agentUid: null,
 			agentType: null,
 			agentUniqueId: null,
 			threadId: null,
@@ -394,8 +377,8 @@ export async function startBackendAgentSession(options: {
 		responseText,
 		url,
 		error: null,
-		agentSessionId,
-		agentId: parseAgentId(responseAgent),
+		agentSessionUid,
+		agentUid: parseAgentUid(responseAgent),
 		agentType: parseAgentType(parsedBody) ?? parseBackendAgentType(responseAgent),
 		agentUniqueId: parseStringField(responseAgent, "agent_unique_id", "agentUniqueId"),
 		threadId: parseStringField(parsedBody, "thread_id", "threadId"),
@@ -404,30 +387,30 @@ export async function startBackendAgentSession(options: {
 }
 
 export async function fetchBackendAgentSession(options: {
-	agentSessionId: number | string;
+	agentSessionUid: string;
 	env?: NodeJS.ProcessEnv;
 	log?: (message: string) => void;
 }): Promise<BackendAgentSessionFetchResult> {
 	const runtimeEnv = options.env ?? process.env;
 	const backendUrl = resolveBackendUrl(runtimeEnv);
-	const normalizedSessionId = normalizeAgentSessionLookupId(options.agentSessionId);
+	const normalizedSessionUid = normalizeBackendLookupUid(options.agentSessionUid);
 
-	if (normalizedSessionId == null) {
+	if (normalizedSessionUid == null) {
 		logStructuredEvent({
 			severity: "WARNING",
 			component: "agent-registration",
-			event: "backend_session_fetch_invalid_id",
-			message: "Backend agent session fetch skipped because the session id was invalid.",
+			event: "backend_session_fetch_invalid_uid",
+			message: "Backend agent session fetch skipped because the session uid was invalid.",
 			data: {
-				agentSessionId: options.agentSessionId,
+				agentSessionUid: options.agentSessionUid,
 			},
 		});
 		return {
 			ok: false,
 			status: null,
 			body: null,
-			error: "Invalid backend agent session id.",
-			agentSessionId: null,
+			error: "Invalid backend agent session uid.",
+			agentSessionUid: null,
 			notFound: false,
 			endpoint: null,
 		};
@@ -441,7 +424,7 @@ export async function fetchBackendAgentSession(options: {
 			event: "backend_session_fetch_missing_auth_headers",
 			message: "Backend agent session fetch failed before the request because no backend auth headers were available.",
 			data: {
-				agentSessionId: normalizedSessionId,
+				agentSessionUid: normalizedSessionUid,
 				error: authHeadersResult.error ?? "missing backend auth headers",
 			},
 		});
@@ -450,16 +433,16 @@ export async function fetchBackendAgentSession(options: {
 			status: null,
 			body: null,
 			error: authHeadersResult.error ?? "Missing backend auth headers for backend session fetch.",
-			agentSessionId: normalizedSessionId,
+			agentSessionUid: normalizedSessionUid,
 			notFound: false,
 			endpoint: null,
 		};
 	}
 
 	const candidateEndpoints = [
-		`${backendUrl}/orm/api/agents/v1/sessions/${normalizedSessionId}/`,
-		`${backendUrl}/orm/api/agents/v1/agent_sessions/${normalizedSessionId}/`,
-		`${backendUrl}/orm/api/agents/v1/agent-sessions/${normalizedSessionId}/`,
+		`${backendUrl}/orm/api/agents/v1/sessions/${encodeURIComponent(normalizedSessionUid)}/`,
+		`${backendUrl}/orm/api/agents/v1/agent_sessions/${encodeURIComponent(normalizedSessionUid)}/`,
+		`${backendUrl}/orm/api/agents/v1/agent-sessions/${encodeURIComponent(normalizedSessionUid)}/`,
 	];
 
 	let lastNon404Error: BackendAgentSessionFetchResult | null = null;
@@ -470,7 +453,7 @@ export async function fetchBackendAgentSession(options: {
 			event: "backend_session_fetch_attempt",
 			message: "Trying backend agent session fetch.",
 			data: {
-				agentSessionId: normalizedSessionId,
+				agentSessionUid: normalizedSessionUid,
 				endpoint,
 			},
 		});
@@ -504,7 +487,7 @@ export async function fetchBackendAgentSession(options: {
 				event: "backend_session_fetch_endpoint_not_found",
 				message: "Backend agent session was not found at this endpoint; trying the next candidate.",
 				data: {
-					agentSessionId: normalizedSessionId,
+					agentSessionUid: normalizedSessionUid,
 					endpoint,
 				},
 			});
@@ -522,7 +505,7 @@ export async function fetchBackendAgentSession(options: {
 				status: response.status,
 				body: parsedBody,
 				error: String(message),
-				agentSessionId: normalizedSessionId,
+				agentSessionUid: normalizedSessionUid,
 				notFound: false,
 				endpoint,
 			};
@@ -532,7 +515,7 @@ export async function fetchBackendAgentSession(options: {
 				event: "backend_session_fetch_rejected",
 				message: "Backend agent session fetch was rejected.",
 				data: {
-					agentSessionId: normalizedSessionId,
+					agentSessionUid: normalizedSessionUid,
 					endpoint,
 					status: response.status,
 					error: message,
@@ -546,7 +529,7 @@ export async function fetchBackendAgentSession(options: {
 			event: "backend_session_fetch_succeeded",
 			message: "Backend agent session fetch succeeded.",
 			data: {
-				agentSessionId: normalizedSessionId,
+				agentSessionUid: normalizedSessionUid,
 				endpoint,
 				status: response.status,
 			},
@@ -556,7 +539,7 @@ export async function fetchBackendAgentSession(options: {
 			status: response.status,
 			body: parsedBody,
 			error: null,
-			agentSessionId: parseAgentSessionId(parsedBody) ?? normalizedSessionId,
+			agentSessionUid: parseAgentSessionUid(parsedBody) ?? normalizedSessionUid,
 			notFound: false,
 			endpoint,
 		};
@@ -572,7 +555,7 @@ export async function fetchBackendAgentSession(options: {
 		event: "backend_session_fetch_not_found",
 		message: "Backend agent session was not found on any known endpoint.",
 		data: {
-			agentSessionId: normalizedSessionId,
+			agentSessionUid: normalizedSessionUid,
 			candidateEndpoints,
 		},
 	});
@@ -580,8 +563,8 @@ export async function fetchBackendAgentSession(options: {
 		ok: false,
 		status: 404,
 		body: null,
-		error: `Backend agent session ${normalizedSessionId} was not found.`,
-		agentSessionId: normalizedSessionId,
+		error: `Backend agent session ${normalizedSessionUid} was not found.`,
+		agentSessionUid: normalizedSessionUid,
 		notFound: true,
 		endpoint: null,
 	};

@@ -16,7 +16,7 @@ import {
 
 type ScopedCredentialManifest = {
 	created_by_user: string;
-	agent_session_id: number | null;
+	agent_session_uid: string | null;
 	providers: Record<
 		string,
 		{
@@ -76,9 +76,9 @@ function readScopedManifest(scopedPiAgentDir: string): ScopedCredentialManifest 
 	if (!isPlainObject(parsed.providers)) return null;
 	return {
 		created_by_user: typeof parsed.created_by_user === "string" ? parsed.created_by_user : "",
-		agent_session_id:
-			typeof parsed.agent_session_id === "number" && Number.isFinite(parsed.agent_session_id)
-				? parsed.agent_session_id
+		agent_session_uid:
+			typeof parsed.agent_session_uid === "string" && parsed.agent_session_uid.trim()
+				? parsed.agent_session_uid.trim()
 				: null,
 		providers: parsed.providers as ScopedCredentialManifest["providers"],
 	};
@@ -147,7 +147,7 @@ export async function fetchBackendProviderCredentialStatus(input: {
 
 export async function hydrateScopedProviderCredentials(input: {
 	createdByUser: string;
-	agentSessionId: number | null;
+	agentSessionUid: string | null;
 	sessionKey: string;
 	provider: string;
 	holderId: string;
@@ -168,7 +168,7 @@ export async function hydrateScopedProviderCredentials(input: {
 	const client = new ModelProviderCredentialClient({ env, log: input.log });
 	const result = await client.hydrate({
 		createdByUser: input.createdByUser,
-		agentSessionId: input.agentSessionId,
+		agentSessionUid: input.agentSessionUid,
 		providers: [input.provider],
 		holderId: input.holderId,
 	});
@@ -213,7 +213,7 @@ export async function hydrateScopedProviderCredentials(input: {
 
 	writeScopedManifest(scopedPiAgentDir, {
 		created_by_user: input.createdByUser,
-		agent_session_id: input.agentSessionId,
+		agent_session_uid: input.agentSessionUid,
 		providers: {
 			[input.provider]: {
 				version: hydrated.version,
@@ -252,7 +252,7 @@ export function createScopedProviderAuthDir(input: {
 export async function flushScopedProviderCredential(input: {
 	scopedPiAgentDir: string;
 	createdByUser: string;
-	agentSessionId: number | null;
+	agentSessionUid: string | null;
 	provider: string;
 	reason: string;
 	env?: NodeJS.ProcessEnv;
@@ -270,7 +270,7 @@ export async function flushScopedProviderCredential(input: {
 
 	const manifest = readScopedManifest(input.scopedPiAgentDir) ?? {
 		created_by_user: input.createdByUser,
-		agent_session_id: input.agentSessionId,
+		agent_session_uid: input.agentSessionUid,
 		providers: {},
 	};
 	const providerManifest = manifest.providers[input.provider];
@@ -292,7 +292,7 @@ export async function flushScopedProviderCredential(input: {
 	const client = new ModelProviderCredentialClient({ env: input.env, log: input.log });
 	const result = await client.flush({
 			createdByUser: input.createdByUser,
-			agentSessionId: input.agentSessionId,
+			agentSessionUid: input.agentSessionUid,
 			provider: input.provider,
 			baseVersion: providerManifest?.version ?? 0,
 			reason: input.reason,
@@ -313,7 +313,7 @@ export async function flushScopedProviderCredential(input: {
 	writeScopedManifest(input.scopedPiAgentDir, {
 		...manifest,
 		created_by_user: input.createdByUser,
-		agent_session_id: input.agentSessionId,
+		agent_session_uid: input.agentSessionUid,
 		providers: {
 			...manifest.providers,
 			[input.provider]: {

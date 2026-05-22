@@ -5,9 +5,9 @@ Responses are **SSE** with:
 - `Content-Type: text/event-stream`
 - `X-Stream-Protocol: ui-message-stream`
 - `X-Thread-Id`
-- `X-Agent-Id` (backend Agent id)
+- `X-Agent-Uid` (backend Agent uid)
 - `X-Agent-Unique-Id` (deterministic identity)
-- `X-Agent-Session-Id` (backend AgentSession id for the attached session)
+- `X-Agent-Session-Uid` (backend AgentSession uid for the attached session)
 - `X-Session-Key` (runtime session key)
 
 Each SSE event uses:
@@ -43,11 +43,11 @@ The server emits standard assistant-ui stream chunks:
 Every chunk also includes:
 
 ```json
-{ "agent_id": 123 }
+{ "agent_uid": "agent_123_uid" }
 ```
 
 Clients must not depend on Astro emitting a `new_session` chunk. The caller should already know the
-session id from the backend control-plane step that created the session before Astro was called.
+session uid from the backend control-plane step that created the session before Astro was called.
 
 The `error` chunk keeps `error` as the human-readable field and includes `error_source` so the
 frontend can distinguish backend, provider, Pi, client, checkpoint, tool, and Astro
@@ -67,10 +67,10 @@ request/response context that caused the stream failure.
   "error_detail": "Lease is already held by another runtime.",
   "field_errors": null,
   "forensics": {
-    "backend_request_url": "http://backend/orm/api/agents/v1/sessions/52/checkpoint_lease/acquire/",
-    "backend_response_text": "{\"agent_session_id\":52,\"error_code\":\"checkpoint_lease_already_held\",\"error_detail\":\"Lease is already held by another runtime.\",\"checkpoint_version\":4,\"bundle_hash\":\"sha256:...\"}",
+    "backend_request_url": "http://backend/orm/api/agents/v1/sessions/session_52_uid/checkpoint_lease/acquire/",
+    "backend_response_text": "{\"agent_session_uid\":\"session_52_uid\",\"error_code\":\"checkpoint_lease_already_held\",\"error_detail\":\"Lease is already held by another runtime.\",\"checkpoint_version\":4,\"bundle_hash\":\"sha256:...\"}",
     "backend_response_body": {
-      "agent_session_id": 52,
+      "agent_session_uid": "session_52_uid",
       "error_code": "checkpoint_lease_already_held",
       "error_detail": "Lease is already held by another runtime.",
       "checkpoint_version": 4,
@@ -79,6 +79,6 @@ request/response context that caused the stream failure.
     "backend_checkpoint_version": 4,
     "backend_bundle_hash": "sha256:..."
   },
-  "agent_id": 123
+  "agent_uid": "agent_123_uid"
 }
 ```
