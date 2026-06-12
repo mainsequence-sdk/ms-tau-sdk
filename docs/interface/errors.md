@@ -3,10 +3,9 @@
 Typical error responses:
 
 - `400` — invalid JSON, missing `messages`, or missing latest user message
-- `400` — missing `agentType` or `userId`
+- `400` — missing `agentType` or `user_uid`
 - `400` — missing user identity for provider status/sign-in/sign-off requests. Astro accepts
-  `userId`, `user_id`, `created_by_user`, `createdByUser`, supported user-id headers, Bearer JWT
-  user claims, or `ASTRO_MAINSEQUENCE_USER_ID`.
+  `user_uid`, supported user-uid headers, Bearer JWT user claims, or `ASTRO_MAINSEQUENCE_USER_UID`.
 - `400` — missing `runtime_session_uid` (or accepted camel-case alias) for real non-mock `POST /api/chat` or
   `POST /api/a2a/chat` requests
 - `400` — missing `sessionUid` for `GET /api/chat/session-model`

@@ -44,7 +44,7 @@ Send a request compatible with assistant-ui's `ui-message-stream` runtime:
 {
   "runtime_session_uid": "session_456_uid",
   "agentType": "astro-orchestrator",
-  "userId": "user_123",
+  "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f",
   "system": "optional system prompt",
   "messages": [
     {
@@ -69,7 +69,7 @@ Send a request compatible with assistant-ui's `ui-message-stream` runtime:
     "surfaceContextSource": "surface",
     "surfaceDetails": {},
     "surfaceSummary": "...",
-    "userId": "..."
+    "user_uid": "..."
   }
 }
 ```
@@ -80,7 +80,7 @@ To start a project-scoped executor session directly, use:
 {
   "runtime_session_uid": "session_87_uid",
   "agentType": "project-executor",
-  "userId": "user_123",
+  "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f",
   "projectId": "42",
   "cwd": "/absolute/path/to/checked-out-project",
   "messages": [
@@ -96,7 +96,7 @@ To start a project-scoped executor session directly, use:
   ],
   "tools": {},
   "context": {
-    "userId": "user_123"
+    "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f"
   }
 }
 ```
@@ -197,7 +197,7 @@ Canonical request fields accepted by Astro include:
 ```json
 {
   "runtime_session_uid": "session_123_uid",
-  "userId": "user_123",
+  "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f",
   "agentType": "project-executor",
   "session": {
     "uid": "session_123_uid",
@@ -252,7 +252,7 @@ Initial writable fields:
 - `config.compaction.enabled`
 - `config.compaction.reserveTokens`
 
-### `GET /api/model-providers?userId=<user_id>`
+### `GET /api/model-providers?user_uid=<user_uid>`
 
 Returns backend-owned auth state for managed auth-backed model providers Astro currently exposes in
 the UI, such as `openai`, `anthropic`, `openai-codex`, and `github-copilot`.
@@ -260,7 +260,7 @@ the UI, such as `openai`, `anthropic`, `openai-codex`, and `github-copilot`.
 ### `POST /api/model-providers/:provider/signin`
 
 Starts provider signin. Immediate providers return `200`; interactive providers return `202` with
-an attempt object. The JSON body must include `userId` or one of Astro's accepted user-id aliases.
+an attempt object. The JSON body must include `user_uid`.
 
 ### `GET /api/model-providers/:provider/signin/:attemptId`
 
@@ -281,13 +281,13 @@ Revokes the provider credential in the backend for the requested user.
 ### `GET /api/models/catalog`
 
 Returns Astro's global model catalog from the Pi registry without runtime availability filtering,
-but still filtered to the providers Astro currently supports in-product. Pass `userId` to annotate
+but still filtered to the providers Astro currently supports in-product. Pass `user_uid` to annotate
 auth-backed entries with user-scoped backend credential status.
 
 ### `GET /api/chat/get_available_models`
 
 Returns the models Astro can currently offer through its model collectors without sending a message
-to Pi. Pass `userId` to evaluate auth-backed provider availability for that user.
+to Pi. Pass `user_uid` to evaluate auth-backed provider availability for that user.
 
 The response is grouped by `provider`, with each provider carrying its own `models` array.
 

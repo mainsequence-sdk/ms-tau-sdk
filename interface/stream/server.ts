@@ -1171,22 +1171,17 @@ function resolveUserIdFromAuthorizationHeader(req: import("node:http").IncomingM
 	const payload = parseJwtPayload(matched[1].trim());
 	if (!payload) return null;
 	return resolveUserId(
-		payload.userId ??
-			payload.user_id ??
-			payload.created_by_user ??
-			payload.createdByUser ??
-			payload.mainsequence_user_id ??
-			payload.sub,
+		payload.user_uid ??
+			payload.mainsequence_user_uid,
 	);
 }
 
 function resolveUserIdFromHeaders(req: import("node:http").IncomingMessage): string | null {
 	return resolveUserId(
 		resolveHeaderString(req, [
-			"x-mainsequence-user-id",
-			"x-ms-user-id",
-			"x-user-id",
-			"x-created-by-user",
+			"x-mainsequence-user-uid",
+			"x-ms-user-uid",
+			"x-user-uid",
 		]),
 	);
 }
@@ -1198,14 +1193,7 @@ function resolveUserIdFromRequest(
 ): string | null {
 	return (
 		resolveUserId(
-			body?.userId ??
-				body?.user_id ??
-				body?.created_by_user ??
-				body?.createdByUser ??
-				url.searchParams.get("userId") ??
-				url.searchParams.get("user_id") ??
-				url.searchParams.get("created_by_user") ??
-				url.searchParams.get("createdByUser"),
+			body?.user_uid ?? url.searchParams.get("user_uid"),
 		) ??
 		resolveUserIdFromHeaders(req) ??
 		resolveUserIdFromAuthorizationHeader(req) ??
@@ -1632,15 +1620,15 @@ function normalizeA2AChatRequestBody(
 		"unknown-agent";
 	const responseFormat = normalizeA2AResponseFormat(body.response_format ?? body.responseFormat);
 	const context = extractObjectPropertyRecord(body, "context") ?? {};
-	const userId =
-		extractStringProperty(body, "userId", "user_id", "created_by_user", "createdByUser") ??
-		extractStringProperty(context, "userId");
+	const userUid =
+		extractStringProperty(body, "user_uid") ??
+		extractStringProperty(context, "user_uid");
 	const mergedContext: Record<string, unknown> = {
 		...context,
 		surfaceId: "a2a",
 		surfaceTitle: "Agent-to-Agent",
 		surfaceContextSource: "a2a",
-		...(userId ? { userId } : {}),
+		...(userUid ? { user_uid: userUid } : {}),
 		a2a: {
 			enabled: true,
 			caller,
@@ -2010,7 +1998,7 @@ async function attachHydratedBackendSession(options: {
 			data: {
 				agentSessionUid: normalizedAgentSessionId,
 				createdByUser,
-				requestUserId: options.userId,
+				requestUserUid: options.userId,
 			},
 		});
 		return {
@@ -4859,7 +4847,7 @@ function buildPrompt(
 		addPromptField(lines, "surfaceContextSource", context.surfaceContextSource);
 		addPromptField(lines, "surfaceDetails", context.surfaceDetails);
 		addPromptField(lines, "surfaceSummary", context.surfaceSummary);
-		addPromptField(lines, "userId", context.userId);
+		addPromptField(lines, "userUid", context.user_uid);
 	}
 
 	if (Object.keys(tools).length > 0) {
@@ -5127,7 +5115,7 @@ async function runPiPrompt(
 				agentType: ctx.agentType,
 				sessionKey: ctx.sessionKey,
 				threadId: ctx.threadId ?? null,
-				userId: ctx.userId,
+				userUid: ctx.userId,
 				agentSessionId: ctx.agentSessionId,
 				cwd: options.cwd,
 				boundModelArg: boundModelArg ?? null,
@@ -5149,7 +5137,7 @@ async function runPiPrompt(
 				agentType: ctx.agentType,
 				sessionKey: ctx.sessionKey,
 				threadId: ctx.threadId ?? null,
-				userId: ctx.userId,
+				userUid: ctx.userId,
 				agentSessionId: ctx.agentSessionId,
 				cwd: options.cwd,
 				sessionModelBindingPresent: Boolean(ctx.sessionModelBinding),
@@ -5334,7 +5322,7 @@ async function runPiPrompt(
 			...(scopedPiAgentDir ? { PI_CODING_AGENT_DIR: scopedPiAgentDir } : {}),
 			PWD: options.cwd,
 			ASTRO_TELEMETRY: "0",
-			ASTRO_MAINSEQUENCE_USER_ID: ctx.userId,
+			ASTRO_MAINSEQUENCE_USER_UID: ctx.userId,
 			...(options.agentConfig
 				? {
 						ASTRO_SUBAGENT_CHILD: "1",
@@ -5604,7 +5592,7 @@ async function handleStreamRequest(
 	}
 
 	if (req.method === "GET" && url.pathname === "/api/chat/get_available_models") {
-		const userId = resolveUserIdFromRequest(req, url);
+		const userUid = resolveUserIdFromRequest(req, url);
 		const runtimeProfile = resolveRuntimeProfile();
 		logStructuredEvent({
 			component: "astro-stream",
@@ -5612,11 +5600,11 @@ async function handleStreamRequest(
 			message: "Available-model discovery request started.",
 			data: {
 				path: url.pathname,
-				userId,
+				userUid,
 				runtimeProfile: serializeRuntimeProfile(runtimeProfile),
 			},
 		});
-		if (!userId) {
+		if (!userUid) {
 			logStructuredEvent({
 				severity: "WARNING",
 				component: "astro-stream",
@@ -5626,14 +5614,11 @@ async function handleStreamRequest(
 				data: {
 					path: url.pathname,
 					acceptedSources: [
-						"userId",
-						"user_id",
-						"created_by_user",
-						"createdByUser",
-						"x-mainsequence-user-id",
-						"x-ms-user-id",
-						"x-user-id",
-						"authorization bearer jwt",
+						"user_uid",
+						"x-mainsequence-user-uid",
+						"x-ms-user-uid",
+						"x-user-uid",
+						"authorization bearer jwt (user_uid)",
 					],
 				},
 			});
@@ -5641,7 +5626,7 @@ async function handleStreamRequest(
 		try {
 			const availableModels = await collectAvailableModels({
 				env: process.env,
-				userId,
+				userId: userUid,
 			});
 			const availableModelSummary = summarizeAvailableModelsForLog(availableModels);
 			logStructuredEvent({
@@ -5650,7 +5635,7 @@ async function handleStreamRequest(
 				message: "Available-model discovery completed.",
 				data: {
 					path: url.pathname,
-					userId,
+					userUid,
 					providerCount: availableModelSummary.providerCount,
 					modelCount: availableModelSummary.modelCount,
 					sourceSummaries: availableModelSummary.sourceSummaries,
@@ -5670,7 +5655,7 @@ async function handleStreamRequest(
 						"Pi model registry reported models, but none were exposed as available in this runtime.",
 					data: {
 						path: url.pathname,
-						userId,
+						userUid,
 						piModelRegistrySource,
 					},
 				});
@@ -5686,7 +5671,7 @@ async function handleStreamRequest(
 				message: "Available-model discovery failed.",
 				data: {
 					path: url.pathname,
-					userId,
+					userUid,
 					error: message,
 				},
 			});
@@ -5725,20 +5710,17 @@ async function handleStreamRequest(
 				data: {
 					path: url.pathname,
 					acceptedSources: [
-						"userId",
-						"user_id",
-						"created_by_user",
-						"createdByUser",
-						"x-mainsequence-user-id",
-						"x-ms-user-id",
-						"x-user-id",
-						"authorization bearer jwt",
+						"user_uid",
+						"x-mainsequence-user-uid",
+						"x-ms-user-uid",
+						"x-user-uid",
+						"authorization bearer jwt (user_uid)",
 					],
 				},
 			});
 			badRequest(
 				res,
-				"Missing or invalid userId for model-provider status. Pass userId, created_by_user, a supported user-id header, or a Bearer JWT with a user id claim.",
+				"Missing or invalid user_uid for model-provider status. Pass user_uid, a supported user-uid header, or a Bearer JWT with a user_uid claim.",
 			);
 			return;
 		}
@@ -5869,20 +5851,17 @@ async function handleStreamRequest(
 					action: modelProviderAuthAction.action,
 					path: url.pathname,
 					acceptedSources: [
-						"userId",
-						"user_id",
-						"created_by_user",
-						"createdByUser",
-						"x-mainsequence-user-id",
-						"x-ms-user-id",
-						"x-user-id",
-						"authorization bearer jwt",
+						"user_uid",
+						"x-mainsequence-user-uid",
+						"x-ms-user-uid",
+						"x-user-uid",
+						"authorization bearer jwt (user_uid)",
 					],
 				},
 			});
 			badRequest(
 				res,
-				"Missing or invalid userId for model-provider auth action. Pass userId, created_by_user, a supported user-id header, or a Bearer JWT with a user id claim.",
+				"Missing or invalid user_uid for model-provider auth action. Pass user_uid, a supported user-uid header, or a Bearer JWT with a user_uid claim.",
 			);
 			return;
 		}
@@ -6294,9 +6273,9 @@ async function handleStreamRequest(
 	}
 	const agentType = requestedAgentType;
 
-	const userId = resolveUserId(body.userId);
+	const userId = resolveUserId(body.user_uid);
 	if (!userId) {
-		badRequest(res, "Missing or invalid userId.");
+		badRequest(res, "Missing or invalid user_uid.");
 		return;
 	}
 	const requestedNewChat = body.newChat === true;
@@ -6332,7 +6311,7 @@ async function handleStreamRequest(
 				"Astro ignored `newChat` because backend-owned session attach now requires an explicit runtime_session_uid.",
 			data: {
 				agentType,
-				userId,
+				userUid: userId,
 				runtimeSessionId,
 				requestedThreadId,
 			},
@@ -6357,7 +6336,7 @@ async function handleStreamRequest(
 					"Astro rejected a request-carried session serializer that did not match the target backend session authority.",
 				data: {
 					agentType,
-					userId,
+					userUid: userId,
 					runtimeSessionId,
 					...authorityValidation.details,
 				},
@@ -6416,7 +6395,7 @@ async function handleStreamRequest(
 			data: {
 				runtimeSessionId,
 				agentType,
-				userId,
+				userUid: userId,
 				requestedThreadId,
 			},
 		});
@@ -6568,7 +6547,7 @@ async function handleStreamRequest(
 				"Astro ignored the message-level `model` field because session-first model authority now comes from the request-carried session serializer, stored session metadata, or backend session authority.",
 			data: {
 				agentType,
-				userId,
+				userUid: userId,
 				threadId: existingSessionMetadata?.threadId ?? requestedThreadId ?? null,
 				runtimeSessionId,
 			},
@@ -6583,7 +6562,7 @@ async function handleStreamRequest(
 				"Astro ignored the message-level `runConfig` field because session-first model policy is resolved from the target backend session.",
 			data: {
 				agentType,
-				userId,
+				userUid: userId,
 				threadId: existingSessionMetadata?.threadId ?? requestedThreadId ?? null,
 				runtimeSessionId,
 			},
@@ -6612,7 +6591,7 @@ async function handleStreamRequest(
 	}
 	const sessionModelBindingLogData = {
 		agentType,
-		userId,
+		userUid: userId,
 		threadId: existingSessionMetadata?.threadId ?? requestedThreadId ?? null,
 		runtimeSessionId,
 		newChat: false,
@@ -6670,7 +6649,7 @@ async function handleStreamRequest(
 		message: "Astro resolved project attachment for the request.",
 		data: {
 			agentType,
-			userId,
+			userUid: userId,
 			runtimeSessionId,
 			runtimeProfile: serializeRuntimeProfile(runtimeProfile),
 			attached: projectAttachment.attached,

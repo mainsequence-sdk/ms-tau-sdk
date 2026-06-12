@@ -2,7 +2,7 @@
 
 `GET /api/chat/get_available_models` returns the models Astro can currently offer without sending a
 chat message to Pi. Auth-backed provider availability is user-scoped; callers should pass
-`userId=<user_id>` so Astro reads backend-owned provider credential status for that user.
+`user_uid=<user_uid>` so Astro reads backend-owned provider credential status for that user.
 
 This is a control-plane endpoint.
 It is separate from `POST /api/chat`, which remains the hot path for user text.

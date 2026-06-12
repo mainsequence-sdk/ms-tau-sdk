@@ -48,6 +48,15 @@ function normalizeIdPart(value: unknown): string | null {
 	return null;
 }
 
+function normalizeUserUid(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const trimmed = value.trim();
+	if (!trimmed) return null;
+	return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed)
+		? trimmed
+		: null;
+}
+
 export function resolveBackendUrl(env: NodeJS.ProcessEnv): string {
 	const raw =
 		env.MAINSEQUENCE_BACKEND ||
@@ -64,15 +73,15 @@ export function resolveMainsequenceUserId(options: {
 	env?: NodeJS.ProcessEnv;
 	log?: (message: string) => void;
 }): string | null {
-	const explicitUserId = normalizeIdPart(options.userId);
+	const explicitUserId = normalizeUserUid(options.userId);
 	if (explicitUserId) return explicitUserId;
 
 	const env = options.env ?? process.env;
-	const envUserId = normalizeIdPart(env.ASTRO_MAINSEQUENCE_USER_ID);
+	const envUserId = normalizeUserUid(env.ASTRO_MAINSEQUENCE_USER_UID);
 	if (envUserId) return envUserId;
 
 	options.log?.(
-		"Could not resolve Main Sequence user id from runtime credential auth alone; pass userId in the request or set ASTRO_MAINSEQUENCE_USER_ID.",
+		"Could not resolve Main Sequence user uid from runtime credential auth alone; pass user_uid in the request or set ASTRO_MAINSEQUENCE_USER_UID.",
 	);
 	return null;
 }

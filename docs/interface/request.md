@@ -8,7 +8,7 @@ currently stored for that runtime session.
 ## Required fields
 
 - `agentType` (string)
-- `userId` (string | number)
+- `user_uid` (string)
 - `runtime_session_uid` (string; accepted camel-case alias: `runtimeSessionUid`) for every real
   non-mock execution request
 - `messages` (array) — the last entry must be the current user message
@@ -70,7 +70,7 @@ currently stored for that runtime session.
   "threadId": "thread-001",
   "runtime_session_uid": "session_456_uid",
   "agentType": "astro-orchestrator",
-  "userId": "user_123",
+  "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f",
   "system": "optional system prompt",
   "messages": [
     {
@@ -84,7 +84,7 @@ currently stored for that runtime session.
   "context": {
     "appId": "astro-ui",
     "surfaceId": "command-center",
-    "userId": "user_123"
+    "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f"
   }
 }
 ```
@@ -95,7 +95,7 @@ Example resume request with session authority:
 {
   "threadId": "thread-001",
   "agentType": "astro-orchestrator",
-  "userId": "user_123",
+  "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f",
   "runtime_session_uid": "session_456_uid",
   "session": {
     "uid": "session_456_uid",
@@ -142,7 +142,7 @@ Example resume request with session authority:
   ],
   "tools": {},
   "context": {
-    "userId": "user_123"
+    "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f"
   }
 }
 ```
@@ -154,7 +154,7 @@ Example project-executor request:
   "threadId": "thread-hope30",
   "runtime_session_uid": "session_87_uid",
   "agentType": "project-executor",
-  "userId": "user_123",
+  "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f",
   "session": {
     "uid": "session_87_uid",
     "thread_id": "87",
@@ -176,7 +176,7 @@ Example project-executor request:
   ],
   "tools": {},
   "context": {
-    "userId": "user_123"
+    "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f"
   }
 }
 ```

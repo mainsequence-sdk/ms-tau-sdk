@@ -114,7 +114,7 @@ export class ModelProviderCredentialClient {
 		createdByUser: string;
 	}): Promise<ProviderCredentialClientResult<ProviderCredentialStatusResponse>> {
 		const url = new URL(endpoint(this.backendUrl, "status/"));
-		url.searchParams.set("created_by_user", input.createdByUser);
+		url.searchParams.set("created_by_user_uid", input.createdByUser);
 		return this.getJson(url.toString());
 	}
 
@@ -125,7 +125,7 @@ export class ModelProviderCredentialClient {
 		holderId: string;
 	}): Promise<ProviderCredentialClientResult<ProviderCredentialHydrateResponse>> {
 		return this.postJson(endpoint(this.backendUrl, "hydrate/"), {
-			created_by_user: input.createdByUser,
+			created_by_user_uid: input.createdByUser,
 			agent_session_uid: input.agentSessionUid,
 			providers: input.providers,
 			holder_id: input.holderId,
@@ -141,7 +141,7 @@ export class ModelProviderCredentialClient {
 		piCredential: PiCredential;
 	}): Promise<ProviderCredentialClientResult<ProviderCredentialFlushResponse>> {
 		return this.postJson(endpoint(this.backendUrl, "flush/"), {
-			created_by_user: input.createdByUser,
+			created_by_user_uid: input.createdByUser,
 			agent_session_uid: input.agentSessionUid,
 			provider: input.provider,
 			base_version: input.baseVersion,
@@ -156,7 +156,7 @@ export class ModelProviderCredentialClient {
 		reason: string;
 	}): Promise<ProviderCredentialClientResult<ProviderCredentialRevokeResponse>> {
 		return this.postJson(endpoint(this.backendUrl, "revoke/"), {
-			created_by_user: input.createdByUser,
+			created_by_user_uid: input.createdByUser,
 			provider: input.provider,
 			reason: input.reason,
 		});

@@ -31,11 +31,20 @@ function normalizeIdPart(value) {
 	return null;
 }
 
+function normalizeUserUid(value) {
+	if (typeof value !== "string") return null;
+	const trimmed = value.trim();
+	if (!trimmed) return null;
+	return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(trimmed)
+		? trimmed
+		: null;
+}
+
 function resolveMainsequenceUserId(options = {}) {
-	const explicitUserId = normalizeIdPart(options.userId);
+	const explicitUserId = normalizeUserUid(options.userId);
 	if (explicitUserId) return explicitUserId;
 	const env = options.env ?? process.env;
-	return normalizeIdPart(env.ASTRO_MAINSEQUENCE_USER_ID);
+	return normalizeUserUid(env.ASTRO_MAINSEQUENCE_USER_UID);
 }
 
 function fail(message) {
@@ -343,7 +352,7 @@ async function main() {
 		env: {
 			...buildStoredAuthVerificationEnv(),
 			PWD: piAgentState.orchestratorRuntime?.runtimeCwd ?? repoRoot,
-			...(runtimeUserId ? { ASTRO_MAINSEQUENCE_USER_ID: runtimeUserId } : {}),
+			...(runtimeUserId ? { ASTRO_MAINSEQUENCE_USER_UID: runtimeUserId } : {}),
 		},
 	});
 
