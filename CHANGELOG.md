@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.2 - 2026-06-13
+
+### Checkpoint Lease Lifecycle
+
+- Replaced the sidecar's epoch-based released-lease sentinel with explicit released lease metadata.
+- Deferred dirty checkpoint flushes when the local manifest has a missing, released, or expired lease instead of dropping the dirty state.
+- Moved chat launch persistence so turn metadata, thread binding, and user-message history are written after checkpoint lease acquisition succeeds.
+
 ## 2.0.0 - 2026-05-22
 
 ### Strict Backend UID Contract

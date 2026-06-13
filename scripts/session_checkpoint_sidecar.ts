@@ -40,12 +40,40 @@ type CheckpointManifest = {
 	checkpoint_version: number;
 	restored_at: string;
 	bundle_hash: string;
-	lease_holder_id: string;
-	lease_token: string;
-	lease_expires_at: string;
+	lease_holder_id: string | null;
+	lease_token: string | null;
+	lease_expires_at: string | null;
+	lease_state?: "active" | "released";
+	lease_released_at?: string;
 	last_flushed_at?: string;
 	last_flush_reason?: CheckpointReason;
 };
+
+type ActiveCheckpointManifest = CheckpointManifest & {
+	lease_holder_id: string;
+	lease_token: string;
+	lease_expires_at: string;
+};
+
+type ManifestLeaseState =
+	| {
+			state: "active";
+			manifest: ActiveCheckpointManifest;
+			leaseExpiresAtMs: number;
+	  }
+	| {
+			state: "expired";
+			manifest: ActiveCheckpointManifest;
+			leaseExpiresAtMs: number;
+	  }
+	| {
+			state: "released";
+			leaseExpiresAt: string | null;
+	  }
+	| {
+			state: "missing";
+			leaseExpiresAt: string | null;
+	  };
 
 type CheckpointMarker = {
 	sessionKey: string;
@@ -144,7 +172,7 @@ const watchedOverrideDirs = new Set<string>();
 const uploadedInsightsKeys = new Map<string, string>();
 const watchers: FSWatcher[] = [];
 const skippedUnmanagedSessions = new Set<string>();
-const skippedExpiredLeases = new Set<string>();
+const deferredLeaseStates = new Set<string>();
 
 let closed = false;
 let observedRestoreManifestCount = 0;
@@ -518,8 +546,18 @@ function readCheckpointManifest(sessionKey: string): CheckpointManifest | null {
 		typeof parsed.last_flush_reason === "string" && isCheckpointReason(parsed.last_flush_reason)
 			? parsed.last_flush_reason
 			: undefined;
+	const leaseState =
+		parsed.lease_state === "released"
+			? "released"
+			: holderId && leaseToken && leaseExpiresAt
+				? "active"
+				: undefined;
+	const leaseReleasedAt =
+		typeof parsed.lease_released_at === "string" && parsed.lease_released_at.trim()
+			? parsed.lease_released_at.trim()
+			: undefined;
 
-	if (!sessionId || checkpointVersion == null || !holderId || !leaseToken || !leaseExpiresAt) return null;
+	if (!sessionId || checkpointVersion == null) return null;
 	return {
 		session_id: sessionId,
 		checkpoint_version: checkpointVersion,
@@ -528,9 +566,53 @@ function readCheckpointManifest(sessionKey: string): CheckpointManifest | null {
 		lease_holder_id: holderId,
 		lease_token: leaseToken,
 		lease_expires_at: leaseExpiresAt,
+		...(leaseState ? { lease_state: leaseState } : {}),
+		...(leaseReleasedAt ? { lease_released_at: leaseReleasedAt } : {}),
 		last_flushed_at: lastFlushedAt,
 		last_flush_reason: lastFlushReason,
 	};
+}
+
+function leaseExpiresAtIsEpoch(value: string | null): boolean {
+	if (!value) return false;
+	const expiresAt = Date.parse(value);
+	return Number.isFinite(expiresAt) && expiresAt <= 0;
+}
+
+function manifestHasLease(manifest: CheckpointManifest | null): manifest is ActiveCheckpointManifest {
+	return Boolean(
+		manifest &&
+			manifest.lease_state !== "released" &&
+			manifest.lease_holder_id &&
+			manifest.lease_token &&
+			manifest.lease_expires_at &&
+			!leaseExpiresAtIsEpoch(manifest.lease_expires_at),
+	);
+}
+
+function classifyManifestLease(manifest: CheckpointManifest): ManifestLeaseState {
+	const hasLease =
+		manifest.lease_state !== "released" &&
+		Boolean(manifest.lease_holder_id) &&
+		Boolean(manifest.lease_token) &&
+		Boolean(manifest.lease_expires_at) &&
+		!leaseExpiresAtIsEpoch(manifest.lease_expires_at);
+	if (!hasLease) {
+		return {
+			state: manifest.lease_state === "released" || leaseExpiresAtIsEpoch(manifest.lease_expires_at)
+				? "released"
+				: "missing",
+			leaseExpiresAt: manifest.lease_expires_at,
+		};
+	}
+	const activeManifest = manifest as ActiveCheckpointManifest;
+	const leaseExpiresAtMs = Date.parse(activeManifest.lease_expires_at);
+	if (!Number.isFinite(leaseExpiresAtMs)) {
+		return { state: "missing", leaseExpiresAt: activeManifest.lease_expires_at };
+	}
+	return leaseExpiresAtMs <= Date.now()
+		? { state: "expired", manifest: activeManifest, leaseExpiresAtMs }
+		: { state: "active", manifest: activeManifest, leaseExpiresAtMs };
 }
 
 function readCheckpointLifecycleState(sessionKey: string): CheckpointLifecycleState | null {
@@ -596,7 +678,7 @@ function clearCheckpointLifecycleIfMarker(sessionKey: string, marker: Checkpoint
 
 function writeCheckpointManifest(
 	sessionKey: string,
-	manifest: CheckpointManifest,
+	manifest: ActiveCheckpointManifest,
 	updates: {
 		checkpointVersion: number;
 		bundleHash: string;
@@ -605,7 +687,7 @@ function writeCheckpointManifest(
 ) {
 	mkdirSync(manifestDir, { recursive: true });
 	const latestManifest = readCheckpointManifest(sessionKey);
-	const leaseSource = latestManifest ?? manifest;
+	const leaseSource = manifestHasLease(latestManifest) ? latestManifest : manifest;
 	const nextManifest: CheckpointManifest = {
 		...manifest,
 		session_id: sessionKey,
@@ -615,13 +697,14 @@ function writeCheckpointManifest(
 		lease_holder_id: leaseSource.lease_holder_id,
 		lease_token: leaseSource.lease_token,
 		lease_expires_at: leaseSource.lease_expires_at,
+		lease_state: "active",
 		last_flushed_at: new Date().toISOString(),
 		last_flush_reason: updates.reason,
 	};
 	writeFileSync(getManifestPath(sessionKey), JSON.stringify(nextManifest, null, 2));
 }
 
-function expireCheckpointManifestLease(sessionKey: string, leaseToken: string) {
+function markCheckpointManifestLeaseReleased(sessionKey: string, leaseToken: string) {
 	const manifest = readCheckpointManifest(sessionKey);
 	if (!manifest || manifest.lease_token !== leaseToken) return;
 	writeFileSync(
@@ -629,7 +712,11 @@ function expireCheckpointManifestLease(sessionKey: string, leaseToken: string) {
 		JSON.stringify(
 			{
 				...manifest,
-				lease_expires_at: new Date(0).toISOString(),
+				lease_holder_id: null,
+				lease_token: null,
+				lease_expires_at: null,
+				lease_state: "released",
+				lease_released_at: new Date().toISOString(),
 			},
 			null,
 			2,
@@ -648,7 +735,7 @@ function shouldReleaseLeaseAfterFlush(reason: CheckpointReason): boolean {
 async function releaseCheckpointLeaseAfterFlush(input: {
 	sessionKey: string;
 	agentSessionId: string;
-	manifest: CheckpointManifest;
+	manifest: ActiveCheckpointManifest;
 	reason: CheckpointReason;
 	marker: CheckpointMarker | null;
 }) {
@@ -665,7 +752,7 @@ async function releaseCheckpointLeaseAfterFlush(input: {
 			reason: releaseReason,
 		});
 		if (result.ok === true) {
-			expireCheckpointManifestLease(input.sessionKey, input.manifest.lease_token);
+			markCheckpointManifestLeaseReleased(input.sessionKey, input.manifest.lease_token);
 			clearCheckpointLifecycleIfLease(input.sessionKey, input.manifest.lease_token);
 			logEvent("checkpoint_lease_released", {
 				session_id: input.sessionKey,
@@ -1059,17 +1146,12 @@ function isLeaseError(error: string): boolean {
 	return error.includes("checkpoint_lease") || error.includes("lease");
 }
 
-function leaseIsExpired(manifest: CheckpointManifest): boolean {
-	const expiresAt = Date.parse(manifest.lease_expires_at);
-	return Number.isFinite(expiresAt) && expiresAt <= Date.now();
-}
-
 function reasonRequiresMarkerLease(reason: CheckpointReason, marker: CheckpointMarker | null): boolean {
 	if (reason === "stream_finish" || reason === "stream_error") return true;
 	return reason === "shutdown" && marker != null;
 }
 
-function markerMatchesManifest(marker: CheckpointMarker, manifest: CheckpointManifest): boolean {
+function markerMatchesManifest(marker: CheckpointMarker, manifest: ActiveCheckpointManifest): boolean {
 	return (
 		marker.leaseToken === manifest.lease_token &&
 		marker.leaseHolderId === manifest.lease_holder_id
@@ -1082,6 +1164,55 @@ function updateCompactionState(sessionKey: string, latestCompactionId: string | 
 	latestCompactionIds.set(sessionKey, latestCompactionId);
 	if (previous && previous !== latestCompactionId) {
 		scheduleFlush(sessionKey, "compaction", { immediate: true });
+	}
+}
+
+function deferFlushForLeaseState(input: {
+	sessionKey: string;
+	reason: CheckpointReason;
+	dirty: DirtySession | undefined;
+	dirtyAgeMs: number;
+	manifest: CheckpointManifest;
+	leaseState: Exclude<ManifestLeaseState, { state: "active" }>;
+}) {
+	const event =
+		input.leaseState.state === "expired"
+			? "checkpoint_flush_deferred_expired_lease"
+			: input.leaseState.state === "released"
+				? "checkpoint_flush_deferred_released_lease"
+				: "checkpoint_flush_deferred_missing_lease";
+	const leaseToken = "manifest" in input.leaseState ? input.leaseState.manifest.lease_token : null;
+	const leaseExpiresAt =
+		"manifest" in input.leaseState
+			? input.leaseState.manifest.lease_expires_at
+			: input.leaseState.leaseExpiresAt;
+	const deferredKey = [
+		event,
+		input.sessionKey,
+		input.manifest.checkpoint_version,
+		input.manifest.bundle_hash,
+		leaseToken ?? "none",
+		leaseExpiresAt ?? "none",
+	].join(":");
+	if (!deferredLeaseStates.has(deferredKey)) {
+		deferredLeaseStates.add(deferredKey);
+		if (input.leaseState.state === "expired") leaseFailureCount += 1;
+		logEvent(event, {
+			session_id: input.sessionKey,
+			reason: input.reason,
+			checkpoint_version: input.manifest.checkpoint_version,
+			bundle_hash: input.manifest.bundle_hash,
+			lease_state: input.leaseState.state,
+			lease_expires_at: leaseExpiresAt,
+			dirty_age_ms: input.dirtyAgeMs,
+		});
+	}
+	if (!closed) {
+		scheduleFlush(input.sessionKey, input.reason, {
+			marker: input.dirty?.marker ?? null,
+			firstDirtyAt: input.dirty?.firstDirtyAt,
+			delayMs: scanIntervalMs,
+		});
 	}
 }
 
@@ -1130,20 +1261,6 @@ async function flushSession(sessionKey: string, reason: CheckpointReason) {
 				clearCheckpointLifecycleIfMarker(sessionKey, marker);
 				return;
 			}
-			if (!markerMatchesManifest(marker, built.manifest)) {
-				logEvent("checkpoint_flush_skipped_stale_marker", {
-					session_id: sessionKey,
-					reason,
-					marker_lease_holder_id: marker.leaseHolderId,
-					marker_lease_token: marker.leaseToken,
-					manifest_lease_holder_id: built.manifest.lease_holder_id,
-					manifest_lease_token: built.manifest.lease_token,
-					checkpoint_version: built.manifest.checkpoint_version,
-					dirty_age_ms: dirtyAgeMs,
-				});
-				clearCheckpointLifecycleIfLease(sessionKey, marker.leaseToken);
-				return;
-			}
 		}
 
 		updateCompactionState(sessionKey, built.latestCompactionId);
@@ -1160,20 +1277,35 @@ async function flushSession(sessionKey: string, reason: CheckpointReason) {
 			return;
 		}
 
-		if (reason !== "shutdown" && leaseIsExpired(built.manifest)) {
-			const expiredLeaseKey = `${sessionKey}:${built.manifest.lease_token}:${built.manifest.lease_expires_at}`;
-			if (!skippedExpiredLeases.has(expiredLeaseKey)) {
-				skippedExpiredLeases.add(expiredLeaseKey);
-				leaseFailureCount += 1;
-				logEvent("checkpoint_flush_skipped_expired_lease", {
+		const leaseState = classifyManifestLease(built.manifest);
+		if (leaseState.state !== "active" && !(reason === "shutdown" && leaseState.state === "expired")) {
+			deferFlushForLeaseState({
+				sessionKey,
+				reason,
+				dirty,
+				dirtyAgeMs,
+				manifest: built.manifest,
+				leaseState,
+			});
+			return;
+		}
+		const activeManifest = leaseState.manifest;
+
+		if (reasonRequiresMarkerLease(reason, marker)) {
+			if (!markerMatchesManifest(marker, activeManifest)) {
+				logEvent("checkpoint_flush_skipped_stale_marker", {
 					session_id: sessionKey,
 					reason,
-					checkpoint_version: built.manifest.checkpoint_version,
-					lease_expires_at: built.manifest.lease_expires_at,
+					marker_lease_holder_id: marker.leaseHolderId,
+					marker_lease_token: marker.leaseToken,
+					manifest_lease_holder_id: activeManifest.lease_holder_id,
+					manifest_lease_token: activeManifest.lease_token,
+					checkpoint_version: activeManifest.checkpoint_version,
 					dirty_age_ms: dirtyAgeMs,
 				});
+				clearCheckpointLifecycleIfLease(sessionKey, marker.leaseToken);
+				return;
 			}
-			return;
 		}
 
 		flushAttemptCount += 1;
@@ -1184,16 +1316,16 @@ async function flushSession(sessionKey: string, reason: CheckpointReason) {
 			session_id: sessionKey,
 			reason,
 			agent_session_uid: built.agentSessionId,
-			checkpoint_version: built.manifest.checkpoint_version,
+			checkpoint_version: activeManifest.checkpoint_version,
 			bundle_hash: built.bundleHash,
 			dirty_age_ms: dirtyAgeMs,
 			local_bundle_summary: summarizeCheckpointBundle(built.bundle, built.latestCompactionId),
 		});
 		const result = await checkpointClient.flush({
 			agentSessionUid: built.agentSessionId,
-			holderId: built.manifest.lease_holder_id,
-			leaseToken: built.manifest.lease_token,
-			expectedCheckpointVersion: built.manifest.checkpoint_version,
+			holderId: activeManifest.lease_holder_id,
+			leaseToken: activeManifest.lease_token,
+			expectedCheckpointVersion: activeManifest.checkpoint_version,
 			reason,
 			bundleHash: built.bundleHash,
 			bundle: built.bundle,
@@ -1218,9 +1350,9 @@ async function flushSession(sessionKey: string, reason: CheckpointReason) {
 				backend_response_text: result.responseText,
 				backend_field_errors: flattenBackendValidationErrors(result.body),
 				backend_error_summary: summarizeBackendErrorBody(result.body),
-				expected_checkpoint_version: built.manifest.checkpoint_version,
+				expected_checkpoint_version: activeManifest.checkpoint_version,
 				submitted_bundle_hash: built.bundleHash,
-				manifest_bundle_hash: built.manifest.bundle_hash,
+				manifest_bundle_hash: activeManifest.bundle_hash,
 				local_bundle_summary: summarizeCheckpointBundle(built.bundle, built.latestCompactionId),
 				latency_ms: latencyMs,
 				dirty_age_ms: dirtyAgeMs,
@@ -1228,11 +1360,11 @@ async function flushSession(sessionKey: string, reason: CheckpointReason) {
 			return;
 		}
 
-		await recordSuccessfulFlush(sessionKey, built.manifest, result.body, reason, latencyMs, dirtyAgeMs);
+		await recordSuccessfulFlush(sessionKey, activeManifest, result.body, reason, latencyMs, dirtyAgeMs);
 		await releaseCheckpointLeaseAfterFlush({
 			sessionKey,
 			agentSessionId: built.agentSessionId,
-			manifest: built.manifest,
+			manifest: activeManifest,
 			reason,
 			marker,
 		});
@@ -1251,7 +1383,7 @@ async function flushSession(sessionKey: string, reason: CheckpointReason) {
 
 async function recordSuccessfulFlush(
 	sessionKey: string,
-	manifest: CheckpointManifest,
+	manifest: ActiveCheckpointManifest,
 	response: CheckpointFlushResponse,
 	reason: CheckpointReason,
 	latencyMs: number,
@@ -1320,7 +1452,12 @@ async function recordSuccessfulFlush(
 function scheduleFlush(
 	sessionKey: string,
 	reason: CheckpointReason,
-	options: { immediate?: boolean; marker?: CheckpointMarker | null } = {},
+	options: {
+		immediate?: boolean;
+		marker?: CheckpointMarker | null;
+		firstDirtyAt?: number;
+		delayMs?: number;
+	} = {},
 ) {
 	if (closed || !sessionKey) return;
 	if (!hasCheckpointManifest(sessionKey)) {
@@ -1337,14 +1474,14 @@ function scheduleFlush(
 	if (existing?.timer) clearTimeout(existing.timer);
 
 	const dirty: DirtySession = {
-		firstDirtyAt: existing?.firstDirtyAt ?? Date.now(),
+		firstDirtyAt: existing?.firstDirtyAt ?? options.firstDirtyAt ?? Date.now(),
 		reason: existing ? chooseReason(existing.reason, reason) : reason,
 		timer: null,
 		marker: options.marker ?? existing?.marker ?? null,
 	};
 	pendingFlushes.set(sessionKey, dirty);
 
-	const waitMs = options.immediate ? 0 : debounceMs;
+	const waitMs = options.immediate ? 0 : options.delayMs ?? debounceMs;
 	dirty.timer = setTimeout(() => {
 		void flushSession(sessionKey, dirty.reason);
 	}, waitMs);
@@ -1470,11 +1607,13 @@ type SidecarLogSeverity = "INFO" | "WARNING" | "ERROR";
 
 const sidecarLogMessages: Record<string, string> = {
 	checkpoint_flush_completed: "Checkpoint bundle flushed to backend.",
+	checkpoint_flush_deferred_expired_lease: "Checkpoint bundle flush deferred because the local manifest lease is expired.",
+	checkpoint_flush_deferred_missing_lease: "Checkpoint bundle flush deferred because the local manifest has no active lease.",
+	checkpoint_flush_deferred_released_lease: "Checkpoint bundle flush deferred because the local manifest lease has already been released.",
 	checkpoint_flush_error: "Checkpoint bundle flush failed with an unexpected error.",
 	checkpoint_flush_local_validation_failed: "Checkpoint bundle failed local validation before flush.",
 	checkpoint_flush_rejected: "Checkpoint bundle flush was rejected by the backend. See backend_error and local_bundle_summary for diagnostics.",
 	checkpoint_flush_skipped_marker_missing_lease: "Terminal checkpoint marker was skipped because it did not include lease identity.",
-	checkpoint_flush_skipped_expired_lease: "Checkpoint bundle flush skipped because the local lease is expired.",
 	checkpoint_flush_skipped_stale_marker: "Terminal checkpoint marker was skipped because it does not match the active manifest lease.",
 	checkpoint_flush_skipped_unmanaged_session: "Checkpoint flush skipped because no checkpoint manifest exists for this session.",
 	checkpoint_flush_started: "Checkpoint bundle flush started.",
@@ -1497,9 +1636,9 @@ const sidecarLogMessages: Record<string, string> = {
 function sidecarLogSeverity(event: string): SidecarLogSeverity {
 	if (event === "checkpoint_flush_error" || event === "checkpoint_sidecar_watch_failed") return "ERROR";
 	if (
+		event === "checkpoint_flush_deferred_expired_lease" ||
 		event === "checkpoint_flush_local_validation_failed" ||
 		event === "checkpoint_flush_rejected" ||
-		event === "checkpoint_flush_skipped_expired_lease" ||
 		event === "checkpoint_flush_skipped_marker_missing_lease" ||
 		event === "checkpoint_flush_skipped_stale_marker" ||
 		event === "checkpoint_lease_release_failed" ||

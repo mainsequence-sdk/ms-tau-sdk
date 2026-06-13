@@ -675,6 +675,14 @@ type CheckpointManifest = {
 	checkpoint_version: number;
 	restored_at: string;
 	bundle_hash: string;
+	lease_holder_id: string | null;
+	lease_token: string | null;
+	lease_expires_at: string | null;
+	lease_state?: "active" | "released";
+	lease_released_at?: string;
+};
+
+type ActiveCheckpointManifest = CheckpointManifest & {
 	lease_holder_id: string;
 	lease_token: string;
 	lease_expires_at: string;
@@ -2430,7 +2438,17 @@ function readCheckpointManifest(sessionKey: string): CheckpointManifest | null {
 		typeof parsed.restored_at === "string" && parsed.restored_at.trim()
 			? parsed.restored_at.trim()
 			: null;
-	if (!sessionId || checkpointVersion == null || !holderId || !leaseToken || !leaseExpiresAt) return null;
+	const leaseState =
+		parsed.lease_state === "released"
+			? "released"
+			: holderId && leaseToken && leaseExpiresAt
+				? "active"
+				: undefined;
+	const leaseReleasedAt =
+		typeof parsed.lease_released_at === "string" && parsed.lease_released_at.trim()
+			? parsed.lease_released_at.trim()
+			: undefined;
+	if (!sessionId || checkpointVersion == null) return null;
 	return {
 		session_id: sessionId,
 		checkpoint_version: checkpointVersion,
@@ -2439,7 +2457,19 @@ function readCheckpointManifest(sessionKey: string): CheckpointManifest | null {
 		lease_holder_id: holderId,
 		lease_token: leaseToken,
 		lease_expires_at: leaseExpiresAt,
+		...(leaseState ? { lease_state: leaseState } : {}),
+		...(leaseReleasedAt ? { lease_released_at: leaseReleasedAt } : {}),
 	};
+}
+
+function manifestHasLease(manifest: CheckpointManifest | null): manifest is ActiveCheckpointManifest {
+	return Boolean(
+		manifest &&
+			manifest.lease_state !== "released" &&
+			manifest.lease_holder_id &&
+			manifest.lease_token &&
+			manifest.lease_expires_at,
+	);
 }
 
 function writeCheckpointManifest(
@@ -2463,6 +2493,7 @@ function writeCheckpointManifest(
 		lease_holder_id: input.holderId,
 		lease_token: input.leaseToken,
 		lease_expires_at: input.leaseExpiresAt,
+		lease_state: "active",
 	};
 	writeFileSync(getCheckpointManifestPath(sessionKey), JSON.stringify(manifest, null, 2));
 }
@@ -2573,8 +2604,11 @@ function checkpointFinalizationCanBeRecovered(
 		return { ok: true, reason: "stale_lifecycle_state" };
 	}
 	if (manifest) {
+		if (manifest.lease_state === "released") {
+			return { ok: true, reason: "manifest_lease_released" };
+		}
 		const sameLease = !state.lease_token || manifest.lease_token === state.lease_token;
-		const leaseExpiresAt = Date.parse(manifest.lease_expires_at);
+		const leaseExpiresAt = manifest.lease_expires_at ? Date.parse(manifest.lease_expires_at) : Number.NaN;
 		if (sameLease && Number.isFinite(leaseExpiresAt) && leaseExpiresAt <= Date.now()) {
 			return { ok: true, reason: "manifest_lease_expired" };
 		}
@@ -2664,8 +2698,11 @@ function buildCheckpointFinalizingErrorEvent(
 	};
 }
 
-function shouldRenewManifestLease(manifest: CheckpointManifest | null, holderId: string): manifest is CheckpointManifest {
-	if (!manifest || manifest.lease_holder_id !== holderId) return false;
+function shouldRenewManifestLease(
+	manifest: CheckpointManifest | null,
+	holderId: string,
+): manifest is ActiveCheckpointManifest {
+	if (!manifestHasLease(manifest) || manifest.lease_holder_id !== holderId) return false;
 	const expiresAt = Date.parse(manifest.lease_expires_at);
 	return Number.isFinite(expiresAt) && expiresAt > Date.now() + 5000;
 }
@@ -5146,23 +5183,6 @@ async function runPiPrompt(
 		});
 	}
 
-	try {
-		const checkpointReady = await prepareCheckpointBeforePiLaunch(ctx);
-		if (checkpointReady.ok === false) {
-			writeChunk(ctx, checkpointReady.errorEvent);
-			writeDone(ctx);
-			return;
-		}
-	} catch (error) {
-		writeChunk(ctx, {
-			type: "error",
-			error: error instanceof Error ? error.message : String(error),
-			error_source: "checkpoint",
-		});
-		writeDone(ctx);
-		return;
-	}
-
 	if (ctx.sessionModelBinding && resolveProviderDefinition(ctx.sessionModelBinding.provider)) {
 		const hydratedProviderCredentials = await hydrateScopedProviderCredentials({
 			createdByUser: ctx.userId,
@@ -6526,7 +6546,6 @@ async function handleStreamRequest(
 			...existingSessionMetadata,
 			a2a: mergeA2AEnvelopes(existingSessionMetadata.a2a ?? null, requestA2AEnvelope),
 		};
-		writeSessionMetadata(runtimeSessionId, existingSessionMetadata);
 	}
 	if (existingSessionMetadata?.agentType) {
 		if (existingSessionMetadata.agentType !== agentType) {
@@ -6739,21 +6758,6 @@ async function handleStreamRequest(
 		existingSessionMetadata?.agentSessionId ?? runtimeSessionId;
 	startedAt = existingSessionMetadata?.startedAt ?? null;
 	sessionKey = runtimeSessionId;
-	writeSessionMetadata(sessionKey, {
-		agentId,
-		agentUniqueId,
-		agentSessionId,
-		threadId,
-		startedAt,
-		agentType: responseAgentType,
-		projectId,
-		cwd: persistedCwd,
-		repoRoot: frozenRepoRoot,
-		projectImageRef,
-		sessionModelBinding,
-		sessionConfigOverrides: existingSessionMetadata?.sessionConfigOverrides ?? null,
-		...(effectiveA2AEnvelope ? { a2a: effectiveA2AEnvelope } : {}),
-	});
 
 	const activeRun = getActiveStreamSession(sessionKey, agentSessionId);
 	if (activeRun) {
@@ -6789,12 +6793,6 @@ async function handleStreamRequest(
 		return;
 	}
 
-	writeThreadBinding({
-		threadId: responseThreadId,
-		runtimeSessionId: sessionKey,
-		updatedAt: new Date().toISOString(),
-	});
-
 	if (logTraffic) {
 		const selectedModelForLog =
 			formatLoggedModel({
@@ -6818,12 +6816,6 @@ async function handleStreamRequest(
 			agentSessionUid: agentSessionId,
 			startedAt,
 			...(effectiveA2AEnvelope ? { a2a: effectiveA2AEnvelope } : {}),
-		});
-		conversationStore.recordUserMessageSync({
-			text: latestUserMessage,
-			...(effectiveA2AEnvelope
-				? { provenance: a2aEnvelopeToUserProvenance(effectiveA2AEnvelope) }
-				: {}),
 		});
 	} catch (error) {
 		console.error(
@@ -6898,11 +6890,24 @@ async function handleStreamRequest(
 	markActiveStreamSession(ctx);
 	attachStreamAbortHandler(ctx);
 
-	writeChunk(ctx, { type: "start", messageId });
+	try {
+		const checkpointReady = await prepareCheckpointBeforePiLaunch(ctx);
+		if (checkpointReady.ok === false) {
+			writeChunk(ctx, checkpointReady.errorEvent);
+			writeDone(ctx);
+			return;
+		}
+	} catch (error) {
+		writeChunk(ctx, {
+			type: "error",
+			error: error instanceof Error ? error.message : String(error),
+			error_source: "checkpoint",
+		});
+		writeDone(ctx);
+		return;
+	}
 
-	const prompt = buildPrompt(system, latestUserMessage, context, tools);
-
-	if (projectAttachment.attached) {
+	try {
 		writeSessionMetadata(sessionKey, {
 			agentId,
 			agentUniqueId,
@@ -6918,7 +6923,37 @@ async function handleStreamRequest(
 			sessionConfigOverrides: existingSessionMetadata?.sessionConfigOverrides ?? null,
 			...(effectiveA2AEnvelope ? { a2a: effectiveA2AEnvelope } : {}),
 		});
+		writeThreadBinding({
+			threadId: responseThreadId,
+			runtimeSessionId: sessionKey,
+			updatedAt: new Date().toISOString(),
+		});
+		conversationStore.recordUserMessageSync({
+			text: latestUserMessage,
+			...(effectiveA2AEnvelope
+				? { provenance: a2aEnvelopeToUserProvenance(effectiveA2AEnvelope) }
+				: {}),
+		});
+	} catch (error) {
+		console.error(
+			`[astro-stream] failed to persist conversation launch files for session=${sessionKey}: ${
+				error instanceof Error ? error.message : String(error)
+			}`,
+		);
+		writeChunk(ctx, {
+			type: "error",
+			error: "Failed to persist conversation launch files before starting the stream.",
+			error_source: "runtime",
+			error_code: "conversation_persistence_failed",
+			error_detail: error instanceof Error ? error.message : String(error),
+		});
+		writeDone(ctx);
+		return;
 	}
+
+	writeChunk(ctx, { type: "start", messageId });
+
+	const prompt = buildPrompt(system, latestUserMessage, context, tools);
 
 	void runPiPrompt(prompt, ctx, {
 		cwd: agentCwd ?? repoRoot,
