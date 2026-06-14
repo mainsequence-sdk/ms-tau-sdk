@@ -435,3 +435,17 @@ Why:
   numeric, and addresses backend resources through id-based helpers
 - `uid`, `agent_type`, and `agent_unique_id` need to stay distinct so backend lookup identity does
   not get confused with semantic agent identity
+
+## 32. Use capability bindings for agent defaults and session overlays
+
+Implementation:
+
+- `reference/adr-32-agent-session-capability-bindings.md`
+
+Why:
+
+- reusable `AgentCapability` rows separate capability content from agent/session attachment
+- agent capability bindings define default agent capabilities, while session bindings define
+  session-local additions or overrides
+- repository versus extra/manual/API/session origin is deterministic from binding and capability
+  `source_type`

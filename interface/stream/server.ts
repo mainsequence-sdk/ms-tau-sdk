@@ -67,6 +67,10 @@ import {
 	validateSessionConfigPatch,
 	type SessionConfigOverrides,
 } from "./session-config.js";
+import {
+	materializeSessionCapabilities,
+	type SessionCapabilityMaterialization,
+} from "./session-capabilities.js";
 import { resolveProviderDefinition } from "./model-provider-definitions.js";
 import { readSessionInsights } from "./session-insights.js";
 import {
@@ -651,6 +655,7 @@ type SessionMetadata = {
 	projectImageRef?: string | null;
 	sessionModelBinding: SessionModelBinding | null;
 	sessionConfigOverrides: SessionConfigOverrides | null;
+	capabilities?: Record<string, unknown> | null;
 	a2a?: A2AEnvelope | null;
 	history_annotations?: HistoryAnnotations;
 };
@@ -2159,6 +2164,10 @@ function getSessionStateDir(): string {
 	return path.dirname(sessionDir);
 }
 
+function getSessionAssetsRoot(): string {
+	return path.join(getSessionStateDir(), "session-assets");
+}
+
 function getManifestDir(): string {
 	return path.join(getSessionStateDir(), "manifests");
 }
@@ -2222,6 +2231,7 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 		const rawProjectImageRef = (parsed as { projectImageRef?: unknown }).projectImageRef;
 		const rawSessionModelBinding = (parsed as { sessionModelBinding?: unknown }).sessionModelBinding;
 		const rawSessionConfigOverrides = (parsed as { sessionConfigOverrides?: unknown }).sessionConfigOverrides;
+		const rawCapabilities = (parsed as { capabilities?: unknown }).capabilities;
 		const rawA2A = (parsed as { a2a?: unknown }).a2a;
 		const rawHistoryAnnotations = (parsed as { history_annotations?: unknown }).history_annotations;
 		const normalizedAgentId =
@@ -2246,6 +2256,7 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 		const normalizedProjectImageRef = normalizeProjectImageRef(rawProjectImageRef);
 		const normalizedSessionModelBinding = normalizeSessionModelBinding(rawSessionModelBinding);
 		const normalizedSessionConfigOverrides = normalizeSessionConfigOverrides(rawSessionConfigOverrides);
+		const normalizedCapabilities = isPlainObject(rawCapabilities) ? rawCapabilities : null;
 		const normalizedA2A = normalizeA2AEnvelope(rawA2A);
 		const normalizedHistoryAnnotations = normalizeHistoryAnnotations(rawHistoryAnnotations);
 		return {
@@ -2261,6 +2272,7 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 			projectImageRef: normalizedProjectImageRef,
 			sessionModelBinding: normalizedSessionModelBinding,
 			sessionConfigOverrides: normalizedSessionConfigOverrides,
+			...(normalizedCapabilities ? { capabilities: normalizedCapabilities } : {}),
 			...(normalizedA2A ? { a2a: normalizedA2A } : {}),
 			...(normalizedHistoryAnnotations ? { history_annotations: normalizedHistoryAnnotations } : {}),
 		};
@@ -2299,6 +2311,30 @@ function writeSessionMetadata(sessionKey: string, metadata: SessionMetadata) {
 		if (existingA2A) nextMetadata.a2a = existingA2A;
 	}
 	writeFileSync(metadataPath, JSON.stringify(nextMetadata, null, 2));
+}
+
+function writeSessionCapabilityMaterializationMetadata(
+	sessionKey: string,
+	materialization: SessionCapabilityMaterialization,
+) {
+	const metadata = readSessionMetadata(sessionKey);
+	if (!metadata) return;
+	writeSessionMetadata(sessionKey, {
+		...metadata,
+		capabilities: {
+			version: 1,
+			materialized_at: materialization.materializedAt,
+			agent_session_uid: materialization.agentSessionUid,
+			session_asset_root: materialization.sessionAssetRoot,
+			skills_root: materialization.skillsRoot,
+			settings_skill_paths: materialization.settingsSkillPaths,
+			binding_count: materialization.bindingCount,
+			enabled_skill_binding_count: materialization.enabledSkillBindingCount,
+			materialized_skill_count: materialization.materializedSkillCount,
+			skipped: materialization.skipped,
+			materialized: materialization.materialized,
+		},
+	});
 }
 
 function syncRuntimeReportedSessionModelBinding(ctx: RequestContext) {
@@ -5183,6 +5219,62 @@ async function runPiPrompt(
 		});
 	}
 
+	let capabilityMaterialization: SessionCapabilityMaterialization | null = null;
+	if (ctx.agentSessionId) {
+		const capabilities = await materializeSessionCapabilities({
+			agentSessionUid: ctx.agentSessionId,
+			sessionAssetsRoot: getSessionAssetsRoot(),
+			env: piLaunchBaseEnv,
+			log: (message) => console.log(`[astro-stream] ${message}`),
+		});
+		if (capabilities.ok === false) {
+			logStructuredEvent({
+				severity: "ERROR",
+				component: "astro-stream",
+				event: "session_capabilities_materialization_failed",
+				message: "Astro could not materialize session capability bindings before launching Pi.",
+				data: {
+					sessionId: ctx.sessionKey,
+					agentSessionId: ctx.agentSessionId,
+					error: capabilities.error,
+					backendMessage: capabilities.message,
+					backendRequestUrl: capabilities.url ?? null,
+					backendStatus: capabilities.statusCode ?? null,
+					backendResponseBody: capabilities.body ?? null,
+				},
+			});
+			writeChunk(
+				ctx,
+				buildBackendFailureErrorEvent(
+					"Session capability materialization failed",
+					capabilities,
+					"backend",
+				),
+			);
+			writeDone(ctx);
+			return;
+		}
+		capabilityMaterialization = capabilities.value;
+		writeSessionCapabilityMaterializationMetadata(ctx.sessionKey, capabilityMaterialization);
+		logStructuredEvent({
+			component: "astro-stream",
+			event: "session_capabilities_materialized",
+			message: "Astro materialized session capability bindings before launching Pi.",
+			data: {
+				sessionId: ctx.sessionKey,
+				agentSessionId: ctx.agentSessionId,
+				bindingCount: capabilityMaterialization.bindingCount,
+				enabledSkillBindingCount: capabilityMaterialization.enabledSkillBindingCount,
+				materializedSkillCount: capabilityMaterialization.materializedSkillCount,
+				skipped: capabilityMaterialization.skipped,
+				sessionAssetRoot: capabilityMaterialization.sessionAssetRoot,
+				skillsRoot: capabilityMaterialization.skillsRoot,
+				settingsSkillPaths: capabilityMaterialization.settingsSkillPaths,
+			},
+		});
+	}
+	const sessionSkillPaths = capabilityMaterialization?.settingsSkillPaths ?? [];
+
 	if (ctx.sessionModelBinding && resolveProviderDefinition(ctx.sessionModelBinding.provider)) {
 		const hydratedProviderCredentials = await hydrateScopedProviderCredentials({
 			createdByUser: ctx.userId,
@@ -5191,6 +5283,7 @@ async function runPiPrompt(
 			provider: ctx.sessionModelBinding.provider,
 			holderId: `astro-pi-stream/${process.pid}/${ctx.sessionKey}`,
 			sessionConfigOverrides: ctx.sessionConfigOverrides,
+			sessionSkillPaths,
 			env: piLaunchBaseEnv,
 			log: (message) => console.log(`[astro-stream] ${message}`),
 		});
@@ -5248,6 +5341,7 @@ async function runPiPrompt(
 		scopedPiAgentDir = ensureSessionScopedPiAgentDir({
 			sessionKey: ctx.sessionKey,
 			sessionConfigOverrides: ctx.sessionConfigOverrides,
+			sessionSkillPaths,
 			env: piLaunchBaseEnv,
 		});
 	}

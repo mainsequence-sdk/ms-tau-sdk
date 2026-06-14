@@ -152,6 +152,7 @@ export async function hydrateScopedProviderCredentials(input: {
 	provider: string;
 	holderId: string;
 	sessionConfigOverrides: SessionConfigOverrides | null;
+	sessionSkillPaths?: string[];
 	env?: NodeJS.ProcessEnv;
 	log?: (message: string) => void;
 }): Promise<ProviderCredentialOperationResult<HydratedScopedProviderCredentials>> {
@@ -200,6 +201,7 @@ export async function hydrateScopedProviderCredentials(input: {
 		sessionKey: input.sessionKey,
 		sessionConfigOverrides: input.sessionConfigOverrides,
 		providerCredentials: credentials,
+		sessionSkillPaths: input.sessionSkillPaths,
 		env,
 	});
 	if (!scopedPiAgentDir) {

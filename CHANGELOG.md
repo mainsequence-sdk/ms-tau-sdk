@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.3 - 2026-06-14
+
+### Session Capability Bindings
+
+- Added backend capability binding support for session-local skill overlays.
+- Materialized enabled non-repository session skill bindings under `/session-state/session-assets/<agent_session_uid>/.agents/skills/`.
+- Skipped repository-sourced capability bindings so fixed agent capabilities are not duplicated into session state.
+- Recorded materialization counts, skipped classifications, and paths in structured logs and session metadata for checkpointing.
+
 ## 2.0.2 - 2026-06-13
 
 ### Checkpoint Lease Lifecycle
