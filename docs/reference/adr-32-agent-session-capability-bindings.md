@@ -514,11 +514,11 @@ This ADR does not:
       `PI_CODING_AGENT_DIR` without losing auth files or settings overrides.
 - [x] Store materialized capability metadata in Astro session metadata and checkpoint bundles.
 - [x] Add logs for materialized capability counts, source classification, and materialization path.
-- [ ] Add tests for agent capability binding classification.
-- [ ] Add tests for session capability binding parsing.
-- [ ] Add tests that repository-sourced agent defaults are not duplicated into session
+- [x] Add tests for agent capability binding classification.
+- [x] Add tests for session capability binding parsing.
+- [x] Add tests that repository-sourced agent defaults are not duplicated into session
       capabilities or session materialization.
-- [ ] Add tests that one session's capability materialization does not leak into another session.
+- [x] Add tests that one session's capability materialization does not leak into another session.
 - [ ] Add tests that session materialization does not overwrite prepared project-image
       `.agents/skills/`.
 - [ ] Add tests that rematerialization can only replace the current session's own skill root.
