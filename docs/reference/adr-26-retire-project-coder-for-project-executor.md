@@ -59,6 +59,12 @@ The immediate replacement flow should be:
 7. orchestrator commits and pushes that change
 8. the flow stops there for now
 
+Amended 2026-06-15: the replacement flow above records the historical transition away from
+`mainsequence-project-coder`. It is not current operational guidance for fixed executor
+deployments. Current `project-executor` behavior is selected by `ASTRO_FIXED_AGENT_TYPE` plus the
+prepared project cwd, and the active deployment identity contract is documented in
+[`../components/deployment-identities.md`](../components/deployment-identities.md).
+
 The important difference is that the orchestrator should not switch the user into another Pi session
 as the implementation agent. The orchestrator remains the conversation owner, and the first
 replacement milestone is blueprint persistence in the created project checkout rather than immediate

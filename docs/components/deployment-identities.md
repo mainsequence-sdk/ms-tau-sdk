@@ -7,6 +7,27 @@ Do not introduce a second public name such as `project_worker` for the `project-
 `ASTRO_EXECUTION_MODE=remote_project_worker` is kept only as legacy topology metadata for existing
 worker images.
 
+## Contract matrix
+
+| Runtime identity | Selected by | Working root | Request `agentType` | Sidecar path contract |
+| --- | --- | --- | --- | --- |
+| `astro-orchestrator` | no fixed agent/project env | writable orchestrator runtime cwd | must be `astro-orchestrator` | shared `/session-state`, `/home/jovyan` data roots |
+| `project-executor` | `ASTRO_FIXED_AGENT_TYPE=project-executor` plus `ASTRO_FIXED_PROJECT_CWD` | prepared project cwd | may be omitted only because fixed env supplies it; if present it must be `project-executor` | shared `/session-state`, `/home/jovyan` data roots |
+
+`project-executor` is not a specialist prompt, not a separate prompt file, and not a `project_worker`
+agent type. It is the fixed project deployment identity of the Astro stream runtime.
+
+## Identity rules
+
+- Backend/session identity is `Agent.agent_type`.
+- Runtime profile names must use the same public values: `astro-orchestrator` and
+  `project-executor`.
+- Fixed runtimes validate request identity before Pi launch.
+- A fixed `project-executor` runtime rejects any explicit request/session `agentType` other than
+  `project-executor`.
+- `ASTRO_EXECUTION_MODE=remote_project_worker` may still appear in deployment env, but it must not
+  be exposed as runtime identity, prompt identity, or backend `agent_type`.
+
 ## `astro-orchestrator`
 
 This is the normal user-facing stream runtime.
@@ -85,6 +106,10 @@ The checkpoint sidecar for a runtime must:
 - flush checkpoint bundles keyed by backend `AgentSession.uid`
 - not infer runtime identity from local paths; use backend session metadata and the request/session
   `agentType`
+
+If the stream container runs with `/home/jovyan` but the sidecar tries to initialize Main Sequence
+state under `/home/appuser`, provider credential hydration and checkpoint flushing can fail before
+history reaches the backend. That is a deployment bug, not a session-history bug.
 
 The only intentional filesystem difference between the two deployment identities is the working
 root used for Pi execution:

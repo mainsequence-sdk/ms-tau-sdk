@@ -8,6 +8,10 @@ The normal entry point is `astro-orchestrator`. Project implementation runs thro
 `ASTRO_FIXED_AGENT_TYPE` plus fixed project env vars when the project image already contains the
 prepared runtime.
 
+The two deployment identities are documented in
+[`../components/deployment-identities.md`](../components/deployment-identities.md). Use that page as
+the source of truth for `agentType`, fixed-worker rejection behavior, and sidecar filesystem paths.
+
 ## Base URL
 
 Default:

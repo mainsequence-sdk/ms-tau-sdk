@@ -75,6 +75,12 @@ For Kubernetes deployments, use the same session runtime contract as local Docke
 
 - mount an `emptyDir` at `/session-state`
 - mount the same `/session-state` `emptyDir` into both `astro-pi-stream` and the checkpoint sidecar
+- run the matching stream container and checkpoint sidecar with the same Astro home/data path
+  contract, especially `HOME=/home/jovyan` and
+  `ASTRO_CONTAINER_DATA_DIR=/home/jovyan/.astro-container-data`
+- do not run a `project-executor` stream container with `/home/jovyan` while its sidecar uses
+  `/home/appuser`; that splits Main Sequence config/log initialization and can break credential
+  hydration or checkpoint flushes
 - expose `POD_UID` to the Astro container; Astro derives the checkpoint holder as `pod/<POD_UID>`
   when `ASTRO_CHECKPOINT_HOLDER_ID` is not explicitly set
 - do not mount a host `~/.ssh`
@@ -95,6 +101,8 @@ The following may remain ephemeral:
 
 For containerized Astro services:
 
+- set `HOME=/home/jovyan`
+- set `ASTRO_CONTAINER_DATA_DIR=/home/jovyan/.astro-container-data`
 - set `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/jovyan/.astro-container-data/.config/mainsequence`
 - set `PI_CODING_AGENT_DIR=/home/jovyan/.astro-container-data/.pi/agent`
 - set `ASTRO_SESSION_STATE_DIR=/session-state`
@@ -102,6 +110,7 @@ For containerized Astro services:
 - set `ASTRO_SESSION_OVERRIDES_DIR=/session-state/session-overrides`
 - set `ASTRO_PROVIDER_CREDENTIAL_DIR=/session-state/pi-agent-auth`
 - in Kubernetes, mount an `emptyDir` at `/session-state`
+- in sidecars, use the same env values and volume mounts as the matching stream container
 - let Astro materialize `/app/.pi` into `/home/jovyan/.astro-container-data/.pi/project`
 - run `astro-orchestrator` from `/home/jovyan/.astro-container-data/astro-orchestrator-runtime`
 - do not mount repo-local or host auth/session directories into the runtime container

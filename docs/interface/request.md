@@ -7,7 +7,8 @@ currently stored for that runtime session.
 
 ## Required fields
 
-- `agentType` (string)
+- `agentType` (string; required for normal requests, optional only when a fixed runtime supplies
+  `ASTRO_FIXED_AGENT_TYPE`)
 - `user_uid` (string)
 - `runtime_session_uid` (string; accepted camel-case alias: `runtimeSessionUid`) for every real
   non-mock execution request
@@ -48,6 +49,12 @@ currently stored for that runtime session.
   not control session continuity.
 - `agentType` is the backend `Agent.agent_type` value
   (unknown values return `error: unknown_agent_type`).
+- Valid deployment identity values are `astro-orchestrator` and `project-executor`.
+- Do not send `project_worker`; it is not a backend `agent_type` and not a public runtime profile.
+- A fixed `project-executor` runtime gets its identity from `ASTRO_FIXED_AGENT_TYPE=project-executor`.
+  If the request also sends `agentType`, it must match `project-executor`.
+- A mismatched request `agentType` on a fixed runtime returns `409 fixed_agent_type_mismatch`
+  before Pi launch.
 - When backend registration is enabled, `runtime_session_uid` is the backend `AgentSession.uid` string.
 - `project-executor` is the only project implementation runtime.
 - Project-scoped executor requests may rely on a deployment-pinned project cwd or supply `cwd`
@@ -183,3 +190,6 @@ Example project-executor request:
 
 For real A2A sends, the example session object above should be treated as abbreviated. The sender
 should forward the full backend session JSON serialization under `session`, not a trimmed subset.
+
+For the deployment-level rules behind these examples, see
+[`../components/deployment-identities.md`](../components/deployment-identities.md).

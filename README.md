@@ -2,9 +2,12 @@
 
 # Astro
 
-Astro is a Pi package that acts as a parent orchestrator for Main Sequence project assistants.
+Astro is a Pi package that exposes Main Sequence assistant runtimes over HTTP.
 
-It translates user intent into a Main Sequence project workflow, helps select an existing project or create a new one, and sets the project up locally while keeping the dedicated project executor on its own runtime path. A separate prompt template exists for the optional tutorial-regression workflow.
+Astro has two deployment identities: `astro-orchestrator` and `project-executor`. The
+orchestrator handles the user-facing control-plane flow; the executor is a fixed project runtime
+selected by env/runtime profile, not by a separate prompt file. Both identities use the shared
+`.pi/APPEND_SYSTEM.md` contract.
 
 ## Quick start
 
@@ -75,9 +78,14 @@ docker compose restart astro-pi-stream
 The compose file now keeps active session files in a shared tmpfs-backed `/session-state` volume and
 leaves container runtime state rebuildable:
 
+- `HOME=/home/jovyan`
+- `ASTRO_CONTAINER_DATA_DIR=/home/jovyan/.astro-container-data`
 - `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/jovyan/.astro-container-data/.config/mainsequence`
 - `PI_CODING_AGENT_DIR=/home/jovyan/.astro-container-data/.pi/agent`
+- `ASTRO_SESSION_STATE_DIR=/session-state`
 - `ASTRO_STREAM_SESSION_DIR=/session-state/sessions`
+- `ASTRO_SESSION_OVERRIDES_DIR=/session-state/session-overrides`
+- `ASTRO_PROVIDER_CREDENTIAL_DIR=/session-state/pi-agent-auth`
 
 At startup, Astro prepares only container-local runtime state. Provider auth, provider signin state,
 and stream session files have no host or repo-local source path in the container. Backend
@@ -98,10 +106,11 @@ docker compose up astro-project-executor
 
 That local executor harness:
 
-- starts Astro directly in `project-executor` mode
+- starts Astro directly in `project-executor` mode with `ASTRO_FIXED_AGENT_TYPE=project-executor`
 - mounts `A2A_DEV_PROJECT` into `/workspace/project`
+- rejects requests whose `agentType` does not match `project-executor`
 - lives in the normal `docker-compose.yml` stack
-- keeps the orchestrator and executor as separate runtimes
+- keeps the orchestrator and executor as separate deployments of the same Astro stream runtime
 
 To run only the local executor runtime instead of the full orchestrator:
 
@@ -131,6 +140,7 @@ docker compose up astro-project-executor
 - [`docs/components/skills.md`](./docs/components/skills.md)
 - [`docs/components/knowledge.md`](./docs/components/knowledge.md)
 - [`docs/components/scripts-and-runtime.md`](./docs/components/scripts-and-runtime.md)
+- [`docs/components/deployment-identities.md`](./docs/components/deployment-identities.md)
 - [`docs/components/remote-worker-image.md`](./docs/components/remote-worker-image.md)
 
 ## Generated context
