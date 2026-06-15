@@ -25,14 +25,16 @@
 - `BUILD_AGENTS_IN_BACKEND` (enable backend-backed session start, hydration, and checkpoint coordination)
 - `OLLAMA_HOST` (optional Ollama host used by `GET /api/chat/get_available_models`, for example `http://localhost:11434`)
 
-## Remote project worker mode
+## `project-executor` fixed runtime
 
 These env vars are used by image-backed `project-executor` pods:
 
 - `ASTRO_EXECUTION_MODE`
-  - set this to `remote_project_worker` for image-backed executor pods
+  - set this to `remote_project_worker` for existing image-backed executor pods
+  - this is topology metadata, not a second runtime identity
 - `ASTRO_FIXED_AGENT_TYPE`
-  - recommended value: `project-executor`
+  - required value: `project-executor`
+  - this is the fixed runtime identity and must match request/session `agentType`
 - `ASTRO_FIXED_PROJECT_CWD`
   - fixed project path inside the image, for example `/usr/local/share/user-skel/app`
   - this tells Astro where the mounted or baked project lives for executor-mode work
@@ -57,8 +59,13 @@ to provide `projectId`. The streamer no longer tries to resolve `projectId` from
 for executor-mode requests and continues using the fixed project runtime even when request-side
 `projectId` is absent.
 
+Requests to a fixed `project-executor` runtime must either omit `agentType` or send
+`agentType="project-executor"`. A mismatched `agentType` is rejected before launch.
+
 For the full worker-image layout and pod contract, see
 [`../components/remote-worker-image.md`](../components/remote-worker-image.md).
+For the two Astro deployment identities and sidecar expectations, see
+[`../components/deployment-identities.md`](../components/deployment-identities.md).
 
 ## Local mounted-project executor harness
 

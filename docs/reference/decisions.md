@@ -407,7 +407,7 @@ Why:
 - keeping `agentType` for communication and `promptName` for prompt-file frontmatter avoids future
   confusion in backend session hydration and prompt lookup code
 
-## 30. Keep backend `agent_type` distinct, but use runtime profiles inside Astro
+## 30. Use backend `agent_type` vocabulary for Astro runtime profiles
 
 Implementation:
 
@@ -415,12 +415,12 @@ Implementation:
 
 Why:
 
-- backend session allocation, registration, runtime access, and analytics still depend on distinct
+- backend session allocation, registration, runtime access, and analytics depend on distinct
   backend `agent_type` values
-- Astro runtime behavior should not keep re-encoding that same distinction through scattered
-  executor-specific `agentType` checks
-- explicit runtime profiles make fixed worker prompt loading, project cwd rules, model policy, and
-  sidecar parity easier to reason about
+- Astro runtime behavior should use the same public vocabulary, `astro-orchestrator` and
+  `project-executor`, rather than exposing a second name such as `project_worker`
+- fixed `project-executor` runtime env makes prompt loading, project cwd rules, model policy, and
+  sidecar parity deterministic
 
 ## 31. Replace backend `id` resource identity with `uid`
 

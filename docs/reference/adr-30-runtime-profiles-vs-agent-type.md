@@ -1,8 +1,13 @@
-# ADR 30: Keep Backend `agent_type`, Introduce Astro Runtime Profiles
+# ADR 30: Keep Backend `agent_type` As Astro Runtime Profile Vocabulary
 
 Status: Accepted
 Date: 2026-05-16
 Implementation Status: Complete for the Astro runtime repository
+
+Amended 2026-06-15: Astro runtime profiles now use the same public vocabulary as backend
+`agent_type`: `astro-orchestrator` and `project-executor`. The legacy
+`ASTRO_EXECUTION_MODE=remote_project_worker` env value remains supported as topology metadata, but
+`project_worker` is no longer a public runtime-profile name.
 
 ## Context
 
@@ -58,8 +63,8 @@ model policy, A2A execution, and runtime deployment wiring.
 ## Decision
 
 Astro will keep backend `agent_type` as the authoritative backend/session identity and deployment
-selector, but Astro internals will introduce an explicit **runtime profile** concept for local
-behavior only.
+selector. Astro also resolves a runtime profile for local behavior, but that profile must use the
+same public identity vocabulary instead of introducing a second name for the same deployment.
 
 ### Backend identity remains distinct
 
@@ -82,13 +87,13 @@ This ADR does **not** collapse those backend-visible identities.
 
 ### Astro runtime behavior moves to profiles
 
-Inside Astro, behavior should primarily be selected by runtime profile, not by repeatedly branching
-on `agentType`.
+Inside Astro, behavior should primarily be selected by the resolved runtime profile, not by
+repeated scattered checks. The runtime profile name should still be the active runtime identity.
 
 The initial profiles are:
 
-- `orchestrator`
-- `project_worker`
+- `astro-orchestrator`
+- `project-executor`
 
 The runtime profile is derived primarily from the deployed or fixed `agent_type`.
 
@@ -105,15 +110,16 @@ The runtime profile is therefore resolved from runtime configuration such as:
 
 When Astro is running in fixed worker mode:
 
-- the runtime profile is `project_worker`
-- the fixed worker contract is the primary selector for local runtime behavior
+- the runtime profile is `project-executor`
+- `ASTRO_FIXED_AGENT_TYPE=project-executor` is the primary selector for local runtime behavior
 - request `agentType` is still validated against the fixed worker identity, but it is not the main
   local prompt/routing selector
 
 In other words:
 
 - backend/session identity still says **what** session this is
-- runtime profile says **how** this process should behave
+- runtime profile says **which deployed Astro runtime identity** is active, using the same
+  `agent_type` vocabulary
 
 ### Session ownership is not a runtime-profile concern
 
@@ -248,8 +254,8 @@ runtime-profile concept.
 
 Astro resolves one runtime profile for the active process:
 
-- `orchestrator`
-- `project_worker`
+- `astro-orchestrator`
+- `project-executor`
 
 That profile owns runtime-local behavior.
 
@@ -261,19 +267,19 @@ Both profiles should share one canonical Astro runtime contract for:
 - scoped Pi auth path layout
 - session-state and sidecar layout
 
-The main profile-specific filesystem difference should be the working root:
+The main runtime-specific filesystem difference should be the working root:
 
 - orchestrator runtime cwd
-- project-worker fixed project cwd
+- `project-executor` fixed project cwd
 
 ### 4. Request behavior
 
-For orchestrator profile:
+For `astro-orchestrator` runtime profile:
 
 - request `agentType` remains meaningful within the allowed orchestrator-facing surface
 - generic orchestrator routing and shared prompt behavior may still apply
 
-For project worker profile:
+For `project-executor` runtime profile:
 
 - fixed runtime configuration is the primary selector
 - request `agentType` is used as an assertion against the fixed worker identity
@@ -322,8 +328,8 @@ Audit result:
 
 ### Runtime profile model
 
-- [x] Add a `RuntimeProfile` type to the stream runtime with at least `orchestrator` and
-      `project_worker`.
+- [x] Add a `RuntimeProfile` type to the stream runtime using `astro-orchestrator` and
+      `project-executor`.
 - [x] Add a `resolveRuntimeProfile(...)` helper that derives the profile from fixed/deployed
       `agent_type` first and treats `ASTRO_EXECUTION_MODE` as topology metadata, not identity.
 - [x] Validate fixed-worker env combinations early: `ASTRO_FIXED_AGENT_TYPE`,
@@ -352,7 +358,9 @@ Audit result:
 Implemented in the first pass:
 
 - `interface/stream/server.ts` now resolves and validates a `RuntimeProfile` before launching chat
-  or A2A execution.
+- or A2A execution.
+- Runtime profile `kind` now uses `astro-orchestrator` / `project-executor`; the old
+  `project_worker` label was removed from runtime logs and `get_runtime_info`.
 - Fixed project-worker runtimes now treat request `agentType` as an assertion against
   `ASTRO_FIXED_AGENT_TYPE`; mismatches are rejected.
 - Project attachment now resolves cwd, repo root, project id, and project image from one helper
@@ -383,7 +391,7 @@ Implemented in the prompt-contract pass:
 
 - `.pi/APPEND_SYSTEM.md` is the single bundled Astro prompt contract.
 - Project-attached behavior is selected by `ASTRO_FIXED_AGENT_TYPE=project-executor`
-  and the runtime profile, not by a separate executor prompt file.
+  and the `project-executor` runtime profile, not by a separate executor prompt file.
 - The standalone executor prompt file was deleted.
 - Project-local `.pi/agents` files, if present, are treated as optional specialist extensions
   rather than the core executor runtime contract.

@@ -29,7 +29,8 @@ This tells Pi what to load from the repository:
 
 This is Astro's shared always-on prompt.
 
-It contains the Main Sequence contract for both normal and project-attached runtime profiles.
+It contains the Main Sequence contract for both `astro-orchestrator` and fixed
+`project-executor` runtimes.
 
 ### Extensions
 
@@ -54,10 +55,10 @@ This repository keeps `pi-web-access` in normal `node_modules` and loads it from
 
 ## The key mental model
 
-Astro has a runtime-profile structure:
+Astro has two deployment identities:
 
-- non-project-attached sessions can handle platform, project creation, and workspace flows
-- project-attached sessions work inside the prepared project cwd
+- `astro-orchestrator` sessions can handle platform, project creation, and workspace flows
+- fixed `project-executor` sessions work inside the prepared project cwd
 
 The shared prompt handles:
 

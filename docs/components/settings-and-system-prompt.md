@@ -24,7 +24,8 @@ This is the shared static Astro prompt.
 It defines Astro's Main Sequence contract:
 
 - use the Main Sequence CLI
-- use runtime profile rules to distinguish project-attached and non-project-attached sessions
+- use `ASTRO_FIXED_AGENT_TYPE=project-executor` and `ASTRO_FIXED_PROJECT_CWD` to distinguish
+  project-attached and non-project-attached sessions
 - handle project creation/selection when not project-attached
 - work in the prepared project cwd when project-attached
 - use A2A through the global A2A contract when cross-runtime communication is needed

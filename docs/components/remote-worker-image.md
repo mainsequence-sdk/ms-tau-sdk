@@ -161,7 +161,12 @@ For `project-executor`, Astro uses a fixed backend registration identity:
 
 - backend `agent_type`: `project-executor`
 - backend `agent_unique_id`: `project-executor`
-- runtime profile: `project_worker`
+- runtime profile: `project-executor`
+
+Astro intentionally does not expose a separate public runtime-profile name such as
+`project_worker`. `project-executor` is both the backend agent type and the fixed runtime profile
+name. `ASTRO_EXECUTION_MODE=remote_project_worker` remains only a legacy topology/env switch used
+by existing deployments.
 
 ## Filesystem layout and writable directories
 
@@ -194,7 +199,8 @@ That is the core contract of the image-backed worker: the image should already c
 project runtime, so Astro should execute work inside it instead of rebuilding it.
 
 The executor runtime uses the shared `.pi/APPEND_SYSTEM.md` prompt contract. Project-attached
-behavior is selected by runtime profile, not by loading a separate bundled executor prompt file.
+behavior is selected by `ASTRO_FIXED_AGENT_TYPE=project-executor` plus
+`ASTRO_FIXED_PROJECT_CWD`, not by loading a separate bundled executor prompt file.
 
 ## What the backend should pass
 

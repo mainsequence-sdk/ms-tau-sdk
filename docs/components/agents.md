@@ -1,8 +1,9 @@
 # Project-local Agent Prompts
 
 Astro no longer ships a bundled `project-executor` prompt file. The shared runtime
-contract lives in `.pi/APPEND_SYSTEM.md`, and the active runtime profile decides whether the current
-cwd is already a prepared project.
+contract lives in `.pi/APPEND_SYSTEM.md`. `ASTRO_FIXED_AGENT_TYPE=project-executor` plus
+`ASTRO_FIXED_PROJECT_CWD` decides whether the current runtime is already attached to a prepared
+project.
 
 Project-local `.pi/agents/` files are reserved for real project-local specialist extensions, not for
 the core executor runtime contract.

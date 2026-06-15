@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.4 - 2026-06-15
+
+### Runtime Identity Vocabulary
+
+- Changed Astro runtime profile values to use backend agent-type vocabulary: `astro-orchestrator` and `project-executor`.
+- Removed `project_worker` as a public runtime-profile name while keeping `ASTRO_EXECUTION_MODE=remote_project_worker` as legacy topology metadata.
+- Documented the two deployment identities, fixed `project-executor` request validation, and matching sidecar filesystem expectations.
+
 ## 2.0.3 - 2026-06-14
 
 ### Session Capability Bindings

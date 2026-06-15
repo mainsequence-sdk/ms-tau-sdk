@@ -64,6 +64,9 @@ For the image-backed project executor runtime, this repo also ships
 runtime from `BASE_IMAGE` and overlays Astro into `/app` so a remote pod can run
 `project-executor` against the already-prepared project image.
 
+For the explicit deployment identity and sidecar contract, see
+[`deployment-identities.md`](./deployment-identities.md).
+
 The shared `astro-base` stage includes:
 
 - Python 3.11

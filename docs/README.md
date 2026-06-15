@@ -35,8 +35,8 @@ flowchart LR
     P --> PROMPTS["pi/prompts/"]
     P --> CLI["mainsequence CLI"]
 
-    P --> PROFILE["Runtime profile"]
-    PROFILE --> TARGET["Project runtime when project-attached"]
+    P --> IDENTITY["Deployment identity"]
+    IDENTITY --> TARGET["Project runtime when project-executor"]
 
     P --> DOCKER["Dockerfile runtime for Python/Node tasks"]
 ```
@@ -74,6 +74,8 @@ flowchart LR
   - why `knowledge/` was removed and what replaces it
 - [`components/scripts-and-runtime.md`](./components/scripts-and-runtime.md)
   - scripts, TypeScript runtime, and Docker-backed Python path
+- [`components/deployment-identities.md`](./components/deployment-identities.md)
+  - `astro-orchestrator`, `project-executor`, fixed runtime env, and sidecar path contract
 - [`components/remote-worker-image.md`](./components/remote-worker-image.md)
   - `Dockerfile.remote-worker`, image-backed executor pods, and required runtime env
 

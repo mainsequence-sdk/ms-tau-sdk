@@ -165,7 +165,7 @@ function resolveOrchestratorRuntimeCwd(): string {
 	return configured ? path.resolve(configured) : repoRoot;
 }
 
-type RuntimeProfileKind = "orchestrator" | "project_worker";
+type RuntimeProfileKind = "astro-orchestrator" | "project-executor";
 
 type RuntimeProfile = {
 	kind: RuntimeProfileKind;
@@ -1069,7 +1069,7 @@ async function ensureRequestCliAuth(
 	res: import("node:http").ServerResponse,
 	runtimeProfile: RuntimeProfile = resolveRuntimeProfile(),
 ): Promise<{ ok: true } | { ok: false }> {
-	if (runtimeProfile.kind === "project_worker") {
+	if (runtimeProfile.kind === "project-executor") {
 		return { ok: true };
 	}
 
@@ -1272,11 +1272,11 @@ function resolveRuntimeProfile(env: NodeJS.ProcessEnv = process.env): RuntimePro
 	const projectImageRef = resolveConfiguredProjectImageRef(env);
 	const kind: RuntimeProfileKind = fixedAgentType
 		? isProjectSessionAgentType(fixedAgentType)
-			? "project_worker"
-			: "orchestrator"
+			? "project-executor"
+			: "astro-orchestrator"
 		: executionMode === "remote_project_worker" || fixedProjectCwd
-			? "project_worker"
-			: "orchestrator";
+			? "project-executor"
+			: "astro-orchestrator";
 
 	return {
 		kind,
@@ -1318,25 +1318,25 @@ function validateRuntimeProfile(profile: RuntimeProfile): RuntimeProfileValidati
 			ok: false,
 			statusCode: 503,
 			error: "invalid_runtime_profile",
-			message: `${ASTRO_EXECUTION_MODE_ENV}=remote_project_worker requires a project-worker ${ASTRO_FIXED_AGENT_TYPE_ENV}.`,
+			message: `${ASTRO_EXECUTION_MODE_ENV}=remote_project_worker requires ${ASTRO_FIXED_AGENT_TYPE_ENV}=project-executor.`,
 		};
 	}
 
-	if (profile.kind === "project_worker" && !profile.fixedAgentType) {
+	if (profile.kind === "project-executor" && !profile.fixedAgentType) {
 		return {
 			ok: false,
 			statusCode: 503,
 			error: "invalid_runtime_profile",
-			message: `Project-worker runtime profile requires ${ASTRO_FIXED_AGENT_TYPE_ENV}.`,
+			message: `project-executor runtime profile requires ${ASTRO_FIXED_AGENT_TYPE_ENV}.`,
 		};
 	}
 
-	if (profile.kind === "project_worker" && !profile.fixedProjectCwd) {
+	if (profile.kind === "project-executor" && !profile.fixedProjectCwd) {
 		return {
 			ok: false,
 			statusCode: 503,
 			error: "invalid_runtime_profile",
-			message: `Project-worker runtime profile requires ${ASTRO_FIXED_PROJECT_CWD_ENV}.`,
+			message: `project-executor runtime profile requires ${ASTRO_FIXED_PROJECT_CWD_ENV}.`,
 		};
 	}
 
@@ -1389,7 +1389,7 @@ function resolveProjectAttachment(input: {
 	const projectImageRef =
 		input.runtimeProfile.projectImageRef ?? input.existingSessionMetadata.projectImageRef ?? null;
 	const projectAttachmentRequired =
-		input.runtimeProfile.kind === "project_worker" || isProjectSessionAgentType(input.agentType);
+		input.runtimeProfile.kind === "project-executor" || isProjectSessionAgentType(input.agentType);
 	const attached =
 		projectAttachmentRequired ||
 		Boolean(effectiveRequestedCwd ?? input.existingSessionMetadata.cwd);
@@ -6582,7 +6582,7 @@ async function handleStreamRequest(
 	if (!existingSessionMetadata && hydratedBackendSession) {
 		existingSessionMetadata = hydratedBackendSession.metadata;
 	}
-	const fixedWorkerRequiresBackendSessionAuthority = runtimeProfile.kind === "project_worker";
+	const fixedWorkerRequiresBackendSessionAuthority = runtimeProfile.kind === "project-executor";
 	if (
 		!existingSessionMetadata ||
 		!existingSessionMetadata.sessionModelBinding ||

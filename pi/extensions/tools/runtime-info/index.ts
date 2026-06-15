@@ -101,15 +101,15 @@ function normalizeEnvString(value: string | undefined): string | null {
 	return trimmed ? trimmed : null;
 }
 
-function resolveRuntimeProfile(env: NodeJS.ProcessEnv): "orchestrator" | "project_worker" {
+function resolveRuntimeProfile(env: NodeJS.ProcessEnv): "astro-orchestrator" | "project-executor" {
 	const fixedAgentType = normalizeEnvString(env.ASTRO_FIXED_AGENT_TYPE);
 	if (fixedAgentType) {
-		return fixedAgentType === "project-executor" ? "project_worker" : "orchestrator";
+		return fixedAgentType === "project-executor" ? "project-executor" : "astro-orchestrator";
 	}
 	return env.ASTRO_EXECUTION_MODE?.trim() === "remote_project_worker" ||
 		normalizeEnvString(env.ASTRO_FIXED_PROJECT_CWD)
-		? "project_worker"
-		: "orchestrator";
+		? "project-executor"
+		: "astro-orchestrator";
 }
 
 export default function (pi: ExtensionAPI) {
@@ -145,7 +145,7 @@ export default function (pi: ExtensionAPI) {
 			const fixedAgentType = normalizeEnvString(process.env.ASTRO_FIXED_AGENT_TYPE);
 			const projectCwd = normalizeEnvString(process.env.ASTRO_FIXED_PROJECT_CWD);
 			const runtimeProfile = resolveRuntimeProfile(process.env);
-			const effectiveWorkspaceCwd = runtimeProfile === "project_worker" && projectCwd ? projectCwd : processCwd;
+			const effectiveWorkspaceCwd = runtimeProfile === "project-executor" && projectCwd ? projectCwd : processCwd;
 
 			const details = {
 				astro_release_version: astroReleaseVersionEnv ?? astroPackageVersion,
