@@ -108,8 +108,8 @@ The minimum useful backend-facing data is:
 
 - whether the backend session was allocated for delegated A2A communication
 - the stable delegated `handle_unique_id`
-- the caller backend `AgentSession.id`
-- the target backend `Agent.id`
+- the caller backend `AgentSession.uid`
+- the target backend `Agent.uid`
 
 Preferred additional backend-facing data:
 

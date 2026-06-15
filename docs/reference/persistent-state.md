@@ -1,8 +1,7 @@
 # Stateless runtime storage policy
 
 Astro containers are disposable. Active session files live on pod-local storage, and durable
-continuity comes from backend checkpoints as described in
-[`adr-emptydir-session-checkpoint-storage.md`](./adr-emptydir-session-checkpoint-storage.md).
+continuity comes from backend checkpoints keyed by backend `AgentSession.uid`.
 
 ## Policy
 

@@ -2,17 +2,17 @@
 
 ## Status
 
-Accepted. Astro documentation updated; runtime implementation pending.
+Accepted. Implemented in the stream runtime and active interface docs.
 
 ## Context
 
-Astro still contains a generic stream path that can initiate backend `AgentSession` creation when a
-request omits `runtime_session_id` and falls into `newChat: true`.
+Astro previously contained a generic stream path that could initiate backend `AgentSession`
+creation when a request omitted `runtime_session_uid` and fell into `newChat: true`.
 
 That behavior is too weak for the current backend-owned session architecture:
 
 - the backend must allocate the session before Astro starts work
-- the backend session id is the only stable runtime identity Astro should attach to
+- the backend session uid is the only stable runtime identity Astro should attach to
 - the backend-controlled session bootstrap path is what unlocks the runtime/RCP token flow
 - generic chat callers must remain safe when request-carried session JSON is absent
 - A2A senders should still inject the full backend session serializer proactively because they
@@ -43,8 +43,8 @@ This applies to:
 
 For every real non-mock streamed run:
 
-1. the caller must provide `runtime_session_id`
-2. that value must be the existing backend `AgentSession.id`
+1. the caller must provide `runtime_session_uid`
+2. that value must be the existing backend `AgentSession.uid`
 3. Astro must attach to that existing session
 4. if request-carried full backend session JSON is missing, Astro must fetch the backend session
    and derive the runtime contract from backend authority before Pi launch
@@ -66,15 +66,14 @@ That means:
 
 If a caller needs a new session, that session must be created by the backend control plane first.
 
-### 2. `runtime_session_id` is mandatory
+### 2. `runtime_session_uid` is mandatory
 
-For real execution requests, Astro must require `runtime_session_id`.
+For real execution requests, Astro must require `runtime_session_uid`.
 
 Allowed aliases remain:
 
-- `runtime_session_id`
-- `runtimeSessionId`
-- `sessionId`
+- `runtime_session_uid`
+- `runtimeSessionUid`
 
 But at least one of them must be present on:
 
@@ -91,8 +90,8 @@ not a correctness requirement.
 Astro must resolve runtime state in this order:
 
 1. request-carried backend session serializer, if present and sufficient
-2. local hydrated metadata/checkpoint state for the same `runtime_session_id`, if present
-3. backend `GET session` authority for that `runtime_session_id`
+2. local hydrated metadata/checkpoint state for the same `runtime_session_uid`, if present
+3. backend `GET session` authority for that `runtime_session_uid`
 
 If model/provider/project/runtime identity still cannot be derived safely after backend authority
 is consulted, Astro must fail the request explicitly.
@@ -119,9 +118,9 @@ Required for real runs:
 
 ```json
 {
-  "runtime_session_id": "456",
+  "runtime_session_uid": "session_456_uid",
   "agentType": "astro-orchestrator",
-  "userId": "user_123",
+  "user_uid": "user_123_uid",
   "messages": [...]
 }
 ```
@@ -143,9 +142,9 @@ Required for all real executor requests:
 
 ```json
 {
-  "runtime_session_id": "87",
+  "runtime_session_uid": "session_87_uid",
   "agentType": "project-executor",
-  "userId": "user_123",
+  "user_uid": "user_123_uid",
   "session": { "...full backend AgentSession serializer..." },
   "messages": [...],
   "response_format": "..."
@@ -162,7 +161,7 @@ unless recovery is actually needed.
 
 For real non-mock requests:
 
-- `400 missing_runtime_session_id` when no session id is provided
+- `400 missing_runtime_session_uid` when no session uid is provided
 - `409 session_mismatch` when the provided session id does not match the requested workflow,
   project, or runtime identity
 - `502 backend_session_hydration_failed` or equivalent attach failure when Astro cannot fetch or
@@ -191,7 +190,7 @@ path because the stream runtime is no longer allowed to allocate sessions there.
 
 - [x] Remove Astro-owned session creation from `POST /api/chat`.
 - [x] Remove Astro-owned session creation from `POST /api/a2a/chat`.
-- [x] Require `runtime_session_id` on all real non-mock stream requests.
+- [x] Require `runtime_session_uid` on all real non-mock stream requests.
 - [x] Treat request-carried `session` as optional optimization, not required authority.
 - [x] Fetch backend session authority before Pi launch whenever local/request metadata is
       insufficient.
@@ -201,11 +200,13 @@ path because the stream runtime is no longer allowed to allocate sessions there.
 
 ## Supersedes
 
-This ADR supersedes the stream-runtime creation assumptions in:
+This ADR supersedes the stream-runtime creation assumptions that predated backend-owned
+session attach.
 
-- [`adr-backend-owned-agent-session-allocation.md`](./adr-backend-owned-agent-session-allocation.md)
-- [`interface/stream/README.md`](../../interface/stream/README.md)
-- [`docs/interface/sessions.md`](../interface/sessions.md)
+Current active request/session details live in:
+
+- [`../interface/request.md`](../interface/request.md)
+- [`../interface/sessions.md`](../interface/sessions.md)
 
 The backend remains the creator of the `AgentSession` row. The additional rule from this ADR is:
 Astro must not be the component that initiates that creation from chat or A2A stream requests.

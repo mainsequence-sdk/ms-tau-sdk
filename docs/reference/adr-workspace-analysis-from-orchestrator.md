@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed
+Accepted. Implemented through deterministic startup skill materialization and the shared Astro
+prompt contract.
 
 ## Context
 

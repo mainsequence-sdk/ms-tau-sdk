@@ -319,8 +319,8 @@ Astro should move toward the following internal structure:
 
 Audit result:
 
-- Backend identity fields remain `agentType` / `agent_type`, backend `agentId` / `agent_id`,
-  backend `agentSessionId` / `agent_session_id`, and backend session-derived `threadId` /
+- Backend identity fields remain `agentType` / `agent_type`, backend `agentUid` / `agent_uid`,
+  backend `agentSessionUid` / `agent_session_uid`, and backend session-derived `threadId` /
   `thread_id`.
 - Runtime behavior is now selected through runtime profile and project attachment helpers rather
   than scattered prompt-role conditionals.
@@ -469,7 +469,7 @@ Cleanup result:
 
 - No one-time local metadata migration is required. The runtime reads both camel-case and snake-case
   backend identity fields where persisted files may contain either, and writes normalized
-  `agentType` / `agent_type` plus `agentSessionId` / `agent_session_id` going forward.
+  `agentType` / `agent_type` plus `agentSessionUid` / `agent_session_uid` going forward.
 - The standalone `project-executor` prompt file has been removed from the prompt
   contract. The shared `.pi/APPEND_SYSTEM.md` contract now owns base behavior.
 - ADR 29 compatibility is preserved by keeping `agentType` / `agent_type` as the identity language

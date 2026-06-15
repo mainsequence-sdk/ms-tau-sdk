@@ -160,7 +160,7 @@ the remainder of the flow. Astro must not create the session from the stream run
 Per backend ADR-007, the allocation response is canonical and should include:
 
 - `handle_unique_id`
-- `agent_session_id`
+- `agent_session_uid`
 - `allocation_state`
 - `session`
 
@@ -178,7 +178,7 @@ outbound Astro request under `session`.
 
 This is a sender-side correctness rule, not just an optimization:
 
-- do not send only `sessionId` plus messages
+- do not send only `runtime_session_uid` plus messages
 - do not trim the session payload down to a hand-picked subset
 - do not rely on Astro's backend fetch fallback to recover model/provider/runtime metadata when the
   backend session JSON is already available to the sender
@@ -190,7 +190,7 @@ This is a sender-side correctness rule, not just an optimization:
 After backend session allocation, Astro should resolve runtime access with:
 
 ```bash
-mainsequence agent session resolve_runtime_access <session_id> --json
+mainsequence agent session resolve_runtime_access <session_uid> --json
 ```
 
 Example response:
@@ -262,9 +262,9 @@ The canonical non-debug A2A runtime payload is:
 
 ```json
 {
-  "runtime_session_id": "123",
+  "runtime_session_uid": "session_123_uid",
   "session": {
-    "id": 123,
+    "uid": "session_123_uid",
     "thread_id": "123",
     "llm_provider": "openai-codex",
     "llm_model": "gpt-5.3-codex-spark",
@@ -291,7 +291,7 @@ session JSON serialization unchanged under `session`, not a trimmed subset.
 
 At minimum, the payload must carry:
 
-- the already-allocated target `runtime_session_id` (or accepted alias `sessionId`)
+- the already-allocated target `runtime_session_uid`
 - the full backend session serializer for that same session under `session`
 - the machine-facing `messages`
 - optional `response_format`
@@ -303,7 +303,8 @@ Astro's `/api/a2a/chat` normalizer must support this canonical A2A request shape
 
 That means the streamer must accept:
 
-- `sessionId`
+- `runtime_session_uid`
+- `runtimeSessionUid`
 - `messages`
 
 in addition to the current local-debug compatibility aliases like:
@@ -329,7 +330,7 @@ Authorization: Bearer <token>
 Content-Type: application/json
 ```
 
-with the backend-created target `sessionId`.
+with the backend-created target `runtime_session_uid`.
 
 ## Local Debug Relationship
 
@@ -384,7 +385,7 @@ Those direct URLs are debug-only behavior.
 - confirm the non-debug A2A sender forwards the full backend session serializer together with the
   target session id on every request
 - confirm Astro resolves runtime access with
-  `mainsequence agent session resolve_runtime_access <session_id> --json`
+  `mainsequence agent session resolve_runtime_access <session_uid> --json`
 - confirm Astro reads `rpc_url` and `token` from runtime access
 - confirm Astro polls `GET <rpc_url>/health` with bearer auth every 30 seconds until healthy
 - confirm Astro sends the A2A request to `POST <rpc_url>/api/a2a/chat`, not `POST /api/chat`
@@ -400,11 +401,12 @@ Those direct URLs are debug-only behavior.
 - [x] Replace production-mode `not implemented` in the A2A discovery path.
 - [x] Add production candidate selection using backend/CLI ranking.
 - [x] Treat backend session allocation as an external control-plane step and require the resulting
-  session id on the Astro A2A request.
+  session uid on the Astro A2A request.
 - [x] Add runtime-access resolution using
-  `mainsequence agent session resolve_runtime_access <session_id> --json`.
+  `mainsequence agent session resolve_runtime_access <session_uid> --json`.
 - [x] Add token-authenticated health polling against `GET <rpc_url>/health`.
 - [x] Add a production A2A sender that targets `POST <rpc_url>/api/a2a/chat`.
 - [x] Add token-authenticated cancellation against `POST <rpc_url>/api/a2a/cancel`.
-- [x] Extend `/api/a2a/chat` normalization to accept canonical `sessionId` and `messages`.
+- [x] Extend `/api/a2a/chat` normalization to accept canonical `runtime_session_uid` and
+      `messages`.
 - [x] Keep `A2A_DEV_PROJECT` as a debug-only override.

@@ -1,451 +1,67 @@
 # Decisions
 
-## 1. Keep the shared Astro prompt static
+This file indexes current decisions only. Historical transition ADRs, superseded proposals, and
+pre-UID API sketches have been removed from the active reference set.
 
-Implementation:
+## Runtime Identity
+
+- [`adr-29-agent-type-identity.md`](./adr-29-agent-type-identity.md)
+  - `agentType` / `agent_type` is the backend/runtime identity field.
+- [`adr-30-runtime-profiles-vs-agent-type.md`](./adr-30-runtime-profiles-vs-agent-type.md)
+  - Astro exposes only `astro-orchestrator` and `project-executor` as runtime/backend types.
+- [`adr-31-backend-uid-identity.md`](./adr-31-backend-uid-identity.md)
+  - Backend resource lookup is by `uid`, not deprecated `id`.
+- [`../components/deployment-identities.md`](../components/deployment-identities.md)
+  - Fixed executor deployment is selected by `ASTRO_FIXED_AGENT_TYPE=project-executor` plus
+    project cwd; `ASTRO_EXECUTION_MODE=remote_project_worker` is topology metadata only.
+
+## Session Attach And A2A
+
+- [`adr-27-backend-only-session-initiation.md`](./adr-27-backend-only-session-initiation.md)
+  - Astro attaches to existing backend sessions; chat and A2A do not create sessions.
+- [`adr-25-production-a2a-discovery-and-runtime-access.md`](./adr-25-production-a2a-discovery-and-runtime-access.md)
+  - Production A2A uses backend/CLI runtime access resolution and sends to `/api/a2a/chat`.
+- [`adr-28-durable-a2a-session-envelope.md`](./adr-28-durable-a2a-session-envelope.md)
+  - A2A caller/linkage metadata is durable session state, not prompt-only scaffolding.
+
+## Checkpoints And Session State
+
+- [`persistent-state.md`](./persistent-state.md)
+  - Containers are disposable; durable continuity comes from backend checkpoints and
+    backend-owned session identity.
+- [`adr-compaction-checkpoint-retention.md`](./adr-compaction-checkpoint-retention.md)
+  - Compaction is a backend checkpoint retention boundary.
+- [`adr-checkpoint-reasoning-annotations.md`](./adr-checkpoint-reasoning-annotations.md)
+  - Reasoning presence is checkpoint metadata without duplicating raw reasoning text.
+- [`adr-editable-session-config.md`](./adr-editable-session-config.md)
+  - Session config editability is advertised through session-insights metadata and patched through
+    a narrow config endpoint.
+
+## Auth And Model Control
+
+- [`adr-runtime-credential-auth.md`](./adr-runtime-credential-auth.md)
+  - Deployed runtimes authenticate to Main Sequence with runtime credentials.
+- [`adr-interactive-provider-signin.md`](./adr-interactive-provider-signin.md)
+  - Interactive model-provider signin is represented as explicit attempt state.
+- [`../interface/model-provider-auth.md`](../interface/model-provider-auth.md)
+  - Current model-provider credential, signin, signoff, and catalog behavior.
+- [`../interface/available-models.md`](../interface/available-models.md)
+  - Current available-model discovery behavior.
+- [`../interface/session-model.md`](../interface/session-model.md)
+  - Current session model binding behavior.
+
+## Skills And Capabilities
+
+- [`adr-workspace-analysis-from-orchestrator.md`](./adr-workspace-analysis-from-orchestrator.md)
+  - Workspace analysis is a first-class orchestrator capability backed by an injected skill.
+- [`adr-32-agent-session-capability-bindings.md`](./adr-32-agent-session-capability-bindings.md)
+  - Agent capabilities define defaults; session capabilities define session-local skill overlays.
+
+## Static Runtime Shape
 
 - `.pi/APPEND_SYSTEM.md`
-
-Why:
-
-- the shared Main Sequence runtime contract is mostly stable
-- static prompt files are easier to inspect than runtime-generated policy
-
-## 2. Keep child runtime policy dynamic
-
-Implementation:
-
-- `pi/extensions/hooks/project-policy/child-policy.md`
-- `pi/extensions/hooks/project-policy/index.ts`
-
-Why:
-
-- runtime-owned child processes should not behave like the parent
-- child-only guardrails are naturally runtime-specific
-
-## 3. Use a dedicated executor runtime for project implementation
-
-Implementation:
-
-- `.pi/APPEND_SYSTEM.md`
-- `ASTRO_FIXED_AGENT_TYPE=project-executor`
-
-Why:
-
-- project implementation happens inside a project-attached runtime when that runtime is already
-  pinned to the executor backend identity
-- the prompt contract is unified in `.pi/APPEND_SYSTEM.md`; the runtime profile decides whether the
-  current cwd is a prepared project
-
-## 4. Keep repo-local runtime in TypeScript
-
-Implementation:
-
-- `pi/extensions/hooks/`
-- `pi/extensions/tools/`
-- `pi/extensions/shared/`
-- `scripts/*.ts`
-
-Why:
-
-- the local runtime logic is mostly orchestration and file shaping
-- avoiding a local language bridge keeps Astro easier to debug
-
-## 5. Keep dependency installation out of `.pi`
-
-Implementation:
-
-- `.pi/settings.json`
-- `package.json`
-- `node_modules/pi-web-access`
-
-Why:
-
-- the runtime should stay inspectable and avoid generating extra package state inside `.pi`
-- external Pi packages should live in normal npm dependency locations
-
-## 6. Keep tutorial verification out of the default shared prompt contract
-
-Implementation:
-
-- `pi/prompts/verify-mainsequence-tutorial.md`
-
-Why:
-
-- it is a fixed CI-shaped workflow
-- it is too specific to live inside the default always-on agent capability list
-- it can still exist as an explicit standalone prompt without shaping normal project routing
-
-## 7. Do not auto-inject docs into agent context
-
-Implementation:
-
-- `docs-context` extension removed
-
-Why:
-
-- the agent already has role instructions in `.pi/APPEND_SYSTEM.md`
-- user-facing docs should not be mixed into the agent prompt by default
-
-## 8. Keep inspectable runtime state outside ephemeral containers
-
-Implementation:
-
-- `docker-compose.yml`
-- `Dockerfile`
-- `docs/reference/persistent-state.md`
-
-Why:
-
-- session continuity, hydration, and deterministic backend tools depend on runtime artifacts
-- developers need to inspect those artifacts from the host without shelling into containers
-- containers should stay disposable while durable state lives under the repo-local `.astro/` root
-
-## 9. Treat custom model selection as first-class session state
-
-Implementation:
-
-- `reference/adr-custom-model-integration.md`
-
-Why:
-
-- private endpoints and Ollama selection need a persistent session-level model identity
-- request-scoped custom providers should not be implemented by mutating shared runtime `models.json`
-- Ollama discovery needs a clear contract for listing models before the user selects one
-
-## 10. Expose session usage and context from the local Pi session file first
-
-Implementation:
-
-- `reference/adr-session-usage-and-context.md`
-
-Why:
-
-- users need live visibility into token consumption and remaining context budget before compaction
-- Astro already has the authoritative local Pi session file and backend session insights are the
-  evolving usage source of truth
-- read-only session usage/context endpoints unblock the UI without waiting for backend mirroring
-
-## 11. Expose auth-backed model providers as a dedicated remote control plane
-
-Implementation:
-
-- `reference/adr-remote-model-providers.md`
-
-Why:
-
-- providers like OpenAI and Anthropic need inspectable runtime auth state
-- credentials can remain environment-owned while Astro manages provider sign-in and sign-off
-- auth-backed model discovery should show known models separately from current usability
-
-## 12. Handle interactive provider signin as explicit attempt state
-
-Implementation:
-
-- `reference/adr-interactive-provider-signin.md`
-
-Why:
-
-- OAuth-style providers such as `openai-codex` need a remote lifecycle that survives the initial
-  `POST /signin`
-- the frontend needs provider-agnostic `status` and `nextAction` hints instead of provider-specific
-  branching
-- signoff must remain provider-level even while a signin attempt is running
-
-## 13. Removed local durable runtime storage as a source of truth
-
-Implementation:
-
-- superseded by `reference/adr-emptydir-session-checkpoint-storage.md`
-
-Why:
-
-- local Docker and Kubernetes must not depend on durable local session/auth storage
-- Pi runtime state may use local files while the container is alive, but continuity must come from
-  backend checkpoints and backend-owned session records
-- the `astro-orchestrator` process should use a writable runtime cwd with a materialized `.pi`
-  copy, not `/app`, because Pi creates project settings lock files next to `.pi/settings.json`
-- provider auth/signin state is pruned on container startup and is not restored from host or
-  repo-local paths
-
-## 14. Advertise editable session config through session-insights
-
-Implementation:
-
-- `reference/adr-editable-session-config.md`
-
-Why:
-
-- the frontend should learn which session config fields are editable directly from the read
-  contract
-- editability needs richer metadata than `true/false`, including types, ranges, units, and enum
-  values
-- writes should still happen through a separate narrow patch endpoint without duplicating the full
-  effective config payload
-
-## 15. Hydrate Astro local orchestrator runtime state from backend-owned sessions
-
-Implementation:
-
-- `reference/adr-backend-session-hydration.md`
-
-Why:
-
-- backend `AgentSession.id` should be the source of truth for orchestrator session
-  recoverability, not only the visible runtime id
-- Astro must be able to attach to backend-created `astro-orchestrator` sessions it did not
-  originally start
-- the first implementation should attach and locally hydrate wrapper state, not create a second
-  backend session or re-run deterministic agent registration
-- project-scoped coder sessions are intentionally out of scope for the first hydration pass
-
-## 16. Treat runtime credentials as the production Main Sequence auth mode
-
-Implementation:
-
-- `reference/adr-runtime-credential-auth.md`
-
-Why:
-
-- deployed coding-agent pods authenticate with runtime credentials
-- the stream runtime must not block startup on token-style auth when
-  `MAINSEQUENCE_AUTH_MODE=runtime_credential`
-- child `pi`, specialist, and project setup processes need the same runtime credential env as the
-  parent process
-
-## 17. Replace shared runtime PVC session state with emptyDir checkpoints
-
-Implementation:
-
-- `reference/adr-emptydir-session-checkpoint-storage.md`
-
-Why:
-
-- Pi requires local session JSONL files, but shared writable PVC state prevents clean horizontal
-  scaling
-- Astro can restore a session bundle into pod-local `emptyDir` before launching each Pi child
-  process
-- a sidecar can continuously checkpoint local Pi/Astro session files back to the backend without
-  putting Postgres on every streamed chat chunk
-
-## 18. Make the backend authoritative for Astro AgentSession allocation
-
-Implementation:
-
-- `reference/adr-backend-owned-agent-session-allocation.md`
-
-Why:
-
-- checkpoint restore and leases need the backend to own the canonical session identity first
-- Astro should execute restored sessions, not duplicate backend Agent and AgentSession creation
-  rules
-- project handoff state should be visible in backend-owned session metadata from creation time
-
-## 19. Make workspace analysis a first-class orchestrator capability
-
-Implementation:
-
-- `reference/adr-workspace-analysis-from-orchestrator.md`
-
-Why:
-
-- workspace analysis is a distinct orchestrator responsibility, not project implementation
-- the required Main Sequence analysis context should be prepared during deterministic startup, not
-  discovered lazily during the first chat turn
-- runtime readiness for that capability should be observable before Astro starts serving requests
-
-## 19. Store user model-provider credentials in the backend
-
-Implementation:
-
-- `reference/adr-backend-owned-provider-credentials.md`
-
-Why:
-
-- provider sign-in should keep the same user-facing flow while durable storage moves out of pods
-- Pi expects provider credentials in `PI_CODING_AGENT_DIR/auth.json`, so Astro should hydrate a
-  scoped pod-local auth dir before provider-backed model use
-- OAuth providers can refresh credentials while Pi is running, so Astro needs an explicit
-  hydrate/flush cycle with backend version checks
-
-## 20. Treat Pi compaction as a backend checkpoint retention boundary
-
-Implementation:
-
-- `reference/adr-compaction-checkpoint-retention.md`
-
-Why:
-
-- Pi compaction changes model context but does not automatically delete old JSONL entries
-- backend-owned checkpoint storage must not retain the full pre-compaction conversation forever
-- accepted compaction flushes should normalize and prune the latest checkpoint bundle while keeping
-  Pi restore valid
-- frontend history hydration should render a compacted summary boundary instead of resurrecting
-  deleted turns
-
-## 21. Preserve reasoning presence as checkpoint metadata
-
-Implementation:
-
-- `reference/adr-checkpoint-reasoning-annotations.md`
-
-Why:
-
-- some Pi/provider paths stream reasoning live but do not persist it into Pi JSONL
-- storing full frontend history in the backend would create a second transcript authority
-- a lightweight checkpoint annotation lets Astro hydrate the thinking UI without duplicating the
-  conversation or storing raw reasoning text
-
-## 22. Detached browser clients do not cancel active session runs
-
-Implementation:
-
-- `reference/adr-detached-client-background-session-runs.md`
-
-Why:
-
-- browser close is a transport detach, not an agent-session cancellation
-- backend-backed sessions should keep Pi running until the assistant run finishes or fails
-- checkpoint lease renewal and runtime-state reporting let the backend know that a session is still
-  working even when no browser is connected
-
-## 23. Treat project executors as backend-mediated runtimes
-
-Implementation:
-
-- `reference/adr-23-backend-mediated-project-executor-runtimes.md`
-
-Why:
-
-- `project-executor` is a separate execution runtime, not a normal orchestrator
-  specialist
-- local development needs a mounted-project executor harness without changing the backend control
-  plane shape
-- the backend should be the only component that knows how to launch and route work to project
-  executors
-
-## 24. Treat A2A discovery as a shared prompt-layer collaboration rule
-
-Implementation:
-
-- `reference/adr-24-a2a-discovery-and-collaboration.md`
-
-Why:
-
-- A2A should be a collaboration modality, not a session-switch substitute
-- the orchestrator needs explicit user-confirmed discovery behavior before A2A initiation
-- project-scoped agents need bounded A2A without broadening their core roles
-
-## 25. Use CLI-backed runtime access for non-debug A2A
-
-Implementation:
-
-- `reference/adr-25-production-a2a-discovery-and-runtime-access.md`
-
-Why:
-
-- production A2A needs a real discovery and routing path instead of the current debug shim
-- the target runtime URL must come from backend-owned runtime access resolution, not from guessed
-  local service URLs
-- Astro should reuse the Main Sequence CLI for agent search and runtime access lookup in non-debug
-  mode while backend control-plane session allocation stays outside the stream runtime
-
-## 26. Retire project-coder and keep project-executor
-
-Implementation:
-
-- `reference/adr-26-retire-project-coder-for-project-executor.md`
-
-Why:
-
-- `mainsequence-project-coder` duplicates the project implementation role now owned by
-  `project-executor`
-- the orchestrator should remain the user-facing session instead of switching the active
-  conversation into a local coder session
-- project implementation handoff should be a committed project artifact consumed by the
-  backend-routed executor runtime
-
-## 27. Do not let Astro initiate session creation from chat or A2A
-
-Implementation:
-
-- `reference/adr-27-backend-only-session-initiation.md`
-
-Why:
-
-- backend session allocation is the required control-plane step before Astro runtime attach
-- model binding must fall back to backend-owned session authority instead of proceeding with a null
-  model
-- A2A callers should provide an existing session id rather than relying on Astro to create one
-
-## 28. Keep A2A envelope as durable session state
-
-Implementation:
-
-- `reference/adr-28-durable-a2a-session-envelope.md`
-
-Why:
-
-- A2A is session-to-session communication and needs durable caller/response/linkage state beyond
-  flattened user text
-- keeping `user` / `assistant` avoids a broad protocol churn across Pi history, session insights,
-  and UI contracts
-- prompt injection should project durable A2A state rather than being the only place that
-  relationship exists
-
-## 29. Use agentType for backend and runtime identity
-
-Implementation:
-
-- `reference/adr-29-agent-type-identity.md`
-
-Why:
-
-- backend classification uses `Agent.agent_type`
-- Astro request routing uses `agentType`, and those values match prompt frontmatter names such as
-  `astro-orchestrator` and `project-executor`
-- keeping `agentType` for communication and `promptName` for prompt-file frontmatter avoids future
-  confusion in backend session hydration and prompt lookup code
-
-## 30. Use backend `agent_type` vocabulary for Astro runtime profiles
-
-Implementation:
-
-- `reference/adr-30-runtime-profiles-vs-agent-type.md`
-
-Why:
-
-- backend session allocation, registration, runtime access, and analytics depend on distinct
-  backend `agent_type` values
-- Astro runtime behavior should use the same public vocabulary, `astro-orchestrator` and
-  `project-executor`, rather than exposing a second name such as `project_worker`
-- fixed `project-executor` runtime env makes prompt loading, project cwd rules, model policy, and
-  sidecar parity deterministic
-
-## 31. Replace backend `id` resource identity with `uid`
-
-Implementation:
-
-- `reference/adr-31-backend-uid-identity.md`
-
-Why:
-
-- backend resource lookup is moving away from deprecated numeric/id-shaped identity
-- Astro currently still parses serializer field `id`, validates some backend session identity as
-  numeric, and addresses backend resources through id-based helpers
-- `uid`, `agent_type`, and `agent_unique_id` need to stay distinct so backend lookup identity does
-  not get confused with semantic agent identity
-
-## 32. Use capability bindings for agent defaults and session overlays
-
-Implementation:
-
-- `reference/adr-32-agent-session-capability-bindings.md`
-
-Why:
-
-- reusable `AgentCapability` rows separate capability content from agent/session attachment
-- agent capability bindings define default agent capabilities, while session bindings define
-  session-local additions or overrides
-- repository versus extra/manual/API/session origin is deterministic from binding and capability
-  `source_type`
+  - Shared Astro instruction contract for both deployment identities.
+- [`../components/settings-and-system-prompt.md`](../components/settings-and-system-prompt.md)
+  - Pi settings and prompt contract.
+- [`../components/scripts-and-runtime.md`](../components/scripts-and-runtime.md)
+  - TypeScript runtime, startup scripts, and sidecar processes.
