@@ -166,9 +166,8 @@ For `project-executor`, Astro uses a fixed backend registration identity:
 Astro intentionally does not expose a separate public runtime-profile name such as
 `project_worker`. `project-executor` is both the backend agent type and the fixed runtime profile
 name. `ASTRO_EXECUTION_MODE=remote_project_worker` remains only a legacy topology/env switch used
-by existing deployments. For backward compatibility, that legacy execution mode can infer the
-effective fixed `project-executor` identity when `ASTRO_FIXED_AGENT_TYPE` is absent, but new
-deployments should set `ASTRO_FIXED_AGENT_TYPE=project-executor` explicitly.
+by existing deployments. It does not define identity by itself; fixed executor deployments must set
+`ASTRO_FIXED_AGENT_TYPE=project-executor`.
 
 ## Filesystem layout and writable directories
 

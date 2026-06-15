@@ -35,8 +35,8 @@ These env vars are used by image-backed `project-executor` pods:
 - `ASTRO_FIXED_AGENT_TYPE`
   - required value for new deployments: `project-executor`
   - this is the fixed runtime identity and must match request/session `agentType`
-  - for backward compatibility, `ASTRO_EXECUTION_MODE=remote_project_worker` without this env var is
-    treated as an effective fixed `project-executor` runtime
+  - existing deployments may keep `ASTRO_EXECUTION_MODE=remote_project_worker`, but this env var is
+    still the source of the fixed backend/runtime identity
 - `ASTRO_FIXED_PROJECT_CWD`
   - fixed project path inside the image, for example `/usr/local/share/user-skel/app`
   - this tells Astro where the mounted or baked project lives for executor-mode work

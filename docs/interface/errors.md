@@ -46,8 +46,8 @@ Typical error responses:
 - `500` — `available_models_unavailable` when `GET /api/chat/get_available_models` fails unexpectedly
 - `502` — backend session hydration/authority fetch failure before Pi launch
 - `503` — `invalid_runtime_profile` when fixed runtime env is internally inconsistent, for example
-  `ASTRO_EXECUTION_MODE=remote_project_worker` with an explicit
-  `ASTRO_FIXED_AGENT_TYPE=astro-orchestrator`
+  `ASTRO_EXECUTION_MODE=remote_project_worker` without
+  `ASTRO_FIXED_AGENT_TYPE=project-executor`
 - `404` — unknown route
 
 ## CORS

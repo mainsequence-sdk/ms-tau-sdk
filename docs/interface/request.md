@@ -52,9 +52,7 @@ currently stored for that runtime session.
 - Valid deployment identity values are `astro-orchestrator` and `project-executor`.
 - Do not send `project_worker`; it is not a backend `agent_type` and not a public runtime profile.
 - A fixed `project-executor` runtime gets its identity from `ASTRO_FIXED_AGENT_TYPE=project-executor`.
-  Legacy `ASTRO_EXECUTION_MODE=remote_project_worker` deployments may also infer this fixed
-  identity for backward compatibility. If the request also sends `agentType`, it must match
-  `project-executor`.
+  If the request also sends `agentType`, it must match `project-executor`.
 - A mismatched request `agentType` on a fixed runtime returns `409 fixed_agent_type_mismatch`
   before Pi launch.
 - When backend registration is enabled, `runtime_session_uid` is the backend `AgentSession.uid` string.
