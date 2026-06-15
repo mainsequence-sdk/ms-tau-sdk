@@ -9,6 +9,11 @@ Amended 2026-06-15: Astro runtime profiles now use the same public vocabulary as
 `ASTRO_EXECUTION_MODE=remote_project_worker` env value remains supported as topology metadata, but
 `project_worker` is no longer a public runtime-profile name.
 
+Backward compatibility note: existing worker deployments that set
+`ASTRO_EXECUTION_MODE=remote_project_worker` but do not yet set `ASTRO_FIXED_AGENT_TYPE` are treated
+as effective fixed `project-executor` runtimes. Explicit mismatched fixed agent types are still
+invalid.
+
 ## Context
 
 Astro currently uses backend-visible `agent_type` values such as:

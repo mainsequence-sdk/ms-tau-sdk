@@ -112,7 +112,8 @@ const ASTRO_FIXED_AGENT_TYPE_ENV = "ASTRO_FIXED_AGENT_TYPE";
 const ASTRO_FIXED_PROJECT_ID_ENV = "ASTRO_FIXED_PROJECT_ID";
 const ASTRO_FIXED_PROJECT_CWD_ENV = "ASTRO_FIXED_PROJECT_CWD";
 const ASTRO_PROJECT_IMAGE_REF_ENV = "ASTRO_PROJECT_IMAGE_REF";
-const PROJECT_SESSION_AGENT_TYPES = new Set(["project-executor"]);
+const PROJECT_EXECUTOR_AGENT_TYPE = "project-executor";
+const PROJECT_SESSION_AGENT_TYPES = new Set([PROJECT_EXECUTOR_AGENT_TYPE]);
 const ALLOWED_AGENT_TYPES = new Set(["astro-orchestrator", ...PROJECT_SESSION_AGENT_TYPES]);
 const PI_BUILT_IN_TOOL_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
 
@@ -1265,8 +1266,11 @@ function resolveConfiguredProjectImageRef(env: NodeJS.ProcessEnv = process.env):
 }
 
 function resolveRuntimeProfile(env: NodeJS.ProcessEnv = process.env): RuntimeProfile {
-	const fixedAgentType = resolveFixedAgentType(env);
+	const configuredFixedAgentType = resolveFixedAgentType(env);
 	const executionMode = normalizeExecutionMode(env[ASTRO_EXECUTION_MODE_ENV]);
+	const legacyProjectExecutorMode = executionMode === "remote_project_worker";
+	const fixedAgentType =
+		configuredFixedAgentType ?? (legacyProjectExecutorMode ? PROJECT_EXECUTOR_AGENT_TYPE : null);
 	const fixedProjectId = resolveFixedProjectId(env);
 	const fixedProjectCwd = resolveFixedProjectCwd(env);
 	const projectImageRef = resolveConfiguredProjectImageRef(env);

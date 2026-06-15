@@ -8,6 +8,7 @@
 - Removed `project_worker` as a public runtime-profile name while keeping `ASTRO_EXECUTION_MODE=remote_project_worker` as legacy topology metadata.
 - Documented the two deployment identities, fixed `project-executor` request validation, and matching sidecar filesystem expectations.
 - Expanded deployment identity docs across the README, interface request/error contract, quickstart, and persistent-state guidance so fixed-worker identity and sidecar path requirements are discoverable from operational docs.
+- Kept existing `ASTRO_EXECUTION_MODE=remote_project_worker` deployments backward compatible by letting that legacy topology env infer the effective fixed `project-executor` identity when `ASTRO_FIXED_AGENT_TYPE` is absent.
 
 ## 2.0.3 - 2026-06-14
 

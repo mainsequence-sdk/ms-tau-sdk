@@ -101,13 +101,17 @@ function normalizeEnvString(value: string | undefined): string | null {
 	return trimmed ? trimmed : null;
 }
 
+const PROJECT_EXECUTOR_AGENT_TYPE = "project-executor";
+
 function resolveRuntimeProfile(env: NodeJS.ProcessEnv): "astro-orchestrator" | "project-executor" {
-	const fixedAgentType = normalizeEnvString(env.ASTRO_FIXED_AGENT_TYPE);
+	const executionMode = env.ASTRO_EXECUTION_MODE?.trim();
+	const fixedAgentType =
+		normalizeEnvString(env.ASTRO_FIXED_AGENT_TYPE) ??
+		(executionMode === "remote_project_worker" ? PROJECT_EXECUTOR_AGENT_TYPE : null);
 	if (fixedAgentType) {
-		return fixedAgentType === "project-executor" ? "project-executor" : "astro-orchestrator";
+		return fixedAgentType === PROJECT_EXECUTOR_AGENT_TYPE ? "project-executor" : "astro-orchestrator";
 	}
-	return env.ASTRO_EXECUTION_MODE?.trim() === "remote_project_worker" ||
-		normalizeEnvString(env.ASTRO_FIXED_PROJECT_CWD)
+	return normalizeEnvString(env.ASTRO_FIXED_PROJECT_CWD)
 		? "project-executor"
 		: "astro-orchestrator";
 }

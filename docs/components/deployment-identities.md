@@ -12,7 +12,7 @@ worker images.
 | Runtime identity | Selected by | Working root | Request `agentType` | Sidecar path contract |
 | --- | --- | --- | --- | --- |
 | `astro-orchestrator` | no fixed agent/project env | writable orchestrator runtime cwd | must be `astro-orchestrator` | shared `/session-state`, `/home/jovyan` data roots |
-| `project-executor` | `ASTRO_FIXED_AGENT_TYPE=project-executor` plus `ASTRO_FIXED_PROJECT_CWD` | prepared project cwd | may be omitted only because fixed env supplies it; if present it must be `project-executor` | shared `/session-state`, `/home/jovyan` data roots |
+| `project-executor` | `ASTRO_FIXED_AGENT_TYPE=project-executor` plus `ASTRO_FIXED_PROJECT_CWD`; legacy `ASTRO_EXECUTION_MODE=remote_project_worker` may infer the fixed identity | prepared project cwd | may be omitted only because fixed env or legacy worker mode supplies it; if present it must be `project-executor` | shared `/session-state`, `/home/jovyan` data roots |
 
 `project-executor` is not a specialist prompt, not a separate prompt file, and not a `project_worker`
 agent type. It is the fixed project deployment identity of the Astro stream runtime.
@@ -27,6 +27,9 @@ agent type. It is the fixed project deployment identity of the Astro stream runt
   `project-executor`.
 - `ASTRO_EXECUTION_MODE=remote_project_worker` may still appear in deployment env, but it must not
   be exposed as runtime identity, prompt identity, or backend `agent_type`.
+- For backward compatibility, `ASTRO_EXECUTION_MODE=remote_project_worker` without
+  `ASTRO_FIXED_AGENT_TYPE` is treated as an effective fixed `project-executor` runtime. New
+  deployments should still set `ASTRO_FIXED_AGENT_TYPE=project-executor` explicitly.
 
 ## `astro-orchestrator`
 
@@ -60,7 +63,8 @@ Selection:
 
 - `ASTRO_FIXED_AGENT_TYPE=project-executor`
 - `ASTRO_FIXED_PROJECT_CWD=<prepared project path>`
-- `ASTRO_EXECUTION_MODE=remote_project_worker` may also be set for existing worker topology
+- `ASTRO_EXECUTION_MODE=remote_project_worker` may also be set for existing worker topology and can
+  infer `project-executor` when `ASTRO_FIXED_AGENT_TYPE` is absent
 - requests must omit `agentType` or send `agentType="project-executor"`
 - mismatched request/session `agentType` is rejected before launch
 
