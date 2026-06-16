@@ -11,7 +11,6 @@ test("A2A runtime turn timeout is disabled unless requested", () => {
 	});
 
 	assert.equal(options.turnTimeoutMs, 0);
-	assert.equal(options.error, null);
 });
 
 test("A2A runtime turn timeout resolves from request seconds", () => {
@@ -22,7 +21,6 @@ test("A2A runtime turn timeout resolves from request seconds", () => {
 	});
 
 	assert.equal(options.turnTimeoutMs, 12500);
-	assert.equal(options.error, null);
 });
 
 test("A2A runtime turn timeout resolves from context milliseconds", () => {
@@ -47,14 +45,4 @@ test("A2A runtime turn timeout can be explicitly disabled per request", () => {
 	});
 
 	assert.equal(options.turnTimeoutMs, 0);
-});
-
-test("A2A runtime options reject removed session mode field", () => {
-	const options = normalizeA2ARuntimeOptions({
-		body: {
-			session_mode: "standard",
-		},
-	});
-
-	assert.match(options.error, /session_mode is not supported/);
 });

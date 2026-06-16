@@ -18,7 +18,12 @@ test("stateless LLM passthrough rejects session and runtime fields", async () =>
 	const result = await handleStatelessLlmChat({
 		body: {
 			agent_session_uid: "session-1",
-			message: "hello",
+			messages: [
+				{
+					role: "user",
+					content: "hello",
+				},
+			],
 		},
 		env: {
 			OPENAI_API_KEY: "sk-test",
@@ -35,13 +40,51 @@ test("stateless LLM passthrough rejects session and runtime fields", async () =>
 	assert.equal(fetchCalled, false);
 });
 
+test("stateless LLM passthrough rejects non-canonical request aliases", async () => {
+	let fetchCalled = false;
+	const result = await handleStatelessLlmChat({
+		body: {
+			provider: "openai",
+			model: "gpt-test",
+			message: "hello",
+			responseFormat: {
+				type: "json_object",
+				strict: true,
+			},
+			timeoutSeconds: 30,
+		},
+		env: {
+			OPENAI_API_KEY: "sk-test",
+		},
+		fetchFn: (async () => {
+			fetchCalled = true;
+			return jsonResponse({});
+		}) as typeof fetch,
+	});
+
+	assert.equal(result.statusCode, 400);
+	assert.equal(result.body.ok, false);
+	assert.equal(result.body.ok === false ? result.body.error : null, "invalid_llm_passthrough_request");
+	if (result.body.ok === false) {
+		assert.equal(result.body.field_errors?.message, "Use the canonical stateless LLM request shape.");
+		assert.equal(result.body.field_errors?.responseFormat, "Use the canonical stateless LLM request shape.");
+		assert.equal(result.body.field_errors?.timeoutSeconds, "Use the canonical stateless LLM request shape.");
+	}
+	assert.equal(fetchCalled, false);
+});
+
 test("stateless LLM passthrough returns application JSON with parsed strict JSON", async () => {
 	const calls: Array<{ url: string; payload: Record<string, unknown>; authorization: string | null }> = [];
 	const result = await handleStatelessLlmChat({
 		body: {
 			provider: "openai",
 			model: "gpt-test",
-			message: "Return JSON with two keys.",
+			messages: [
+				{
+					role: "user",
+					content: "Return JSON with two keys.",
+				},
+			],
 			response_format: {
 				type: "json_object",
 				strict: true,
@@ -103,7 +146,12 @@ test("stateless LLM passthrough repairs invalid strict JSON before returning", a
 		body: {
 			provider: "openai",
 			model: "gpt-test",
-			message: "Return JSON.",
+			messages: [
+				{
+					role: "user",
+					content: "Return JSON.",
+				},
+			],
 			response_format: {
 				type: "json_object",
 				strict: true,

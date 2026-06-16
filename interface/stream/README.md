@@ -48,7 +48,12 @@ Request:
 {
   "provider": "openai",
   "model": "gpt-5.4",
-  "message": "Return JSON with only 2 string keys.",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Return JSON with only 2 string keys."
+    }
+  ],
   "response_format": {
     "type": "json_object",
     "strict": true
@@ -85,9 +90,9 @@ Response:
 }
 ```
 
-The request can also provide canonical `messages` instead of `message`. Session/runtime fields such
-as `agent_session_uid`, `thread_id`, `agent_type`, `runtime_turn_timeout_seconds`, and
-`session_mode` are rejected.
+The request body has one canonical shape. Use `messages`; `message`, `prompt`, `input`, camelCase
+option aliases, and session/runtime fields such as `agent_session_uid`, `thread_id`, `agent_type`,
+and `runtime_turn_timeout_seconds` are rejected.
 
 ### `POST /api/chat`
 
@@ -249,14 +254,15 @@ Request:
 
 ```json
 {
-  "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f",
-  "thread_id": "0b2701a1-e777-4cfe-8437-b94025f00069",
-  "agent_type": "astro-orchestrator"
+  "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f"
 }
 ```
 
 Attach returns immediately with runtime attachment state while startup/preflight continues
 asynchronously.
+
+The backend session UID in the path is the authority; Astro hydrates thread metadata from
+backend/session state and uses the deployed runtime profile.
 
 Poll attachment/runtime status:
 
@@ -285,6 +291,8 @@ Request:
   }
 }
 ```
+
+Attached chat requests carry only the turn input and per-turn output controls.
 
 Cancel the active turn:
 

@@ -102,8 +102,20 @@ const SESSION_RUNTIME_FIELDS = [
 	"agentType",
 	"runtime_turn_timeout_seconds",
 	"runtimeTurnTimeoutSeconds",
-	"session_mode",
-	"sessionMode",
+];
+const NON_CANONICAL_REQUEST_FIELDS = [
+	"message",
+	"prompt",
+	"input",
+	"responseFormat",
+	"jsonRepair",
+	"omitReasoning",
+	"timeoutSeconds",
+	"baseUrl",
+	"topP",
+	"max_tokens",
+	"maxOutputTokens",
+	"maxTokens",
 ];
 
 const OPENAI_COMPATIBLE_BASE_URLS: Record<string, string> = {
@@ -145,7 +157,7 @@ function numberOption(value: unknown): number | null {
 }
 
 function normalizeTimeoutSeconds(body: Record<string, unknown>): number {
-	const configured = numberOption(body.timeout_seconds ?? body.timeoutSeconds);
+	const configured = numberOption(body.timeout_seconds);
 	if (configured == null || configured <= 0) return DEFAULT_TIMEOUT_SECONDS;
 	return Math.min(Math.trunc(configured), MAX_TIMEOUT_SECONDS);
 }
@@ -169,24 +181,17 @@ function extractTextContent(content: unknown): string | null {
 
 function normalizeMessages(body: Record<string, unknown>): StatelessLlmMessage[] | null {
 	const messages = Array.isArray(body.messages) ? body.messages : null;
-	if (messages) {
-		const normalized: StatelessLlmMessage[] = [];
-		for (const message of messages) {
-			if (!isPlainObject(message)) continue;
-			const role = nonEmptyString(message.role);
-			if (role !== "system" && role !== "user" && role !== "assistant") continue;
-			const content = extractTextContent(message.content);
-			if (!content) continue;
-			normalized.push({ role, content });
-		}
-		if (normalized.length > 0) return normalized;
+	if (!messages) return null;
+	const normalized: StatelessLlmMessage[] = [];
+	for (const message of messages) {
+		if (!isPlainObject(message)) continue;
+		const role = nonEmptyString(message.role);
+		if (role !== "system" && role !== "user" && role !== "assistant") continue;
+		const content = extractTextContent(message.content);
+		if (!content) continue;
+		normalized.push({ role, content });
 	}
-
-	const prompt =
-		nonEmptyString(body.message) ??
-		nonEmptyString(body.prompt) ??
-		nonEmptyString(body.input);
-	return prompt ? [{ role: "user", content: prompt }] : null;
+	return normalized.length > 0 ? normalized : null;
 }
 
 function rejectSessionRuntimeFields(body: Record<string, unknown>): StatelessLlmChatResult | null {
@@ -208,8 +213,28 @@ function rejectSessionRuntimeFields(body: Record<string, unknown>): StatelessLlm
 	};
 }
 
+function rejectNonCanonicalRequestFields(body: Record<string, unknown>): StatelessLlmChatResult | null {
+	const fieldErrors: Record<string, string> = {};
+	for (const field of NON_CANONICAL_REQUEST_FIELDS) {
+		if (body[field] !== undefined) {
+			fieldErrors[field] = "Use the canonical stateless LLM request shape.";
+		}
+	}
+	if (Object.keys(fieldErrors).length === 0) return null;
+	return {
+		statusCode: 400,
+		body: {
+			ok: false,
+			error: "invalid_llm_passthrough_request",
+			message:
+				"Stateless LLM passthrough requests use one canonical body shape: messages, response_format, json_repair, omit_reasoning, and timeout_seconds.",
+			field_errors: fieldErrors,
+		},
+	};
+}
+
 function buildProviderBaseUrl(provider: string, body: Record<string, unknown>, env: NodeJS.ProcessEnv): string | null {
-	const explicit = nonEmptyString(body.base_url ?? body.baseUrl);
+	const explicit = nonEmptyString(body.base_url);
 	if (explicit) return explicit.replace(/\/+$/, "");
 	const envProviderKey = `ASTRO_LLM_PASSTHROUGH_${provider.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_BASE_URL`;
 	const configured = nonEmptyString(env[envProviderKey]) ?? nonEmptyString(env.ASTRO_LLM_PASSTHROUGH_BASE_URL);
@@ -397,14 +422,9 @@ function buildProviderPayload(input: {
 	};
 	const temperature = numberOption(input.body.temperature);
 	if (temperature != null) payload.temperature = temperature;
-	const topP = numberOption(input.body.top_p ?? input.body.topP);
+	const topP = numberOption(input.body.top_p);
 	if (topP != null) payload.top_p = topP;
-	const maxTokens = integerOption(
-		input.body.max_output_tokens ??
-			input.body.maxOutputTokens ??
-			input.body.max_tokens ??
-			input.body.maxTokens,
-	);
+	const maxTokens = integerOption(input.body.max_output_tokens);
 	if (maxTokens != null && maxTokens > 0) payload.max_tokens = maxTokens;
 	const responseFormat = providerResponseFormat(input.options);
 	if (responseFormat) payload.response_format = responseFormat;
@@ -605,6 +625,8 @@ export async function handleStatelessLlmChat(input: {
 	const startedAt = Date.now();
 	const invalidSessionFields = rejectSessionRuntimeFields(body);
 	if (invalidSessionFields) return invalidSessionFields;
+	const nonCanonicalFields = rejectNonCanonicalRequestFields(body);
+	if (nonCanonicalFields) return nonCanonicalFields;
 
 	const provider = nonEmptyString(body.provider) ?? DEFAULT_PROVIDER;
 	const model = nonEmptyString(body.model) ?? DEFAULT_MODEL;
@@ -615,9 +637,9 @@ export async function handleStatelessLlmChat(input: {
 			body: {
 				ok: false,
 				error: "invalid_llm_passthrough_request",
-				message: "Stateless LLM passthrough requests require messages or a non-empty message.",
+				message: "Stateless LLM passthrough requests require a non-empty messages array.",
 				field_errors: {
-					messages: "Provide messages or message.",
+					messages: "Provide a non-empty messages array.",
 				},
 			},
 		};

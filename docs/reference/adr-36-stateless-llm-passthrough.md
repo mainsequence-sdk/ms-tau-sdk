@@ -128,6 +128,8 @@ Response:
 Rules:
 
 - `messages` is the complete context for the call.
+- The request body has one canonical shape. Do not accept `message`, `prompt`, `input`, camelCase
+  option aliases, or alternate token-limit field names.
 - The endpoint must not load prior messages from Astro or the backend.
 - The endpoint must not persist the request or response as conversation history.
 - The HTTP response body must be JSON, not SSE and not raw model text.
@@ -174,7 +176,7 @@ Rules:
 
 The stateless endpoint must reject session/runtime fields.
 
-These fields are invalid:
+These session/runtime fields are invalid:
 
 - `agent_session_uid`
 - `agentSessionUid`
@@ -184,8 +186,21 @@ These fields are invalid:
 - `agentType`
 - `runtime_turn_timeout_seconds`
 - `runtimeTurnTimeoutSeconds`
-- `session_mode`
-- `sessionMode`
+
+These non-canonical request aliases are also invalid:
+
+- `message`
+- `prompt`
+- `input`
+- `responseFormat`
+- `jsonRepair`
+- `omitReasoning`
+- `timeoutSeconds`
+- `baseUrl`
+- `topP`
+- `max_tokens`
+- `maxOutputTokens`
+- `maxTokens`
 
 Invalid request response:
 
@@ -302,6 +317,7 @@ session runtime.
 - [x] Implement a separate stateless LLM service that does not import or call session-runtime,
   checkpoint, Pi runner, capability materialization, or conversation-store code.
 - [x] Reject all session/runtime identity fields in passthrough requests.
+- [x] Enforce one canonical request body shape and reject shortcut/camelCase aliases.
 - [x] Resolve provider/model through explicit OpenAI-compatible passthrough provider mapping and
   credential-backed provider definitions.
 - [x] Resolve provider credentials independently of backend session state, using environment

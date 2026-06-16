@@ -73,9 +73,7 @@ Request:
 
 ```json
 {
-  "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f",
-  "thread_id": "0b2701a1-e777-4cfe-8437-b94025f00069",
-  "agent_type": "astro-orchestrator"
+  "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f"
 }
 ```
 
@@ -83,8 +81,8 @@ Rules:
 
 - `{agent_session_uid}` references an existing backend-owned session UID.
 - `user_uid` identifies the backend user that owns or is authorized for the existing session.
-- `thread_id` is the existing conversation/thread identity when the caller has one.
-- `agent_type` selects the Astro runtime identity.
+- Thread identity is backend session metadata and is hydrated by Astro from backend/session state.
+- Runtime identity is the deployed Astro runtime profile, not a caller-selected request field.
 - Attach must not create a backend session.
 - Attach must return immediately after registering the session runtime attachment.
 - Attach starts runtime bootstrap and runtime preparation asynchronously.
@@ -99,8 +97,6 @@ Response:
 {
   "ok": true,
   "agent_session_uid": "0b2701a1-e777-4cfe-8437-b94025f00069",
-  "thread_id": "0b2701a1-e777-4cfe-8437-b94025f00069",
-  "agent_type": "astro-orchestrator",
   "state": "starting",
   "expires_at": "2026-06-16T16:30:00.000Z"
 }
@@ -174,8 +170,7 @@ Rules:
 - The turn request should not repeat backend session identity fields.
 - The turn request carries only per-turn inputs and output controls.
 - Astro serializes turns for the attached session runtime.
-- Standard persistent sessions preserve checkpoint/session-history safety.
-- Ephemeral sessions preserve the no-checkpoint/no-persistent-history behavior selected at attach.
+- Attached session runtimes preserve checkpoint/session-history safety.
 - Strict JSON and reasoning suppression behavior follows ADR 34.
 - Runtime turn timeout remains per request. Omitted or `0` means Astro does not kill by timer.
 
@@ -233,8 +228,7 @@ Astro's internal runtime attachment state binds:
 
 - backend `agent_session_uid`
 - thread id
-- agent type/runtime profile
-- selected session mode
+- runtime profile
 - live or starting Pi runner
 - prepared runtime state
 - expiry/idle policy
@@ -260,8 +254,6 @@ The intended Python client workflow is:
 runtime = client.attach_session_runtime(
     agent_session_uid=session_uid,
     user_uid=user_uid,
-    thread_id=thread_uid,
-    agent_type="astro-orchestrator",
 )
 
 runtime.wait_until_ready()
@@ -298,7 +290,7 @@ If an old one-turn route still exists in code, it is legacy surface area, not th
 - Do not create backend sessions in Astro.
 - Do not remove agent skills or session capabilities.
 - Do not remove provider credential handling.
-- Do not remove checkpoint/session safety from the standard path.
+- Do not remove checkpoint/session safety from attached session runtimes.
 - Do not require clients to consume a generated endpoints map.
 - Do not introduce a second public runtime identity separate from `agent_session_uid`.
 
@@ -306,9 +298,11 @@ If an old one-turn route still exists in code, it is legacy surface area, not th
 
 - [x] Add a session runtime registry keyed by backend `agent_session_uid`.
 - [x] Track runtime state as `starting`, `ready`, `busy`, `failed`, or `detached`.
-- [x] Store only Astro runtime attachment state in the registry: session UID, thread UID, agent type,
-  session mode, runner/preflight status, current turn state, expiry, and last error.
+- [x] Store only Astro runtime attachment state in the registry: session UID, hydrated thread UID
+  when known, runtime profile, runner/preflight status, current turn state, expiry, and last error.
 - [x] Add `POST /api/a2a/sessions/{agent_session_uid}/runtime`.
+- [x] Remove caller-selected thread and agent identity from attach and attached chat request
+  authority.
 - [ ] Make attach validate authorization for the existing backend session UID without creating a new
   backend session.
 - [x] Make attach return immediately after registering or reusing the session runtime attachment.
@@ -323,9 +317,8 @@ If an old one-turn route still exists in code, it is legacy surface area, not th
 - [x] Reuse the already-attached Pi RPC runner when it is ready.
 - [x] If chat arrives while the runtime is still starting, wait according to the chat request policy
   rather than blocking attach.
-- [x] Preserve standard checkpoint/session-history safety for standard sessions.
-- [x] Remove `session_mode` and the no-checkpoint/no-persistent-history branch from the A2A session
-  runtime contract.
+- [x] Preserve checkpoint/session-history safety for attached session runtimes.
+- [x] Remove the no-checkpoint/no-persistent-history branch from the A2A session runtime contract.
 - [x] Preserve ADR 34 output controls for strict JSON, JSON repair, and reasoning suppression.
 - [x] Add `POST /api/a2a/sessions/{agent_session_uid}/runtime/cancel`.
 - [x] Make cancel stop only the active turn for the attached session runtime.

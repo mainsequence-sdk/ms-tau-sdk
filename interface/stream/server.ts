@@ -752,8 +752,6 @@ function serializeSessionRuntimeAttachment(record: A2ASessionRuntimeAttachment) 
 	return {
 		ok: true,
 		agent_session_uid: record.agentSessionUid,
-		thread_id: record.threadId,
-		agent_type: record.agentType,
 		state,
 		runner: runner
 			? {
@@ -7747,7 +7745,6 @@ function buildBackgroundRuntimeContext(input: {
 		envelopeResponseFormat: null,
 	});
 	const a2aRuntimeOptions: A2ARuntimeOptions = {
-		error: null,
 		turnTimeoutMs: 0,
 	};
 	return {
@@ -8091,35 +8088,18 @@ async function handleA2ASessionRuntimeRequest(
 			return;
 		}
 
-		const agentType = normalizeAgentType(body.agent_type ?? body.agentType) ?? runtimeProfile.kind;
+		const agentType = runtimeProfile.kind;
 		if (!ALLOWED_AGENT_TYPES.has(agentType)) {
 			json(res, 400, {
 				error: "invalid_agent_type",
-				message: `Unsupported agent_type "${agentType}".`,
-			});
-			return;
-		}
-
-		const threadId =
-			normalizeRuntimeSessionId(body.thread_id ?? body.threadId) ?? route.agentSessionUid;
-		const contextRecord = isPlainObject(body.context) ? body.context : {};
-		const a2aContext = extractObjectPropertyRecord(contextRecord, "a2a") ?? {};
-		const a2aRuntimeOptions = normalizeA2ARuntimeOptions({
-			body,
-			a2aContext,
-			context: contextRecord,
-		});
-		if (a2aRuntimeOptions.error) {
-			json(res, 400, {
-				error: "invalid_a2a_runtime_options",
-				message: a2aRuntimeOptions.error,
+				message: `Unsupported runtime profile agent type "${agentType}".`,
 			});
 			return;
 		}
 
 		const record = a2aSessionRuntimeRegistry.attach({
 			agentSessionUid: route.agentSessionUid,
-			threadId,
+			threadId: null,
 			agentType,
 		});
 		logStructuredEvent({
@@ -8128,7 +8108,6 @@ async function handleA2ASessionRuntimeRequest(
 			message: "Astro attached an existing backend session UID to a session runtime.",
 			data: {
 				agentSessionUid: route.agentSessionUid,
-				threadId,
 				agentType,
 				userUid,
 				state: record.state,
@@ -8886,23 +8865,20 @@ async function handleStreamRequest(
 		body = {
 			...rawBody,
 			runtime_session_uid: route.agentSessionUid,
-				threadId:
-					normalizeRuntimeSessionId(rawBody.thread_id ?? rawBody.threadId) ??
-					record.threadId ??
-					route.agentSessionUid,
-				agent_type: normalizeAgentType(rawBody.agent_type ?? rawBody.agentType) ?? record.agentType,
-			};
-			logStructuredEvent({
-				component: "astro-stream",
-				event: "a2a_session_runtime_chat_attached",
+			threadId: record.threadId ?? route.agentSessionUid,
+			agent_type: record.agentType,
+		};
+		logStructuredEvent({
+			component: "astro-stream",
+			event: "a2a_session_runtime_chat_attached",
 			message: "Astro routed an A2A chat turn through an attached session runtime.",
 			data: {
-					agentSessionUid: route.agentSessionUid,
-					threadId: body.threadId,
-					agentType: body.agent_type,
-				},
-			});
-	}
+				agentSessionUid: route.agentSessionUid,
+				threadId: body.threadId,
+				agentType: body.agent_type,
+			},
+		});
+		}
 
 	if (logRequestBodies) {
 		console.log(`[astro-stream] IN ${url.pathname}: ${JSON.stringify(body)}`);
@@ -9478,13 +9454,6 @@ async function handleStreamRequest(
 			a2aContext,
 			context,
 		});
-		if (isA2AChatRequest && a2aRuntimeOptions.error) {
-			json(res, 400, {
-				error: "invalid_a2a_runtime_options",
-				message: a2aRuntimeOptions.error,
-			});
-			return;
-		}
 		if (a2aOutputOptions.omitReasoning || a2aOutputOptions.strictJson) {
 		logStructuredEvent({
 			component: "astro-stream",

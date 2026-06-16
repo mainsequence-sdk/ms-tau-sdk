@@ -1,5 +1,4 @@
 export type A2ARuntimeOptions = {
-	error: string | null;
 	turnTimeoutMs: number;
 };
 
@@ -55,13 +54,6 @@ function firstNormalizedSeconds(...values: Array<unknown>): number | null {
 	return null;
 }
 
-function firstPresent(...values: Array<unknown>): unknown {
-	for (const value of values) {
-		if (value != null) return value;
-	}
-	return null;
-}
-
 export function normalizeA2ARuntimeOptions(input: {
 	body?: Record<string, unknown> | null;
 	a2aContext?: Record<string, unknown> | null;
@@ -70,14 +62,6 @@ export function normalizeA2ARuntimeOptions(input: {
 	const body = isPlainObject(input.body) ? input.body : {};
 	const a2aContext = isPlainObject(input.a2aContext) ? input.a2aContext : {};
 	const context = isPlainObject(input.context) ? input.context : {};
-	const removedSessionMode = firstPresent(
-		body.session_mode,
-		body.sessionMode,
-		a2aContext.session_mode,
-		a2aContext.sessionMode,
-		context.session_mode,
-		context.sessionMode,
-	);
 	const turnTimeoutMs =
 		firstNormalized(
 			body.runtime_turn_timeout_ms,
@@ -109,10 +93,6 @@ export function normalizeA2ARuntimeOptions(input: {
 			) ??
 			0;
 	return {
-		error:
-			removedSessionMode == null
-				? null
-				: "A2A session_mode is not supported; attached A2A runtimes always use backend session semantics.",
 		turnTimeoutMs,
 	};
 }

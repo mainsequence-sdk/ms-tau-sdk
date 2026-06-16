@@ -260,126 +260,38 @@ The result is slow and confusing:
 - strict JSON calls inherit durable session semantics they did not necessarily request
 - checkpoint work blocks the critical path instead of being scoped to requests that need it
 
-### Target Modes
+### Current Direction
 
-Introduce one explicit A2A fast-path selector. The first implementation should expose only
-`session_mode: "ephemeral"`; omitting `session_mode` keeps the standard checkpoint/session-history
-behavior. `hot_owner` is a follow-up optimization because it requires additional lease-owner
-correctness work.
+Do not introduce request-level durability selectors inside the A2A runtime contract.
 
-#### 1. Standard Mode
+The split is now endpoint-level:
 
-Standard mode is the current safety model and is selected by omitting `session_mode`.
+- attached A2A session runtimes use backend session semantics and preserve checkpoint/session-history
+  safety
+- stateless LLM passthrough uses `POST /api/llm/chat` and does not attach to a session, start Pi,
+  acquire checkpoints, or persist history
 
-Use it when the A2A request should read/write the canonical long-lived Pi session history.
-
-Required behavior:
-
-- acquire or renew checkpoint lease
-- restore backend checkpoint if local state is stale
-- validate local session history before prompt dispatch
-- hold/renew lease while Pi mutates session state
-- checkpoint/finalize after turn completion
-
-This should remain the default for UI-equivalent session turns unless a safer default is agreed.
-
-#### 2. Ephemeral Mode
-
-Ephemeral mode is for API-style A2A calls that do not need to mutate durable session history.
-
-Use it for strict JSON/tool-like calls where the caller wants a response, not a persisted session
-turn.
-
-Required behavior:
-
-- no durable checkpoint lease
-- no write to canonical Pi session history
-- no same-session mutation queue unless explicitly requested
-- run with `--no-session`, a temporary session, or a separate ephemeral context
-- optionally include summarized context supplied by the caller/backend
-- return response and discard local state
-
-This is the fastest path because it removes checkpoint ownership from the critical path entirely.
-
-#### Future: Hot Owner Mode
-
-Hot owner mode is for a live warm runner that already owns a valid local checkpoint lease.
-
-Instead of doing a backend checkpoint round-trip before every prompt, Astro can dispatch if:
-
-- this pod has the active warm runner for the `agentSessionId`
-- the runner has an active current prepared runtime compatible with the request
-- the local checkpoint lease is present and not close to expiry
-- no backend restore is pending
-- no previous turn failed finalization
-
-Lease renewal should continue in the background. If renewal fails, Astro stops the runner and rejects
-future durable turns until ownership is reacquired.
-
-This keeps cross-pod safety for a live owner while avoiding per-turn lease acquisition latency.
-
-### Request Contract Direction
-
-The A2A caller should be able to opt into the fast non-persistent path explicitly.
-If the caller omits `session_mode`, Astro should use the existing standard path.
-
-Possible shape:
-
-```json
-{
-  "message": "Return a JSON object.",
-  "response_format": { "type": "json_object", "strict": true },
-  "session_mode": "ephemeral"
-}
-```
-
-Only explicit mode:
-
-- `ephemeral`: no durable session mutation
-
-Possible future mode:
-
-- `hot_owner`: require existing live owner, otherwise fail or fall back based on request option
-
-The fast path must be explicit. Astro should not guess whether a machine-facing A2A call wants to
-skip standard persistent writes.
+This avoids a hidden mode switch inside the A2A runtime contract. If a caller wants no session
+mutation, it should call the stateless endpoint instead of sending an A2A session-runtime turn.
 
 ### Safety Rules
 
-- Never skip checkpoint for a request that will mutate canonical session history unless this pod
-  already has a valid active lease.
-- Never dispatch a standard persistent prompt after lease expiry.
-- If hot-owner renewal fails, stop the runner and reject or cold-recover future standard turns.
-- Ephemeral mode must not write to the durable session `.jsonl` or checkpoint bundle.
-- If the caller asks for `hot_owner` and no live owner exists, return a clear error or use an
-  explicit caller-selected fallback.
+- Attached A2A runtime turns preserve checkpoint/session-history safety.
+- Stateless LLM passthrough must not mutate canonical session history.
+- Stateless LLM passthrough must not acquire checkpoint leases, restore checkpoints, start Pi, or
+  write conversation history.
+- Backend checkpoint failures must not affect `POST /api/llm/chat`.
 
 ### Acceptance Criteria
 
-- A strict JSON A2A request can opt into a no-checkpoint ephemeral path.
-- Standard A2A still preserves single-writer checkpoint safety.
-- Hot-owner A2A can dispatch without a fresh backend lease round-trip when a valid local lease is
-  already held.
-- Logs identify the selected durability mode for every A2A request.
-- Logs show whether checkpoint was skipped because of `ephemeral` or acquired/restored because the
-  request used standard behavior.
-- Backend checkpoint failures do not affect ephemeral requests.
+- Attached A2A runtime turns have no request-level durability selector.
+- `POST /api/llm/chat` handles strict JSON machine calls without session attachment.
+- Logs distinguish attached runtime work from stateless LLM passthrough work by endpoint/event name,
+  not by a mode flag.
 
 ### Expected Latency Impact
 
-Ephemeral mode removes checkpoint latency entirely from the request path.
+Stateless LLM passthrough removes checkpoint and Pi startup latency entirely from the request path.
 
-Hot-owner mode turns repeated same-session durable turns from:
-
-```text
-backend lease/restore check + prompt dispatch
-```
-
-into:
-
-```text
-local lease validity check + prompt dispatch
-```
-
-Durable cold recovery remains slower, but it is only paid when the request actually needs durable
-session ownership or when no live owner exists.
+Attached A2A session runtimes remain optimized through attach-once, warm runner reuse, and explicit
+runtime lifecycle management.
