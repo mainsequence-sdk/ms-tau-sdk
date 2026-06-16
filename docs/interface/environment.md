@@ -26,6 +26,9 @@
   is stopped)
 - `ASTRO_A2A_WARM_RUNNER_RPC_TIMEOUT_MS` (default `10000`; timeout for warm runner RPC command
   acknowledgements)
+- `ASTRO_A2A_TURN_TIMEOUT_MS` (default `240000`; maximum active `/api/a2a/chat` runtime turn
+  duration before Astro cancels the turn so it releases the same-session queue before external
+  300s request timeouts; set `0` to disable)
 - `ASTRO_A2A_JSON_REPAIR_TIMEOUT_MS` (default `60000`; timeout for each strict JSON repair attempt
   when an A2A response fails runtime JSON validation)
 - `ASTRO_RELEASE_VERSION` (the Astro release/build version baked into the image and exposed for

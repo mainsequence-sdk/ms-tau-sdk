@@ -155,6 +155,11 @@ const warmRunnerRpcCommandTimeoutMs = (() => {
 	const configured = Number(process.env.ASTRO_A2A_WARM_RUNNER_RPC_TIMEOUT_MS ?? "10000");
 	return Number.isFinite(configured) && configured >= 1000 ? Math.trunc(configured) : 10000;
 })();
+const a2aTurnTimeoutMs = (() => {
+	const configured = Number(process.env.ASTRO_A2A_TURN_TIMEOUT_MS ?? "240000");
+	if (configured === 0) return 0;
+	return Number.isFinite(configured) && configured >= 1000 ? Math.trunc(configured) : 240000;
+})();
 const sessionCancelGraceMs = (() => {
 	const configured = Number(process.env.ASTRO_SESSION_CANCEL_GRACE_MS ?? "5000");
 	return Number.isFinite(configured) && configured >= 500 ? Math.trunc(configured) : 5000;
@@ -549,8 +554,12 @@ type RequestContext = {
 	toolCallIds: Map<number, { toolCallId: string; toolName: string }>;
 	piProcess: ChildProcess | null;
 	cancelKillTimer: ReturnType<typeof setTimeout> | null;
+	runtimeTurnTimeoutTimer: ReturnType<typeof setTimeout> | null;
 	cancellation: ActiveRunCancellation | null;
 	clientAttached: boolean;
+	cancelOnClientDisconnect: boolean;
+	streamAbortHandlerAttached: boolean;
+	runtimeStarted: boolean;
 	finished: boolean;
 	terminalError: { errorCode: string | null; errorDetail: string | null } | null;
 	system: string | undefined;
@@ -4722,12 +4731,23 @@ function writeChunkWithAgentId(ctx: RequestContext, chunk: StreamEvent, agentId:
 			ctx.res.write(payload);
 		} catch (error) {
 			ctx.clientAttached = false;
-			updateActiveStreamSession(ctx, { clientAttached: false });
+			if (ctx.cancelOnClientDisconnect) {
+				beginActiveRunCancellation(ctx, {
+					reason: "client_write_failed",
+					message: "A2A client write failed before the runtime turn completed.",
+				});
+			} else {
+				updateActiveStreamSession(ctx, { clientAttached: false });
+			}
 			logStructuredEvent({
 				severity: "WARNING",
 				component: "astro-stream",
-				event: "stream_client_write_failed",
-				message: "Astro could not write to the SSE response; the active Pi run will continue detached.",
+				event: ctx.cancelOnClientDisconnect
+					? "stream_client_write_failed_runtime_cancelled"
+					: "stream_client_write_failed",
+				message: ctx.cancelOnClientDisconnect
+					? "Astro could not write to the A2A SSE response; cancelling the active runtime turn."
+					: "Astro could not write to the SSE response; the active Pi run will continue detached.",
 				data: {
 					sessionKey: ctx.sessionKey,
 					threadId: ctx.threadId,
@@ -5166,6 +5186,7 @@ function writeDone(ctx: RequestContext) {
 		abortStreamOnPersistenceFailure(ctx, error);
 		return;
 	}
+	clearRuntimeTurnTimeout(ctx);
 	stopCheckpointLeaseRenewal(ctx);
 	clearActiveStreamSession(ctx);
 	if (ctx.clientAttached && !ctx.res.writableEnded && !ctx.res.destroyed) {
@@ -5196,22 +5217,85 @@ function writeDone(ctx: RequestContext) {
 	ctx.finished = true;
 }
 
+function clearRuntimeTurnTimeout(ctx: RequestContext) {
+	if (!ctx.runtimeTurnTimeoutTimer) return;
+	clearTimeout(ctx.runtimeTurnTimeoutTimer);
+	ctx.runtimeTurnTimeoutTimer = null;
+}
+
+function runtimeTurnShouldStop(ctx: RequestContext): boolean {
+	return (
+		ctx.finished ||
+		ctx.cancellation?.requested === true ||
+		(ctx.cancelOnClientDisconnect && !ctx.clientAttached)
+	);
+}
+
+function startRuntimeTurnTimeout(ctx: RequestContext) {
+	clearRuntimeTurnTimeout(ctx);
+	if (!ctx.cancelOnClientDisconnect || a2aTurnTimeoutMs <= 0) return;
+	ctx.runtimeTurnTimeoutTimer = setTimeout(() => {
+		if (ctx.finished || ctx.cancellation?.requested) return;
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "a2a_runtime_turn_timeout",
+			message: "Astro is cancelling an A2A runtime turn because it exceeded the runtime turn timeout.",
+			data: {
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId,
+				agentSessionId: ctx.agentSessionId,
+				agentType: ctx.agentType,
+				timeoutMs: a2aTurnTimeoutMs,
+				hasPiProcess: Boolean(ctx.piProcess),
+				runtimeStarted: ctx.runtimeStarted,
+			},
+		});
+		beginActiveRunCancellation(ctx, {
+			reason: "a2a_runtime_turn_timeout",
+			message: `A2A runtime turn timed out after ${a2aTurnTimeoutMs}ms.`,
+		});
+	}, a2aTurnTimeoutMs);
+	ctx.runtimeTurnTimeoutTimer.unref();
+}
+
 function attachStreamAbortHandler(ctx: RequestContext) {
+	if (ctx.streamAbortHandlerAttached) return;
+	ctx.streamAbortHandlerAttached = true;
 	ctx.res.once("close", () => {
 		if (ctx.finished || ctx.res.writableEnded) return;
 		ctx.clientAttached = false;
-		updateActiveStreamSession(ctx, { clientAttached: false });
+		if (!ctx.runtimeStarted) {
+			ctx.finished = true;
+		} else if (ctx.cancelOnClientDisconnect) {
+			beginActiveRunCancellation(ctx, {
+				reason: "client_disconnected",
+				message: "A2A client disconnected before the runtime turn completed.",
+			});
+		} else {
+			updateActiveStreamSession(ctx, { clientAttached: false });
+		}
 		logStructuredEvent({
 			severity: "INFO",
 			component: "astro-stream",
-			event: "stream_client_detached",
-			message: "Client disconnected before the stream completed; the active Pi run will continue.",
+			event: ctx.runtimeStarted
+				? ctx.cancelOnClientDisconnect
+					? "stream_client_disconnected_runtime_cancelled"
+					: "stream_client_detached"
+				: "stream_client_detached_before_runtime_start",
+			message: ctx.runtimeStarted
+				? ctx.cancelOnClientDisconnect
+					? "A2A client disconnected before the stream completed; Astro is cancelling the active runtime turn."
+					: "Client disconnected before the stream completed; the active Pi run will continue."
+				: "Client disconnected before the queued runtime turn started; Astro will skip this abandoned turn.",
 			data: {
 				sessionKey: ctx.sessionKey,
 				threadId: ctx.threadId,
 				agentSessionId: ctx.agentSessionId,
 				hasCheckpointLease: Boolean(ctx.checkpointLease),
 				hasPiProcess: Boolean(ctx.piProcess),
+				runtimeStarted: ctx.runtimeStarted,
+				cancelOnClientDisconnect: ctx.cancelOnClientDisconnect,
 			},
 		});
 	});
@@ -5805,6 +5889,16 @@ async function prepareWarmPiRuntime(
 		capabilityPreparationPromise,
 		providerCredentialPreparationPromise,
 	]);
+	if (runtimeTurnShouldStop(ctx)) {
+		const hydratedProviderCredentials = providerCredentialPreparation?.hydratedProviderCredentials;
+		if (
+			hydratedProviderCredentials?.ok === true &&
+			!isScopedProviderCredentialCacheEnabled(piLaunchBaseEnv)
+		) {
+			cleanupScopedPiAgentDir(hydratedProviderCredentials.value.scopedPiAgentDir);
+		}
+		return { ok: false, handled: true };
+	}
 
 	const capabilities = capabilityPreparation.capabilities;
 	capabilityPreparationDurationMs = capabilityPreparation.durationMs;
@@ -5950,6 +6044,15 @@ async function prepareWarmPiRuntime(
 			sessionSkillPaths,
 			env: piLaunchBaseEnv,
 		});
+	}
+	if (runtimeTurnShouldStop(ctx)) {
+		if (activeProviderCredentialKey) {
+			activeScopedProviderCredentials.delete(activeProviderCredentialKey);
+		}
+		if (!isScopedProviderCredentialCacheEnabled(piLaunchBaseEnv)) {
+			cleanupScopedPiAgentDir(scopedProviderCredentialProvider ? scopedPiAgentDir : null);
+		}
+		return { ok: false, handled: true };
 	}
 
 	const flushProviderCredential = async (reason: string) => {
@@ -6240,6 +6343,10 @@ function handleWarmRunnerParsedLine(runner: WarmSessionRunner, parsed: any) {
 	const turn = runner.currentTurn;
 	if (!turn || turn.completed) return;
 	const ctx = turn.ctx;
+	if (ctx.cancellation?.requested) {
+		void completeWarmRunnerTurn(runner, "shutdown");
+		return;
+	}
 	if (ctx.finished) {
 		void completeWarmRunnerTurn(runner, "stream_finish");
 		return;
@@ -6379,7 +6486,13 @@ async function startWarmRunner(input: {
 	child.on("exit", (code, signal) => {
 		const turn = runner.currentTurn;
 		removeWarmRunner(runner, signal ? `exit_signal_${signal}` : `exit_code_${code ?? "null"}`);
-		if (turn && !turn.completed && !turn.ctx.finished) {
+		if (turn && !turn.completed && turn.ctx.cancellation?.requested) {
+			if (!turn.ctx.finished) {
+				writeChunk(turn.ctx, buildCancellationErrorEvent());
+				writeDone(turn.ctx);
+			}
+			void completeWarmRunnerTurn(runner, "shutdown");
+		} else if (turn && !turn.completed && !turn.ctx.finished) {
 			const stderrSummary = runner.stderrLines.length
 				? ` Recent stderr:\n${runner.stderrLines.join("\n")}`
 				: "";
@@ -6395,7 +6508,13 @@ async function startWarmRunner(input: {
 	child.on("error", (error) => {
 		const turn = runner.currentTurn;
 		removeWarmRunner(runner, "process_error");
-		if (turn && !turn.completed && !turn.ctx.finished) {
+		if (turn && !turn.completed && turn.ctx.cancellation?.requested) {
+			if (!turn.ctx.finished) {
+				writeChunk(turn.ctx, buildCancellationErrorEvent());
+				writeDone(turn.ctx);
+			}
+			void completeWarmRunnerTurn(runner, "shutdown");
+		} else if (turn && !turn.completed && !turn.ctx.finished) {
 			writeChunk(turn.ctx, { type: "error", error: error.message, error_source: "pi" });
 			writeDone(turn.ctx);
 			void completeWarmRunnerTurn(runner, "stream_error");
@@ -6540,6 +6659,10 @@ async function runWarmPiPrompt(
 ): Promise<{ ok: true } | { ok: false; fallbackReason: string } | { ok: false; handled: true }> {
 	const prepared = await prepareWarmPiRuntime(ctx, options);
 	if (!prepared.ok) return prepared;
+	if (runtimeTurnShouldStop(ctx)) {
+		await prepared.value.finalizeProviderCredentials("shutdown");
+		return { ok: false, handled: true };
+	}
 	let runner: WarmSessionRunner;
 	try {
 		runner = await getCompatibleWarmRunner({
@@ -6554,6 +6677,10 @@ async function runWarmPiPrompt(
 			ok: false,
 			fallbackReason: error instanceof Error ? error.message : String(error),
 		};
+	}
+	if (runtimeTurnShouldStop(ctx)) {
+		await prepared.value.finalizeProviderCredentials("shutdown");
+		return { ok: false, handled: true };
 	}
 	await dispatchWarmRunnerTurn(runner, prompt, ctx, prepared.value);
 	return { ok: true };
@@ -6677,6 +6804,16 @@ async function runPiPrompt(
 		capabilityPreparationPromise,
 		providerCredentialPreparationPromise,
 	]);
+	if (runtimeTurnShouldStop(ctx)) {
+		const hydratedProviderCredentials = providerCredentialPreparation?.hydratedProviderCredentials;
+		if (
+			hydratedProviderCredentials?.ok === true &&
+			!isScopedProviderCredentialCacheEnabled(piLaunchBaseEnv)
+		) {
+			cleanupScopedPiAgentDir(hydratedProviderCredentials.value.scopedPiAgentDir);
+		}
+		return;
+	}
 
 	if (capabilityPreparation) {
 		const capabilities = capabilityPreparation.capabilities;
@@ -6966,6 +7103,10 @@ async function runPiPrompt(
 			},
 		});
 	};
+	if (runtimeTurnShouldStop(ctx)) {
+		await finalizeProviderCredentials("shutdown");
+		return;
+	}
 
 	if (options.agentConfig) {
 		if (boundModelArg) {
@@ -6979,6 +7120,12 @@ async function runPiPrompt(
 		args.push("--append-system-prompt", promptPath);
 	} else if (boundModelArg) {
 		args.push("--model", boundModelArg);
+	}
+
+	if (runtimeTurnShouldStop(ctx)) {
+		await finalizeProviderCredentials("shutdown");
+		cleanupPromptFile(promptPath);
+		return;
 	}
 
 	args.push(prompt);
@@ -8574,8 +8721,12 @@ async function handleStreamRequest(
 		toolCallIds: new Map(),
 		piProcess: null,
 		cancelKillTimer: null,
+		runtimeTurnTimeoutTimer: null,
 		cancellation: null,
 		clientAttached: true,
+		cancelOnClientDisconnect: isA2AChatRequest,
+		streamAbortHandlerAttached: false,
+		runtimeStarted: false,
 		finished: false,
 		terminalError: null,
 		system,
@@ -8596,18 +8747,52 @@ async function handleStreamRequest(
 		checkpointLease: null,
 	};
 
+	const queuedAt = Date.now();
 	const executeRuntimeTurn = async () => {
+		if (ctx.finished || !ctx.clientAttached || ctx.res.destroyed || ctx.res.writableEnded) {
+			logStructuredEvent({
+				severity: "INFO",
+				component: "astro-stream",
+				event: "runtime_turn_skipped_after_client_detach",
+				message: "Astro skipped a queued runtime turn because the client disconnected before execution started.",
+				data: {
+					sessionKey: ctx.sessionKey,
+					threadId: ctx.threadId,
+					agentSessionId: ctx.agentSessionId,
+					agentType: ctx.agentType,
+					queueWaitMs: Date.now() - queuedAt,
+				},
+			});
+			return;
+		}
+		ctx.runtimeStarted = true;
 		markActiveStreamSession(ctx);
-		attachStreamAbortHandler(ctx);
+		startRuntimeTurnTimeout(ctx);
+		logStructuredEvent({
+			severity: "INFO",
+			component: "astro-stream",
+			event: "runtime_turn_started",
+			message: "Astro started executing a runtime turn after any same-session queue wait.",
+			data: {
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId,
+				agentSessionId: ctx.agentSessionId,
+				agentType: ctx.agentType,
+				queueWaitMs: Date.now() - queuedAt,
+				warmA2ATurnEligible,
+			},
+		});
 
 		try {
 			const checkpointReady = await prepareCheckpointBeforePiLaunch(ctx);
+			if (runtimeTurnShouldStop(ctx)) return;
 			if (checkpointReady.ok === false) {
 				writeChunk(ctx, checkpointReady.errorEvent);
 				writeDone(ctx);
 				return;
 			}
 		} catch (error) {
+			if (runtimeTurnShouldStop(ctx)) return;
 			writeChunk(ctx, {
 				type: "error",
 				error: error instanceof Error ? error.message : String(error),
@@ -8616,6 +8801,7 @@ async function handleStreamRequest(
 			writeDone(ctx);
 			return;
 		}
+		if (runtimeTurnShouldStop(ctx)) return;
 
 		try {
 			writeSessionMetadata(sessionKey, {
@@ -8645,6 +8831,7 @@ async function handleStreamRequest(
 					: {}),
 			});
 		} catch (error) {
+			if (runtimeTurnShouldStop(ctx)) return;
 			console.error(
 				`[astro-stream] failed to persist conversation launch files for session=${sessionKey}: ${
 					error instanceof Error ? error.message : String(error)
@@ -8660,8 +8847,10 @@ async function handleStreamRequest(
 			writeDone(ctx);
 			return;
 		}
+		if (runtimeTurnShouldStop(ctx)) return;
 
 		writeChunk(ctx, { type: "start", messageId });
+		if (runtimeTurnShouldStop(ctx)) return;
 
 		const prompt = buildPrompt(system, latestUserMessage, context, tools);
 		const piOptions = {
@@ -8672,6 +8861,7 @@ async function handleStreamRequest(
 
 		if (warmA2ATurnEligible) {
 			const warmResult = await runWarmPiPrompt(prompt, ctx, piOptions);
+			if (runtimeTurnShouldStop(ctx)) return;
 			if (warmResult.ok === true || "handled" in warmResult) return;
 			const fallbackReason = warmResult.fallbackReason;
 			logStructuredEvent({
@@ -8689,9 +8879,29 @@ async function handleStreamRequest(
 			});
 		}
 
+		if (runtimeTurnShouldStop(ctx)) return;
 		await runPiPrompt(prompt, ctx, piOptions);
 	};
 
+	attachStreamAbortHandler(ctx);
+	const existingWarmQueue = warmA2ATurnEligible
+		? warmSessionTurnQueues.has(agentSessionId!)
+		: false;
+	if (warmA2ATurnEligible) {
+		logStructuredEvent({
+			severity: "INFO",
+			component: "astro-stream",
+			event: "runtime_turn_queued",
+			message: "Astro queued an A2A runtime turn behind the same backend agent session.",
+			data: {
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId,
+				agentSessionId: ctx.agentSessionId,
+				agentType: ctx.agentType,
+				existingWarmQueue,
+			},
+		});
+	}
 	const execution = warmA2ATurnEligible
 		? enqueueWarmSessionTurn(agentSessionId!, executeRuntimeTurn)
 		: executeRuntimeTurn();
