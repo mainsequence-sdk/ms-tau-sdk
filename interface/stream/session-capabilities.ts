@@ -118,7 +118,13 @@ export type SessionCapabilityMaterialization = {
 };
 
 export type SessionCapabilityMaterializationResult =
-	| { ok: true; value: SessionCapabilityMaterialization }
+	| {
+			ok: true;
+			value: SessionCapabilityMaterialization;
+			cacheHit?: boolean;
+			cacheReason?: string;
+			cacheInvalidationReason?: string;
+	  }
 	| {
 			ok: false;
 			statusCode: number | null;
@@ -138,6 +144,15 @@ const SUPPORTED_CAPABILITY_SOURCE_TYPES = new Set<CapabilitySourceType>([
 ]);
 
 const SUPPORTED_CAPABILITY_KINDS = new Set<CapabilityKind>(["skill", "prompt", "extension"]);
+const DEFAULT_ZERO_CAPABILITY_CACHE_TTL_MS = 5 * 60 * 1000;
+
+type CachedSessionCapabilityMaterialization = {
+	value: SessionCapabilityMaterialization;
+	expiresAtMs: number | null;
+	bindingSignature: string | null;
+};
+
+const sessionCapabilityMaterializationCache = new Map<string, CachedSessionCapabilityMaterialization>();
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -197,6 +212,84 @@ function parseCapability(value: unknown): AgentCapability | null {
 		created_by_user_uid: normalizeString(value.created_by_user_uid),
 		updated_at: normalizeString(value.updated_at) ?? "",
 	};
+}
+
+function resolveCacheEnabled(env: NodeJS.ProcessEnv): boolean {
+	return env.ASTRO_SESSION_CAPABILITY_CACHE !== "0";
+}
+
+function resolveZeroCapabilityCacheTtlMs(env: NodeJS.ProcessEnv): number {
+	const configured = Number(env.ASTRO_SESSION_CAPABILITY_CACHE_TTL_MS ?? DEFAULT_ZERO_CAPABILITY_CACHE_TTL_MS);
+	return Number.isFinite(configured) && configured > 0
+		? Math.trunc(configured)
+		: DEFAULT_ZERO_CAPABILITY_CACHE_TTL_MS;
+}
+
+function cacheKey(input: { agentSessionUid: string; sessionAssetsRoot: string; env?: NodeJS.ProcessEnv }): string {
+	const env = input.env ?? process.env;
+	const backendUrl = env.MAINSEQUENCE_BACKEND ?? "";
+	return `${backendUrl}:${path.resolve(input.sessionAssetsRoot)}:${input.agentSessionUid}`;
+}
+
+function isZeroCapabilityMaterialization(value: SessionCapabilityMaterialization): boolean {
+	return value.bindingCount === 0 && value.enabledSkillBindingCount === 0 && value.materializedSkillCount === 0;
+}
+
+function buildBindingsSignature(bindings: AgentSessionCapabilityBinding[]): string {
+	const normalized = bindings
+		.map((binding) => ({
+			uid: binding.uid,
+			agent_session_uid: binding.agent_session_uid,
+			capability_uid: binding.capability_uid,
+			role: binding.role,
+			sort_order: binding.sort_order,
+			is_enabled: binding.is_enabled,
+			is_locked: binding.is_locked,
+			source_type: binding.source_type,
+			source_ref: binding.source_ref,
+			updated_at: binding.updated_at,
+			capability: {
+				uid: binding.capability.uid,
+				kind: binding.capability.kind,
+				source_type: binding.capability.source_type,
+				source_ref: binding.capability.source_ref,
+				capability_path: binding.capability.capability_path,
+				content_file: binding.capability.content_file,
+				content_sha256: binding.capability.content_sha256,
+				content_mime_type: binding.capability.content_mime_type,
+				content_size: binding.capability.content_size,
+				has_content: binding.capability.has_content,
+				updated_at: binding.capability.updated_at,
+			},
+		}))
+		.sort((left, right) => left.uid.localeCompare(right.uid));
+	return `sha256:${createHash("sha256").update(JSON.stringify(normalized)).digest("hex")}`;
+}
+
+function cachedMaterializedFilesValid(value: SessionCapabilityMaterialization): boolean {
+	for (const entry of value.materialized) {
+		const existing = readExistingText(entry.targetPath);
+		if (existing == null) return false;
+		if (entry.contentSha256 && hashContent(existing) !== entry.contentSha256) return false;
+	}
+	return true;
+}
+
+function cloneMaterialization(
+	value: SessionCapabilityMaterialization,
+	materializedAt = value.materializedAt,
+): SessionCapabilityMaterialization {
+	return {
+		...value,
+		materializedAt,
+		skipped: { ...value.skipped },
+		settingsSkillPaths: [...value.settingsSkillPaths],
+		materialized: value.materialized.map((entry) => ({ ...entry })),
+	};
+}
+
+export function clearSessionCapabilityMaterializationCache() {
+	sessionCapabilityMaterializationCache.clear();
 }
 
 function parseAgentCapabilityBinding(value: unknown): AgentCapabilityBinding | null {
@@ -472,6 +565,30 @@ export async function materializeSessionCapabilities(input: {
 	env?: NodeJS.ProcessEnv;
 	log?: (message: string) => void;
 }): Promise<SessionCapabilityMaterializationResult> {
+	const env = input.env ?? process.env;
+	const key = cacheKey(input);
+	const cacheEnabled = resolveCacheEnabled(env);
+	let cacheInvalidationReason: string | null = null;
+	if (cacheEnabled) {
+		const cached = sessionCapabilityMaterializationCache.get(key);
+		if (cached) {
+			if (cached.expiresAtMs != null && cached.expiresAtMs > Date.now()) {
+				return {
+					ok: true,
+					value: cloneMaterialization(cached.value, new Date().toISOString()),
+					cacheHit: true,
+					cacheReason: "zero_session_capabilities",
+				};
+			}
+			if (cached.expiresAtMs != null) {
+				cacheInvalidationReason = "zero_capability_cache_expired";
+				sessionCapabilityMaterializationCache.delete(key);
+			}
+		}
+	} else {
+		cacheInvalidationReason = "cache_disabled";
+	}
+
 	const client = new AgentCapabilitiesClient({ env: input.env, log: input.log });
 	const bindingsResult = await client.listSessionCapabilities(input.agentSessionUid);
 	if (bindingsResult.ok === false) {
@@ -484,6 +601,25 @@ export async function materializeSessionCapabilities(input: {
 			responseText: bindingsResult.responseText,
 			url: bindingsResult.url,
 		};
+	}
+	const bindingSignature = buildBindingsSignature(bindingsResult.body);
+	const cached = cacheEnabled ? sessionCapabilityMaterializationCache.get(key) : null;
+	if (cached?.bindingSignature === bindingSignature) {
+		if (cachedMaterializedFilesValid(cached.value)) {
+			return {
+				ok: true,
+				value: cloneMaterialization(cached.value, new Date().toISOString()),
+				cacheHit: true,
+				cacheReason: "capability_signature_unchanged",
+			};
+		}
+		cacheInvalidationReason = "materialized_files_missing_or_changed";
+		sessionCapabilityMaterializationCache.delete(key);
+	} else if (cached?.bindingSignature) {
+		cacheInvalidationReason = "capability_signature_changed";
+		sessionCapabilityMaterializationCache.delete(key);
+	} else if (!cacheInvalidationReason) {
+		cacheInvalidationReason = cached ? "cache_entry_not_reusable" : "cache_miss";
 	}
 
 	const sessionAssetRoot = path.resolve(
@@ -582,20 +718,41 @@ export async function materializeSessionCapabilities(input: {
 		rmSync(skillsRoot, { recursive: true, force: true });
 	}
 
+	const value: SessionCapabilityMaterialization = {
+		version: 1,
+		agentSessionUid: input.agentSessionUid,
+		materializedAt: new Date().toISOString(),
+		sessionAssetRoot,
+		skillsRoot,
+		settingsSkillPaths: materialized.length > 0 ? [skillsRoot] : [],
+		bindingCount: bindingsResult.body.length,
+		enabledSkillBindingCount,
+		materializedSkillCount: materialized.length,
+		skipped,
+		materialized,
+	};
+
+	if (cacheEnabled && isZeroCapabilityMaterialization(value)) {
+		sessionCapabilityMaterializationCache.set(key, {
+			value: cloneMaterialization(value),
+			expiresAtMs: Date.now() + resolveZeroCapabilityCacheTtlMs(env),
+			bindingSignature,
+		});
+	} else if (cacheEnabled) {
+		sessionCapabilityMaterializationCache.set(key, {
+			value: cloneMaterialization(value),
+			expiresAtMs: null,
+			bindingSignature,
+		});
+	} else {
+		sessionCapabilityMaterializationCache.delete(key);
+	}
+
 	return {
 		ok: true,
-		value: {
-			version: 1,
-			agentSessionUid: input.agentSessionUid,
-			materializedAt: new Date().toISOString(),
-			sessionAssetRoot,
-			skillsRoot,
-			settingsSkillPaths: materialized.length > 0 ? [skillsRoot] : [],
-			bindingCount: bindingsResult.body.length,
-			enabledSkillBindingCount,
-			materializedSkillCount: materialized.length,
-			skipped,
-			materialized,
-		},
+		value,
+		cacheHit: false,
+		cacheReason: cacheInvalidationReason ?? "cache_miss",
+		cacheInvalidationReason: cacheInvalidationReason ?? undefined,
 	};
 }

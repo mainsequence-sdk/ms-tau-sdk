@@ -18,6 +18,25 @@ export function normalizeA2AResponseFormat(
 	return null;
 }
 
+function normalizeJsonMode(value: unknown): "none" | "json" | "json_object" | "json_schema" {
+	if (typeof value !== "string") return "none";
+	const normalized = value.trim().toLowerCase();
+	if (normalized === "json" || normalized === "application/json") return "json";
+	if (normalized === "json_object") return "json_object";
+	if (normalized === "json_schema") return "json_schema";
+	return "none";
+}
+
+function strictJsonModeForResponseFormat(
+	responseFormat: string | Record<string, unknown> | null,
+): "none" | "json" | "json_object" | "json_schema" {
+	if (typeof responseFormat === "string") return normalizeJsonMode(responseFormat);
+	if (!isPlainObject(responseFormat) || responseFormat.strict !== true) return "none";
+	let jsonMode = normalizeJsonMode(responseFormat.type);
+	if (jsonMode === "none") jsonMode = normalizeJsonMode(responseFormat.format);
+	return jsonMode;
+}
+
 export function buildA2ASystemInstruction(options: {
 	callerAgentType: string;
 	responseFormat: string | Record<string, unknown> | null;
@@ -39,6 +58,16 @@ export function buildA2ASystemInstruction(options: {
 		lines.push(`Required response format: ${JSON.stringify(options.responseFormat)}`);
 	} else {
 		lines.push("Required response format: none specified.");
+	}
+
+	const strictJsonMode = strictJsonModeForResponseFormat(options.responseFormat);
+	if (strictJsonMode !== "none") {
+		lines.push("Strict JSON response required.");
+		lines.push("Return exactly one valid JSON value and nothing else.");
+		lines.push("Do not include prose, markdown fences, explanations, or comments.");
+		if (strictJsonMode === "json_object" || strictJsonMode === "json_schema") {
+			lines.push("The top-level JSON value must be an object.");
+		}
 	}
 
 	return lines.join("\n");

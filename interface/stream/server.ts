@@ -33,6 +33,12 @@ import {
 	type A2AEnvelope,
 } from "./a2a-envelope.js";
 import {
+	buildStrictJsonRepairPrompt,
+	normalizeA2AOutputOptions,
+	type A2AOutputOptions,
+	validateStrictJsonText,
+} from "./a2a-output.js";
+import {
 	repairPiSessionJsonlCurrentBranch,
 	validatePiSessionJsonlCurrentBranch,
 	type PiSessionJsonlRepair,
@@ -81,6 +87,8 @@ import {
 	cleanupScopedPiAgentDir,
 	flushScopedProviderCredential,
 	hydrateScopedProviderCredentials,
+	invalidateScopedProviderCredentialCache,
+	isScopedProviderCredentialCacheEnabled,
 } from "./model-provider-scoped-auth.js";
 import {
 	cancelModelProviderSignInAttempt,
@@ -137,6 +145,14 @@ const runtimeHealthStatePath =
 	);
 const providerCredentialFlushIntervalMs = (() => {
 	const configured = Number(process.env.ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS ?? "10000");
+	return Number.isFinite(configured) && configured >= 1000 ? Math.trunc(configured) : 10000;
+})();
+const warmRunnerIdleTtlMs = (() => {
+	const configured = Number(process.env.ASTRO_A2A_WARM_RUNNER_IDLE_TTL_MS ?? "300000");
+	return Number.isFinite(configured) && configured >= 1000 ? Math.trunc(configured) : 300000;
+})();
+const warmRunnerRpcCommandTimeoutMs = (() => {
+	const configured = Number(process.env.ASTRO_A2A_WARM_RUNNER_RPC_TIMEOUT_MS ?? "10000");
 	return Number.isFinite(configured) && configured >= 1000 ? Math.trunc(configured) : 10000;
 })();
 const sessionCancelGraceMs = (() => {
@@ -540,6 +556,15 @@ type RequestContext = {
 	system: string | undefined;
 	uiContext: Record<string, unknown>;
 	uiTools: Record<string, unknown>;
+	a2aOutputOptions: A2AOutputOptions;
+	strictJsonBufferedText: string;
+	strictJsonRepairRuntime: {
+		cwd: string;
+		projectId: string | null;
+		scopedPiAgentDir: string | null;
+		envOverrides?: NodeJS.ProcessEnv;
+	} | null;
+	assistantCompletionPending: Promise<void> | null;
 	sessionModelBinding: SessionModelBinding | null;
 	sessionConfigOverrides: SessionConfigOverrides | null;
 	responseProvider: string | null;
@@ -579,8 +604,83 @@ type ActiveStreamSession = {
 	cancellationId: string | null;
 };
 
+type PreparedSessionRuntime = {
+	version: 1;
+	agentSessionUid: string;
+	userUid: string;
+	agentType: string;
+	cwd: string;
+	projectId: string | null;
+	provider: string | null;
+	model: string | null;
+	reasoningEffort: string | null;
+	sessionConfigSignature: string;
+	capabilityState: {
+		bindingCount: number | null;
+		enabledSkillBindingCount: number | null;
+		materializedSkillCount: number | null;
+		settingsSkillPaths: string[];
+	};
+	providerCredentialState: {
+		provider: string | null;
+		scopedPiAgentDir: string | null;
+	};
+	checkpointState: {
+		holderId: string | null;
+		checkpointVersion: number | null;
+		bundleHash: string | null;
+	};
+	runtimeImageRevision: string | null;
+	preparedAt: string;
+	lastUsedAt: string;
+	signature: string;
+};
+
+type WarmPreparedRuntime = {
+	preparedRuntime: PreparedSessionRuntime;
+	piLaunchBaseEnv: NodeJS.ProcessEnv;
+	scopedPiAgentDir: string | null;
+	scopedProviderCredentialProvider: string | null;
+	sessionSkillPaths: string[];
+	finalizeProviderCredentials: (reason: string) => Promise<void>;
+};
+
+type WarmRunnerTurn = {
+	ctx: RequestContext;
+	prompt: string;
+	prepared: WarmPreparedRuntime;
+	resolve: () => void;
+	reject: (error: unknown) => void;
+	completed: boolean;
+	startedAt: number;
+};
+
+type WarmSessionRunner = {
+	key: string;
+	state: "starting" | "idle" | "running" | "stopping" | "stopped";
+	preparedRuntime: PreparedSessionRuntime;
+	child: ChildProcess;
+	pendingResponses: Map<
+		string,
+		{
+			resolve: (value: unknown) => void;
+			reject: (error: unknown) => void;
+			timer: ReturnType<typeof setTimeout>;
+		}
+	>;
+	commandCounter: number;
+	currentTurn: WarmRunnerTurn | null;
+	idleTimer: ReturnType<typeof setTimeout> | null;
+	firstOutputLogged: boolean;
+	startedAt: string;
+	lastUsedAt: string;
+	stderrLines: string[];
+};
+
 const activeStreamSessions = new Map<string, ActiveStreamSession>();
 const activeStreamContexts = new Map<string, RequestContext>();
+const warmSessionRunners = new Map<string, WarmSessionRunner>();
+const warmSessionTurnQueues = new Map<string, Promise<void>>();
 
 function getActiveStreamSessionKey(sessionKey: string, agentSessionId: string | null): string {
 	return agentSessionId == null ? `session:${sessionKey}` : `agent_session:${agentSessionId}`;
@@ -1633,6 +1733,12 @@ function normalizeA2AChatRequestBody(
 		"unknown-agent";
 	const responseFormat = normalizeA2AResponseFormat(body.response_format ?? body.responseFormat);
 	const context = extractObjectPropertyRecord(body, "context") ?? {};
+	const a2aContext = extractObjectPropertyRecord(context, "a2a") ?? {};
+	const a2aOutputOptions = normalizeA2AOutputOptions({
+		enabled: true,
+		body,
+		a2aContext,
+	});
 	const userUid =
 		extractStringProperty(body, "user_uid") ??
 		extractStringProperty(context, "user_uid");
@@ -1646,6 +1752,8 @@ function normalizeA2AChatRequestBody(
 			enabled: true,
 			caller,
 			responseFormat,
+			omitReasoning: a2aOutputOptions.omitReasoning,
+			jsonRepair: a2aOutputOptions.jsonRepair,
 		},
 	};
 
@@ -2186,6 +2294,14 @@ function getCheckpointManifestPath(sessionKey: string): string {
 
 function getCheckpointLifecyclePath(sessionKey: string): string {
 	return path.join(getCheckpointLifecycleDir(), `${sessionKey}.json`);
+}
+
+function getPreparedRuntimeDir(): string {
+	return path.join(getSessionStateDir(), "prepared-runtimes");
+}
+
+function getPreparedRuntimePath(agentSessionUid: string): string {
+	return path.join(getPreparedRuntimeDir(), `${sanitizeSessionKey(agentSessionUid)}.json`);
 }
 
 function getSessionOverridesPath(sessionKey: string): string {
@@ -4405,6 +4521,13 @@ function buildProviderResponseErrorEvent(errorMessage: string | null): Extract<S
 	};
 }
 
+function isProviderCredentialAuthFailureMessage(errorMessage: string | null): boolean {
+	if (!errorMessage) return false;
+	return /\b(401|403|unauthori[sz]ed|forbidden|auth(?:entication|orization)?|credential|api[-_\s]?key|oauth|token|expired|revoked)\b/i.test(
+		errorMessage,
+	);
+}
+
 function formatLoggedModel(ctx: Pick<RequestContext, "responseProvider" | "responseModel" | "sessionModelBinding">): string | null {
 	if (ctx.responseProvider && ctx.responseModel) return `${ctx.responseProvider}/${ctx.responseModel}`;
 	if (ctx.responseModel) return ctx.responseModel;
@@ -4749,6 +4872,292 @@ function emitAssistantText(ctx: RequestContext, text: string, agentId: string | 
 	writeChunkWithAgentId(ctx, { type: "text-end" }, agentId);
 }
 
+function resetAssistantTurnOutputState(ctx: RequestContext) {
+	ctx.piAssistantTextSeen = false;
+	ctx.strictJsonBufferedText = "";
+	ctx.lastAssistantErrorMessage = null;
+	ctx.lastAssistantFinishReason = null;
+	ctx.lastAssistantUsage = undefined;
+}
+
+function appendStrictJsonAssistantText(ctx: RequestContext, text: string) {
+	if (!text) return;
+	ctx.piAssistantTextSeen = true;
+	ctx.strictJsonBufferedText += text;
+}
+
+type StrictJsonRepairResult =
+	| { ok: true; text: string }
+	| { ok: false; error: string };
+
+function runStrictJsonRepairAttempt(ctx: RequestContext, prompt: string): Promise<StrictJsonRepairResult> {
+	const runtime = ctx.strictJsonRepairRuntime;
+	if (!runtime) {
+		return Promise.resolve({
+			ok: false,
+			error: "Strict JSON repair runtime is not available for this request.",
+		});
+	}
+	const args = ["--mode", "json", "--no-session"];
+	const boundModelArg = buildPiModelArgument(ctx.sessionModelBinding);
+	if (boundModelArg) args.push("--model", boundModelArg);
+	args.push(prompt);
+	const configuredTimeoutMs = Number(process.env.ASTRO_A2A_JSON_REPAIR_TIMEOUT_MS ?? "60000");
+	const timeoutMs = Number.isFinite(configuredTimeoutMs) && configuredTimeoutMs > 0
+		? configuredTimeoutMs
+		: 60000;
+
+	return new Promise((resolve) => {
+		let settled = false;
+		let assistantText = "";
+		let fallbackAssistantText = "";
+		let providerErrorMessage: string | null = null;
+		const stderrLines: string[] = [];
+		let timer: ReturnType<typeof setTimeout> | null = null;
+		const child = spawn("pi", args, {
+			cwd: runtime.cwd,
+			env: buildMainsequenceStoredAuthEnv({
+				...process.env,
+				...buildSessionModelEnv(ctx.sessionModelBinding, process.env),
+				...(runtime.envOverrides ?? {}),
+				...(runtime.scopedPiAgentDir ? { PI_CODING_AGENT_DIR: runtime.scopedPiAgentDir } : {}),
+				PWD: runtime.cwd,
+				ASTRO_TELEMETRY: "0",
+				ASTRO_MAINSEQUENCE_USER_UID: ctx.userId,
+				...(runtime.projectId ? { ASTRO_TARGET_PROJECT_ID: runtime.projectId } : {}),
+			}),
+			stdio: ["ignore", "pipe", "pipe"],
+		});
+
+		const finish = (result: StrictJsonRepairResult) => {
+			if (settled) return;
+			settled = true;
+			if (timer) clearTimeout(timer);
+			resolve(result);
+		};
+
+		timer = setTimeout(() => {
+			try {
+				child.kill("SIGTERM");
+			} catch {
+				// ignore termination failures
+			}
+			finish({
+				ok: false,
+				error: `Strict JSON repair timed out after ${timeoutMs}ms.`,
+			});
+		}, timeoutMs);
+
+		const stdout = createInterface({ input: child.stdout });
+		stdout.on("line", (line) => {
+			let parsed: any;
+			try {
+				parsed = JSON.parse(line);
+			} catch {
+				return;
+			}
+			if (parsed?.type === "message_update") {
+				const evt = parsed.assistantMessageEvent;
+				if (evt?.type === "text_delta" && typeof evt.delta === "string") {
+					assistantText += evt.delta;
+				} else if (evt?.type === "done" && evt.reason === "error") {
+					providerErrorMessage = extractAssistantErrorMessage(evt.message ?? evt.partial);
+				}
+				return;
+			}
+			if (parsed?.type === "message_end" && parsed.message?.role === "assistant") {
+				const text = extractTextParts(parsed.message.content).trim();
+				if (text) fallbackAssistantText = text;
+			}
+		});
+
+		const stderr = createInterface({ input: child.stderr });
+		stderr.on("line", (line) => {
+			if (!line.trim()) return;
+			stderrLines.push(line);
+			if (stderrLines.length > 20) stderrLines.shift();
+		});
+
+		child.on("error", (error) => {
+			finish({ ok: false, error: error.message });
+		});
+
+		child.on("exit", (code, signal) => {
+			if (settled) return;
+			if (providerErrorMessage) {
+				finish({ ok: false, error: providerErrorMessage });
+				return;
+			}
+			const failed = Boolean(signal || (typeof code === "number" && code !== 0));
+			if (failed) {
+				const stderrSummary = stderrLines.length ? ` Recent stderr:\n${stderrLines.join("\n")}` : "";
+				finish({
+					ok: false,
+					error: signal
+						? `Strict JSON repair exited with signal ${signal}.${stderrSummary}`
+						: `Strict JSON repair exited with code ${code}.${stderrSummary}`,
+				});
+				return;
+			}
+			finish({ ok: true, text: assistantText.trim() || fallbackAssistantText.trim() });
+		});
+	});
+}
+
+function writeA2AInvalidJsonResponseError(ctx: RequestContext, detail: string) {
+	writeChunk(ctx, {
+		type: "error",
+		error: "The A2A response was not valid JSON after repair attempts.",
+		error_source: "runtime",
+		error_code: "a2a_invalid_json_response",
+		error_detail: detail,
+		forensics: {
+			json_repair_attempts: ctx.a2aOutputOptions.jsonRepair.attempts,
+			json_validation_error: detail,
+			json_mode: ctx.a2aOutputOptions.jsonMode,
+		},
+	});
+	writeDone(ctx);
+}
+
+async function finalizeStrictJsonAssistantText(ctx: RequestContext): Promise<boolean> {
+	const options = ctx.a2aOutputOptions;
+	if (!options.strictJson) return true;
+
+	const originalText = ctx.strictJsonBufferedText;
+	let validation = validateStrictJsonText(originalText, options);
+	if (validation.ok === true) {
+		emitAssistantText(ctx, validation.canonicalText);
+		return true;
+	}
+
+	let lastError = validation.error;
+	const attempts = options.jsonRepair.attempts;
+	for (let attempt = 1; attempt <= attempts; attempt += 1) {
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "a2a_strict_json_repair_attempt_started",
+			message: "Astro is attempting to repair invalid strict JSON output.",
+			data: {
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId,
+				agentSessionId: ctx.agentSessionId,
+				agentType: ctx.agentType,
+				attempt,
+				maxAttempts: attempts,
+				validationError: lastError,
+			},
+		});
+		const repair = await runStrictJsonRepairAttempt(
+			ctx,
+			buildStrictJsonRepairPrompt({
+				invalidText: originalText,
+				validationError: lastError,
+				responseFormat: options.responseFormat,
+				jsonMode: options.jsonMode,
+				jsonSchema: options.jsonSchema,
+				attempt,
+				maxAttempts: attempts,
+			}),
+		);
+		if (repair.ok === false) {
+			lastError = repair.error;
+			logStructuredEvent({
+				severity: "WARNING",
+				component: "astro-stream",
+				event: "a2a_strict_json_repair_attempt_failed",
+				message: "A strict JSON repair attempt failed before producing valid JSON.",
+				data: {
+					sessionKey: ctx.sessionKey,
+					threadId: ctx.threadId,
+					agentSessionId: ctx.agentSessionId,
+					agentType: ctx.agentType,
+					attempt,
+					maxAttempts: attempts,
+					error: lastError,
+				},
+			});
+			continue;
+		}
+
+		validation = validateStrictJsonText(repair.text, options);
+		if (validation.ok === true) {
+			logStructuredEvent({
+				component: "astro-stream",
+				event: "a2a_strict_json_repair_attempt_succeeded",
+				message: "Astro repaired invalid strict JSON output.",
+				data: {
+					sessionKey: ctx.sessionKey,
+					threadId: ctx.threadId,
+					agentSessionId: ctx.agentSessionId,
+					agentType: ctx.agentType,
+					attempt,
+					maxAttempts: attempts,
+				},
+			});
+			emitAssistantText(ctx, validation.canonicalText);
+			return true;
+		}
+		lastError = validation.error;
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "a2a_strict_json_repair_validation_failed",
+			message: "A strict JSON repair attempt produced output that still failed validation.",
+			data: {
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId,
+				agentSessionId: ctx.agentSessionId,
+				agentType: ctx.agentType,
+				attempt,
+				maxAttempts: attempts,
+				validationError: lastError,
+			},
+		});
+	}
+
+	writeA2AInvalidJsonResponseError(ctx, lastError);
+	return false;
+}
+
+async function finalizeAssistantSuccess(
+	ctx: RequestContext,
+	finishReason: string,
+	usage: { inputTokens?: number; outputTokens?: number } | undefined,
+) {
+	ctx.lastAssistantFinishReason = finishReason;
+	ctx.lastAssistantUsage = usage;
+	const valid = await finalizeStrictJsonAssistantText(ctx);
+	if (!valid || ctx.finished) return;
+	writeChunk(ctx, { type: "finish", finishReason, usage });
+	writeDone(ctx);
+}
+
+function startAssistantCompletion(
+	ctx: RequestContext,
+	finishReason: string,
+	usage: { inputTokens?: number; outputTokens?: number } | undefined,
+) {
+	if (ctx.assistantCompletionPending) return;
+	ctx.assistantCompletionPending = finalizeAssistantSuccess(ctx, finishReason, usage)
+		.catch((error) => {
+			if (ctx.finished) return;
+			const message = error instanceof Error ? error.message : String(error);
+			writeChunk(ctx, {
+				type: "error",
+				error: message,
+				error_source: "runtime",
+				error_code: "a2a_output_finalization_failed",
+				error_detail: message,
+			});
+			writeDone(ctx);
+		})
+		.finally(() => {
+			ctx.assistantCompletionPending = null;
+		});
+}
+
 function writeDone(ctx: RequestContext) {
 	if (ctx.finished) return;
 	try {
@@ -5051,21 +5460,28 @@ function handleAssistantDelta(ctx: RequestContext, evt: any) {
 		case "thinking_start": {
 			ctx.reasoningCounter += 1;
 			const id = `r${ctx.reasoningCounter}`;
-			writeChunk(ctx, { type: "reasoning-start", id });
 			recordReasoningAnnotationStart(ctx);
+			if (!ctx.a2aOutputOptions.omitReasoning) {
+				writeChunk(ctx, { type: "reasoning-start", id });
+			}
 			return;
 		}
 		case "thinking_delta":
-			if (typeof evt.delta === "string") {
+			if (!ctx.a2aOutputOptions.omitReasoning && typeof evt.delta === "string") {
 				writeChunk(ctx, { type: "reasoning-delta", delta: evt.delta });
 			}
 			return;
 		case "thinking_end":
-			writeChunk(ctx, { type: "reasoning-end" });
 			recordReasoningAnnotationEnd(ctx);
+			if (!ctx.a2aOutputOptions.omitReasoning) {
+				writeChunk(ctx, { type: "reasoning-end" });
+			}
 			return;
 		case "text_start": {
 			ctx.piAssistantTextSeen = true;
+			if (ctx.a2aOutputOptions.strictJson) {
+				return;
+			}
 			ctx.textCounter += 1;
 			const id = `t${ctx.textCounter}`;
 			writeChunk(ctx, { type: "text-start", id });
@@ -5074,10 +5490,17 @@ function handleAssistantDelta(ctx: RequestContext, evt: any) {
 		case "text_delta":
 			if (typeof evt.delta === "string") {
 				ctx.piAssistantTextSeen = true;
+				if (ctx.a2aOutputOptions.strictJson) {
+					appendStrictJsonAssistantText(ctx, evt.delta);
+					return;
+				}
 				writeChunk(ctx, { type: "text-delta", textDelta: evt.delta });
 			}
 			return;
 		case "text_end":
+			if (ctx.a2aOutputOptions.strictJson) {
+				return;
+			}
 			writeChunk(ctx, { type: "text-end" });
 			return;
 		case "toolcall_start": {
@@ -5115,8 +5538,7 @@ function handleAssistantDelta(ctx: RequestContext, evt: any) {
 				writeDone(ctx);
 				return;
 			}
-			writeChunk(ctx, { type: "finish", finishReason, usage: mappedUsage });
-			writeDone(ctx);
+			startAssistantCompletion(ctx, finishReason, mappedUsage);
 			return;
 		}
 		case "error": {
@@ -5149,11 +5571,138 @@ function handleAssistantMessageEnd(ctx: RequestContext, message: unknown) {
 	const text = extractTextParts((message as { content?: unknown }).content).trim();
 	if (!text) return;
 
+	if (ctx.a2aOutputOptions.strictJson) {
+		appendStrictJsonAssistantText(ctx, text);
+		return;
+	}
+
 	emitAssistantText(ctx, text);
 }
 
-async function runPiPrompt(
-	prompt: string,
+function isA2AWarmRunnerEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+	return env.ASTRO_A2A_WARM_RUNNERS !== "0";
+}
+
+function stableStringify(value: unknown): string {
+	if (Array.isArray(value)) return `[${value.map((entry) => stableStringify(entry)).join(",")}]`;
+	if (value && typeof value === "object") {
+		const record = value as Record<string, unknown>;
+		return `{${Object.keys(record)
+			.sort()
+			.map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+			.join(",")}}`;
+	}
+	return JSON.stringify(value);
+}
+
+function buildPreparedRuntimeSignature(input: Omit<PreparedSessionRuntime, "signature">): string {
+	return stableStringify({
+		agentSessionUid: input.agentSessionUid,
+		userUid: input.userUid,
+		agentType: input.agentType,
+		cwd: input.cwd,
+		projectId: input.projectId,
+		provider: input.provider,
+		model: input.model,
+		reasoningEffort: input.reasoningEffort,
+		sessionConfigSignature: input.sessionConfigSignature,
+		capabilityState: input.capabilityState,
+		providerCredentialState: input.providerCredentialState,
+		runtimeImageRevision: input.runtimeImageRevision,
+	});
+}
+
+function writePreparedSessionRuntime(value: PreparedSessionRuntime) {
+	mkdirSync(getPreparedRuntimeDir(), { recursive: true });
+	writeFileSync(getPreparedRuntimePath(value.agentSessionUid), JSON.stringify(value, null, 2));
+}
+
+function readPreparedSessionRuntime(agentSessionUid: string): PreparedSessionRuntime | null {
+	const parsed = readJsonFileObject(getPreparedRuntimePath(agentSessionUid));
+	if (!parsed) return null;
+	if (parsed.version !== 1) return null;
+	const signature = typeof parsed.signature === "string" ? parsed.signature : null;
+	if (!signature) return null;
+	return parsed as PreparedSessionRuntime;
+}
+
+function buildPreparedSessionRuntime(input: {
+	ctx: RequestContext;
+	cwd: string;
+	projectId: string | null;
+	capabilityMaterialization: SessionCapabilityMaterialization | null;
+	scopedPiAgentDir: string | null;
+	scopedProviderCredentialProvider: string | null;
+}): PreparedSessionRuntime | null {
+	if (!input.ctx.agentSessionId) return null;
+	const now = new Date().toISOString();
+	const base = {
+		version: 1 as const,
+		agentSessionUid: input.ctx.agentSessionId,
+		userUid: input.ctx.userId,
+		agentType: input.ctx.agentType,
+		cwd: path.resolve(input.cwd),
+		projectId: input.projectId,
+		provider: input.ctx.sessionModelBinding?.provider ?? null,
+		model: input.ctx.sessionModelBinding?.model ?? null,
+		reasoningEffort: input.ctx.sessionModelBinding?.runConfig.reasoning_effort ?? null,
+		sessionConfigSignature: stableStringify(input.ctx.sessionConfigOverrides ?? null),
+		capabilityState: {
+			bindingCount: input.capabilityMaterialization?.bindingCount ?? null,
+			enabledSkillBindingCount: input.capabilityMaterialization?.enabledSkillBindingCount ?? null,
+			materializedSkillCount: input.capabilityMaterialization?.materializedSkillCount ?? null,
+			settingsSkillPaths: input.capabilityMaterialization?.settingsSkillPaths ?? [],
+		},
+		providerCredentialState: {
+			provider: input.scopedProviderCredentialProvider,
+			scopedPiAgentDir: input.scopedPiAgentDir,
+		},
+		checkpointState: {
+			holderId: input.ctx.checkpointLease?.holderId ?? null,
+			checkpointVersion: input.ctx.checkpointLease?.checkpointVersion ?? null,
+			bundleHash: input.ctx.checkpointLease?.bundleHash ?? null,
+		},
+		runtimeImageRevision: process.env.ASTRO_RELEASE_VERSION ?? null,
+		preparedAt: now,
+		lastUsedAt: now,
+	};
+	return {
+		...base,
+		signature: buildPreparedRuntimeSignature(base),
+	};
+}
+
+function warmRunnerCompatible(
+	runner: WarmSessionRunner,
+	preparedRuntime: PreparedSessionRuntime,
+): { ok: true } | { ok: false; reason: string } {
+	if (runner.state === "stopping" || runner.state === "stopped") {
+		return { ok: false, reason: "runner_stopping" };
+	}
+	if (runner.child.killed || runner.child.exitCode != null || runner.child.signalCode != null) {
+		return { ok: false, reason: "runner_process_exited" };
+	}
+	if (runner.preparedRuntime.signature !== preparedRuntime.signature) {
+		return { ok: false, reason: "prepared_runtime_signature_changed" };
+	}
+	return { ok: true };
+}
+
+function enqueueWarmSessionTurn(key: string, task: () => Promise<void>): Promise<void> {
+	const previous = warmSessionTurnQueues.get(key) ?? Promise.resolve();
+	const next = previous
+		.catch(() => undefined)
+		.then(task)
+		.finally(() => {
+			if (warmSessionTurnQueues.get(key) === next) {
+				warmSessionTurnQueues.delete(key);
+			}
+		});
+	warmSessionTurnQueues.set(key, next);
+	return next;
+}
+
+async function prepareWarmPiRuntime(
 	ctx: RequestContext,
 	options: {
 		cwd: string;
@@ -5161,24 +5710,26 @@ async function runPiPrompt(
 		agentConfig: AgentConfig | null;
 		envOverrides?: NodeJS.ProcessEnv;
 	},
-) {
-	mkdirSync(sessionDir, { recursive: true });
-	const sessionPath = getSessionPath(ctx.sessionKey);
-	const args = ["--mode", "json", "--session", sessionPath];
-	let promptPath: string | null = null;
+): Promise<
+	| { ok: true; value: WarmPreparedRuntime }
+	| { ok: false; fallbackReason: string; handled?: false }
+	| { ok: false; handled: true }
+> {
+	if (!ctx.agentSessionId) return { ok: false, fallbackReason: "missing_agent_session_id" };
+	if (options.agentConfig) return { ok: false, fallbackReason: "specialist_agent_config" };
+
 	const boundModelArg = buildPiModelArgument(ctx.sessionModelBinding);
 	const piLaunchBaseEnv = {
 		...process.env,
 		...(options.envOverrides ?? {}),
 	};
-	let scopedPiAgentDir: string | null = null;
-	let scopedProviderCredentialProvider: string | null = null;
-	let activeProviderCredentialKey: string | null = null;
-	let providerCredentialFlushTimer: ReturnType<typeof setInterval> | null = null;
-	let providerCredentialFinalized = false;
-	ctx.piAssistantTextSeen = false;
-	ctx.lastAssistantFinishReason = null;
-	ctx.lastAssistantUsage = undefined;
+	const providerRequiresScopedCredentials = Boolean(
+		ctx.sessionModelBinding && resolveProviderDefinition(ctx.sessionModelBinding.provider),
+	);
+	if (providerRequiresScopedCredentials && !isScopedProviderCredentialCacheEnabled(piLaunchBaseEnv)) {
+		return { ok: false, fallbackReason: "provider_credential_cache_disabled" };
+	}
+
 	if (boundModelArg || options.agentConfig?.model) {
 		logStructuredEvent({
 			component: "astro-stream",
@@ -5199,94 +5750,126 @@ async function runPiPrompt(
 				agentConfigModel: options.agentConfig?.model ?? null,
 			},
 		});
-	} else {
-		logStructuredEvent({
-			severity: "WARNING",
-			component: "astro-stream",
-			event: "pi_launch_without_model",
-			message:
-				"Pi is launching without a bound model argument or agent-config model; execution may fail with no available models.",
-			data: {
-				agentType: ctx.agentType,
-				sessionKey: ctx.sessionKey,
-				threadId: ctx.threadId ?? null,
-				userUid: ctx.userId,
-				agentSessionId: ctx.agentSessionId,
-				cwd: options.cwd,
-				sessionModelBindingPresent: Boolean(ctx.sessionModelBinding),
-				agentConfigModel: options.agentConfig?.model ?? null,
-			},
-		});
 	}
 
+	const preflightStartedAt = Date.now();
+	let capabilityPreparationDurationMs: number | null = null;
+	let providerCredentialPreparationDurationMs: number | null = null;
+	let capabilityCacheHit: boolean | null = null;
+	let capabilityCacheReason: string | null = null;
+	let providerCredentialCacheHit: boolean | null = null;
+	let providerCredentialCacheReason: string | null = null;
 	let capabilityMaterialization: SessionCapabilityMaterialization | null = null;
-	if (ctx.agentSessionId) {
+	let scopedPiAgentDir: string | null = null;
+	let scopedProviderCredentialProvider: string | null = null;
+	let activeProviderCredentialKey: string | null = null;
+	let providerCredentialFinalized = false;
+
+	const capabilityPreparationStartedAt = Date.now();
+	const capabilityPreparationPromise = (async () => {
 		const capabilities = await materializeSessionCapabilities({
-			agentSessionUid: ctx.agentSessionId,
+			agentSessionUid: ctx.agentSessionId!,
 			sessionAssetsRoot: getSessionAssetsRoot(),
 			env: piLaunchBaseEnv,
 			log: (message) => console.log(`[astro-stream] ${message}`),
 		});
-		if (capabilities.ok === false) {
-			logStructuredEvent({
-				severity: "ERROR",
-				component: "astro-stream",
-				event: "session_capabilities_materialization_failed",
-				message: "Astro could not materialize session capability bindings before launching Pi.",
-				data: {
-					sessionId: ctx.sessionKey,
-					agentSessionId: ctx.agentSessionId,
-					error: capabilities.error,
-					backendMessage: capabilities.message,
-					backendRequestUrl: capabilities.url ?? null,
-					backendStatus: capabilities.statusCode ?? null,
-					backendResponseBody: capabilities.body ?? null,
-				},
-			});
-			writeChunk(
-				ctx,
-				buildBackendFailureErrorEvent(
-					"Session capability materialization failed",
-					capabilities,
-					"backend",
-				),
-			);
-			writeDone(ctx);
-			return;
-		}
-		capabilityMaterialization = capabilities.value;
-		writeSessionCapabilityMaterializationMetadata(ctx.sessionKey, capabilityMaterialization);
+		return {
+			capabilities,
+			durationMs: Date.now() - capabilityPreparationStartedAt,
+		};
+	})();
+
+	const providerCredentialPreparationStartedAt = Date.now();
+	const providerCredentialPreparationPromise =
+		ctx.sessionModelBinding && providerRequiresScopedCredentials
+			? (async () => {
+					const hydratedProviderCredentials = await hydrateScopedProviderCredentials({
+						createdByUser: ctx.userId,
+						agentSessionUid: ctx.agentSessionId,
+						sessionKey: ctx.sessionKey,
+						provider: ctx.sessionModelBinding.provider,
+						holderId: `astro-pi-stream/${process.pid}/${ctx.sessionKey}`,
+						sessionConfigOverrides: ctx.sessionConfigOverrides,
+						sessionSkillPaths: [],
+						env: piLaunchBaseEnv,
+						log: (message) => console.log(`[astro-stream] ${message}`),
+					});
+					return {
+						hydratedProviderCredentials,
+						durationMs: Date.now() - providerCredentialPreparationStartedAt,
+					};
+			  })()
+			: Promise.resolve(null);
+
+	const [capabilityPreparation, providerCredentialPreparation] = await Promise.all([
+		capabilityPreparationPromise,
+		providerCredentialPreparationPromise,
+	]);
+
+	const capabilities = capabilityPreparation.capabilities;
+	capabilityPreparationDurationMs = capabilityPreparation.durationMs;
+	capabilityCacheHit = capabilities.ok ? capabilities.cacheHit === true : false;
+	capabilityCacheReason = capabilities.ok ? capabilities.cacheReason ?? null : null;
+	if (capabilities.ok === false) {
 		logStructuredEvent({
+			severity: "ERROR",
 			component: "astro-stream",
-			event: "session_capabilities_materialized",
-			message: "Astro materialized session capability bindings before launching Pi.",
+			event: "session_capabilities_materialization_failed",
+			message: "Astro could not materialize session capability bindings before launching Pi.",
 			data: {
 				sessionId: ctx.sessionKey,
 				agentSessionId: ctx.agentSessionId,
-				bindingCount: capabilityMaterialization.bindingCount,
-				enabledSkillBindingCount: capabilityMaterialization.enabledSkillBindingCount,
-				materializedSkillCount: capabilityMaterialization.materializedSkillCount,
-				skipped: capabilityMaterialization.skipped,
-				sessionAssetRoot: capabilityMaterialization.sessionAssetRoot,
-				skillsRoot: capabilityMaterialization.skillsRoot,
-				settingsSkillPaths: capabilityMaterialization.settingsSkillPaths,
+				durationMs: capabilityPreparationDurationMs,
+				error: capabilities.error,
+				backendMessage: capabilities.message,
+				backendRequestUrl: capabilities.url ?? null,
+				backendStatus: capabilities.statusCode ?? null,
+				backendResponseBody: capabilities.body ?? null,
 			},
 		});
+		writeChunk(
+			ctx,
+			buildBackendFailureErrorEvent(
+				"Session capability materialization failed",
+				capabilities,
+				"backend",
+			),
+		);
+		writeDone(ctx);
+		return { ok: false, handled: true };
 	}
-	const sessionSkillPaths = capabilityMaterialization?.settingsSkillPaths ?? [];
+	capabilityMaterialization = capabilities.value;
+	writeSessionCapabilityMaterializationMetadata(ctx.sessionKey, capabilityMaterialization);
+	logStructuredEvent({
+		component: "astro-stream",
+		event: "session_capabilities_materialized",
+		message: "Astro materialized session capability bindings before launching Pi.",
+		data: {
+			sessionId: ctx.sessionKey,
+			agentSessionId: ctx.agentSessionId,
+			durationMs: capabilityPreparationDurationMs,
+			cacheHit: capabilityCacheHit,
+			cacheReason: capabilityCacheReason,
+			bindingCount: capabilityMaterialization.bindingCount,
+			enabledSkillBindingCount: capabilityMaterialization.enabledSkillBindingCount,
+			materializedSkillCount: capabilityMaterialization.materializedSkillCount,
+			skipped: capabilityMaterialization.skipped,
+			sessionAssetRoot: capabilityMaterialization.sessionAssetRoot,
+			skillsRoot: capabilityMaterialization.skillsRoot,
+			settingsSkillPaths: capabilityMaterialization.settingsSkillPaths,
+		},
+	});
+	const sessionSkillPaths = capabilityMaterialization.settingsSkillPaths;
 
-	if (ctx.sessionModelBinding && resolveProviderDefinition(ctx.sessionModelBinding.provider)) {
-		const hydratedProviderCredentials = await hydrateScopedProviderCredentials({
-			createdByUser: ctx.userId,
-			agentSessionUid: ctx.agentSessionId,
-			sessionKey: ctx.sessionKey,
-			provider: ctx.sessionModelBinding.provider,
-			holderId: `astro-pi-stream/${process.pid}/${ctx.sessionKey}`,
-			sessionConfigOverrides: ctx.sessionConfigOverrides,
-			sessionSkillPaths,
-			env: piLaunchBaseEnv,
-			log: (message) => console.log(`[astro-stream] ${message}`),
-		});
+	if (ctx.sessionModelBinding && providerCredentialPreparation) {
+		const hydratedProviderCredentials = providerCredentialPreparation.hydratedProviderCredentials;
+		providerCredentialPreparationDurationMs = providerCredentialPreparation.durationMs;
+		providerCredentialCacheHit = hydratedProviderCredentials.ok
+			? hydratedProviderCredentials.value.cacheHit === true
+			: false;
+		providerCredentialCacheReason = hydratedProviderCredentials.ok
+			? hydratedProviderCredentials.value.cacheReason ?? null
+			: null;
 		if (hydratedProviderCredentials.ok === false) {
 			logStructuredEvent({
 				severity: "ERROR",
@@ -5297,6 +5880,7 @@ async function runPiPrompt(
 					sessionId: ctx.sessionKey,
 					agentSessionId: ctx.agentSessionId,
 					provider: ctx.sessionModelBinding.provider,
+					durationMs: providerCredentialPreparationDurationMs,
 					error: hydratedProviderCredentials.error,
 					backendMessage: hydratedProviderCredentials.message,
 				},
@@ -5310,9 +5894,28 @@ async function runPiPrompt(
 				),
 			);
 			writeDone(ctx);
-			return;
+			return { ok: false, handled: true };
 		}
 		scopedPiAgentDir = hydratedProviderCredentials.value.scopedPiAgentDir;
+		if (sessionSkillPaths.length > 0) {
+			const refreshedScopedPiAgentDir = ensureSessionScopedPiAgentDir({
+				sessionKey: ctx.sessionKey,
+				sessionConfigOverrides: ctx.sessionConfigOverrides,
+				sessionSkillPaths,
+				forceProviderAuthDir: true,
+				env: piLaunchBaseEnv,
+			});
+			if (!refreshedScopedPiAgentDir) {
+				writeChunk(ctx, {
+					type: "error",
+					error: "Failed to prepare scoped Pi auth directory with session skills.",
+					error_source: "runtime",
+				});
+				writeDone(ctx);
+				return { ok: false, handled: true };
+			}
+			scopedPiAgentDir = refreshedScopedPiAgentDir;
+		}
 		scopedProviderCredentialProvider = ctx.sessionModelBinding.provider;
 		activeProviderCredentialKey = `${ctx.sessionKey}:${scopedProviderCredentialProvider}`;
 		activeScopedProviderCredentials.set(activeProviderCredentialKey, {
@@ -5335,6 +5938,9 @@ async function runPiPrompt(
 				agentSessionId: ctx.agentSessionId,
 				provider: scopedProviderCredentialProvider,
 				scopedPiAgentDir,
+				durationMs: providerCredentialPreparationDurationMs,
+				cacheHit: providerCredentialCacheHit,
+				cacheReason: providerCredentialCacheReason,
 			},
 		});
 	} else {
@@ -5394,6 +6000,925 @@ async function runPiPrompt(
 		}
 	};
 
+	const invalidateProviderCredentialCacheIfAuthFailure = (errorMessage: string | null) => {
+		if (!scopedProviderCredentialProvider) return;
+		if (!isProviderCredentialAuthFailureMessage(errorMessage)) return;
+		invalidateScopedProviderCredentialCache({
+			sessionKey: ctx.sessionKey,
+			provider: scopedProviderCredentialProvider,
+			env: piLaunchBaseEnv,
+		});
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "provider_credentials_cache_invalidated",
+			message: "Astro invalidated scoped provider credentials after a provider auth failure.",
+			data: {
+				sessionId: ctx.sessionKey,
+				agentSessionId: ctx.agentSessionId,
+				provider: scopedProviderCredentialProvider,
+				reason: "provider_auth_failure",
+			},
+		});
+	};
+
+	const finalizeProviderCredentials = async (reason: string) => {
+		if (providerCredentialFinalized) return;
+		providerCredentialFinalized = true;
+		try {
+			const providerAuthFailureMessage =
+				ctx.lastAssistantFinishReason === "error" ? ctx.lastAssistantErrorMessage : null;
+			if (isProviderCredentialAuthFailureMessage(providerAuthFailureMessage)) {
+				invalidateProviderCredentialCacheIfAuthFailure(providerAuthFailureMessage);
+			} else {
+				await flushProviderCredential(reason);
+			}
+		} finally {
+			if (activeProviderCredentialKey) {
+				activeScopedProviderCredentials.delete(activeProviderCredentialKey);
+				activeProviderCredentialKey = null;
+			}
+		}
+	};
+
+	const preparedRuntime = buildPreparedSessionRuntime({
+		ctx,
+		cwd: options.cwd,
+		projectId: options.projectId,
+		capabilityMaterialization,
+		scopedPiAgentDir,
+		scopedProviderCredentialProvider,
+	});
+	if (!preparedRuntime) return { ok: false, fallbackReason: "prepared_runtime_missing" };
+	writePreparedSessionRuntime(preparedRuntime);
+	ctx.strictJsonRepairRuntime = {
+		cwd: options.cwd,
+		projectId: options.projectId,
+		scopedPiAgentDir,
+		envOverrides: options.envOverrides,
+	};
+
+	logStructuredEvent({
+		component: "astro-stream",
+		event: "pi_preflight_completed",
+		message: "Astro completed local runtime preparation before launching Pi.",
+		data: {
+			agentType: ctx.agentType,
+			sessionKey: ctx.sessionKey,
+			threadId: ctx.threadId ?? null,
+			agentSessionId: ctx.agentSessionId,
+			durationMs: Date.now() - preflightStartedAt,
+			capabilityDurationMs: capabilityPreparationDurationMs,
+			capabilityCacheHit,
+			capabilityCacheReason,
+			providerCredentialDurationMs: providerCredentialPreparationDurationMs,
+			providerCredentialCacheHit,
+			providerCredentialCacheReason,
+			sessionSkillPathCount: sessionSkillPaths.length,
+			scopedPiAgentDir,
+		},
+	});
+
+	return {
+		ok: true,
+		value: {
+			preparedRuntime,
+			piLaunchBaseEnv,
+			scopedPiAgentDir,
+			scopedProviderCredentialProvider,
+			sessionSkillPaths,
+			finalizeProviderCredentials,
+		},
+	};
+}
+
+function clearWarmRunnerIdleTimer(runner: WarmSessionRunner) {
+	if (!runner.idleTimer) return;
+	clearTimeout(runner.idleTimer);
+	runner.idleTimer = null;
+}
+
+function removeWarmRunner(runner: WarmSessionRunner, reason: string) {
+	const current = warmSessionRunners.get(runner.key);
+	if (current === runner) warmSessionRunners.delete(runner.key);
+	clearWarmRunnerIdleTimer(runner);
+	runner.state = "stopped";
+	for (const pending of runner.pendingResponses.values()) {
+		clearTimeout(pending.timer);
+		pending.reject(new Error(`Warm runner stopped before RPC response: ${reason}`));
+	}
+	runner.pendingResponses.clear();
+}
+
+function stopWarmRunner(runner: WarmSessionRunner, reason: string) {
+	if (runner.state === "stopping" || runner.state === "stopped") return;
+	runner.state = "stopping";
+	removeWarmRunner(runner, reason);
+	try {
+		runner.child.kill("SIGTERM");
+	} catch {
+		// ignore shutdown failures
+	}
+	setTimeout(() => {
+		if (runner.child.exitCode == null && runner.child.signalCode == null) {
+			try {
+				runner.child.kill("SIGKILL");
+			} catch {
+				// ignore forced shutdown failures
+			}
+		}
+	}, 2000).unref();
+	logStructuredEvent({
+		component: "astro-stream",
+		event: "warm_runner_stopped",
+		message: "Astro stopped a warm Pi RPC runner.",
+		data: {
+			key: runner.key,
+			agentSessionId: runner.preparedRuntime.agentSessionUid,
+			reason,
+		},
+	});
+}
+
+function scheduleWarmRunnerIdleShutdown(runner: WarmSessionRunner) {
+	clearWarmRunnerIdleTimer(runner);
+	runner.idleTimer = setTimeout(() => {
+		if (runner.state === "idle" && !runner.currentTurn) {
+			stopWarmRunner(runner, "idle_ttl_expired");
+		}
+	}, warmRunnerIdleTtlMs);
+	runner.idleTimer.unref();
+}
+
+function writeWarmRunnerCommand(
+	runner: WarmSessionRunner,
+	command: Record<string, unknown>,
+): Promise<unknown> {
+	if (!runner.child.stdin || runner.child.stdin.destroyed) {
+		return Promise.reject(new Error("Warm runner stdin is unavailable."));
+	}
+	const id = `cmd_${++runner.commandCounter}`;
+	const payload = {
+		...command,
+		id,
+	};
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			runner.pendingResponses.delete(id);
+			reject(new Error(`Warm runner RPC command timed out: ${String(command.type ?? "unknown")}`));
+		}, warmRunnerRpcCommandTimeoutMs);
+		runner.pendingResponses.set(id, { resolve, reject, timer });
+		runner.child.stdin!.write(`${JSON.stringify(payload)}\n`, (error) => {
+			if (!error) return;
+			clearTimeout(timer);
+			runner.pendingResponses.delete(id);
+			reject(error);
+		});
+	});
+}
+
+function respondToWarmRunnerExtensionRequest(runner: WarmSessionRunner, request: Record<string, unknown>) {
+	const id = typeof request.id === "string" ? request.id : null;
+	const method = typeof request.method === "string" ? request.method : null;
+	if (!id || !runner.child.stdin || runner.child.stdin.destroyed) return;
+	if (method === "notify" || method === "setStatus" || method === "setTitle" || method === "set_editor_text") {
+		return;
+	}
+	const response =
+		method === "confirm"
+			? { type: "extension_ui_response", id, confirmed: false, cancelled: true }
+			: { type: "extension_ui_response", id, cancelled: true };
+	runner.child.stdin.write(`${JSON.stringify(response)}\n`);
+}
+
+async function completeWarmRunnerTurn(
+	runner: WarmSessionRunner,
+	reason: "stream_finish" | "stream_error" | "shutdown",
+) {
+	const turn = runner.currentTurn;
+	if (!turn || turn.completed) return;
+	turn.completed = true;
+	turn.ctx.piProcess = null;
+	try {
+		if (turn.ctx.assistantCompletionPending) {
+			await turn.ctx.assistantCompletionPending;
+		}
+		await turn.prepared.finalizeProviderCredentials(reason);
+	} finally {
+		if (runner.currentTurn === turn) runner.currentTurn = null;
+		runner.state = runner.state === "stopping" || runner.state === "stopped" ? runner.state : "idle";
+		runner.preparedRuntime = {
+			...turn.prepared.preparedRuntime,
+			lastUsedAt: new Date().toISOString(),
+		};
+		runner.lastUsedAt = runner.preparedRuntime.lastUsedAt;
+		writePreparedSessionRuntime(runner.preparedRuntime);
+		if (runner.state === "idle") {
+			scheduleWarmRunnerIdleShutdown(runner);
+		}
+		turn.resolve();
+	}
+}
+
+function handleWarmRunnerParsedLine(runner: WarmSessionRunner, parsed: any) {
+	if (parsed?.type === "response") {
+		const id = typeof parsed.id === "string" ? parsed.id : null;
+		const pending = id ? runner.pendingResponses.get(id) : null;
+		if (pending) {
+			clearTimeout(pending.timer);
+			runner.pendingResponses.delete(id!);
+			pending.resolve(parsed);
+		}
+		return;
+	}
+
+	if (parsed?.type === "extension_ui_request" && isPlainObject(parsed)) {
+		respondToWarmRunnerExtensionRequest(runner, parsed);
+		return;
+	}
+
+	const turn = runner.currentTurn;
+	if (!turn || turn.completed) return;
+	const ctx = turn.ctx;
+	if (ctx.finished) {
+		void completeWarmRunnerTurn(runner, "stream_finish");
+		return;
+	}
+	updateActiveStreamSession(ctx, { lastPiEventAt: new Date().toISOString() });
+
+	if (parsed?.type === "message_start") {
+		if (parsed.message?.role !== "assistant") return;
+		resetAssistantTurnOutputState(ctx);
+		updateResponseModelFromMessage(ctx, parsed.message);
+		return;
+	}
+
+	if (parsed?.type === "message_update") {
+		if (parsed.message?.role !== "assistant") return;
+		updateResponseModelFromMessage(ctx, parsed.message);
+		const evt = parsed.assistantMessageEvent;
+		if (!evt || typeof evt.type !== "string") return;
+		handleAssistantDelta(ctx, evt);
+		if (evt.type === "done") {
+			const completion = ctx.assistantCompletionPending ?? Promise.resolve();
+			void completion.finally(() =>
+				completeWarmRunnerTurn(runner, evt.reason === "error" ? "stream_error" : "stream_finish"),
+			);
+		}
+		return;
+	}
+
+	if (parsed?.type === "message_end") {
+		handleAssistantMessageEnd(ctx, parsed.message);
+		return;
+	}
+
+	if (parsed?.type === "tool_execution_end") {
+		const toolCallId = parsed.toolCallId;
+		if (typeof toolCallId === "string") {
+			writeChunk(ctx, { type: "tool-result", toolCallId, result: parsed.result });
+		}
+	}
+}
+
+async function startWarmRunner(input: {
+	ctx: RequestContext;
+	prepared: WarmPreparedRuntime;
+	cwd: string;
+	projectId: string | null;
+}): Promise<WarmSessionRunner> {
+	const sessionPath = getSessionPath(input.ctx.sessionKey);
+	const args = ["--mode", "rpc", "--session", sessionPath];
+	const boundModelArg = buildPiModelArgument(input.ctx.sessionModelBinding);
+	if (boundModelArg) args.push("--model", boundModelArg);
+
+	const spawnStartedAt = Date.now();
+	const child = spawn("pi", args, {
+		cwd: input.cwd,
+		env: buildMainsequenceStoredAuthEnv({
+			...process.env,
+			...buildSessionModelEnv(input.ctx.sessionModelBinding, process.env),
+			...(input.prepared.scopedPiAgentDir ? { PI_CODING_AGENT_DIR: input.prepared.scopedPiAgentDir } : {}),
+			PWD: input.cwd,
+			ASTRO_TELEMETRY: "0",
+			ASTRO_MAINSEQUENCE_USER_UID: input.ctx.userId,
+			...(input.projectId ? { ASTRO_TARGET_PROJECT_ID: input.projectId } : {}),
+		}),
+		stdio: ["pipe", "pipe", "pipe"],
+	});
+	const key = input.prepared.preparedRuntime.agentSessionUid;
+	const runner: WarmSessionRunner = {
+		key,
+		state: "starting",
+		preparedRuntime: input.prepared.preparedRuntime,
+		child,
+		pendingResponses: new Map(),
+		commandCounter: 0,
+		currentTurn: null,
+		idleTimer: null,
+		firstOutputLogged: false,
+		startedAt: new Date().toISOString(),
+		lastUsedAt: new Date().toISOString(),
+		stderrLines: [],
+	};
+	warmSessionRunners.set(key, runner);
+
+	logStructuredEvent({
+		component: "astro-stream",
+		event: "warm_runner_spawned",
+		message: "Astro spawned a warm Pi RPC runner.",
+		data: {
+			agentType: input.ctx.agentType,
+			sessionKey: input.ctx.sessionKey,
+			threadId: input.ctx.threadId ?? null,
+			agentSessionId: input.ctx.agentSessionId,
+			cwd: input.cwd,
+			durationMs: Date.now() - spawnStartedAt,
+		},
+	});
+
+	const stdout = createInterface({ input: child.stdout });
+	stdout.on("line", (line) => {
+		if (!runner.firstOutputLogged) {
+			runner.firstOutputLogged = true;
+			logStructuredEvent({
+				component: "astro-stream",
+				event: "warm_runner_first_output",
+				message: "Warm Pi RPC runner emitted its first stdout line.",
+				data: {
+					agentType: input.ctx.agentType,
+					sessionKey: input.ctx.sessionKey,
+					agentSessionId: input.ctx.agentSessionId,
+					durationMs: Date.now() - spawnStartedAt,
+				},
+			});
+		}
+		let parsed: any;
+		try {
+			parsed = JSON.parse(line);
+		} catch {
+			if (logTraffic) {
+				console.log(`[astro-stream] WARM_NONJSON session=${input.ctx.sessionKey}: ${line}`);
+			}
+			return;
+		}
+		handleWarmRunnerParsedLine(runner, parsed);
+	});
+
+	const stderr = createInterface({ input: child.stderr });
+	stderr.on("line", (line) => {
+		if (line.trim()) {
+			runner.stderrLines.push(line);
+			if (runner.stderrLines.length > 20) runner.stderrLines.shift();
+		}
+		if (logTraffic) {
+			console.log(`[astro-stream] WARM_STDERR session=${input.ctx.sessionKey}: ${line}`);
+		}
+	});
+
+	child.on("exit", (code, signal) => {
+		const turn = runner.currentTurn;
+		removeWarmRunner(runner, signal ? `exit_signal_${signal}` : `exit_code_${code ?? "null"}`);
+		if (turn && !turn.completed && !turn.ctx.finished) {
+			const stderrSummary = runner.stderrLines.length
+				? ` Recent stderr:\n${runner.stderrLines.join("\n")}`
+				: "";
+			const reason = signal
+				? `Warm Pi RPC runner exited with signal ${signal}.${stderrSummary}`
+				: `Warm Pi RPC runner exited with code ${code}.${stderrSummary}`;
+			writeChunk(turn.ctx, { type: "error", error: reason, error_source: "pi" });
+			writeDone(turn.ctx);
+			void completeWarmRunnerTurn(runner, "stream_error");
+		}
+	});
+
+	child.on("error", (error) => {
+		const turn = runner.currentTurn;
+		removeWarmRunner(runner, "process_error");
+		if (turn && !turn.completed && !turn.ctx.finished) {
+			writeChunk(turn.ctx, { type: "error", error: error.message, error_source: "pi" });
+			writeDone(turn.ctx);
+			void completeWarmRunnerTurn(runner, "stream_error");
+		}
+	});
+
+	const stateResponse = await writeWarmRunnerCommand(runner, { type: "get_state" });
+	if (!isPlainObject(stateResponse) || stateResponse.success !== true) {
+		stopWarmRunner(runner, "rpc_get_state_failed");
+		throw new Error("Warm runner did not respond successfully to get_state.");
+	}
+	runner.state = "idle";
+	scheduleWarmRunnerIdleShutdown(runner);
+	return runner;
+}
+
+async function getCompatibleWarmRunner(input: {
+	ctx: RequestContext;
+	prepared: WarmPreparedRuntime;
+	cwd: string;
+	projectId: string | null;
+}): Promise<WarmSessionRunner> {
+	const key = input.prepared.preparedRuntime.agentSessionUid;
+	const existing = warmSessionRunners.get(key);
+	if (existing) {
+		const compatible = warmRunnerCompatible(existing, input.prepared.preparedRuntime);
+		if (compatible.ok === true) return existing;
+		const incompatibilityReason = compatible.reason;
+		logStructuredEvent({
+			component: "astro-stream",
+			event: "warm_runner_restarting_incompatible",
+			message: "Astro is restarting an incompatible warm runner.",
+			data: {
+				key,
+				reason: incompatibilityReason,
+			},
+		});
+		stopWarmRunner(existing, incompatibilityReason);
+	}
+	const persisted = readPreparedSessionRuntime(key);
+	if (persisted && persisted.signature !== input.prepared.preparedRuntime.signature) {
+		logStructuredEvent({
+			component: "astro-stream",
+			event: "prepared_runtime_replaced",
+			message: "Astro replaced persisted prepared runtime state after compatibility changed.",
+			data: {
+				key,
+				previousPreparedAt: persisted.preparedAt,
+			},
+		});
+	}
+	return startWarmRunner(input);
+}
+
+async function dispatchWarmRunnerTurn(
+	runner: WarmSessionRunner,
+	prompt: string,
+	ctx: RequestContext,
+	prepared: WarmPreparedRuntime,
+): Promise<void> {
+	clearWarmRunnerIdleTimer(runner);
+	runner.state = "running";
+	ctx.piProcess = runner.child;
+	updateActiveStreamSession(ctx, {
+		lastPiEventAt: new Date().toISOString(),
+	});
+	logStructuredEvent({
+		component: "astro-stream",
+		event: "warm_runner_dispatch_started",
+		message: "Astro dispatched an A2A turn to a warm Pi RPC runner.",
+		data: {
+			agentType: ctx.agentType,
+			sessionKey: ctx.sessionKey,
+			threadId: ctx.threadId ?? null,
+			agentSessionId: ctx.agentSessionId,
+			key: runner.key,
+		},
+	});
+
+	await new Promise<void>((resolve, reject) => {
+		runner.currentTurn = {
+			ctx,
+			prompt,
+			prepared,
+			resolve,
+			reject,
+			completed: false,
+			startedAt: Date.now(),
+		};
+		writeWarmRunnerCommand(runner, {
+			type: "prompt",
+			message: prompt,
+			streamingBehavior: "followUp",
+		})
+			.then((response) => {
+				if (!isPlainObject(response) || response.success !== true) {
+					const message =
+						isPlainObject(response) && typeof response.error === "string"
+							? response.error
+							: "Warm runner prompt command failed.";
+					writeChunk(ctx, { type: "error", error: message, error_source: "pi" });
+					writeDone(ctx);
+					void completeWarmRunnerTurn(runner, "stream_error");
+				}
+			})
+			.catch((error) => {
+				if (!ctx.finished) {
+					writeChunk(ctx, {
+						type: "error",
+						error: error instanceof Error ? error.message : String(error),
+						error_source: "pi",
+					});
+					writeDone(ctx);
+				}
+				void completeWarmRunnerTurn(runner, "stream_error");
+			});
+	});
+
+	logStructuredEvent({
+		component: "astro-stream",
+		event: "warm_runner_dispatch_completed",
+		message: "Astro completed an A2A turn on a warm Pi RPC runner.",
+		data: {
+			agentType: ctx.agentType,
+			sessionKey: ctx.sessionKey,
+			threadId: ctx.threadId ?? null,
+			agentSessionId: ctx.agentSessionId,
+			key: runner.key,
+		},
+	});
+}
+
+async function runWarmPiPrompt(
+	prompt: string,
+	ctx: RequestContext,
+	options: {
+		cwd: string;
+		projectId: string | null;
+		agentConfig: AgentConfig | null;
+		envOverrides?: NodeJS.ProcessEnv;
+	},
+): Promise<{ ok: true } | { ok: false; fallbackReason: string } | { ok: false; handled: true }> {
+	const prepared = await prepareWarmPiRuntime(ctx, options);
+	if (!prepared.ok) return prepared;
+	let runner: WarmSessionRunner;
+	try {
+		runner = await getCompatibleWarmRunner({
+			ctx,
+			prepared: prepared.value,
+			cwd: options.cwd,
+			projectId: options.projectId,
+		});
+	} catch (error) {
+		await prepared.value.finalizeProviderCredentials("stream_error");
+		return {
+			ok: false,
+			fallbackReason: error instanceof Error ? error.message : String(error),
+		};
+	}
+	await dispatchWarmRunnerTurn(runner, prompt, ctx, prepared.value);
+	return { ok: true };
+}
+
+async function runPiPrompt(
+	prompt: string,
+	ctx: RequestContext,
+	options: {
+		cwd: string;
+		projectId: string | null;
+		agentConfig: AgentConfig | null;
+		envOverrides?: NodeJS.ProcessEnv;
+	},
+) {
+	mkdirSync(sessionDir, { recursive: true });
+	const sessionPath = getSessionPath(ctx.sessionKey);
+	const args = ["--mode", "json", "--session", sessionPath];
+	let promptPath: string | null = null;
+	const boundModelArg = buildPiModelArgument(ctx.sessionModelBinding);
+	const piLaunchBaseEnv = {
+		...process.env,
+		...(options.envOverrides ?? {}),
+	};
+	let scopedPiAgentDir: string | null = null;
+	let scopedProviderCredentialProvider: string | null = null;
+	let activeProviderCredentialKey: string | null = null;
+	let providerCredentialFlushTimer: ReturnType<typeof setInterval> | null = null;
+	let providerCredentialFinalized = false;
+	resetAssistantTurnOutputState(ctx);
+	if (boundModelArg || options.agentConfig?.model) {
+		logStructuredEvent({
+			component: "astro-stream",
+			event: "pi_launch_model_ready",
+			message: "Pi launch has a resolved model configuration.",
+			data: {
+				agentType: ctx.agentType,
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId ?? null,
+				userUid: ctx.userId,
+				agentSessionId: ctx.agentSessionId,
+				cwd: options.cwd,
+				boundModelArg: boundModelArg ?? null,
+				sessionModelBindingProvider: ctx.sessionModelBinding?.provider ?? null,
+				sessionModelBindingModel: ctx.sessionModelBinding?.model ?? null,
+				sessionModelBindingReasoningEffort:
+					ctx.sessionModelBinding?.runConfig.reasoning_effort ?? null,
+				agentConfigModel: options.agentConfig?.model ?? null,
+			},
+		});
+	} else {
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "pi_launch_without_model",
+			message:
+				"Pi is launching without a bound model argument or agent-config model; execution may fail with no available models.",
+			data: {
+				agentType: ctx.agentType,
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId ?? null,
+				userUid: ctx.userId,
+				agentSessionId: ctx.agentSessionId,
+				cwd: options.cwd,
+				sessionModelBindingPresent: Boolean(ctx.sessionModelBinding),
+				agentConfigModel: options.agentConfig?.model ?? null,
+			},
+		});
+	}
+
+	const preflightStartedAt = Date.now();
+	let capabilityPreparationDurationMs: number | null = null;
+	let providerCredentialPreparationDurationMs: number | null = null;
+	let capabilityCacheHit: boolean | null = null;
+	let capabilityCacheReason: string | null = null;
+	let providerCredentialCacheHit: boolean | null = null;
+	let providerCredentialCacheReason: string | null = null;
+	let capabilityMaterialization: SessionCapabilityMaterialization | null = null;
+	const capabilityPreparationStartedAt = Date.now();
+	const capabilityPreparationPromise = ctx.agentSessionId
+		? (async () => {
+				const capabilities = await materializeSessionCapabilities({
+					agentSessionUid: ctx.agentSessionId,
+					sessionAssetsRoot: getSessionAssetsRoot(),
+					env: piLaunchBaseEnv,
+					log: (message) => console.log(`[astro-stream] ${message}`),
+				});
+				return {
+					capabilities,
+					durationMs: Date.now() - capabilityPreparationStartedAt,
+				};
+		  })()
+		: Promise.resolve(null);
+
+	const providerRequiresScopedCredentials = Boolean(
+		ctx.sessionModelBinding && resolveProviderDefinition(ctx.sessionModelBinding.provider),
+	);
+	const providerCredentialPreparationStartedAt = Date.now();
+	const providerCredentialPreparationPromise =
+		ctx.sessionModelBinding && providerRequiresScopedCredentials
+			? (async () => {
+					const hydratedProviderCredentials = await hydrateScopedProviderCredentials({
+						createdByUser: ctx.userId,
+						agentSessionUid: ctx.agentSessionId,
+						sessionKey: ctx.sessionKey,
+						provider: ctx.sessionModelBinding.provider,
+						holderId: `astro-pi-stream/${process.pid}/${ctx.sessionKey}`,
+						sessionConfigOverrides: ctx.sessionConfigOverrides,
+						sessionSkillPaths: [],
+						env: piLaunchBaseEnv,
+						log: (message) => console.log(`[astro-stream] ${message}`),
+					});
+					return {
+						hydratedProviderCredentials,
+						durationMs: Date.now() - providerCredentialPreparationStartedAt,
+					};
+			  })()
+			: Promise.resolve(null);
+
+	const [capabilityPreparation, providerCredentialPreparation] = await Promise.all([
+		capabilityPreparationPromise,
+		providerCredentialPreparationPromise,
+	]);
+
+	if (capabilityPreparation) {
+		const capabilities = capabilityPreparation.capabilities;
+		capabilityPreparationDurationMs = capabilityPreparation.durationMs;
+		capabilityCacheHit = capabilities.ok ? capabilities.cacheHit === true : false;
+		capabilityCacheReason = capabilities.ok ? capabilities.cacheReason ?? null : null;
+		if (capabilities.ok === false) {
+			if (
+				providerCredentialPreparation?.hydratedProviderCredentials.ok === true &&
+				!isScopedProviderCredentialCacheEnabled(piLaunchBaseEnv)
+			) {
+				cleanupScopedPiAgentDir(
+					providerCredentialPreparation.hydratedProviderCredentials.value.scopedPiAgentDir,
+				);
+			}
+			logStructuredEvent({
+				severity: "ERROR",
+				component: "astro-stream",
+				event: "session_capabilities_materialization_failed",
+				message: "Astro could not materialize session capability bindings before launching Pi.",
+				data: {
+					sessionId: ctx.sessionKey,
+					agentSessionId: ctx.agentSessionId,
+					durationMs: capabilityPreparationDurationMs,
+					error: capabilities.error,
+					backendMessage: capabilities.message,
+					backendRequestUrl: capabilities.url ?? null,
+					backendStatus: capabilities.statusCode ?? null,
+					backendResponseBody: capabilities.body ?? null,
+				},
+			});
+			writeChunk(
+				ctx,
+				buildBackendFailureErrorEvent(
+					"Session capability materialization failed",
+					capabilities,
+					"backend",
+				),
+			);
+			writeDone(ctx);
+			return;
+		}
+		capabilityMaterialization = capabilities.value;
+		writeSessionCapabilityMaterializationMetadata(ctx.sessionKey, capabilityMaterialization);
+		logStructuredEvent({
+			component: "astro-stream",
+			event: "session_capabilities_materialized",
+			message: "Astro materialized session capability bindings before launching Pi.",
+			data: {
+				sessionId: ctx.sessionKey,
+				agentSessionId: ctx.agentSessionId,
+				durationMs: capabilityPreparationDurationMs,
+				cacheHit: capabilityCacheHit,
+				cacheReason: capabilityCacheReason,
+				bindingCount: capabilityMaterialization.bindingCount,
+				enabledSkillBindingCount: capabilityMaterialization.enabledSkillBindingCount,
+				materializedSkillCount: capabilityMaterialization.materializedSkillCount,
+				skipped: capabilityMaterialization.skipped,
+				sessionAssetRoot: capabilityMaterialization.sessionAssetRoot,
+				skillsRoot: capabilityMaterialization.skillsRoot,
+				settingsSkillPaths: capabilityMaterialization.settingsSkillPaths,
+			},
+		});
+	}
+	const sessionSkillPaths = capabilityMaterialization?.settingsSkillPaths ?? [];
+
+	if (ctx.sessionModelBinding && providerCredentialPreparation) {
+		const hydratedProviderCredentials = providerCredentialPreparation.hydratedProviderCredentials;
+		providerCredentialPreparationDurationMs = providerCredentialPreparation.durationMs;
+		providerCredentialCacheHit = hydratedProviderCredentials.ok
+			? hydratedProviderCredentials.value.cacheHit === true
+			: false;
+		providerCredentialCacheReason = hydratedProviderCredentials.ok
+			? hydratedProviderCredentials.value.cacheReason ?? null
+			: null;
+		if (hydratedProviderCredentials.ok === false) {
+			if (!isScopedProviderCredentialCacheEnabled(piLaunchBaseEnv)) {
+				cleanupScopedPiAgentDir(
+					ensureSessionScopedPiAgentDir({
+						sessionKey: ctx.sessionKey,
+						sessionConfigOverrides: ctx.sessionConfigOverrides,
+						forceProviderAuthDir: true,
+						env: piLaunchBaseEnv,
+					}),
+				);
+			}
+			logStructuredEvent({
+				severity: "ERROR",
+				component: "astro-stream",
+				event: "provider_credentials_hydrate_failed",
+				message: "Astro could not hydrate scoped provider credentials before launching Pi.",
+				data: {
+					sessionId: ctx.sessionKey,
+					agentSessionId: ctx.agentSessionId,
+					provider: ctx.sessionModelBinding.provider,
+					durationMs: providerCredentialPreparationDurationMs,
+					error: hydratedProviderCredentials.error,
+					backendMessage: hydratedProviderCredentials.message,
+				},
+			});
+			writeChunk(
+				ctx,
+				buildBackendFailureErrorEvent(
+					"Provider credential hydrate failed",
+					hydratedProviderCredentials,
+					"provider",
+				),
+			);
+			writeDone(ctx);
+			return;
+		}
+		scopedPiAgentDir = hydratedProviderCredentials.value.scopedPiAgentDir;
+		if (sessionSkillPaths.length > 0) {
+			const refreshedScopedPiAgentDir = ensureSessionScopedPiAgentDir({
+				sessionKey: ctx.sessionKey,
+				sessionConfigOverrides: ctx.sessionConfigOverrides,
+				sessionSkillPaths,
+				forceProviderAuthDir: true,
+				env: piLaunchBaseEnv,
+			});
+			if (!refreshedScopedPiAgentDir) {
+				writeChunk(ctx, {
+					type: "error",
+					error: "Failed to prepare scoped Pi auth directory with session skills.",
+					error_source: "runtime",
+				});
+				writeDone(ctx);
+				return;
+			}
+			scopedPiAgentDir = refreshedScopedPiAgentDir;
+		}
+		scopedProviderCredentialProvider = ctx.sessionModelBinding.provider;
+		activeProviderCredentialKey = `${ctx.sessionKey}:${scopedProviderCredentialProvider}`;
+		activeScopedProviderCredentials.set(activeProviderCredentialKey, {
+			scopedPiAgentDir,
+			createdByUser: ctx.userId,
+			agentSessionId: ctx.agentSessionId,
+			provider: scopedProviderCredentialProvider,
+			sessionKey: ctx.sessionKey,
+			env: {
+				...piLaunchBaseEnv,
+				PI_CODING_AGENT_DIR: scopedPiAgentDir,
+			},
+		});
+		logStructuredEvent({
+			component: "astro-stream",
+			event: "provider_credentials_hydrated",
+			message: "Astro hydrated scoped provider credentials before launching Pi.",
+			data: {
+				sessionId: ctx.sessionKey,
+				agentSessionId: ctx.agentSessionId,
+				provider: scopedProviderCredentialProvider,
+				scopedPiAgentDir,
+				durationMs: providerCredentialPreparationDurationMs,
+				cacheHit: providerCredentialCacheHit,
+				cacheReason: providerCredentialCacheReason,
+			},
+		});
+	} else {
+		scopedPiAgentDir = ensureSessionScopedPiAgentDir({
+			sessionKey: ctx.sessionKey,
+			sessionConfigOverrides: ctx.sessionConfigOverrides,
+			sessionSkillPaths,
+			env: piLaunchBaseEnv,
+		});
+	}
+
+	logStructuredEvent({
+		component: "astro-stream",
+		event: "pi_preflight_completed",
+		message: "Astro completed local runtime preparation before launching Pi.",
+		data: {
+			agentType: ctx.agentType,
+			sessionKey: ctx.sessionKey,
+			threadId: ctx.threadId ?? null,
+			agentSessionId: ctx.agentSessionId,
+			durationMs: Date.now() - preflightStartedAt,
+			capabilityDurationMs: capabilityPreparationDurationMs,
+			capabilityCacheHit,
+			capabilityCacheReason,
+			providerCredentialDurationMs: providerCredentialPreparationDurationMs,
+			providerCredentialCacheHit,
+			providerCredentialCacheReason,
+			sessionSkillPathCount: sessionSkillPaths.length,
+			scopedPiAgentDir,
+		},
+	});
+	ctx.strictJsonRepairRuntime = {
+		cwd: options.cwd,
+		projectId: options.projectId,
+		scopedPiAgentDir,
+		envOverrides: options.envOverrides,
+	};
+
+	const flushProviderCredential = async (reason: string) => {
+		if (!scopedPiAgentDir || !scopedProviderCredentialProvider) return;
+		const flushed = await flushScopedProviderCredential({
+			scopedPiAgentDir,
+			createdByUser: ctx.userId,
+			agentSessionUid: ctx.agentSessionId,
+			provider: scopedProviderCredentialProvider,
+			reason,
+			env: {
+				...piLaunchBaseEnv,
+				PI_CODING_AGENT_DIR: scopedPiAgentDir,
+			},
+			log: (message) => console.log(`[astro-stream] ${message}`),
+		});
+		if (flushed.ok === false) {
+			logStructuredEvent({
+				severity: "ERROR",
+				component: "astro-stream",
+				event: "provider_credentials_flush_failed",
+				message: "Astro could not flush scoped provider credentials to backend.",
+				data: {
+					sessionId: ctx.sessionKey,
+					agentSessionId: ctx.agentSessionId,
+					provider: scopedProviderCredentialProvider,
+					reason,
+					error: flushed.error,
+					backendMessage: flushed.message,
+				},
+			});
+			return;
+		}
+		if (!flushed.value.noop) {
+			logStructuredEvent({
+				component: "astro-stream",
+				event: "provider_credentials_flushed",
+				message: "Astro flushed scoped provider credentials to backend.",
+				data: {
+					sessionId: ctx.sessionKey,
+					agentSessionId: ctx.agentSessionId,
+					provider: scopedProviderCredentialProvider,
+					reason,
+					version: flushed.value.version,
+					credentialHash: flushed.value.credential_hash,
+				},
+			});
+		}
+	};
+
 	const finalizeProviderCredentials = async (reason: string) => {
 		if (providerCredentialFinalized) return;
 		providerCredentialFinalized = true;
@@ -5402,14 +6927,44 @@ async function runPiPrompt(
 			providerCredentialFlushTimer = null;
 		}
 		try {
-			await flushProviderCredential(reason);
+			const providerAuthFailureMessage =
+				ctx.lastAssistantFinishReason === "error" ? ctx.lastAssistantErrorMessage : null;
+			if (isProviderCredentialAuthFailureMessage(providerAuthFailureMessage)) {
+				invalidateProviderCredentialCacheIfAuthFailure(providerAuthFailureMessage);
+			} else {
+				await flushProviderCredential(reason);
+			}
 		} finally {
 			if (activeProviderCredentialKey) {
 				activeScopedProviderCredentials.delete(activeProviderCredentialKey);
 				activeProviderCredentialKey = null;
 			}
-			cleanupScopedPiAgentDir(scopedProviderCredentialProvider ? scopedPiAgentDir : null);
+			if (!isScopedProviderCredentialCacheEnabled(piLaunchBaseEnv)) {
+				cleanupScopedPiAgentDir(scopedProviderCredentialProvider ? scopedPiAgentDir : null);
+			}
 		}
+	};
+
+	const invalidateProviderCredentialCacheIfAuthFailure = (errorMessage: string | null) => {
+		if (!scopedProviderCredentialProvider) return;
+		if (!isProviderCredentialAuthFailureMessage(errorMessage)) return;
+		invalidateScopedProviderCredentialCache({
+			sessionKey: ctx.sessionKey,
+			provider: scopedProviderCredentialProvider,
+			env: piLaunchBaseEnv,
+		});
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "provider_credentials_cache_invalidated",
+			message: "Astro invalidated scoped provider credentials after a provider auth failure.",
+			data: {
+				sessionId: ctx.sessionKey,
+				agentSessionId: ctx.agentSessionId,
+				provider: scopedProviderCredentialProvider,
+				reason: "provider_auth_failure",
+			},
+		});
 	};
 
 	if (options.agentConfig) {
@@ -5427,6 +6982,7 @@ async function runPiPrompt(
 	}
 
 	args.push(prompt);
+	const piSpawnStartedAt = Date.now();
 	const child = spawn("pi", args, {
 		cwd: options.cwd,
 		env: buildMainsequenceStoredAuthEnv({
@@ -5447,6 +7003,20 @@ async function runPiPrompt(
 		}),
 		stdio: ["ignore", "pipe", "pipe"],
 	});
+	const piSpawnedAt = Date.now();
+	logStructuredEvent({
+		component: "astro-stream",
+		event: "pi_process_spawned",
+		message: "Astro spawned the Pi runtime process.",
+		data: {
+			agentType: ctx.agentType,
+			sessionKey: ctx.sessionKey,
+			threadId: ctx.threadId ?? null,
+			agentSessionId: ctx.agentSessionId,
+			cwd: options.cwd,
+			durationMs: piSpawnedAt - piSpawnStartedAt,
+		},
+	});
 	ctx.piProcess = child;
 	if (scopedProviderCredentialProvider) {
 		providerCredentialFlushTimer = setInterval(() => {
@@ -5455,7 +7025,23 @@ async function runPiPrompt(
 	}
 
 	const stdout = createInterface({ input: child.stdout });
+	let firstPiOutputLogged = false;
 	stdout.on("line", (line) => {
+		if (!firstPiOutputLogged) {
+			firstPiOutputLogged = true;
+			logStructuredEvent({
+				component: "astro-stream",
+				event: "pi_first_output",
+				message: "Pi emitted its first stdout line for this runtime turn.",
+				data: {
+					agentType: ctx.agentType,
+					sessionKey: ctx.sessionKey,
+					threadId: ctx.threadId ?? null,
+					agentSessionId: ctx.agentSessionId,
+					durationMs: Date.now() - piSpawnedAt,
+				},
+			});
+		}
 		let parsed: any;
 		try {
 			parsed = JSON.parse(line);
@@ -5473,8 +7059,7 @@ async function runPiPrompt(
 
 		if (parsed?.type === "message_start") {
 			if (parsed.message?.role !== "assistant") return;
-			ctx.piAssistantTextSeen = false;
-			ctx.lastAssistantErrorMessage = null;
+			resetAssistantTurnOutputState(ctx);
 			updateResponseModelFromMessage(ctx, parsed.message);
 			return;
 		}
@@ -5547,6 +7132,11 @@ async function runPiPrompt(
 		});
 	});
 
+	let resolveChildCompletion: () => void = () => {};
+	const childCompletion = new Promise<void>((resolve) => {
+		resolveChildCompletion = resolve;
+	});
+
 	child.on("exit", (code, signal) => {
 		ctx.piProcess = null;
 		void (async () => {
@@ -5558,6 +7148,9 @@ async function runPiPrompt(
 				: failed
 					? "stream_error"
 					: "stream_finish";
+			if (ctx.assistantCompletionPending) {
+				await ctx.assistantCompletionPending;
+			}
 			await finalizeProviderCredentials(terminalReason);
 			if (ctx.finished) return;
 			if (ctx.cancellation?.requested) {
@@ -5599,7 +7192,7 @@ async function runPiPrompt(
 				usage: ctx.lastAssistantUsage,
 			});
 			writeDone(ctx);
-		})();
+		})().finally(resolveChildCompletion);
 	});
 
 	child.on("error", (error) => {
@@ -5625,7 +7218,10 @@ async function runPiPrompt(
 			}
 			writeDone(ctx);
 		}
+		resolveChildCompletion();
 	});
+
+	await childCompletion;
 }
 
 const server = createServer((req, res) => {
@@ -5658,6 +7254,9 @@ async function handleShutdownSignal(signal: "SIGINT" | "SIGTERM") {
 	if (shutdownStarted) return;
 	shutdownStarted = true;
 	try {
+		for (const runner of warmSessionRunners.values()) {
+			stopWarmRunner(runner, signal);
+		}
 		await flushActiveScopedProviderCredentialsForShutdown(signal);
 	} finally {
 		mainsequenceCredentialExchangeLoop?.stop();
@@ -6835,6 +8434,12 @@ async function handleStreamRequest(
 						null,
 			  })
 			: null;
+	const a2aOutputOptions = normalizeA2AOutputOptions({
+		enabled: isA2AChatRequest || a2aContext.enabled === true || effectiveA2AEnvelope?.enabled === true,
+		body: isPlainObject(body) ? body : {},
+		a2aContext,
+		envelopeResponseFormat: effectiveA2AEnvelope?.responseFormat ?? null,
+	});
 	const persistedCwd = projectAttachment.attached ? agentCwd : null;
 	const frozenRepoRoot = projectAttachment.repoRoot;
 	if (
@@ -6852,9 +8457,14 @@ async function handleStreamRequest(
 		existingSessionMetadata?.agentSessionId ?? runtimeSessionId;
 	startedAt = existingSessionMetadata?.startedAt ?? null;
 	sessionKey = runtimeSessionId;
+	const warmA2ATurnEligible =
+		isA2AChatRequest &&
+		isA2AWarmRunnerEnabled() &&
+		agentSessionId != null &&
+		agentConfig == null;
 
 	const activeRun = getActiveStreamSession(sessionKey, agentSessionId);
-	if (activeRun) {
+	if (activeRun && !warmA2ATurnEligible) {
 		logStructuredEvent({
 			severity: "WARNING",
 			component: "astro-stream",
@@ -6971,6 +8581,10 @@ async function handleStreamRequest(
 		system,
 		uiContext: context,
 		uiTools: tools,
+		a2aOutputOptions,
+		strictJsonBufferedText: "",
+		strictJsonRepairRuntime: null,
+		assistantCompletionPending: null,
 		sessionModelBinding,
 		sessionConfigOverrides: existingSessionMetadata?.sessionConfigOverrides ?? null,
 		responseProvider: null,
@@ -6981,79 +8595,107 @@ async function handleStreamRequest(
 		lastAssistantUsage: undefined,
 		checkpointLease: null,
 	};
-	markActiveStreamSession(ctx);
-	attachStreamAbortHandler(ctx);
 
-	try {
-		const checkpointReady = await prepareCheckpointBeforePiLaunch(ctx);
-		if (checkpointReady.ok === false) {
-			writeChunk(ctx, checkpointReady.errorEvent);
+	const executeRuntimeTurn = async () => {
+		markActiveStreamSession(ctx);
+		attachStreamAbortHandler(ctx);
+
+		try {
+			const checkpointReady = await prepareCheckpointBeforePiLaunch(ctx);
+			if (checkpointReady.ok === false) {
+				writeChunk(ctx, checkpointReady.errorEvent);
+				writeDone(ctx);
+				return;
+			}
+		} catch (error) {
+			writeChunk(ctx, {
+				type: "error",
+				error: error instanceof Error ? error.message : String(error),
+				error_source: "checkpoint",
+			});
 			writeDone(ctx);
 			return;
 		}
-	} catch (error) {
-		writeChunk(ctx, {
-			type: "error",
-			error: error instanceof Error ? error.message : String(error),
-			error_source: "checkpoint",
-		});
-		writeDone(ctx);
-		return;
-	}
 
-	try {
-		writeSessionMetadata(sessionKey, {
-			agentId,
-			agentUniqueId,
-			agentSessionId,
-			threadId,
-			startedAt,
-			agentType: responseAgentType,
+		try {
+			writeSessionMetadata(sessionKey, {
+				agentId,
+				agentUniqueId,
+				agentSessionId,
+				threadId,
+				startedAt,
+				agentType: responseAgentType,
+				projectId,
+				cwd: persistedCwd,
+				repoRoot: frozenRepoRoot,
+				projectImageRef,
+				sessionModelBinding,
+				sessionConfigOverrides: existingSessionMetadata?.sessionConfigOverrides ?? null,
+				...(effectiveA2AEnvelope ? { a2a: effectiveA2AEnvelope } : {}),
+			});
+			writeThreadBinding({
+				threadId: responseThreadId,
+				runtimeSessionId: sessionKey,
+				updatedAt: new Date().toISOString(),
+			});
+			conversationStore.recordUserMessageSync({
+				text: latestUserMessage,
+				...(effectiveA2AEnvelope
+					? { provenance: a2aEnvelopeToUserProvenance(effectiveA2AEnvelope) }
+					: {}),
+			});
+		} catch (error) {
+			console.error(
+				`[astro-stream] failed to persist conversation launch files for session=${sessionKey}: ${
+					error instanceof Error ? error.message : String(error)
+				}`,
+			);
+			writeChunk(ctx, {
+				type: "error",
+				error: "Failed to persist conversation launch files before starting the stream.",
+				error_source: "runtime",
+				error_code: "conversation_persistence_failed",
+				error_detail: error instanceof Error ? error.message : String(error),
+			});
+			writeDone(ctx);
+			return;
+		}
+
+		writeChunk(ctx, { type: "start", messageId });
+
+		const prompt = buildPrompt(system, latestUserMessage, context, tools);
+		const piOptions = {
+			cwd: agentCwd ?? repoRoot,
 			projectId,
-			cwd: persistedCwd,
-			repoRoot: frozenRepoRoot,
-			projectImageRef,
-			sessionModelBinding,
-			sessionConfigOverrides: existingSessionMetadata?.sessionConfigOverrides ?? null,
-			...(effectiveA2AEnvelope ? { a2a: effectiveA2AEnvelope } : {}),
-		});
-		writeThreadBinding({
-			threadId: responseThreadId,
-			runtimeSessionId: sessionKey,
-			updatedAt: new Date().toISOString(),
-		});
-		conversationStore.recordUserMessageSync({
-			text: latestUserMessage,
-			...(effectiveA2AEnvelope
-				? { provenance: a2aEnvelopeToUserProvenance(effectiveA2AEnvelope) }
-				: {}),
-		});
-	} catch (error) {
-		console.error(
-			`[astro-stream] failed to persist conversation launch files for session=${sessionKey}: ${
-				error instanceof Error ? error.message : String(error)
-			}`,
-		);
-		writeChunk(ctx, {
-			type: "error",
-			error: "Failed to persist conversation launch files before starting the stream.",
-			error_source: "runtime",
-			error_code: "conversation_persistence_failed",
-			error_detail: error instanceof Error ? error.message : String(error),
-		});
-		writeDone(ctx);
-		return;
-	}
+			agentConfig,
+		};
 
-	writeChunk(ctx, { type: "start", messageId });
+		if (warmA2ATurnEligible) {
+			const warmResult = await runWarmPiPrompt(prompt, ctx, piOptions);
+			if (warmResult.ok === true || "handled" in warmResult) return;
+			const fallbackReason = warmResult.fallbackReason;
+			logStructuredEvent({
+				severity: "WARNING",
+				component: "astro-stream",
+				event: "warm_runner_cold_fallback",
+				message: "Astro is falling back to cold durable Pi launch after warm runner dispatch failed or was ineligible.",
+				data: {
+					agentType: ctx.agentType,
+					sessionKey: ctx.sessionKey,
+					threadId: ctx.threadId ?? null,
+					agentSessionId: ctx.agentSessionId,
+					reason: fallbackReason,
+				},
+			});
+		}
 
-	const prompt = buildPrompt(system, latestUserMessage, context, tools);
+		await runPiPrompt(prompt, ctx, piOptions);
+	};
 
-	void runPiPrompt(prompt, ctx, {
-		cwd: agentCwd ?? repoRoot,
-		projectId,
-		agentConfig,
-	}).catch((error) => {
+	const execution = warmA2ATurnEligible
+		? enqueueWarmSessionTurn(agentSessionId!, executeRuntimeTurn)
+		: executeRuntimeTurn();
+	void execution.catch((error) => {
 		if (!ctx.finished) {
 			writeChunk(ctx, {
 				type: "error",

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.5 - 2026-06-16
+
+### A2A Runtime Performance And Output Contracts
+
+- Added cached session capability materialization and scoped provider credential reuse for same-session runtime turns.
+- Added warm Pi RPC runners for `/api/a2a/chat` so same-session A2A calls can avoid repeated cold process startup.
+- Added runtime-enforced A2A output options for `omit_reasoning` / `omitReasoning`, strict JSON `response_format` / `responseFormat`, and `json_repair` / `jsonRepair`.
+- Buffered strict JSON assistant text until validation succeeds, emits canonical JSON on success, and emits `a2a_invalid_json_response` without persisting invalid text when validation and repair fail.
+- Documented ADR 33 and ADR 34, warm-runner and strict JSON repair environment knobs, and A2A request examples.
+- Added focused tests for cached preflight, scoped provider credential cache behavior, strict JSON validation/repair, reasoning suppression, non-strict streaming, and warm/cold A2A output paths.
+
 ## 2.0.4 - 2026-06-15
 
 ### Runtime Identity Vocabulary

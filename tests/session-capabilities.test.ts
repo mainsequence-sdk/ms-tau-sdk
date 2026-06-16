@@ -1,5 +1,6 @@
 import { afterEach, test } from "node:test";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import {
 	chmodSync,
 	existsSync,
@@ -13,18 +14,24 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import {
 	AgentCapabilitiesClient,
+	clearSessionCapabilityMaterializationCache,
 	materializeSessionCapabilities,
 } from "../interface/stream/session-capabilities.js";
 
 const originalFetch = globalThis.fetch;
 
+function sha256(value: string): string {
+	return `sha256:${createHash("sha256").update(value).digest("hex")}`;
+}
+
 afterEach(() => {
 	globalThis.fetch = originalFetch;
+	clearSessionCapabilityMaterializationCache();
 });
 
 type JsonRoute = {
 	status?: number;
-	body: unknown;
+	body: unknown | (() => unknown);
 };
 
 function createRuntimeEnv(root: string): NodeJS.ProcessEnv {
@@ -50,7 +57,8 @@ function installFetchRoutes(routes: Record<string, JsonRoute>) {
 		if (!route) {
 			return new Response(JSON.stringify({ error: `missing route: ${url}` }), { status: 404 });
 		}
-		return new Response(JSON.stringify(route.body), {
+		const body = typeof route.body === "function" ? route.body() : route.body;
+		return new Response(JSON.stringify(body), {
 			status: route.status ?? 200,
 			headers: { "Content-Type": "application/json" },
 		});
@@ -64,6 +72,8 @@ function capability(options: {
 	sourceType?: "inline" | "registry" | "repository" | "api" | "external";
 	capabilityPath?: string;
 	hasContent?: boolean;
+	contentSha256?: string;
+	updatedAt?: string;
 }) {
 	return {
 		uid: options.uid,
@@ -76,12 +86,12 @@ function capability(options: {
 		description: "",
 		metadata: {},
 		content_file: null,
-		content_sha256: "",
+		content_sha256: options.contentSha256 ?? "",
 		content_mime_type: "text/markdown",
 		content_size: 0,
 		has_content: options.hasContent ?? true,
 		created_by_user_uid: "user-uid",
-		updated_at: "2026-06-14T00:00:00.000Z",
+		updated_at: options.updatedAt ?? "2026-06-14T00:00:00.000Z",
 	};
 }
 
@@ -95,6 +105,8 @@ function sessionBinding(options: {
 	kind?: "skill" | "prompt" | "extension";
 	capabilityPath?: string;
 	hasContent?: boolean;
+	contentSha256?: string;
+	updatedAt?: string;
 }) {
 	const capabilityUid = options.capabilityUid ?? options.uid;
 	return {
@@ -107,6 +119,8 @@ function sessionBinding(options: {
 			sourceType: options.capabilitySourceType,
 			capabilityPath: options.capabilityPath,
 			hasContent: options.hasContent,
+			contentSha256: options.contentSha256,
+			updatedAt: options.updatedAt,
 		}),
 		role: "",
 		sort_order: 0,
@@ -115,7 +129,7 @@ function sessionBinding(options: {
 		configuration: {},
 		source_type: options.bindingSourceType ?? "inline",
 		source_ref: "",
-		updated_at: "2026-06-14T00:00:00.000Z",
+		updated_at: options.updatedAt ?? "2026-06-14T00:00:00.000Z",
 	};
 }
 
@@ -370,4 +384,154 @@ test("session capability materialization rejects conflicting session paths", asy
 	const failure = result as Extract<typeof result, { ok: false }>;
 	assert.equal(failure.statusCode, 409);
 	assert.equal(failure.error, "session_capability_path_collision");
+});
+
+test("session capability materialization reuses cached zero bindings", async (t) => {
+	const root = mkdtempSync(path.join(tmpdir(), "astro-capabilities-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const env = {
+		...createRuntimeEnv(root),
+		ASTRO_SESSION_CAPABILITY_CACHE_TTL_MS: "600000",
+	};
+	const assetsRoot = path.join(root, "session-assets");
+	const requests = installFetchRoutes({
+		"https://backend.test/orm/api/agents/v1/sessions/session-empty/capabilities/": {
+			body: [],
+		},
+	});
+
+	const first = await materializeSessionCapabilities({
+		agentSessionUid: "session-empty",
+		sessionAssetsRoot: assetsRoot,
+		env,
+	});
+	const second = await materializeSessionCapabilities({
+		agentSessionUid: "session-empty",
+		sessionAssetsRoot: assetsRoot,
+		env,
+	});
+
+	if (!first.ok) assert.fail("Expected first zero capability materialization to succeed.");
+	if (!second.ok) assert.fail("Expected second zero capability materialization to succeed.");
+	assert.equal(first.cacheHit, false);
+	assert.equal(second.cacheHit, true);
+	assert.equal(second.cacheReason, "zero_session_capabilities");
+	assert.equal(first.value.bindingCount, 0);
+	assert.equal(second.value.bindingCount, 0);
+	assert.equal(requests.length, 1);
+	assert.equal(existsSync(path.join(assetsRoot, "session-empty", ".agents", "skills")), false);
+});
+
+test("session capability materialization reuses unchanged non-zero binding signatures", async (t) => {
+	const root = mkdtempSync(path.join(tmpdir(), "astro-capabilities-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const env = createRuntimeEnv(root);
+	const assetsRoot = path.join(root, "session-assets");
+	const requests = installFetchRoutes({
+		"https://backend.test/orm/api/agents/v1/sessions/session-cached/capabilities/": {
+			body: [
+				sessionBinding({
+					uid: "cached-skill",
+					sessionUid: "session-cached",
+					capabilityUid: "cached-cap",
+					capabilityPath: "skills/cached/SKILL.md",
+					contentSha256: sha256("# Cached\n"),
+				}),
+			],
+		},
+		"https://backend.test/orm/api/agents/v1/capabilities/cached-cap/content/": {
+			body: {
+				content: "# Cached\n",
+				content_sha256: sha256("# Cached\n"),
+				content_mime_type: "text/markdown",
+				content_size: 9,
+			},
+		},
+	});
+
+	const first = await materializeSessionCapabilities({
+		agentSessionUid: "session-cached",
+		sessionAssetsRoot: assetsRoot,
+		env,
+	});
+	const second = await materializeSessionCapabilities({
+		agentSessionUid: "session-cached",
+		sessionAssetsRoot: assetsRoot,
+		env,
+	});
+
+	if (!first.ok) assert.fail("Expected first non-zero materialization to succeed.");
+	if (!second.ok) assert.fail("Expected second non-zero materialization to succeed.");
+	assert.equal(first.cacheHit, false);
+	assert.equal(second.cacheHit, true);
+	assert.equal(second.cacheReason, "capability_signature_unchanged");
+	assert.equal(second.value.materializedSkillCount, 1);
+	assert.equal(readFileSync(path.join(second.value.skillsRoot, "cached", "SKILL.md"), "utf8"), "# Cached\n");
+	assert.deepEqual(
+		requests.map((request) => request.url),
+		[
+			"https://backend.test/orm/api/agents/v1/sessions/session-cached/capabilities/",
+			"https://backend.test/orm/api/agents/v1/capabilities/cached-cap/content/",
+			"https://backend.test/orm/api/agents/v1/sessions/session-cached/capabilities/",
+		],
+	);
+});
+
+test("session capability materialization invalidates cache when binding signature changes", async (t) => {
+	const root = mkdtempSync(path.join(tmpdir(), "astro-capabilities-"));
+	t.after(() => rmSync(root, { recursive: true, force: true }));
+	const env = createRuntimeEnv(root);
+	const assetsRoot = path.join(root, "session-assets");
+	let currentVersion: "first" | "second" = "first";
+	const requests = installFetchRoutes({
+		"https://backend.test/orm/api/agents/v1/sessions/session-changing/capabilities/": {
+			body: () => [
+				sessionBinding({
+					uid: "changing-skill",
+					sessionUid: "session-changing",
+					capabilityUid: "changing-cap",
+					capabilityPath: "skills/changing/SKILL.md",
+					contentSha256: sha256(currentVersion === "first" ? "# First\n" : "# Second\n"),
+					updatedAt:
+						currentVersion === "first"
+							? "2026-06-14T00:00:00.000Z"
+							: "2026-06-14T00:01:00.000Z",
+				}),
+			],
+		},
+		"https://backend.test/orm/api/agents/v1/capabilities/changing-cap/content/": {
+			body: () => ({
+				content: currentVersion === "first" ? "# First\n" : "# Second\n",
+				content_sha256: sha256(currentVersion === "first" ? "# First\n" : "# Second\n"),
+				content_mime_type: "text/markdown",
+				content_size: currentVersion === "first" ? 8 : 9,
+			}),
+		},
+	});
+
+	const first = await materializeSessionCapabilities({
+		agentSessionUid: "session-changing",
+		sessionAssetsRoot: assetsRoot,
+		env,
+	});
+	currentVersion = "second";
+	const second = await materializeSessionCapabilities({
+		agentSessionUid: "session-changing",
+		sessionAssetsRoot: assetsRoot,
+		env,
+	});
+
+	if (!first.ok) assert.fail("Expected first changing materialization to succeed.");
+	if (!second.ok) assert.fail("Expected second changing materialization to succeed.");
+	assert.equal(second.cacheHit, false);
+	assert.equal(second.cacheInvalidationReason, "capability_signature_changed");
+	assert.equal(readFileSync(path.join(second.value.skillsRoot, "changing", "SKILL.md"), "utf8"), "# Second\n");
+	assert.equal(
+		requests.filter((request) => request.url.endsWith("/sessions/session-changing/capabilities/")).length,
+		2,
+	);
+	assert.equal(
+		requests.filter((request) => request.url.endsWith("/capabilities/changing-cap/content/")).length,
+		2,
+	);
 });

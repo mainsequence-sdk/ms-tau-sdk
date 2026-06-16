@@ -23,6 +23,12 @@ pre-UID API sketches have been removed from the active reference set.
   - Production A2A uses backend/CLI runtime access resolution and sends to `/api/a2a/chat`.
 - [`adr-28-durable-a2a-session-envelope.md`](./adr-28-durable-a2a-session-envelope.md)
   - A2A caller/linkage metadata is durable session state, not prompt-only scaffolding.
+- [`adr-33-warm-a2a-session-runtime.md`](./adr-33-warm-a2a-session-runtime.md)
+  - A2A chat should reuse cached preflight and warm session runners instead of paying a full
+    cold-start cost on every same-session turn.
+- [`adr-34-a2a-output-contracts.md`](./adr-34-a2a-output-contracts.md)
+  - A2A output options must suppress reasoning and enforce strict JSON in Astro, not only through
+    prompt guidance.
 
 ## Checkpoints And Session State
 

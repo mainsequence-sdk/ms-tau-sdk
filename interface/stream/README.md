@@ -214,7 +214,14 @@ Canonical request fields accepted by Astro include:
       "content": "Inspect the prepared project and summarize the next implementation step."
     }
   ],
-  "response_format": "Return a concise machine-facing status summary with blockers and next actions.",
+  "omit_reasoning": true,
+  "json_repair": {
+    "attempts": 3
+  },
+  "response_format": {
+    "type": "json_object",
+    "strict": true
+  },
   "caller": {
     "agent_type": "astro-orchestrator"
   }
@@ -231,6 +238,17 @@ For real A2A execution, that backend session identity is mandatory. Astro must n
 executor session on behalf of the caller. The caller should also include the full backend session
 serializer for that target session on every outbound A2A request so session/model/provider metadata
 does not have to be recovered through fallback.
+
+A2A output options:
+
+- `omit_reasoning` / `omitReasoning`: suppresses outbound `reasoning-start`, `reasoning-delta`, and `reasoning-end` SSE events for this request only.
+- `response_format: "json"` or `{ "type": "json_object", "strict": true }`: enables strict JSON mode. Astro buffers assistant text, validates it at completion, and emits one canonical JSON text response only if validation succeeds.
+- `json_repair` / `jsonRepair`: configures strict JSON repair attempts. The default is `{ "attempts": 3 }`; `{ "attempts": 0 }` disables repair and hard-fails on the first validation error.
+
+`POST /api/a2a/chat` remains an SSE endpoint. Strict JSON guarantees the final assistant text
+payload, not that the HTTP transport envelope itself is JSON. If validation and all repair attempts
+fail, Astro emits `error_code: "a2a_invalid_json_response"` and does not emit the invalid assistant
+text.
 
 ### `POST /api/a2a/cancel`
 

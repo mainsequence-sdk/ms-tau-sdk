@@ -48,6 +48,9 @@ export type StreamEvent =
 			backend_response_body?: unknown;
 			backend_checkpoint_version?: unknown;
 			backend_bundle_hash?: unknown;
+			json_repair_attempts?: number | null;
+			json_validation_error?: string | null;
+			json_mode?: string | null;
 		};
 	};
 

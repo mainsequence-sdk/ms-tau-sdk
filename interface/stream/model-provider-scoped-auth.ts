@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import {
 	ModelProviderCredentialClient,
@@ -47,7 +47,12 @@ export type HydratedScopedProviderCredentials = {
 	scopedPiAgentDir: string;
 	credentials: Record<string, PiCredential>;
 	hydrate: ProviderCredentialHydrateResponse;
+	cacheHit?: boolean;
+	cacheReason?: string;
+	cacheInvalidationReason?: string;
 };
+
+const DEFAULT_PROVIDER_CREDENTIAL_CACHE_TTL_MS = 10 * 60 * 1000;
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -124,6 +129,103 @@ export function cleanupScopedPiAgentDir(scopedPiAgentDir: string | null | undefi
 	rmSync(scopedPiAgentDir, { recursive: true, force: true });
 }
 
+export function isScopedProviderCredentialCacheEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+	return env.ASTRO_PROVIDER_CREDENTIAL_CACHE !== "0";
+}
+
+export function isScopedProviderCredentialRemoteCheckEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+	return env.ASTRO_PROVIDER_CREDENTIAL_REMOTE_CHECK !== "0";
+}
+
+function resolveProviderCredentialCacheTtlMs(env: NodeJS.ProcessEnv): number {
+	const configured = Number(env.ASTRO_PROVIDER_CREDENTIAL_CACHE_TTL_MS ?? DEFAULT_PROVIDER_CREDENTIAL_CACHE_TTL_MS);
+	return Number.isFinite(configured) && configured > 0
+		? Math.trunc(configured)
+		: DEFAULT_PROVIDER_CREDENTIAL_CACHE_TTL_MS;
+}
+
+function isCacheRecordFresh(lastFlushedAt: string, env: NodeJS.ProcessEnv): boolean {
+	const parsed = Date.parse(lastFlushedAt);
+	if (!Number.isFinite(parsed)) return false;
+	return Date.now() - parsed <= resolveProviderCredentialCacheTtlMs(env);
+}
+
+function credentialKind(credential: PiCredential): "api_key" | "oauth" {
+	return credential.type === "oauth" ? "oauth" : "api_key";
+}
+
+function tryReuseScopedProviderCredentials(input: {
+	createdByUser: string;
+	agentSessionUid: string | null;
+	provider: string;
+	scopedPiAgentDir: string;
+	env: NodeJS.ProcessEnv;
+}): { value: HydratedScopedProviderCredentials | null; missReason: string | null } {
+	const manifest = readScopedManifest(input.scopedPiAgentDir);
+	if (!manifest) return { value: null, missReason: "manifest_missing" };
+	if (manifest.created_by_user !== input.createdByUser) return { value: null, missReason: "user_changed" };
+	if (manifest.agent_session_uid !== input.agentSessionUid) return { value: null, missReason: "agent_session_changed" };
+	const providerManifest = manifest.providers[input.provider];
+	if (!providerManifest) return { value: null, missReason: "provider_missing" };
+	if (!isCacheRecordFresh(providerManifest.last_flushed_at, input.env)) {
+		return { value: null, missReason: "manifest_expired" };
+	}
+
+	const credential = readScopedPiCredential(input.scopedPiAgentDir, input.provider);
+	if (!credential) return { value: null, missReason: "credential_missing" };
+	if (hashPiCredential(credential) !== providerManifest.local_hash) {
+		return { value: null, missReason: "local_hash_changed" };
+	}
+
+	return {
+		value: {
+			scopedPiAgentDir: input.scopedPiAgentDir,
+			credentials: {
+				[input.provider]: credential,
+			},
+			hydrate: {
+				credentials: {
+					[input.provider]: {
+						status: "active",
+						credential_kind: credentialKind(credential),
+						version: providerManifest.version,
+						credential_hash: providerManifest.credential_hash,
+						last_flushed_at: providerManifest.last_flushed_at,
+						pi_credential: credential,
+					},
+				},
+				missing: [],
+				revoked: [],
+			},
+			cacheHit: true,
+			cacheReason: "manifest_valid",
+		},
+		missReason: null,
+	};
+}
+
+async function validateRemoteScopedProviderCredentialCache(input: {
+	createdByUser: string;
+	provider: string;
+	cached: HydratedScopedProviderCredentials;
+	client: ModelProviderCredentialClient;
+}): Promise<{ ok: true } | { ok: false; missReason: string }> {
+	const cachedStatus = input.cached.hydrate.credentials[input.provider];
+	if (!cachedStatus) return { ok: false, missReason: "cached_provider_status_missing" };
+	const remote = await input.client.status({ createdByUser: input.createdByUser });
+	if (remote.ok === false) return { ok: false, missReason: "remote_status_failed" };
+	const remoteStatus = remote.body.providers[input.provider];
+	if (!remoteStatus) return { ok: false, missReason: "remote_provider_missing" };
+	if (remoteStatus.status !== "active") return { ok: false, missReason: "remote_provider_not_active" };
+	if (remoteStatus.version !== cachedStatus.version) {
+		return { ok: false, missReason: "remote_version_changed" };
+	}
+	if (remoteStatus.credential_hash !== cachedStatus.credential_hash) {
+		return { ok: false, missReason: "remote_hash_changed" };
+	}
+	return { ok: true };
+}
+
 export async function fetchBackendProviderCredentialStatus(input: {
 	createdByUser: string;
 	env?: NodeJS.ProcessEnv;
@@ -166,7 +268,55 @@ export async function hydrateScopedProviderCredentials(input: {
 	}
 
 	const env = input.env ?? process.env;
+	const cacheEnabled = isScopedProviderCredentialCacheEnabled(env);
+	let cacheInvalidationReason: string | null = cacheEnabled ? null : "cache_disabled";
+	const reusableScopedPiAgentDir = ensureSessionScopedPiAgentDir({
+		sessionKey: input.sessionKey,
+		sessionConfigOverrides: input.sessionConfigOverrides,
+		sessionSkillPaths: input.sessionSkillPaths,
+		forceProviderAuthDir: true,
+		env,
+	});
+	if (!reusableScopedPiAgentDir) {
+		return {
+			ok: false,
+			statusCode: 500,
+			error: "provider_credentials_hydrate_failed",
+			message: "Astro could not create a scoped Pi auth directory.",
+		};
+	}
 	const client = new ModelProviderCredentialClient({ env, log: input.log });
+	if (cacheEnabled) {
+		const cached = tryReuseScopedProviderCredentials({
+			createdByUser: input.createdByUser,
+			agentSessionUid: input.agentSessionUid,
+			provider: input.provider,
+			scopedPiAgentDir: reusableScopedPiAgentDir,
+			env,
+		});
+		if (cached.value) {
+			if (!isScopedProviderCredentialRemoteCheckEnabled(env)) {
+				return { ok: true, value: cached.value };
+			}
+			const remoteValidation = await validateRemoteScopedProviderCredentialCache({
+				createdByUser: input.createdByUser,
+				provider: input.provider,
+				cached: cached.value,
+				client,
+			});
+			if (remoteValidation.ok) return { ok: true, value: cached.value };
+			cacheInvalidationReason =
+				remoteValidation.ok === false ? remoteValidation.missReason : "remote_status_changed";
+			invalidateScopedProviderCredentialCache({
+				sessionKey: input.sessionKey,
+				provider: input.provider,
+				env,
+			});
+		} else {
+			cacheInvalidationReason = cached.missReason;
+		}
+	}
+
 	const result = await client.hydrate({
 		createdByUser: input.createdByUser,
 		agentSessionUid: input.agentSessionUid,
@@ -232,9 +382,43 @@ export async function hydrateScopedProviderCredentials(input: {
 			scopedPiAgentDir,
 			credentials,
 			hydrate: result.body,
+			cacheHit: false,
+			cacheReason: cacheInvalidationReason ?? "cache_miss",
+			cacheInvalidationReason: cacheInvalidationReason ?? undefined,
 		},
 	};
 }
+
+export function invalidateScopedProviderCredentialCache(input: {
+	sessionKey: string;
+	provider?: string | null;
+	env?: NodeJS.ProcessEnv;
+}) {
+	const scopedPiAgentDir = ensureSessionScopedPiAgentDir({
+		sessionKey: input.sessionKey,
+		sessionConfigOverrides: null,
+		forceProviderAuthDir: true,
+		env: input.env,
+	});
+	if (!scopedPiAgentDir) return;
+	if (!input.provider) {
+		cleanupScopedPiAgentDir(scopedPiAgentDir);
+		return;
+	}
+
+	const manifest = readScopedManifest(scopedPiAgentDir);
+	removeScopedPiCredential(scopedPiAgentDir, input.provider);
+	if (!manifest) return;
+	delete manifest.providers[input.provider];
+	if (Object.keys(manifest.providers).length === 0) {
+		cleanupScopedPiAgentDir(scopedPiAgentDir);
+		return;
+	}
+	mkdirSync(scopedPiAgentDir, { recursive: true, mode: 0o700 });
+	writeScopedManifest(scopedPiAgentDir, manifest);
+}
+
+export const clearScopedProviderCredentialCache = invalidateScopedProviderCredentialCache;
 
 export function createScopedProviderAuthDir(input: {
 	scopeKey: string;

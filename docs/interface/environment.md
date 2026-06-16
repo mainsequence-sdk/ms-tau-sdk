@@ -9,8 +9,25 @@
 - `ASTRO_SESSION_OVERRIDES_DIR` (pod-local scoped Pi settings overlays; in containers use `/session-state/session-overrides`)
 - `ASTRO_PROVIDER_CREDENTIAL_DIR` (pod-local scoped Pi auth dirs hydrated from backend-owned
   provider credentials; in containers use `/session-state/pi-agent-auth`)
+- `ASTRO_PROVIDER_CREDENTIAL_CACHE` (`0` disables same-session scoped provider credential reuse)
+- `ASTRO_PROVIDER_CREDENTIAL_CACHE_TTL_MS` (default `600000`; maximum age for reusing a scoped
+  provider credential manifest before rehydrating from the backend)
+- `ASTRO_PROVIDER_CREDENTIAL_REMOTE_CHECK` (`0` disables backend status validation before reusing a
+  scoped provider credential manifest; by default Astro compares backend version/hash before reuse)
 - `ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS` (default `10000`; periodic safety flush interval
   for scoped provider credentials while Pi is running)
+- `ASTRO_SESSION_CAPABILITY_CACHE` (`0` disables same-session capability materialization reuse)
+- `ASTRO_SESSION_CAPABILITY_CACHE_TTL_MS` (default `300000`; maximum age for reusing a known
+  zero-capability session materialization result before checking the backend again; non-zero
+  capability sets are reused only after the backend binding signature is confirmed unchanged)
+- `ASTRO_A2A_WARM_RUNNERS` (`0` disables warm Pi RPC runners for `/api/a2a/chat`; enabled by
+  default)
+- `ASTRO_A2A_WARM_RUNNER_IDLE_TTL_MS` (default `300000`; idle time before an unused warm A2A runner
+  is stopped)
+- `ASTRO_A2A_WARM_RUNNER_RPC_TIMEOUT_MS` (default `10000`; timeout for warm runner RPC command
+  acknowledgements)
+- `ASTRO_A2A_JSON_REPAIR_TIMEOUT_MS` (default `60000`; timeout for each strict JSON repair attempt
+  when an A2A response fails runtime JSON validation)
 - `ASTRO_RELEASE_VERSION` (the Astro release/build version baked into the image and exposed for
   runtime debugging)
 - `ASTRO_STREAM_LOG_TRAFFIC` (`0` disables logging)
