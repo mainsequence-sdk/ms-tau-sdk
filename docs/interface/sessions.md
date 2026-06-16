@@ -15,8 +15,9 @@ is not the intended production contract for chat or A2A.
 
 ## Session attachment logic
 
-- Real `POST /api/chat` and `POST /api/a2a/chat` requests must include `runtime_session_uid` (or the
-  accepted camel-case alias `runtimeSessionUid`).
+- Real `POST /api/chat` requests must include `runtime_session_uid` (or the accepted camel-case alias
+  `runtimeSessionUid`). A2A session-runtime chat derives the runtime session UID from
+  `/api/a2a/sessions/{agent_session_uid}/runtime/chat`.
 - Astro attaches to that existing backend session and reuses its `AgentSession.uid` as the runtime
   session key.
 - Astro must not create a new backend session on behalf of the caller.

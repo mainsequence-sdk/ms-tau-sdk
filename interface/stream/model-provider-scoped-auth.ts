@@ -134,7 +134,7 @@ export function isScopedProviderCredentialCacheEnabled(env: NodeJS.ProcessEnv = 
 }
 
 export function isScopedProviderCredentialRemoteCheckEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-	return env.ASTRO_PROVIDER_CREDENTIAL_REMOTE_CHECK !== "0";
+	return env.ASTRO_PROVIDER_CREDENTIAL_REMOTE_CHECK === "1";
 }
 
 function resolveProviderCredentialCacheTtlMs(env: NodeJS.ProcessEnv): number {

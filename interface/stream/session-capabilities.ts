@@ -144,7 +144,7 @@ const SUPPORTED_CAPABILITY_SOURCE_TYPES = new Set<CapabilitySourceType>([
 ]);
 
 const SUPPORTED_CAPABILITY_KINDS = new Set<CapabilityKind>(["skill", "prompt", "extension"]);
-const DEFAULT_ZERO_CAPABILITY_CACHE_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_ZERO_CAPABILITY_CACHE_TTL_MS = 60 * 60 * 1000;
 
 type CachedSessionCapabilityMaterialization = {
 	value: SessionCapabilityMaterialization;

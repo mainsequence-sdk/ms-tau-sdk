@@ -4,10 +4,11 @@ Status: Accepted
 Date: 2026-06-15
 Implementation Status: Implemented in Astro runtime. Astro records preflight timing, caches
 zero-capability materialization, reuses unchanged non-zero capability materialization by binding
-signature, validates provider credential cache entries against backend version/hash, invalidates
-provider credential cache on auth failure, runs capability and credential preparation concurrently
-behind strict launch barriers, and routes eligible `/api/a2a/chat` turns through a session-keyed
-warm Pi RPC runner with cold durable fallback.
+signature, can validate provider credential cache entries against backend version/hash when remote
+checks are explicitly enabled, invalidates provider credential cache on auth failure, runs
+capability and credential preparation concurrently behind strict launch barriers, and routes
+eligible `/api/a2a/chat` turns through a session-keyed warm Pi RPC runner with cold durable
+fallback.
 
 ## Context
 
@@ -105,7 +106,8 @@ Implemented behavior:
 - `hydrateScopedProviderCredentials` reuses a valid scoped auth manifest for the same
   `(userUid, agentSessionId, provider)` tuple.
 - provider credential cache reuse validates the scoped auth manifest, local credential file, local
-  credential hash, user, session, provider, TTL, and backend version/hash status.
+  credential hash, user, session, provider, and TTL; `ASTRO_PROVIDER_CREDENTIAL_REMOTE_CHECK=1`
+  additionally validates backend version/hash status before reuse.
 - provider credential cache is invalidated when local credential files change or when a provider
   auth failure is observed after a Pi run.
 - `runPiPrompt` starts capability preparation and provider credential preparation concurrently,

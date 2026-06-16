@@ -12,15 +12,16 @@
 - `ASTRO_PROVIDER_CREDENTIAL_CACHE` (`0` disables same-session scoped provider credential reuse)
 - `ASTRO_PROVIDER_CREDENTIAL_CACHE_TTL_MS` (default `600000`; maximum age for reusing a scoped
   provider credential manifest before rehydrating from the backend)
-- `ASTRO_PROVIDER_CREDENTIAL_REMOTE_CHECK` (`0` disables backend status validation before reusing a
-  scoped provider credential manifest; by default Astro compares backend version/hash before reuse)
+- `ASTRO_PROVIDER_CREDENTIAL_REMOTE_CHECK` (`1` enables backend status validation before reusing a
+  scoped provider credential manifest; by default Astro trusts a fresh local manifest and
+  invalidates it on local hash changes, TTL expiry, or provider auth failures)
 - `ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS` (default `10000`; periodic safety flush interval
   for scoped provider credentials while Pi is running)
 - `ASTRO_SESSION_CAPABILITY_CACHE` (`0` disables same-session capability materialization reuse)
-- `ASTRO_SESSION_CAPABILITY_CACHE_TTL_MS` (default `300000`; maximum age for reusing a known
+- `ASTRO_SESSION_CAPABILITY_CACHE_TTL_MS` (default `3600000`; maximum age for reusing a known
   zero-capability session materialization result before checking the backend again; non-zero
   capability sets are reused only after the backend binding signature is confirmed unchanged)
-- `ASTRO_A2A_WARM_RUNNERS` (`0` disables warm Pi RPC runners for `/api/a2a/chat`; enabled by
+- `ASTRO_A2A_WARM_RUNNERS` (`0` disables warm Pi RPC runners for A2A session-runtime chat turns; enabled by
   default)
 - `ASTRO_A2A_WARM_RUNNER_IDLE_TTL_MS` (default `300000`; idle time before an unused warm A2A runner
   is stopped)
@@ -28,9 +29,6 @@
   new warm Pi RPC runner to emit its `runtime_ready` sentinel)
 - `ASTRO_A2A_WARM_RUNNER_RPC_TIMEOUT_MS` (default `10000`; timeout for warm runner RPC command
   acknowledgements)
-- `ASTRO_A2A_TURN_TIMEOUT_MS` (default `240000`; maximum active `/api/a2a/chat` runtime turn
-  duration before Astro cancels the turn so it releases the same-session queue before external
-  300s request timeouts; set `0` to disable)
 - `ASTRO_A2A_JSON_REPAIR_TIMEOUT_MS` (default `60000`; timeout for each strict JSON repair attempt
   when an A2A response fails runtime JSON validation)
 - `ASTRO_RELEASE_VERSION` (the Astro release/build version baked into the image and exposed for
@@ -78,9 +76,9 @@ with Docker `WORKDIR /app`, and the startup command then changes into
 `/usr/local/share/user-skel/app` before Astro starts so the live process cwd matches the real
 project workspace.
 
-For `project-executor`, incoming `/api/chat` and `/api/a2a/chat` requests do not need
-to provide `projectId`. The streamer no longer tries to resolve `projectId` from the request path
-for executor-mode requests and continues using the fixed project runtime even when request-side
+For `project-executor`, incoming `/api/chat` and A2A session-runtime chat requests do not need to
+provide `projectId`. The streamer no longer tries to resolve `projectId` from the request path for
+executor-mode requests and continues using the fixed project runtime even when request-side
 `projectId` is absent.
 
 Requests to a fixed `project-executor` runtime must either omit `agentType` or send

@@ -6,7 +6,7 @@
 
 - Changed `/api/a2a/chat` disconnect handling so abandoned queued requests are skipped instead of blocking same-session retries.
 - Changed active A2A client disconnects and SSE write failures to cancel the runtime turn instead of continuing detached like UI chat.
-- Added `ASTRO_A2A_TURN_TIMEOUT_MS` with a default 240s server-side timeout so stuck A2A turns release the same-session queue before external 300s request aborts.
+- Added optional request-scoped A2A turn timeout fields so callers can choose a watchdog per `/api/a2a/chat` request; omitted or zero disables the watchdog.
 - Ensured warm-runner cancellation resolves the active turn and releases the queue when the underlying Pi RPC runner exits.
 - Added structured queue/cancellation diagnostics for queued, started, skipped, disconnected, and timed-out A2A turns.
 

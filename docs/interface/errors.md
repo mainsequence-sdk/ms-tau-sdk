@@ -8,8 +8,8 @@ Typical error responses:
   `project-executor`
 - `400` — missing user identity for provider status/sign-in/sign-off requests. Astro accepts
   `user_uid`, supported user-uid headers, Bearer JWT user claims, or `ASTRO_MAINSEQUENCE_USER_UID`.
-- `400` — missing `runtime_session_uid` (or accepted camel-case alias) for real non-mock `POST /api/chat` or
-  `POST /api/a2a/chat` requests
+- `400` — missing `runtime_session_uid` (or accepted camel-case alias) for real non-mock
+  `POST /api/chat` requests
 - `400` — missing `sessionUid` for `GET /api/chat/session-model`
 - `400` — missing `sessionUid` for `PATCH /api/chat/session-config`
 - `400` — `invalid_session_config` when the patch payload includes unsupported or invalid config fields

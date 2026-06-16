@@ -139,7 +139,7 @@ test("provider credential hydration reuses a valid scoped credential manifest", 
 	assert.equal(second.value.cacheReason, "manifest_valid");
 	assert.deepEqual(
 		requests.map((request) => request.method),
-		["POST", "GET"],
+		["POST"],
 	);
 	assert.equal(requests[0].headers.authorization, "Bearer test-token");
 	assert.equal(
@@ -155,7 +155,10 @@ test("provider credential hydration reuses a valid scoped credential manifest", 
 test("provider credential remote version change invalidates cached scoped credentials", async (t) => {
 	const root = mkdtempSync(path.join(tmpdir(), "astro-provider-auth-"));
 	t.after(() => rmSync(root, { recursive: true, force: true }));
-	const env = createRuntimeEnv(root);
+	const env = {
+		...createRuntimeEnv(root),
+		ASTRO_PROVIDER_CREDENTIAL_REMOTE_CHECK: "1",
+	};
 	let hydrateVersion = 7;
 	let remoteVersion = 8;
 	const requests = installFetchRoutes({

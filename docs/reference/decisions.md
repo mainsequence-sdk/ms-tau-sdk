@@ -20,7 +20,8 @@ pre-UID API sketches have been removed from the active reference set.
 - [`adr-27-backend-only-session-initiation.md`](./adr-27-backend-only-session-initiation.md)
   - Astro attaches to existing backend sessions; chat and A2A do not create sessions.
 - [`adr-25-production-a2a-discovery-and-runtime-access.md`](./adr-25-production-a2a-discovery-and-runtime-access.md)
-  - Production A2A uses backend/CLI runtime access resolution and sends to `/api/a2a/chat`.
+  - Production A2A uses backend/CLI runtime access resolution. ADR 35 supersedes the old one-turn
+    chat route for new A2A clients.
 - [`adr-28-durable-a2a-session-envelope.md`](./adr-28-durable-a2a-session-envelope.md)
   - A2A caller/linkage metadata is durable session state, not prompt-only scaffolding.
 - [`adr-33-warm-a2a-session-runtime.md`](./adr-33-warm-a2a-session-runtime.md)
@@ -29,6 +30,16 @@ pre-UID API sketches have been removed from the active reference set.
 - [`adr-34-a2a-output-contracts.md`](./adr-34-a2a-output-contracts.md)
   - A2A output options must suppress reasoning and enforce strict JSON in Astro, not only through
     prompt guidance.
+- [`adr-35-a2a-runtime-attachment-protocol.md`](./adr-35-a2a-runtime-attachment-protocol.md)
+  - A2A clients should attach the existing backend session UID to a session-scoped Astro/Pi runtime
+    and send subsequent turns through that session runtime instead of rebuilding the full execution
+    envelope each time.
+
+## Stateless LLM Passthrough
+
+- [`adr-36-stateless-llm-passthrough.md`](./adr-36-stateless-llm-passthrough.md)
+  - Simple LLM calls should use a separate stateless JSON endpoint that skips sessions, checkpoints,
+    Pi runners, capabilities, project attachment, queues, and persistence.
 
 ## Checkpoints And Session State
 

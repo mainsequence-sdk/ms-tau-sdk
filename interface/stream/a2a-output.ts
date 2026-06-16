@@ -212,7 +212,7 @@ export function normalizeA2AOutputOptions(input: {
 		normalizeBooleanOption(input.a2aContext?.omitReasoning) ??
 		normalizeBooleanOption(input.context?.omit_reasoning) ??
 		normalizeBooleanOption(input.context?.omitReasoning) ??
-		false;
+		strictJson.strictJson;
 	return {
 		omitReasoning,
 		strictJson: strictJson.strictJson,

@@ -86,6 +86,9 @@ This option controls outbound stream shape only. It does not change model reason
 cost, or Pi's internal thinking behavior. Model reasoning effort remains controlled by session model
 binding `runConfig.reasoning_effort`.
 
+Strict JSON response mode defaults to the same outbound reasoning suppression unless the caller
+explicitly sets `omit_reasoning: false`.
+
 Reasoning suppression must not rely on prompt text. It must be enforced in Astro's stream writer or
 assistant event handling.
 

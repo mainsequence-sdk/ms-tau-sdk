@@ -123,6 +123,21 @@ test("A2A output options use durable envelope responseFormat only when request o
 	assert.equal(requestWins.responseFormat, "plain_text");
 });
 
+test("strict JSON output suppresses reasoning by default", () => {
+	const options = normalizeA2AOutputOptions({
+		enabled: true,
+		body: {
+			response_format: {
+				type: "json_object",
+				strict: true,
+			},
+		},
+	});
+
+	assert.equal(options.strictJson, true);
+	assert.equal(options.omitReasoning, true);
+});
+
 test("strict JSON validation canonicalizes valid JSON objects", () => {
 	const result = validateStrictJsonText(' { "ok" : true, "items" : [1, 2] } ', {
 		jsonMode: "json_object",
