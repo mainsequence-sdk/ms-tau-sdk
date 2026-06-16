@@ -19,13 +19,14 @@
 		"check": "tsc --noEmit -p tsconfig.json",
 		"test": "node --import tsx --test tests/*.test.ts",
 		"version:show": "node -p \"require('./package.json').version\"",
-    "version:major": "npm version major --no-git-tag-version",
-    "version:patch": "npm version patch --no-git-tag-version",
-    "build:gcp": "gcloud builds submit --config deployment/gcp/cloudbuild.yaml .",
-    "pi": "node scripts/start_pi.mjs",
-    "pi:stream": "tsx scripts/start_pi_stream.ts",
-    "checkpoint:sidecar": "tsx scripts/session_checkpoint_sidecar.ts"
-  },
+		"version:major": "npm version major --no-git-tag-version",
+		"version:patch": "npm version patch --no-git-tag-version",
+		"patch:pi-rpc": "node scripts/patch_pi_rpc_ready.mjs",
+		"build:gcp": "gcloud builds submit --config deployment/gcp/cloudbuild.yaml .",
+		"pi": "node scripts/start_pi.mjs",
+		"pi:stream": "tsx scripts/start_pi_stream.ts",
+		"checkpoint:sidecar": "tsx scripts/session_checkpoint_sidecar.ts"
+	},
   "peerDependencies": {
     "@mariozechner/pi-agent-core": "*",
     "@mariozechner/pi-ai": "*",

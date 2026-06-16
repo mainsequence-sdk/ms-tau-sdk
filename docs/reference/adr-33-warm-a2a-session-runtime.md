@@ -126,11 +126,15 @@ Implemented behavior:
   A2A latency can be measured by phase. Warm runner logs include `warm_runner_spawned`,
   `warm_runner_first_output`, `warm_runner_dispatch_started`, `warm_runner_dispatch_completed`,
   `warm_runner_restarting_incompatible`, `warm_runner_stopped`, and `warm_runner_cold_fallback`.
+- warm runner startup readiness is event-driven: patched Pi RPC mode emits a `runtime_ready`
+  sentinel after its stdin command loop is attached, and Astro waits for that sentinel before
+  dispatching commands instead of using `get_state` as a startup probe.
 - environment flags document how to disable or tune the caches:
   `ASTRO_SESSION_CAPABILITY_CACHE`, `ASTRO_SESSION_CAPABILITY_CACHE_TTL_MS`,
   `ASTRO_PROVIDER_CREDENTIAL_CACHE`, `ASTRO_PROVIDER_CREDENTIAL_CACHE_TTL_MS`,
   `ASTRO_PROVIDER_CREDENTIAL_REMOTE_CHECK`, `ASTRO_A2A_WARM_RUNNERS`,
-  `ASTRO_A2A_WARM_RUNNER_IDLE_TTL_MS`, and `ASTRO_A2A_WARM_RUNNER_RPC_TIMEOUT_MS`.
+  `ASTRO_A2A_WARM_RUNNER_IDLE_TTL_MS`, `ASTRO_A2A_WARM_RUNNER_STARTUP_TIMEOUT_MS`, and
+  `ASTRO_A2A_WARM_RUNNER_RPC_TIMEOUT_MS`.
 
 ## Required Architecture
 

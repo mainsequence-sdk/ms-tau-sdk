@@ -155,6 +155,10 @@ const warmRunnerRpcCommandTimeoutMs = (() => {
 	const configured = Number(process.env.ASTRO_A2A_WARM_RUNNER_RPC_TIMEOUT_MS ?? "10000");
 	return Number.isFinite(configured) && configured >= 1000 ? Math.trunc(configured) : 10000;
 })();
+const warmRunnerStartupTimeoutMs = (() => {
+	const configured = Number(process.env.ASTRO_A2A_WARM_RUNNER_STARTUP_TIMEOUT_MS ?? "120000");
+	return Number.isFinite(configured) && configured >= 1000 ? Math.trunc(configured) : 120000;
+})();
 const a2aTurnTimeoutMs = (() => {
 	const configured = Number(process.env.ASTRO_A2A_TURN_TIMEOUT_MS ?? "240000");
 	if (configured === 0) return 0;
@@ -680,6 +684,12 @@ type WarmSessionRunner = {
 	commandCounter: number;
 	currentTurn: WarmRunnerTurn | null;
 	idleTimer: ReturnType<typeof setTimeout> | null;
+	readySignal: {
+		resolve: (event: Record<string, unknown>) => void;
+		reject: (error: Error) => void;
+		timer: ReturnType<typeof setTimeout>;
+	} | null;
+	readyEvent: Record<string, unknown> | null;
 	firstOutputLogged: boolean;
 	startedAt: string;
 	lastUsedAt: string;
@@ -1740,13 +1750,21 @@ function normalizeA2AChatRequestBody(
 	const callerAgentType =
 		extractStringProperty(caller, "agent_type", "agentType") ??
 		"unknown-agent";
-	const responseFormat = normalizeA2AResponseFormat(body.response_format ?? body.responseFormat);
 	const context = extractObjectPropertyRecord(body, "context") ?? {};
 	const a2aContext = extractObjectPropertyRecord(context, "a2a") ?? {};
+	const responseFormat = normalizeA2AResponseFormat(
+		body.response_format ??
+			body.responseFormat ??
+			a2aContext.response_format ??
+			a2aContext.responseFormat ??
+			context.response_format ??
+			context.responseFormat,
+	);
 	const a2aOutputOptions = normalizeA2AOutputOptions({
 		enabled: true,
 		body,
 		a2aContext,
+		context,
 	});
 	const userUid =
 		extractStringProperty(body, "user_uid") ??
@@ -4693,8 +4711,9 @@ function logReadableChunk(ctx: RequestContext, chunk: ReturnType<typeof attachAg
 	}
 }
 
-function shouldSuppressClientChunk(chunk: ReturnType<typeof attachAgentUid>): boolean {
-	return false;
+function shouldSuppressClientChunk(ctx: RequestContext, chunk: ReturnType<typeof attachAgentUid>): boolean {
+	if (!ctx.a2aOutputOptions.omitReasoning) return false;
+	return chunk.type === "reasoning-start" || chunk.type === "reasoning-delta" || chunk.type === "reasoning-end";
 }
 
 function abortStreamOnPersistenceFailure(ctx: RequestContext, error: unknown) {
@@ -4725,7 +4744,7 @@ function writeChunkWithAgentId(ctx: RequestContext, chunk: StreamEvent, agentId:
 		abortStreamOnPersistenceFailure(ctx, error);
 		return;
 	}
-	if (!shouldSuppressClientChunk(enrichedChunk) && ctx.clientAttached && !ctx.res.writableEnded && !ctx.res.destroyed) {
+	if (!shouldSuppressClientChunk(ctx, enrichedChunk) && ctx.clientAttached && !ctx.res.writableEnded && !ctx.res.destroyed) {
 		const payload = serializeSse(ctx.eventId, enrichedChunk);
 		try {
 			ctx.res.write(payload);
@@ -6205,6 +6224,7 @@ function removeWarmRunner(runner: WarmSessionRunner, reason: string) {
 	const current = warmSessionRunners.get(runner.key);
 	if (current === runner) warmSessionRunners.delete(runner.key);
 	clearWarmRunnerIdleTimer(runner);
+	rejectWarmRunnerReady(runner, new Error(`Warm runner stopped before runtime_ready: ${reason}`));
 	runner.state = "stopped";
 	for (const pending of runner.pendingResponses.values()) {
 		clearTimeout(pending.timer);
@@ -6240,6 +6260,35 @@ function stopWarmRunner(runner: WarmSessionRunner, reason: string) {
 			agentSessionId: runner.preparedRuntime.agentSessionUid,
 			reason,
 		},
+	});
+}
+
+function resolveWarmRunnerReady(runner: WarmSessionRunner, event: Record<string, unknown>) {
+	runner.readyEvent = event;
+	if (!runner.readySignal) return;
+	clearTimeout(runner.readySignal.timer);
+	runner.readySignal.resolve(event);
+	runner.readySignal = null;
+}
+
+function rejectWarmRunnerReady(runner: WarmSessionRunner, error: Error) {
+	if (!runner.readySignal) return;
+	clearTimeout(runner.readySignal.timer);
+	runner.readySignal.reject(error);
+	runner.readySignal = null;
+}
+
+function waitForWarmRunnerReady(runner: WarmSessionRunner): Promise<Record<string, unknown>> {
+	if (runner.readyEvent) return Promise.resolve(runner.readyEvent);
+	if (runner.state === "stopped" || runner.state === "stopping") {
+		return Promise.reject(new Error("Warm runner stopped before runtime_ready."));
+	}
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => {
+			runner.readySignal = null;
+			reject(new Error("Warm runner did not emit runtime_ready before startup timeout."));
+		}, warmRunnerStartupTimeoutMs);
+		runner.readySignal = { resolve, reject, timer };
 	});
 }
 
@@ -6324,6 +6373,23 @@ async function completeWarmRunnerTurn(
 }
 
 function handleWarmRunnerParsedLine(runner: WarmSessionRunner, parsed: any) {
+	if (parsed?.type === "runtime_ready" && isPlainObject(parsed)) {
+		resolveWarmRunnerReady(runner, parsed);
+		logStructuredEvent({
+			component: "astro-stream",
+			event: "warm_runner_ready",
+			message: "Warm Pi RPC runner emitted its readiness sentinel.",
+			data: {
+				key: runner.key,
+				agentSessionId: runner.preparedRuntime.agentSessionUid,
+				protocol: typeof parsed.protocol === "string" ? parsed.protocol : null,
+				version: typeof parsed.version === "number" ? parsed.version : null,
+				startupDurationMs: Date.now() - Date.parse(runner.startedAt),
+			},
+		});
+		return;
+	}
+
 	if (parsed?.type === "response") {
 		const id = typeof parsed.id === "string" ? parsed.id : null;
 		const pending = id ? runner.pendingResponses.get(id) : null;
@@ -6423,6 +6489,8 @@ async function startWarmRunner(input: {
 		commandCounter: 0,
 		currentTurn: null,
 		idleTimer: null,
+		readySignal: null,
+		readyEvent: null,
 		firstOutputLogged: false,
 		startedAt: new Date().toISOString(),
 		lastUsedAt: new Date().toISOString(),
@@ -6521,10 +6589,11 @@ async function startWarmRunner(input: {
 		}
 	});
 
-	const stateResponse = await writeWarmRunnerCommand(runner, { type: "get_state" });
-	if (!isPlainObject(stateResponse) || stateResponse.success !== true) {
-		stopWarmRunner(runner, "rpc_get_state_failed");
-		throw new Error("Warm runner did not respond successfully to get_state.");
+	try {
+		await waitForWarmRunnerReady(runner);
+	} catch (error) {
+		stopWarmRunner(runner, "runtime_ready_timeout");
+		throw error;
 	}
 	runner.state = "idle";
 	scheduleWarmRunnerIdleShutdown(runner);
@@ -7333,12 +7402,7 @@ async function runPiPrompt(
 				return;
 			}
 
-			writeChunk(ctx, {
-				type: "finish",
-				finishReason: ctx.lastAssistantFinishReason ?? "stop",
-				usage: ctx.lastAssistantUsage,
-			});
-			writeDone(ctx);
+			await finalizeAssistantSuccess(ctx, ctx.lastAssistantFinishReason ?? "stop", ctx.lastAssistantUsage);
 		})().finally(resolveChildCompletion);
 	});
 
@@ -8585,8 +8649,26 @@ async function handleStreamRequest(
 		enabled: isA2AChatRequest || a2aContext.enabled === true || effectiveA2AEnvelope?.enabled === true,
 		body: isPlainObject(body) ? body : {},
 		a2aContext,
+		context,
 		envelopeResponseFormat: effectiveA2AEnvelope?.responseFormat ?? null,
 	});
+	if (a2aOutputOptions.omitReasoning || a2aOutputOptions.strictJson) {
+		logStructuredEvent({
+			component: "astro-stream",
+			event: "a2a_output_options_resolved",
+			message: "Astro resolved A2A output controls for this request.",
+			data: {
+				sessionKey: runtimeSessionId,
+				threadId,
+				agentType,
+				omitReasoning: a2aOutputOptions.omitReasoning,
+				strictJson: a2aOutputOptions.strictJson,
+				jsonMode: a2aOutputOptions.jsonMode,
+				jsonRepairAttempts: a2aOutputOptions.jsonRepair.attempts,
+				responseFormat: a2aOutputOptions.responseFormat,
+			},
+		});
+	}
 	const persistedCwd = projectAttachment.attached ? agentCwd : null;
 	const frozenRepoRoot = projectAttachment.repoRoot;
 	if (

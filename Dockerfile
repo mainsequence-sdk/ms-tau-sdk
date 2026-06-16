@@ -33,7 +33,8 @@ COPY pi ./pi
 COPY interface ./interface
 COPY scripts ./scripts
 
-RUN npm run check
+RUN node scripts/patch_pi_rpc_ready.mjs \
+ && npm run check
 
 FROM astro-base AS astro-mainsequence
 

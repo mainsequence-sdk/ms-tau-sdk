@@ -24,6 +24,8 @@
   default)
 - `ASTRO_A2A_WARM_RUNNER_IDLE_TTL_MS` (default `300000`; idle time before an unused warm A2A runner
   is stopped)
+- `ASTRO_A2A_WARM_RUNNER_STARTUP_TIMEOUT_MS` (default `120000`; failure guard while waiting for a
+  new warm Pi RPC runner to emit its `runtime_ready` sentinel)
 - `ASTRO_A2A_WARM_RUNNER_RPC_TIMEOUT_MS` (default `10000`; timeout for warm runner RPC command
   acknowledgements)
 - `ASTRO_A2A_TURN_TIMEOUT_MS` (default `240000`; maximum active `/api/a2a/chat` runtime turn

@@ -163,6 +163,7 @@ function resolveStrictJsonFormat(
 export function resolveA2AResponseFormat(input: {
 	body?: Record<string, unknown> | null;
 	a2aContext?: Record<string, unknown> | null;
+	context?: Record<string, unknown> | null;
 	envelopeResponseFormat?: string | Record<string, unknown> | null;
 }): string | Record<string, unknown> | null {
 	return (
@@ -170,6 +171,8 @@ export function resolveA2AResponseFormat(input: {
 		normalizeResponseFormat(input.body?.responseFormat) ??
 		normalizeResponseFormat(input.a2aContext?.response_format) ??
 		normalizeResponseFormat(input.a2aContext?.responseFormat) ??
+		normalizeResponseFormat(input.context?.response_format) ??
+		normalizeResponseFormat(input.context?.responseFormat) ??
 		normalizeResponseFormat(input.envelopeResponseFormat) ??
 		null
 	);
@@ -179,6 +182,7 @@ export function normalizeA2AOutputOptions(input: {
 	enabled: boolean;
 	body?: Record<string, unknown> | null;
 	a2aContext?: Record<string, unknown> | null;
+	context?: Record<string, unknown> | null;
 	envelopeResponseFormat?: string | Record<string, unknown> | null;
 }): A2AOutputOptions {
 	const responseFormat = resolveA2AResponseFormat(input);
@@ -188,6 +192,8 @@ export function normalizeA2AOutputOptions(input: {
 		input.body?.jsonRepair,
 		input.a2aContext?.json_repair,
 		input.a2aContext?.jsonRepair,
+		input.context?.json_repair,
+		input.context?.jsonRepair,
 	);
 	if (!input.enabled) {
 		return {
@@ -204,6 +210,8 @@ export function normalizeA2AOutputOptions(input: {
 		normalizeBooleanOption(input.body?.omitReasoning) ??
 		normalizeBooleanOption(input.a2aContext?.omit_reasoning) ??
 		normalizeBooleanOption(input.a2aContext?.omitReasoning) ??
+		normalizeBooleanOption(input.context?.omit_reasoning) ??
+		normalizeBooleanOption(input.context?.omitReasoning) ??
 		false;
 	return {
 		omitReasoning,

@@ -56,6 +56,51 @@ test("A2A output options use camelCase aliases and default repair attempts to 3"
 	assert.equal(options.jsonRepair.attempts, 3);
 });
 
+test("A2A output options resolve from normalized context envelope", () => {
+	const options = normalizeA2AOutputOptions({
+		enabled: true,
+		body: {},
+		a2aContext: {
+			omitReasoning: true,
+			responseFormat: {
+				type: "json_object",
+				strict: true,
+			},
+			jsonRepair: {
+				attempts: 2,
+			},
+		},
+	});
+
+	assert.equal(options.omitReasoning, true);
+	assert.equal(options.strictJson, true);
+	assert.equal(options.jsonMode, "json_object");
+	assert.equal(options.jsonRepair.attempts, 2);
+});
+
+test("A2A output options resolve from context-level serializer fields", () => {
+	const options = normalizeA2AOutputOptions({
+		enabled: true,
+		body: {},
+		a2aContext: {},
+		context: {
+			omit_reasoning: true,
+			response_format: {
+				type: "json_object",
+				strict: true,
+			},
+			json_repair: {
+				attempts: 1,
+			},
+		},
+	});
+
+	assert.equal(options.omitReasoning, true);
+	assert.equal(options.strictJson, true);
+	assert.equal(options.jsonMode, "json_object");
+	assert.equal(options.jsonRepair.attempts, 1);
+});
+
 test("A2A output options use durable envelope responseFormat only when request omits it", () => {
 	const fallback = normalizeA2AOutputOptions({
 		enabled: true,
@@ -268,6 +313,29 @@ test("json_repair.attempts 0 hard-fails without repair", async () => {
 	assert.equal(repairCalled, false);
 	assert.deepEqual(chunkTypes(chunks), ["error"]);
 	assert.equal(chunks[0]?.type === "error" ? chunks[0].forensics.json_repair_attempts : null, 0);
+});
+
+test("strict JSON contract rejects empty assistant output instead of finish-only success", async () => {
+	const options = normalizeA2AOutputOptions({
+		enabled: true,
+		body: {
+			response_format: {
+				type: "json_object",
+				strict: true,
+			},
+			json_repair: {
+				attempts: 0,
+			},
+		},
+	});
+	const chunks = await runA2AOutputContractTurn({
+		options,
+		events: [{ type: "done" }],
+	});
+
+	assert.deepEqual(chunkTypes(chunks), ["error"]);
+	assert.equal(chunks[0]?.type === "error" ? chunks[0].error_code : null, "a2a_invalid_json_response");
+	assert.match(chunks[0]?.type === "error" ? chunks[0].error_detail : "", /empty/i);
 });
 
 test("strict JSON contract handles warm delta and cold message_end output paths", async () => {
