@@ -10,6 +10,7 @@ export type A2ASessionRuntimeAttachment = {
 	agentSessionUid: string;
 	threadId: string | null;
 	agentType: string;
+	userUid: string;
 	state: A2ASessionRuntimeState;
 	attachedAt: string;
 	updatedAt: string;
@@ -22,6 +23,7 @@ export type A2ASessionRuntimeAttachInput = {
 	agentSessionUid: string;
 	threadId: string | null;
 	agentType: string;
+	userUid: string;
 	expiresAt?: string | null;
 };
 
@@ -41,6 +43,7 @@ export class A2ASessionRuntimeRegistry {
 			const updated = {
 				...existing,
 				threadId: input.threadId ?? existing.threadId,
+				userUid: input.userUid,
 				updatedAt: now,
 				expiresAt: input.expiresAt ?? existing.expiresAt,
 			};
@@ -52,6 +55,7 @@ export class A2ASessionRuntimeRegistry {
 				agentSessionUid: input.agentSessionUid,
 				threadId: input.threadId,
 				agentType: input.agentType,
+				userUid: input.userUid,
 				state: "starting",
 			attachedAt: now,
 			updatedAt: now,

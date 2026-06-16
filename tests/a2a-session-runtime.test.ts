@@ -14,11 +14,13 @@ test("session runtime attach creates a starting attachment keyed by session uid"
 		agentSessionUid: "session-a",
 		threadId: "thread-a",
 		agentType: "astro-orchestrator",
+		userUid: "user-a",
 	});
 
 	assert.equal(record.agentSessionUid, "session-a");
 	assert.equal(record.threadId, "thread-a");
 	assert.equal(record.agentType, "astro-orchestrator");
+	assert.equal(record.userUid, "user-a");
 	assert.equal(record.state, "starting");
 	assert.equal(registry.get("session-a"), record);
 });
@@ -29,11 +31,13 @@ test("session runtime attach reuses compatible live attachment", () => {
 		agentSessionUid: "session-a",
 		threadId: "thread-a",
 		agentType: "astro-orchestrator",
+		userUid: "user-a",
 	});
 	const second = registry.attach({
 		agentSessionUid: "session-a",
 		threadId: "thread-b",
 		agentType: "astro-orchestrator",
+		userUid: "user-a",
 	});
 
 	assert.equal(second.attachedAt, first.attachedAt);
@@ -47,12 +51,14 @@ test("session runtime attach replaces detached attachment", () => {
 		agentSessionUid: "session-a",
 		threadId: "thread-a",
 		agentType: "astro-orchestrator",
+		userUid: "user-a",
 	});
 	const detached = registry.detach("session-a");
 	const second = registry.attach({
 		agentSessionUid: "session-a",
 		threadId: "thread-a",
 		agentType: "astro-orchestrator",
+		userUid: "user-a",
 	});
 
 	assert.equal(detached?.state, "detached");
@@ -67,6 +73,7 @@ test("session runtime registry updates state and last error", () => {
 		agentSessionUid: "session-a",
 		threadId: null,
 		agentType: "astro-orchestrator",
+		userUid: "user-a",
 	});
 	const updated = registry.update("session-a", {
 		state: "failed",

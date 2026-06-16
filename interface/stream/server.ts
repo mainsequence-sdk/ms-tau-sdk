@@ -8101,6 +8101,7 @@ async function handleA2ASessionRuntimeRequest(
 			agentSessionUid: route.agentSessionUid,
 			threadId: null,
 			agentType,
+			userUid,
 		});
 		logStructuredEvent({
 			component: "astro-stream",
@@ -8866,7 +8867,8 @@ async function handleStreamRequest(
 			...rawBody,
 			runtime_session_uid: route.agentSessionUid,
 			threadId: record.threadId ?? route.agentSessionUid,
-			agent_type: record.agentType,
+			agentType: record.agentType,
+			user_uid: record.userUid,
 		};
 		logStructuredEvent({
 			component: "astro-stream",
@@ -8875,7 +8877,7 @@ async function handleStreamRequest(
 			data: {
 				agentSessionUid: route.agentSessionUid,
 				threadId: body.threadId,
-				agentType: body.agent_type,
+				agentType: body.agentType,
 			},
 		});
 		}
