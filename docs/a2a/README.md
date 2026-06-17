@@ -4,9 +4,11 @@ This document is the operational contract for Astro's public Agent-to-Agent inte
 It describes the endpoints that exist now, what each one actually does, and the current
 phase-1 limitations.
 
-Astro no longer exposes the old Astro-specific A2A chat or session-runtime routes. Public
-A2A clients must use the standard REST-style routes under `/api/a2a/v1` or the JSON-RPC
-binding at `/api/a2a/rpc`.
+Astro no longer exposes the old Astro-specific A2A chat route. Public A2A clients must use
+the standard REST-style routes under `/api/a2a/v1` or the JSON-RPC binding at `/api/a2a/rpc`.
+The backend/control-plane runtime attachment route remains available at
+`/api/a2a/sessions/{agent_session_uid}/runtime` so a backend-owned `AgentSession` can be
+prepared before message delivery.
 
 ## Runtime Model
 
@@ -22,7 +24,8 @@ For phase 1:
 - `message.contextId` is required and must be an existing `AgentSession.uid`.
 - Public A2A execution dispatches internally through the same runtime path as `/api/chat`.
 - Runtime bootstrap, checkpointing, provider credentials, and warm-runner reuse are implementation
-  details, not separate public A2A endpoints.
+  details for public A2A message callers. The backend/control-plane can still pre-attach a
+  runtime through the session runtime route.
 - Public A2A responses omit Pi reasoning, tool traces, and raw text-delta internals.
 
 ## Endpoint Status
@@ -39,6 +42,7 @@ For phase 1:
 | `/api/a2a/v1/tasks/{taskId}/pushNotificationConfigs/{configId}` | `GET`, `DELETE` | Config store only | Reads/deletes in-memory push notification config records. |
 | `/api/a2a/v1/extendedAgentCard` | `GET` | Implemented | Session-scoped backend Agent Card lookup. Requires an agent session uid. |
 | `/api/a2a/rpc` | `POST` | Implemented | JSON-RPC 2.0 binding over the same handlers. |
+| `/api/a2a/sessions/{agent_session_uid}/runtime` | `GET`, `POST` | Control-plane attach/status | Prepares or inspects the runtime attached to an existing backend `AgentSession.uid`. |
 
 Not implemented yet:
 
@@ -57,6 +61,42 @@ A2A requests need a user identity. Astro accepts the same identity sources used 
 - runtime credential auth in local/debug flows
 
 If identity is missing, the public A2A endpoint returns a standard A2A/JSON-RPC error.
+
+## Session Runtime Attach
+
+The backend/control-plane can prepare an existing backend session before message delivery:
+
+```http
+POST /api/a2a/sessions/{agent_session_uid}/runtime
+Content-Type: application/json
+```
+
+The attach response returns immediately while runtime preparation continues:
+
+```json
+{
+  "ok": true,
+  "agent_session_uid": "0b2701a1-e777-4cfe-8437-b94025f00069",
+  "state": "starting",
+  "runner": {
+    "kind": "pi-rpc",
+    "state": "not_started",
+    "ready": false
+  },
+  "preflight": {
+    "ready": false
+  }
+}
+```
+
+Status uses the same path with `GET`:
+
+```http
+GET /api/a2a/sessions/{agent_session_uid}/runtime
+```
+
+The route is not the public message contract. Clients still send turns through
+`POST /api/a2a/v1/message:send` with `message.contextId` set to the same `AgentSession.uid`.
 
 ## `message:send`
 

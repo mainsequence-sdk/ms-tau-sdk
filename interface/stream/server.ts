@@ -708,6 +708,34 @@ const activeStreamSessions = new Map<string, ActiveStreamSession>();
 const activeStreamContexts = new Map<string, RequestContext>();
 const warmSessionRunners = new Map<string, WarmSessionRunner>();
 const warmSessionTurnQueues = new Map<string, Promise<void>>();
+const a2aSessionRuntimeAttachments = new Map<string, A2ASessionRuntimeAttachment>();
+const a2aSessionRuntimeBootstrapTasks = new Map<string, Promise<void>>();
+
+type A2ASessionRuntimeState = "starting" | "ready" | "busy" | "failed" | "detached";
+
+type A2ASessionRuntimeAttachment = {
+	agentSessionUid: string;
+	threadId: string | null;
+	agentType: string | null;
+	userUid: string;
+	state: A2ASessionRuntimeState;
+	attachedAt: string;
+	updatedAt: string;
+	expiresAt: string | null;
+	detachedAt: string | null;
+	lastError: string | null;
+};
+
+type A2ASessionRuntimeRoute = {
+	agentSessionUid: string;
+};
+
+function matchA2ASessionRuntimeRoute(pathname: string): A2ASessionRuntimeRoute | null {
+	const match = pathname.match(/^\/api\/a2a\/sessions\/([^/]+)\/runtime$/);
+	if (!match) return null;
+	const agentSessionUid = normalizeRuntimeSessionId(decodeURIComponent(match[1]));
+	return agentSessionUid ? { agentSessionUid } : null;
+}
 
 type A2AStandardRoute =
 	| { kind: "message_send" }
@@ -1419,6 +1447,518 @@ async function runA2AStandardRuntimeTurn(
 			message: error instanceof Error ? error.message : String(error),
 		};
 	}
+}
+
+function createDetachedRuntimeResponse(): import("node:http").ServerResponse {
+	return {
+		writableEnded: true,
+		destroyed: false,
+		headersSent: false,
+		writeHead() {
+			return this;
+		},
+		write() {
+			return true;
+		},
+		end() {
+			return this;
+		},
+		destroy() {
+			return this;
+		},
+		once() {
+			return this;
+		},
+	} as unknown as import("node:http").ServerResponse;
+}
+
+function deriveSessionRuntimeState(record: A2ASessionRuntimeAttachment): A2ASessionRuntimeState {
+	if (record.state === "detached" || record.state === "failed") return record.state;
+	const active = getActiveStreamSession(record.agentSessionUid, record.agentSessionUid);
+	if (active) return "busy";
+	const runner = warmSessionRunners.get(record.agentSessionUid);
+	if (!runner) return record.state;
+	if (runner.currentTurn && !runner.currentTurn.completed) return "busy";
+	if (runner.state === "idle" && runner.readyEvent) return "ready";
+	if (runner.state === "running") return "busy";
+	if (runner.state === "starting") return "starting";
+	if (runner.state === "stopped" || runner.state === "stopping") return record.state;
+	return record.state;
+}
+
+function serializeSessionRuntimeAttachment(record: A2ASessionRuntimeAttachment) {
+	const runner = warmSessionRunners.get(record.agentSessionUid);
+	const preparedRuntime = readPreparedSessionRuntime(record.agentSessionUid);
+	const state = deriveSessionRuntimeState(record);
+	return {
+		ok: true,
+		agent_session_uid: record.agentSessionUid,
+		state,
+		runner: runner
+			? {
+					kind: "pi-rpc",
+					state: runner.state,
+					ready: Boolean(runner.readyEvent),
+					started_at: runner.startedAt,
+					last_used_at: runner.lastUsedAt,
+			  }
+			: {
+					kind: "pi-rpc",
+					state: "not_started",
+					ready: false,
+					started_at: null,
+					last_used_at: null,
+			  },
+		preflight: {
+			ready: Boolean(preparedRuntime),
+			prepared_at: preparedRuntime?.preparedAt ?? null,
+			last_used_at: preparedRuntime?.lastUsedAt ?? null,
+		},
+		agent_type: record.agentType,
+		thread_id: record.threadId,
+		attached_at: record.attachedAt,
+		updated_at: record.updatedAt,
+		expires_at: record.expiresAt,
+		detached_at: record.detachedAt,
+		last_error: record.lastError,
+	};
+}
+
+function writeMissingSessionRuntime(
+	res: import("node:http").ServerResponse,
+	agentSessionUid: string,
+) {
+	json(res, 404, {
+		ok: false,
+		error: "session_runtime_not_attached",
+		message: "No live runtime is attached for this backend session.",
+		agent_session_uid: agentSessionUid,
+	});
+}
+
+function updateSessionRuntimeAttachment(
+	agentSessionUid: string,
+	updates: Partial<Omit<A2ASessionRuntimeAttachment, "agentSessionUid" | "attachedAt">>,
+): A2ASessionRuntimeAttachment | null {
+	const current = a2aSessionRuntimeAttachments.get(agentSessionUid);
+	if (!current) return null;
+	const next: A2ASessionRuntimeAttachment = {
+		...current,
+		...updates,
+		updatedAt: new Date().toISOString(),
+	};
+	a2aSessionRuntimeAttachments.set(agentSessionUid, next);
+	return next;
+}
+
+function createSessionRuntimeAttachment(input: {
+	agentSessionUid: string;
+	userUid: string;
+}): A2ASessionRuntimeAttachment {
+	const now = new Date().toISOString();
+	const expiresAt = Number.isFinite(warmRunnerIdleTtlMs)
+		? new Date(Date.now() + warmRunnerIdleTtlMs).toISOString()
+		: null;
+	const existing = a2aSessionRuntimeAttachments.get(input.agentSessionUid);
+	if (existing && existing.state !== "detached") {
+		const refreshed = {
+			...existing,
+			userUid: input.userUid,
+			updatedAt: now,
+			expiresAt,
+		};
+		a2aSessionRuntimeAttachments.set(input.agentSessionUid, refreshed);
+		return refreshed;
+	}
+	const record: A2ASessionRuntimeAttachment = {
+		agentSessionUid: input.agentSessionUid,
+		threadId: null,
+		agentType: null,
+		userUid: input.userUid,
+		state: "starting",
+		attachedAt: now,
+		updatedAt: now,
+		expiresAt,
+		detachedAt: null,
+		lastError: null,
+	};
+	a2aSessionRuntimeAttachments.set(input.agentSessionUid, record);
+	return record;
+}
+
+async function buildSessionRuntimeBootstrapContext(input: {
+	req: import("node:http").IncomingMessage;
+	url: URL;
+	agentSessionUid: string;
+	userUid: string;
+	body: Record<string, unknown>;
+}): Promise<
+	| {
+			ok: true;
+			ctx: RequestContext;
+			cwd: string;
+			projectId: string | null;
+	  }
+	| {
+			ok: false;
+			statusCode: number;
+			error: string;
+			message: string;
+	  }
+> {
+	const runtimeProfile = resolveRuntimeProfile();
+	const runtimeProfileValidation = validateRuntimeProfile(runtimeProfile);
+	if (runtimeProfileValidation.ok === false) {
+		return {
+			ok: false,
+			statusCode: runtimeProfileValidation.statusCode,
+			error: runtimeProfileValidation.error,
+			message: runtimeProfileValidation.message,
+		};
+	}
+
+	const requestedThreadId = extractStringProperty(input.body, "threadId", "thread_id");
+	const checkpointHydration = await hydrateLocalSessionFilesForRead({
+		sessionKey: input.agentSessionUid,
+		requestedThreadId,
+		reason: "session_config",
+	});
+	if (checkpointHydration.ok === false) {
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "a2a_session_runtime_checkpoint_hydration_skipped",
+			message: "Astro could not hydrate checkpoint files before session runtime attach; backend session metadata hydration will still be attempted.",
+			data: {
+				agentSessionUid: input.agentSessionUid,
+				statusCode: checkpointHydration.statusCode,
+				error: checkpointHydration.error,
+				message: checkpointHydration.message,
+			},
+		});
+	}
+
+	const existingMetadata = readSessionMetadata(input.agentSessionUid);
+	const hydration = await attachHydratedBackendSession({
+		runtimeSessionId: input.agentSessionUid,
+		userId: input.userUid,
+		requestedThreadId,
+		existingMetadata,
+		log: (message) => console.log(`[astro-stream] ${message}`),
+	});
+	if (hydration.ok === false) {
+		return {
+			ok: false,
+			statusCode: hydration.statusCode,
+			error: hydration.error,
+			message: hydration.message,
+		};
+	}
+
+	const agentType = hydration.hydrated.metadata.agentType ?? runtimeProfile.kind;
+	if (!ALLOWED_AGENT_TYPES.has(agentType)) {
+		return {
+			ok: false,
+			statusCode: 400,
+			error: "invalid_agent_type",
+			message: `Unsupported runtime profile agent type "${agentType}".`,
+		};
+	}
+	if (!hydration.hydrated.metadata.sessionModelBinding) {
+		return {
+			ok: false,
+			statusCode: 409,
+			error: "session_model_binding_missing",
+			message:
+				"Astro could not resolve a model binding from the backend-owned session. Provide backend session model metadata or update the backend session before retrying.",
+		};
+	}
+
+	const metadata: SessionMetadata = {
+		...hydration.hydrated.metadata,
+		agentId: hydration.hydrated.agentId,
+		agentUniqueId: hydration.hydrated.agentUniqueId,
+		agentSessionId: input.agentSessionUid,
+		agentType,
+	};
+	const projectAttachment = resolveProjectAttachment({
+		agentType,
+		body: input.body,
+		existingSessionMetadata: metadata,
+		runtimeProfile,
+	});
+	if (projectAttachment.ok === false) {
+		return {
+			ok: false,
+			statusCode: projectAttachment.statusCode,
+			error: projectAttachment.error,
+			message: projectAttachment.message,
+		};
+	}
+
+	const threadId = metadata.threadId ?? requestedThreadId ?? input.agentSessionUid;
+	const persistedMetadata: SessionMetadata = {
+		...metadata,
+		threadId,
+		projectId: projectAttachment.projectId,
+		cwd: projectAttachment.attached ? projectAttachment.cwd : null,
+		repoRoot: projectAttachment.repoRoot,
+		projectImageRef: projectAttachment.projectImageRef,
+	};
+	writeSessionMetadata(input.agentSessionUid, persistedMetadata);
+	writeThreadBinding({
+		threadId,
+		runtimeSessionId: input.agentSessionUid,
+		updatedAt: new Date().toISOString(),
+	});
+
+	const conversationStore = createConversationStore({
+		sessionDir,
+		sessionKey: input.agentSessionUid,
+		threadId,
+		agentType,
+		agentUid: hydration.hydrated.agentId,
+		agentSessionUid: input.agentSessionUid,
+		startedAt: metadata.startedAt,
+		...(metadata.a2a !== undefined ? { a2a: metadata.a2a } : {}),
+	});
+	const ctx: RequestContext = {
+		res: createDetachedRuntimeResponse(),
+		messageId: `attach_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e6).toString(36)}`,
+		threadId,
+		sessionKey: input.agentSessionUid,
+		agentId: hydration.hydrated.agentId,
+		agentUniqueId: hydration.hydrated.agentUniqueId,
+		agentSessionId: input.agentSessionUid,
+		agentType,
+		userId: input.userUid,
+		conversationStore,
+		logState: {
+			reasoning: null,
+			text: null,
+			toolCalls: new Map(),
+		},
+		eventId: 0,
+		textCounter: 0,
+		reasoningCounter: 0,
+		activeReasoningAnnotationOrdinal: null,
+		runtimeToolCounter: 0,
+		toolCallIds: new Map(),
+		piProcess: null,
+		cancelKillTimer: null,
+		runtimeTurnTimeoutTimer: null,
+		cancellation: null,
+		warmRunner: null,
+		clientAttached: false,
+		cancelOnClientDisconnect: false,
+		streamAbortHandlerAttached: false,
+		runtimeStarted: false,
+		finished: false,
+		terminalError: null,
+		system: undefined,
+		uiContext: {},
+		uiTools: {},
+		a2aOutputOptions: normalizeA2AOutputOptions({
+			enabled: false,
+			body: {},
+			a2aContext: {},
+			context: {},
+			envelopeResponseFormat: null,
+		}),
+		a2aRuntimeOptions: normalizeA2ARuntimeOptions({
+			body: {},
+			a2aContext: {},
+			context: {},
+		}),
+		strictJsonBufferedText: "",
+		strictJsonRepairRuntime: null,
+		assistantCompletionPending: null,
+		sessionModelBinding: metadata.sessionModelBinding,
+		sessionConfigOverrides: metadata.sessionConfigOverrides,
+		responseProvider: null,
+		responseModel: null,
+		piAssistantTextSeen: false,
+		lastAssistantFinishReason: null,
+		lastAssistantErrorMessage: null,
+		lastAssistantUsage: undefined,
+		checkpointLease: null,
+	};
+	return {
+		ok: true,
+		ctx,
+		cwd: projectAttachment.cwd ?? resolveOrchestratorRuntimeCwd(),
+		projectId: projectAttachment.projectId,
+	};
+}
+
+function startA2ASessionRuntimeBootstrap(input: {
+	req: import("node:http").IncomingMessage;
+	url: URL;
+	record: A2ASessionRuntimeAttachment;
+	body: Record<string, unknown>;
+}) {
+	if (a2aSessionRuntimeBootstrapTasks.has(input.record.agentSessionUid)) return;
+	const bootstrap = (async () => {
+		try {
+			const resolved = await buildSessionRuntimeBootstrapContext({
+				req: input.req,
+				url: input.url,
+				agentSessionUid: input.record.agentSessionUid,
+				userUid: input.record.userUid,
+				body: input.body,
+			});
+			if (resolved.ok === false) {
+				updateSessionRuntimeAttachment(input.record.agentSessionUid, {
+					state: "failed",
+					lastError: resolved.message,
+				});
+				logStructuredEvent({
+					severity: "ERROR",
+					component: "astro-stream",
+					event: "a2a_session_runtime_bootstrap_failed",
+					message: "Astro could not bootstrap an attached A2A session runtime.",
+					data: {
+						agentSessionUid: input.record.agentSessionUid,
+						error: resolved.error,
+						statusCode: resolved.statusCode,
+						detail: resolved.message,
+					},
+				});
+				return;
+			}
+
+			updateSessionRuntimeAttachment(input.record.agentSessionUid, {
+				state: "starting",
+				agentType: resolved.ctx.agentType,
+				threadId: resolved.ctx.threadId,
+				lastError: null,
+			});
+			const prepared = await prepareWarmPiRuntime(resolved.ctx, {
+				cwd: resolved.cwd,
+				projectId: resolved.projectId,
+				agentConfig: null,
+			});
+			if (prepared.ok === false) {
+				updateSessionRuntimeAttachment(input.record.agentSessionUid, {
+					state: "failed",
+					lastError: prepared.handled === true ? "runtime_preflight_failed" : prepared.fallbackReason,
+				});
+				return;
+			}
+
+			try {
+				await getCompatibleWarmRunner({
+					ctx: resolved.ctx,
+					prepared: prepared.value,
+					cwd: resolved.cwd,
+					projectId: resolved.projectId,
+				});
+				await prepared.value.finalizeProviderCredentials("attach");
+			} catch (error) {
+				await prepared.value.finalizeProviderCredentials("stream_error");
+				throw error;
+			}
+
+			updateSessionRuntimeAttachment(input.record.agentSessionUid, {
+				state: "ready",
+				agentType: resolved.ctx.agentType,
+				threadId: resolved.ctx.threadId,
+				lastError: null,
+			});
+			logStructuredEvent({
+				component: "astro-stream",
+				event: "a2a_session_runtime_bootstrap_ready",
+				message: "Astro prepared an attached A2A session runtime.",
+				data: {
+					agentSessionUid: input.record.agentSessionUid,
+					threadId: resolved.ctx.threadId,
+					agentType: resolved.ctx.agentType,
+				},
+			});
+		} catch (error) {
+			const message = error instanceof Error ? error.message : String(error);
+			updateSessionRuntimeAttachment(input.record.agentSessionUid, {
+				state: "failed",
+				lastError: message,
+			});
+			logStructuredEvent({
+				severity: "ERROR",
+				component: "astro-stream",
+				event: "a2a_session_runtime_bootstrap_error",
+				message: "Astro hit an unexpected error while bootstrapping an attached A2A session runtime.",
+				data: {
+					agentSessionUid: input.record.agentSessionUid,
+					error: message,
+				},
+			});
+		}
+	})().finally(() => {
+		a2aSessionRuntimeBootstrapTasks.delete(input.record.agentSessionUid);
+	});
+	a2aSessionRuntimeBootstrapTasks.set(input.record.agentSessionUid, bootstrap);
+}
+
+async function handleA2ASessionRuntimeRequest(
+	req: import("node:http").IncomingMessage,
+	res: import("node:http").ServerResponse,
+	url: URL,
+	route: A2ASessionRuntimeRoute,
+) {
+	if (req.method === "GET") {
+		const record = a2aSessionRuntimeAttachments.get(route.agentSessionUid);
+		if (!record || record.state === "detached") {
+			writeMissingSessionRuntime(res, route.agentSessionUid);
+			return;
+		}
+		json(res, 200, serializeSessionRuntimeAttachment(record));
+		return;
+	}
+
+	if (req.method !== "POST") {
+		methodNotAllowed(res, ["GET", "POST"]);
+		return;
+	}
+
+	let body: Record<string, unknown>;
+	try {
+		body = await parseOptionalJsonObject(req);
+	} catch {
+		badRequest(res, "Invalid JSON body.");
+		return;
+	}
+
+	const userUid = resolveUserIdFromRequest(req, url, body);
+	if (!userUid) {
+		json(res, 401, {
+			ok: false,
+			error: "missing_user_identity",
+			message:
+				"Missing user identity. Provide user_uid, a supported user UID header, or a Bearer JWT with a user_uid claim.",
+		});
+		return;
+	}
+
+	const record = createSessionRuntimeAttachment({
+		agentSessionUid: route.agentSessionUid,
+		userUid,
+	});
+	logStructuredEvent({
+		component: "astro-stream",
+		event: "a2a_session_runtime_attached",
+		message: "Astro attached an existing backend session UID to a session runtime.",
+		data: {
+			agentSessionUid: route.agentSessionUid,
+			userUid,
+			state: record.state,
+		},
+	});
+	startA2ASessionRuntimeBootstrap({
+		req,
+		url,
+		record,
+		body,
+	});
+	json(res, 200, serializeSessionRuntimeAttachment(record));
 }
 
 async function executeA2AStandardTask(record: A2AStandardTaskRecord, prepared: A2AStandardPreparedTurn) {
@@ -8967,6 +9507,12 @@ async function handleStreamRequest(
 
 	if (req.method === "GET" && url.pathname === "/health") {
 		json(res, 200, buildRuntimeHealthSnapshot());
+		return;
+	}
+
+	const a2aSessionRuntimeRoute = matchA2ASessionRuntimeRoute(url.pathname);
+	if (a2aSessionRuntimeRoute) {
+		await handleA2ASessionRuntimeRequest(req, res, url, a2aSessionRuntimeRoute);
 		return;
 	}
 

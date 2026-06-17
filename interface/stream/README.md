@@ -284,12 +284,14 @@ Other public A2A endpoints include:
 - `GET|DELETE /api/a2a/v1/tasks/{id}/pushNotificationConfigs/{configId}`
 - `GET /api/a2a/v1/extendedAgentCard`
 - `POST /api/a2a/rpc`
+- `GET|POST /api/a2a/sessions/{agent_session_uid}/runtime` for backend/control-plane runtime attach/status
 
 ### A2A Runtime Execution
 
 The public A2A adapter dispatches turns through the same backend-owned session runtime as
 `POST /api/chat`. Runtime bootstrap, warm-runner reuse, checkpointing, and provider credential
-hydration are implementation details and are not exposed as separate A2A HTTP routes.
+hydration are implementation details for message callers. The backend/control-plane can still
+pre-attach an existing `AgentSession.uid` through `/api/a2a/sessions/{agent_session_uid}/runtime`.
 
 Public callers should express output needs through the standard A2A request:
 
