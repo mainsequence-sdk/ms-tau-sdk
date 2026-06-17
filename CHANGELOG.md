@@ -4,9 +4,9 @@
 
 ### A2A Cancellation Lifecycle
 
-- Changed `/api/a2a/chat` disconnect handling so abandoned queued requests are skipped instead of blocking same-session retries.
+- Changed legacy A2A chat disconnect handling so abandoned queued requests are skipped instead of blocking same-session retries.
 - Changed active A2A client disconnects and SSE write failures to cancel the runtime turn instead of continuing detached like UI chat.
-- Added optional request-scoped A2A turn timeout fields so callers can choose a watchdog per `/api/a2a/chat` request; omitted or zero disables the watchdog.
+- Added optional request-scoped A2A turn timeout fields so callers can choose a watchdog per legacy A2A chat request; omitted or zero disables the watchdog.
 - Ensured warm-runner cancellation resolves the active turn and releases the queue when the underlying Pi RPC runner exits.
 - Added structured queue/cancellation diagnostics for queued, started, skipped, disconnected, and timed-out A2A turns.
 
@@ -15,7 +15,7 @@
 ### A2A Runtime Performance And Output Contracts
 
 - Added cached session capability materialization and scoped provider credential reuse for same-session runtime turns.
-- Added warm Pi RPC runners for `/api/a2a/chat` so same-session A2A calls can avoid repeated cold process startup.
+- Added warm Pi RPC runners for legacy A2A chat so same-session A2A calls can avoid repeated cold process startup.
 - Added runtime-enforced A2A output options for `omit_reasoning` / `omitReasoning`, strict JSON `response_format` / `responseFormat`, and `json_repair` / `jsonRepair`.
 - Buffered strict JSON assistant text until validation succeeds, emits canonical JSON on success, and emits `a2a_invalid_json_response` without persisting invalid text when validation and repair fail.
 - Documented ADR 33 and ADR 34, warm-runner and strict JSON repair environment knobs, and A2A request examples.

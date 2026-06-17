@@ -5,7 +5,7 @@ Date: 2026-06-16
 
 ## Goal
 
-Reduce `/api/a2a/chat` time-to-dispatch by removing serialized startup work that does not need to
+Reduce legacy Astro A2A chat time-to-dispatch by removing serialized startup work that does not need to
 block Pi runner startup.
 
 This document records the implementation discoveries from production traces and turns them into
@@ -210,7 +210,7 @@ These are separate tasks and should be expanded one by one:
 
 ### Discovery
 
-Current `/api/a2a/chat` treats every request as a durable session mutation. That forces checkpoint
+Current legacy Astro A2A chat treats every request as a durable session mutation. That forces checkpoint
 lease/restore/local validation before the prompt can be dispatched, even for A2A calls that are
 closer to API/tool calls than interactive UI turns.
 

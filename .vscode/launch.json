@@ -1,0 +1,55 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "A2A endpoint: ask capabilities JSON",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "node",
+      "program": "${workspaceFolder}/scripts/debug_a2a_endpoint.mjs",
+      "args": [
+        "capabilities",
+        "--base-url",
+        "http://127.0.0.1:${input:astroStreamPort}",
+        "--agent-session-uid",
+        "${input:a2aAgentSessionUid}"
+      ],
+      "console": "integratedTerminal",
+      "skipFiles": [
+        "<node_internals>/**"
+      ]
+    },
+    {
+      "name": "A2A endpoint: ask dictionary JSON",
+      "type": "node",
+      "request": "launch",
+      "runtimeExecutable": "node",
+      "program": "${workspaceFolder}/scripts/debug_a2a_endpoint.mjs",
+      "args": [
+        "dictionary",
+        "--base-url",
+        "http://127.0.0.1:${input:astroStreamPort}",
+        "--agent-session-uid",
+        "${input:a2aAgentSessionUid}"
+      ],
+      "console": "integratedTerminal",
+      "skipFiles": [
+        "<node_internals>/**"
+      ]
+    }
+  ],
+  "inputs": [
+    {
+      "id": "astroStreamPort",
+      "type": "promptString",
+      "description": "Host port for the running astro-pi-stream endpoint",
+      "default": "8787"
+    },
+    {
+      "id": "a2aAgentSessionUid",
+      "type": "promptString",
+      "description": "Existing backend AgentSession.uid used as A2A message.contextId",
+      "default": "0b2701a1-e777-4cfe-8437-b94025f00069"
+    }
+  ]
+}

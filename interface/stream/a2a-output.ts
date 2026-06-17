@@ -60,6 +60,22 @@ export type A2AOutputRepairAttemptInput = {
 
 const DEFAULT_JSON_REPAIR_ATTEMPTS = 3;
 const MAX_JSON_REPAIR_ATTEMPTS = 10;
+const OMIT_REASONING_CLIENT_CHUNK_TYPES = new Set([
+	"reasoning-start",
+	"reasoning-delta",
+	"reasoning-end",
+	"tool-call-start",
+	"tool-call-delta",
+	"tool-call-end",
+	"tool-result",
+]);
+
+export function shouldSuppressA2AClientChunk(
+	options: Pick<A2AOutputOptions, "omitReasoning">,
+	chunk: { type: string },
+): boolean {
+	return options.omitReasoning && OMIT_REASONING_CLIENT_CHUNK_TYPES.has(chunk.type);
+}
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
 	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -110,7 +126,7 @@ function normalizeJsonModeValue(value: unknown): A2AJsonMode {
 	if (typeof value !== "string") return "none";
 	const normalized = value.trim().toLowerCase();
 	if (["json", "application/json"].includes(normalized)) return "json";
-	if (normalized === "json_object") return "json_object";
+	if (["json_object", "object", "dictionary", "dict"].includes(normalized)) return "json_object";
 	if (normalized === "json_schema") return "json_schema";
 	return "none";
 }
@@ -328,9 +344,15 @@ export async function runA2AOutputContractTurn(input: {
 	const counters = { reasoning: 0, text: 0 };
 	let strictJsonBufferedText = "";
 	let assistantTextSeen = false;
+	const shouldBufferText = input.options.strictJson || input.options.omitReasoning;
 
 	const finalizeStrictJson = async (): Promise<boolean> => {
-		if (!input.options.strictJson) return true;
+		if (!input.options.strictJson) {
+			if (input.options.omitReasoning) {
+				emitCanonicalText(chunks, counters, strictJsonBufferedText);
+			}
+			return true;
+		}
 		const originalText = strictJsonBufferedText;
 		let validation = validateStrictJsonText(originalText, input.options);
 		if (validation.ok === true) {
@@ -383,27 +405,27 @@ export async function runA2AOutputContractTurn(input: {
 				break;
 			case "text_start":
 				assistantTextSeen = true;
-				if (!input.options.strictJson) {
+				if (!shouldBufferText) {
 					counters.text += 1;
 					chunks.push({ type: "text-start", id: `t${counters.text}` });
 				}
 				break;
 			case "text_delta":
 				assistantTextSeen = true;
-				if (input.options.strictJson) {
+				if (shouldBufferText) {
 					strictJsonBufferedText += event.delta;
 				} else {
 					chunks.push({ type: "text-delta", textDelta: event.delta });
 				}
 				break;
 			case "text_end":
-				if (!input.options.strictJson) {
+				if (!shouldBufferText) {
 					chunks.push({ type: "text-end" });
 				}
 				break;
 			case "message_end_text":
 				if (!assistantTextSeen) {
-					if (input.options.strictJson) {
+					if (shouldBufferText) {
 						assistantTextSeen = true;
 						strictJsonBufferedText += event.text;
 					} else {

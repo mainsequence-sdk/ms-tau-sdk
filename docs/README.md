@@ -50,6 +50,8 @@ flowchart LR
   - [`getting-started/quickstart.md`](./getting-started/quickstart.md)
 - Want the reusable workflow definitions:
   - [`components/prompts.md`](./components/prompts.md)
+- Want the current public A2A contract:
+  - [`a2a/README.md`](./a2a/README.md)
 - Want the mirrored per-file runtime docs:
   - [`extensions/README.md`](./extensions/README.md)
   - [`prompts/README.md`](./prompts/README.md)
@@ -82,6 +84,7 @@ flowchart LR
 ## Interface
 
 - [`interface/README.md`](./interface/README.md)
+- [`a2a/README.md`](./a2a/README.md)
 
 ## Reference
 

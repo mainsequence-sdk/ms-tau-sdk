@@ -1,0 +1,26 @@
+{
+  "message": {
+    "messageId": "msg-client-1",
+    "role": "ROLE_USER",
+    "contextId": "agent-session-uid-1",
+    "parts": [
+      {
+        "text": "What can this Astro agent do?"
+      }
+    ]
+  },
+  "configuration": {
+    "acceptedOutputModes": ["application/json"],
+    "historyLength": 0,
+    "returnImmediately": false
+  },
+  "metadata": {
+    "https://mainsequence.ai/a2a/extensions/output-contract/v1": {
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "additionalProperties": true
+      }
+    }
+  }
+}

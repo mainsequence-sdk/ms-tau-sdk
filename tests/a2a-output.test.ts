@@ -6,6 +6,7 @@ import {
 	type A2AOutputContractChunk,
 	normalizeA2AOutputOptions,
 	runA2AOutputContractTurn,
+	shouldSuppressA2AClientChunk,
 	validateStrictJsonText,
 } from "../interface/stream/a2a-output.js";
 import { attachAgentUid, serializeSse } from "../interface/stream/protocol.js";
@@ -54,6 +55,29 @@ test("A2A output options use camelCase aliases and default repair attempts to 3"
 	assert.equal(options.strictJson, true);
 	assert.equal(options.jsonMode, "json");
 	assert.equal(options.jsonRepair.attempts, 3);
+});
+
+test("A2A output options treat dictionary response format as strict json_object", () => {
+	const stringAlias = normalizeA2AOutputOptions({
+		enabled: true,
+		body: {
+			responseFormat: "dictionary",
+		},
+	});
+	const objectAlias = normalizeA2AOutputOptions({
+		enabled: true,
+		body: {
+			response_format: {
+				type: "dict",
+				strict: true,
+			},
+		},
+	});
+
+	assert.equal(stringAlias.strictJson, true);
+	assert.equal(stringAlias.jsonMode, "json_object");
+	assert.equal(objectAlias.strictJson, true);
+	assert.equal(objectAlias.jsonMode, "json_object");
 });
 
 test("A2A output options resolve from normalized context envelope", () => {
@@ -150,13 +174,17 @@ test("strict JSON validation canonicalizes valid JSON objects", () => {
 	}
 });
 
-test("strict json_object validation rejects arrays and prose", () => {
+test("strict json_object validation rejects arrays, primitives, and prose", () => {
 	const arrayResult = validateStrictJsonText("[1,2,3]", { jsonMode: "json_object" });
+	const numberResult = validateStrictJsonText("42", { jsonMode: "json_object" });
+	const nullResult = validateStrictJsonText("null", { jsonMode: "json_object" });
 	const proseResult = validateStrictJsonText("Here is the JSON: {\"ok\":true}", {
 		jsonMode: "json_object",
 	});
 
 	assert.equal(arrayResult.ok, false);
+	assert.equal(numberResult.ok, false);
+	assert.equal(nullResult.ok, false);
 	assert.equal(proseResult.ok, false);
 });
 
@@ -202,6 +230,46 @@ test("reasoning suppression removes outbound reasoning SSE events", async () => 
 	assert.deepEqual(chunkTypes(chunks), ["text-start", "text-delta", "text-end", "finish"]);
 	assert.doesNotMatch(raw, /reasoning-start|reasoning-delta|reasoning-end/);
 	assert.match(raw, /public answer/);
+});
+
+test("reasoning suppression emits one final answer instead of streaming text deltas", async () => {
+	const options = normalizeA2AOutputOptions({
+		enabled: true,
+		body: {
+			omit_reasoning: true,
+		},
+	});
+	const chunks = await runA2AOutputContractTurn({
+		options,
+		events: [
+			{ type: "text_start" },
+			{ type: "text_delta", delta: "hello " },
+			{ type: "text_delta", delta: "world" },
+			{ type: "text_end" },
+			{ type: "done" },
+		],
+	});
+
+	assert.deepEqual(chunkTypes(chunks), ["text-start", "text-delta", "text-end", "finish"]);
+	assert.deepEqual(
+		chunks.filter((chunk) => chunk.type === "text-delta").map((chunk) => chunk.textDelta),
+		["hello world"],
+	);
+});
+
+test("reasoning suppression removes outbound tool trace SSE events", () => {
+	const options = normalizeA2AOutputOptions({
+		enabled: true,
+		body: {
+			omit_reasoning: true,
+		},
+	});
+
+	for (const type of ["tool-call-start", "tool-call-delta", "tool-call-end", "tool-result"]) {
+		assert.equal(shouldSuppressA2AClientChunk(options, { type }), true);
+	}
+	assert.equal(shouldSuppressA2AClientChunk(options, { type: "text-delta" }), false);
+	assert.equal(shouldSuppressA2AClientChunk({ ...options, omitReasoning: false }, { type: "tool-result" }), false);
 });
 
 test("non-strict A2A streams text deltas normally", async () => {

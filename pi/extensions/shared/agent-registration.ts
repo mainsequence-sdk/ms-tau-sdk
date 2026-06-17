@@ -26,6 +26,18 @@ export type BackendAgentSessionFetchResult = {
 	endpoint: string | null;
 };
 
+export type BackendAgentSessionAgentCardFetchResult = {
+	ok: boolean;
+	status: number | null;
+	body: unknown;
+	error: string | null;
+	agentSessionUid: string | null;
+	agentUid: string | null;
+	agentCard: Record<string, unknown> | null;
+	notFound: boolean;
+	endpoint: string | null;
+};
+
 const DEFAULT_BACKEND = "https://api.main-sequence.app";
 
 export type BackendAuthHeaders = Record<string, string>;
@@ -201,6 +213,10 @@ function agentStartSessionEndpoint(backendUrl: string, agentUid: string): string
 	return `${backendUrl}/orm/api/agents/v1/agents/${encodeURIComponent(agentUid)}/start_new_session/`;
 }
 
+function agentSessionAgentCardEndpoint(backendUrl: string, agentSessionUid: string): string {
+	return `${backendUrl}/orm/api/agents/v1/sessions/${encodeURIComponent(agentSessionUid)}/agent-card/`;
+}
+
 async function getAgentSessionByEndpoint(options: {
 	endpoint: string;
 	authHeaders: BackendAuthHeaders;
@@ -220,6 +236,10 @@ function normalizeBackendUid(value: unknown): string | null {
 
 function parseAgentUid(payload: any): string | null {
 	return parseStringField(payload, "uid", "agent_uid", "agentUid");
+}
+
+function parseAgentCard(payload: any): Record<string, unknown> | null {
+	return parseObjectField(payload, "agent_card", "agentCard");
 }
 
 function parseAgentSessionUid(payload: any): string | null {
@@ -576,5 +596,202 @@ export async function fetchBackendAgentSession(options: {
 		agentSessionUid: normalizedSessionUid,
 		notFound: true,
 		endpoint: null,
+	};
+}
+
+export async function fetchBackendAgentSessionAgentCard(options: {
+	agentSessionUid: string;
+	env?: NodeJS.ProcessEnv;
+	log?: (message: string) => void;
+}): Promise<BackendAgentSessionAgentCardFetchResult> {
+	const runtimeEnv = options.env ?? process.env;
+	const backendUrl = resolveBackendUrl(runtimeEnv);
+	const normalizedSessionUid = normalizeBackendLookupUid(options.agentSessionUid);
+
+	if (normalizedSessionUid == null) {
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "agent-registration",
+			event: "backend_session_agent_card_fetch_invalid_uid",
+			message: "Backend session agent card fetch skipped because the session uid was invalid.",
+			data: {
+				agentSessionUid: options.agentSessionUid,
+			},
+		});
+		return {
+			ok: false,
+			status: null,
+			body: null,
+			error: "Invalid backend agent session uid.",
+			agentSessionUid: null,
+			agentUid: null,
+			agentCard: null,
+			notFound: false,
+			endpoint: null,
+		};
+	}
+
+	const endpoint = agentSessionAgentCardEndpoint(backendUrl, normalizedSessionUid);
+	const authHeadersResult = await resolveBackendAuthHeaders(runtimeEnv, options.log);
+	if (!authHeadersResult.headers) {
+		logStructuredEvent({
+			severity: "ERROR",
+			component: "agent-registration",
+			event: "backend_session_agent_card_fetch_missing_auth_headers",
+			message:
+				"Backend session agent card fetch failed before the request because no backend auth headers were available.",
+			data: {
+				agentSessionUid: normalizedSessionUid,
+				error: authHeadersResult.error ?? "missing backend auth headers",
+			},
+		});
+		return {
+			ok: false,
+			status: null,
+			body: null,
+			error: authHeadersResult.error ?? "Missing backend auth headers for backend session agent card fetch.",
+			agentSessionUid: normalizedSessionUid,
+			agentUid: null,
+			agentCard: null,
+			notFound: false,
+			endpoint,
+		};
+	}
+
+	logStructuredEvent({
+		component: "agent-registration",
+		event: "backend_session_agent_card_fetch_attempt",
+		message: "Trying backend session agent card fetch.",
+		data: {
+			agentSessionUid: normalizedSessionUid,
+			endpoint,
+		},
+	});
+
+	let response = await getAgentSessionByEndpoint({
+		endpoint,
+		authHeaders: authHeadersResult.headers,
+	});
+
+	if (response.status === 401 || response.status === 403) {
+		const retryAuthHeaders = await resolveBackendAuthHeaders(runtimeEnv, options.log);
+		if (retryAuthHeaders.headers) {
+			response = await getAgentSessionByEndpoint({
+				endpoint,
+				authHeaders: retryAuthHeaders.headers,
+			});
+		}
+	}
+
+	const responseText = await response.text();
+	let parsedBody: any = null;
+	try {
+		parsedBody = responseText ? JSON.parse(responseText) : null;
+	} catch {
+		parsedBody = null;
+	}
+
+	if (response.status === 404) {
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "agent-registration",
+			event: "backend_session_agent_card_fetch_not_found",
+			message: "Backend session agent card was not found.",
+			data: {
+				agentSessionUid: normalizedSessionUid,
+				endpoint,
+			},
+		});
+		return {
+			ok: false,
+			status: 404,
+			body: parsedBody,
+			error: `Backend agent card for session ${normalizedSessionUid} was not found.`,
+			agentSessionUid: normalizedSessionUid,
+			agentUid: null,
+			agentCard: null,
+			notFound: true,
+			endpoint,
+		};
+	}
+
+	if (!response.ok) {
+		const message = extractBackendErrorMessage(
+			parsedBody,
+			responseText,
+			`Backend agent fetch failed with status ${response.status}.`,
+		);
+		logStructuredEvent({
+			severity: "ERROR",
+			component: "agent-registration",
+			event: "backend_session_agent_card_fetch_rejected",
+			message: "Backend session agent card fetch was rejected.",
+			data: {
+				agentSessionUid: normalizedSessionUid,
+				endpoint,
+				status: response.status,
+				error: message,
+			},
+		});
+		return {
+			ok: false,
+			status: response.status,
+			body: parsedBody,
+			error: String(message),
+			agentSessionUid: normalizedSessionUid,
+			agentUid: null,
+			agentCard: null,
+			notFound: false,
+			endpoint,
+		};
+	}
+
+	const agentCard = parseAgentCard(parsedBody);
+	if (!agentCard) {
+		logStructuredEvent({
+			severity: "ERROR",
+			component: "agent-registration",
+			event: "backend_session_agent_card_fetch_missing_agent_card",
+			message:
+				"Backend session agent card fetch succeeded but the response did not contain an agent_card object.",
+			data: {
+				agentSessionUid: normalizedSessionUid,
+				endpoint,
+				status: response.status,
+			},
+		});
+		return {
+			ok: false,
+			status: response.status,
+			body: parsedBody,
+			error: "Backend agent response did not contain an agent_card object.",
+			agentSessionUid: parseAgentSessionUid(parsedBody) ?? normalizedSessionUid,
+			agentUid: parseAgentUid(parsedBody),
+			agentCard: null,
+			notFound: false,
+			endpoint,
+		};
+	}
+
+	logStructuredEvent({
+		component: "agent-registration",
+		event: "backend_session_agent_card_fetch_succeeded",
+		message: "Backend session agent card fetch succeeded.",
+		data: {
+			agentSessionUid: normalizedSessionUid,
+			endpoint,
+			status: response.status,
+		},
+	});
+	return {
+		ok: true,
+		status: response.status,
+		body: parsedBody,
+		error: null,
+		agentSessionUid: parseAgentSessionUid(parsedBody) ?? normalizedSessionUid,
+		agentUid: parseAgentUid(parsedBody),
+		agentCard,
+		notFound: false,
+		endpoint,
 	};
 }

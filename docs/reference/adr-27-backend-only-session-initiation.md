@@ -39,7 +39,7 @@ Astro must never initiate backend `AgentSession` creation from the stream runtim
 This applies to:
 
 - `POST /api/chat`
-- `POST /api/a2a/chat`
+- the legacy Astro A2A chat route
 
 For every real non-mock streamed run:
 
@@ -56,7 +56,7 @@ that Astro must ignore for routing and allocation decisions.
 
 ### 1. No Astro-owned session creation
 
-Astro must not call backend `start_new_session` from `/api/chat` or `/api/a2a/chat`.
+Astro must not call backend `start_new_session` from `/api/chat` or the legacy Astro A2A chat route.
 
 That means:
 
@@ -78,7 +78,7 @@ Allowed aliases remain:
 But at least one of them must be present on:
 
 - `POST /api/chat`
-- `POST /api/a2a/chat`
+- the legacy Astro A2A chat route
 
 If no session id is provided, Astro must reject the request before Pi launch.
 
@@ -136,7 +136,7 @@ Optional but preferred:
 `newChat` may still appear from older clients, but Astro must treat it as non-authoritative and it
 must not cause allocation.
 
-### `POST /api/a2a/chat`
+### Legacy Astro A2A Chat Route
 
 Required for all real executor requests:
 
@@ -189,7 +189,7 @@ path because the stream runtime is no longer allowed to allocate sessions there.
 ## Implementation Tasks
 
 - [x] Remove Astro-owned session creation from `POST /api/chat`.
-- [x] Remove Astro-owned session creation from `POST /api/a2a/chat`.
+- [x] Remove Astro-owned session creation from the legacy Astro A2A chat route.
 - [x] Require `runtime_session_uid` on all real non-mock stream requests.
 - [x] Treat request-carried `session` as optional optimization, not required authority.
 - [x] Fetch backend session authority before Pi launch whenever local/request metadata is

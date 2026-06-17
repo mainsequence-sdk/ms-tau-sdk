@@ -32,7 +32,7 @@ Astro already has:
 - a prompt-layer A2A collaboration rule
 - a local debug A2A shim using `A2A_DEV_PROJECT`
 - an executor-facing streamer surface:
-  - `POST /api/a2a/chat`
+  - the legacy Astro A2A chat route
   - `POST /api/a2a/cancel`
 
 Astro previously lacked a real non-debug production discovery and communication flow.
@@ -247,7 +247,7 @@ After the runtime becomes healthy, Astro should send the actual A2A request to t
 runtime's existing A2A endpoint:
 
 ```text
-POST <rpc_url>/api/a2a/chat
+POST <runtime-chat-url>
 Authorization: Bearer <token>
 Accept: text/event-stream
 Content-Type: application/json
@@ -299,7 +299,7 @@ At minimum, the payload must carry:
 
 ### Streamer normalization requirement
 
-Astro's `/api/a2a/chat` normalizer must support this canonical A2A request shape in non-debug mode.
+Astro's legacy A2A chat normalizer must support this canonical A2A request shape in non-debug mode.
 
 That means the streamer must accept:
 
@@ -369,7 +369,7 @@ Those direct URLs are debug-only behavior.
   - runtime access resolution
   - health readiness
   - streamed runtime request
-- `/api/a2a/chat` must grow support for canonical `messages` input rather than only the current
+- The legacy Astro A2A chat path must grow support for canonical `messages` input rather than only the current
   task-alias shim
 
 ## Verification Plan
@@ -388,7 +388,7 @@ Those direct URLs are debug-only behavior.
   `mainsequence agent session resolve_runtime_access <session_uid> --json`
 - confirm Astro reads `rpc_url` and `token` from runtime access
 - confirm Astro polls `GET <rpc_url>/health` with bearer auth every 30 seconds until healthy
-- confirm Astro sends the A2A request to `POST <rpc_url>/api/a2a/chat`, not `POST /api/chat`
+- confirm Astro sends the A2A request to the runtime A2A chat transport, not `POST /api/chat`
 - confirm Astro can cancel the run through `POST <rpc_url>/api/a2a/cancel`
 - confirm non-debug mode no longer returns `a2a_backend_discovery_not_implemented`
 - confirm non-debug mode no longer returns `a2a_backend_not_implemented`
@@ -405,8 +405,8 @@ Those direct URLs are debug-only behavior.
 - [x] Add runtime-access resolution using
   `mainsequence agent session resolve_runtime_access <session_uid> --json`.
 - [x] Add token-authenticated health polling against `GET <rpc_url>/health`.
-- [x] Add a production A2A sender that targets `POST <rpc_url>/api/a2a/chat`.
+- [x] Add a production A2A sender that targets the runtime A2A chat transport.
 - [x] Add token-authenticated cancellation against `POST <rpc_url>/api/a2a/cancel`.
-- [x] Extend `/api/a2a/chat` normalization to accept canonical `runtime_session_uid` and
+- [x] Extend legacy A2A chat normalization to accept canonical `runtime_session_uid` and
       `messages`.
 - [x] Keep `A2A_DEV_PROJECT` as a debug-only override.

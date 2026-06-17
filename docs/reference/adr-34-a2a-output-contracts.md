@@ -2,11 +2,11 @@
 
 Status: Accepted
 Date: 2026-06-15
-Implementation Status: Implemented for `/api/a2a/chat` SSE; non-streaming JSON transport decision recorded
+Implementation Status: Implemented for the legacy Astro A2A SSE path; non-streaming JSON transport decision recorded
 
 ## Context
 
-Astro's `/api/a2a/chat` endpoint is now a real runtime execution path for agent-to-agent
+Astro's legacy A2A chat endpoint is now a real runtime execution path for agent-to-agent
 communication. ADR 33 made same-session A2A execution faster by introducing cached preflight and
 warm Pi RPC runners, but it did not change the outbound response contract.
 
@@ -29,7 +29,7 @@ A2A callers need machine-facing response guarantees for common automation flows:
 - call another agent and suppress reasoning noise from the response stream
 - require the final response text to be valid JSON
 - distinguish "the model produced invalid JSON" from transport/runtime failure
-- continue using `/api/a2a/chat` SSE when streaming is desired
+- continue using legacy Astro A2A SSE when streaming is desired
 - optionally use a non-streaming JSON transport when the caller wants a normal HTTP JSON response
 
 Prompt-only instructions are not enough. A model can ignore instructions, produce prose before JSON,
@@ -115,7 +115,7 @@ Astro will interpret these `response_format` forms as strict JSON:
 }
 ```
 
-For strict JSON over `/api/a2a/chat`, Astro must buffer assistant text instead of forwarding
+For strict JSON over legacy Astro A2A chat, Astro must buffer assistant text instead of forwarding
 `text-start`, `text-delta`, and `text-end` immediately.
 
 At assistant completion:
@@ -177,7 +177,7 @@ as proof that the model response is semantically correct.
 
 ### Transport Boundary
 
-`/api/a2a/chat` remains an SSE endpoint. Strict JSON guarantees the assistant text payload, not the
+The legacy Astro A2A chat path remains an SSE endpoint. Strict JSON guarantees the assistant text payload, not the
 HTTP transport envelope.
 
 If callers need the HTTP response itself to be JSON, Astro should support either:
@@ -209,8 +209,8 @@ The non-streaming transport is a separate implementation concern. It must reuse 
 validation rules as SSE.
 
 Transport decision: Astro should add a separate non-streaming endpoint, not overload
-`/api/a2a/chat` with `stream: false`. The preferred endpoint shape is `/api/a2a/message/send`
-because it matches A2A naming, keeps `/api/a2a/chat` as an SSE-only route, and lets callers choose a
+legacy Astro A2A chat with `stream: false`. The preferred endpoint shape is a message-send route
+because it matches A2A naming, keeps legacy Astro A2A chat as an SSE-only route, and lets callers choose a
 plain HTTP JSON contract without changing the existing streaming route semantics.
 
 ## Per-request vs Durable State
@@ -259,7 +259,7 @@ This ADR does not:
 - change model reasoning effort or provider reasoning controls
 - remove reasoning from stored checkpoint metadata globally
 - make every A2A response JSON by default
-- replace `/api/a2a/chat` SSE
+- replace legacy Astro A2A SSE
 - implement schema validation if no JSON schema validator is present
 - guarantee semantic correctness of model-produced JSON beyond syntactic/schema validity
 

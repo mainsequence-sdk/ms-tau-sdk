@@ -31,10 +31,12 @@ import {
 	normalizeA2AEnvelope,
 	normalizeA2AResponseFormat,
 	type A2AEnvelope,
+	type A2AResponseFormat,
 } from "./a2a-envelope.js";
 import {
 	buildStrictJsonRepairPrompt,
 	normalizeA2AOutputOptions,
+	shouldSuppressA2AClientChunk,
 	type A2AOutputOptions,
 	validateStrictJsonText,
 } from "./a2a-output.js";
@@ -42,11 +44,6 @@ import {
 	normalizeA2ARuntimeOptions,
 	type A2ARuntimeOptions,
 } from "./a2a-runtime-options.js";
-import {
-	A2ASessionRuntimeRegistry,
-	type A2ASessionRuntimeAttachment,
-	type A2ASessionRuntimeState,
-} from "./a2a-session-runtime.js";
 import {
 	repairPiSessionJsonlCurrentBranch,
 	validatePiSessionJsonlCurrentBranch,
@@ -111,6 +108,7 @@ import {
 } from "./llm-passthrough.js";
 import type { AgentConfig } from "../../pi/extensions/tools/specialist-delegate/agents.js";
 import {
+	fetchBackendAgentSessionAgentCard,
 	fetchBackendAgentSession,
 	resolveMainsequenceUserId,
 	shouldRegisterAgents,
@@ -710,108 +708,735 @@ const activeStreamSessions = new Map<string, ActiveStreamSession>();
 const activeStreamContexts = new Map<string, RequestContext>();
 const warmSessionRunners = new Map<string, WarmSessionRunner>();
 const warmSessionTurnQueues = new Map<string, Promise<void>>();
-const a2aSessionRuntimeRegistry = new A2ASessionRuntimeRegistry();
-const a2aSessionRuntimeBootstrapTasks = new Map<string, Promise<void>>();
 
-type A2ASessionRuntimeRoute =
-	| { agentSessionUid: string; action: "runtime" }
-	| { agentSessionUid: string; action: "chat" | "cancel" | "detach" };
+type A2AStandardRoute =
+	| { kind: "message_send" }
+	| { kind: "message_stream" }
+	| { kind: "tasks" }
+	| { kind: "task_get"; taskId: string }
+	| { kind: "task_cancel"; taskId: string }
+	| { kind: "task_subscribe"; taskId: string }
+	| { kind: "push_config_create"; taskId: string }
+	| { kind: "push_config_list"; taskId: string }
+	| { kind: "push_config_get"; taskId: string; configId: string }
+	| { kind: "push_config_delete"; taskId: string; configId: string }
+	| { kind: "extended_agent_card" }
+	| { kind: "rpc" };
 
-function matchA2ASessionRuntimeRoute(pathname: string): A2ASessionRuntimeRoute | null {
-	const match = pathname.match(/^\/api\/a2a\/sessions\/([^/]+)\/runtime(?:\/([^/]+))?$/);
-	if (!match) return null;
-	const agentSessionUid = normalizeRuntimeSessionId(decodeURIComponent(match[1]));
-	if (!agentSessionUid) return null;
-	const suffix = match[2] ? decodeURIComponent(match[2]) : null;
-	if (suffix == null) return { agentSessionUid, action: "runtime" };
-	if (suffix === "chat" || suffix === "cancel" || suffix === "detach") {
-		return { agentSessionUid, action: suffix };
+type A2AStandardTaskState =
+	| "TASK_STATE_SUBMITTED"
+	| "TASK_STATE_WORKING"
+	| "TASK_STATE_INPUT_REQUIRED"
+	| "TASK_STATE_COMPLETED"
+	| "TASK_STATE_FAILED"
+	| "TASK_STATE_CANCELED"
+	| "TASK_STATE_REJECTED"
+	| "TASK_STATE_AUTH_REQUIRED";
+
+type A2AStandardTaskRecord = {
+	id: string;
+	contextId: string;
+	status: {
+		state: A2AStandardTaskState;
+		timestamp: string;
+		message?: Record<string, unknown>;
+	};
+	artifacts: Array<Record<string, unknown>>;
+	createdAt: string;
+	updatedAt: string;
+	error?: {
+		code: string;
+		message: string;
+	};
+};
+
+type A2AStandardPushNotificationConfigRecord = {
+	id: string;
+	taskId: string;
+	config: Record<string, unknown>;
+	createdAt: string;
+	updatedAt: string;
+};
+
+type A2AStandardPreparedTurn = {
+	contextId: string;
+	messageId: string;
+	messageText: string;
+	agentType: string;
+	userUid: string;
+	responseFormat: A2AResponseFormat;
+	jsonRepairAttempts: number;
+	strictJson: boolean;
+	returnImmediately: boolean;
+	runtimeTurnTimeoutSeconds: number;
+	sourceBody: Record<string, unknown>;
+};
+
+type A2AStandardPreparedTurnDraft = Omit<A2AStandardPreparedTurn, "agentType" | "userUid">;
+
+type A2AStandardInternalResult =
+	| {
+			ok: true;
+			text: string;
+			json: unknown;
+			usage: unknown;
+			events: Array<Record<string, unknown>>;
+	  }
+	| {
+			ok: false;
+			statusCode: number;
+			code: string;
+			message: string;
+			detail?: string;
+			raw?: unknown;
+	  };
+
+const A2A_STANDARD_REST_BASE = "/api/a2a/v1";
+const A2A_STANDARD_RPC_PATH = "/api/a2a/rpc";
+const A2A_OUTPUT_CONTRACT_EXTENSION_URI =
+	"https://mainsequence.ai/a2a/extensions/output-contract/v1";
+const A2A_RUNTIME_EXTENSION_URI = "https://mainsequence.ai/a2a/extensions/runtime/v1";
+const a2aStandardTasks = new Map<string, A2AStandardTaskRecord>();
+const a2aStandardPushNotificationConfigs = new Map<
+	string,
+	Map<string, A2AStandardPushNotificationConfigRecord>
+>();
+
+function matchA2AStandardRoute(pathname: string): A2AStandardRoute | null {
+	if (pathname === `${A2A_STANDARD_REST_BASE}/message:send`) return { kind: "message_send" };
+	if (pathname === `${A2A_STANDARD_REST_BASE}/message:stream`) return { kind: "message_stream" };
+	if (pathname === `${A2A_STANDARD_REST_BASE}/tasks`) return { kind: "tasks" };
+	if (pathname === `${A2A_STANDARD_REST_BASE}/extendedAgentCard`) {
+		return { kind: "extended_agent_card" };
 	}
+	if (pathname === A2A_STANDARD_RPC_PATH) return { kind: "rpc" };
+
+	const taskCancelMatch = pathname.match(/^\/api\/a2a\/v1\/tasks\/([^/]+):cancel$/);
+	if (taskCancelMatch) return { kind: "task_cancel", taskId: decodeURIComponent(taskCancelMatch[1]) };
+
+	const taskSubscribeMatch = pathname.match(/^\/api\/a2a\/v1\/tasks\/([^/]+):subscribe$/);
+	if (taskSubscribeMatch) {
+		return { kind: "task_subscribe", taskId: decodeURIComponent(taskSubscribeMatch[1]) };
+	}
+
+	const pushConfigMatch = pathname.match(
+		/^\/api\/a2a\/v1\/tasks\/([^/]+)\/pushNotificationConfigs(?:\/([^/]+))?$/,
+	);
+	if (pushConfigMatch) {
+		const taskId = decodeURIComponent(pushConfigMatch[1]);
+		const configId = pushConfigMatch[2] ? decodeURIComponent(pushConfigMatch[2]) : null;
+		if (configId) {
+			return { kind: "push_config_get", taskId, configId };
+		}
+		return { kind: "push_config_list", taskId };
+	}
+
+	const taskGetMatch = pathname.match(/^\/api\/a2a\/v1\/tasks\/([^/]+)$/);
+	if (taskGetMatch) return { kind: "task_get", taskId: decodeURIComponent(taskGetMatch[1]) };
+
 	return null;
 }
 
-function deriveSessionRuntimeState(
-	record: A2ASessionRuntimeAttachment,
-): A2ASessionRuntimeState {
-	if (record.state === "detached" || record.state === "failed") return record.state;
-	const active = getActiveStreamSession(record.agentSessionUid, record.agentSessionUid);
-	if (active?.cancelling || active) return "busy";
-	const runner = warmSessionRunners.get(record.agentSessionUid);
-	if (!runner) return record.state;
-	if (runner.currentTurn && !runner.currentTurn.completed) return "busy";
-	if (runner.state === "idle" && runner.readyEvent) return "ready";
-	if (runner.state === "running") return "busy";
-	if (runner.state === "starting") return "starting";
-	if (runner.state === "stopped" || runner.state === "stopping") return record.state;
-	return record.state;
+function writeJsonResponse(
+	res: import("node:http").ServerResponse,
+	statusCode: number,
+	body: unknown,
+	contentType: string,
+) {
+	res.writeHead(statusCode, {
+		"Content-Type": contentType,
+	});
+	res.end(JSON.stringify(body));
 }
 
-function serializeSessionRuntimeAttachment(record: A2ASessionRuntimeAttachment) {
-	const runner = warmSessionRunners.get(record.agentSessionUid);
-	const state = deriveSessionRuntimeState(record);
+function writeA2AJson(
+	res: import("node:http").ServerResponse,
+	statusCode: number,
+	body: unknown,
+) {
+	writeJsonResponse(res, statusCode, body, "application/a2a+json");
+}
+
+function writeJsonRpcJson(
+	res: import("node:http").ServerResponse,
+	statusCode: number,
+	body: unknown,
+) {
+	writeJsonResponse(res, statusCode, body, "application/json");
+}
+
+function buildA2ABadRequestError(message: string, field?: string) {
 	return {
-		ok: true,
-		agent_session_uid: record.agentSessionUid,
-		state,
-		runner: runner
-			? {
-					kind: "pi-rpc",
-					state: runner.state,
-					ready: Boolean(runner.readyEvent),
-					started_at: runner.startedAt,
-					last_used_at: runner.lastUsedAt,
-			  }
-			: {
-					kind: "pi-rpc",
-					state: "not_started",
-					ready: false,
-					started_at: null,
-					last_used_at: null,
-			  },
-		preflight: {
-			ready: Boolean(readPreparedSessionRuntime(record.agentSessionUid)),
+		error: {
+			code: -32602,
+			message,
+			data: field
+				? [
+						{
+							"@type": "type.googleapis.com/google.rpc.BadRequest",
+							fieldViolations: [
+								{
+									field,
+									description: message,
+								},
+							],
+						},
+				  ]
+				: undefined,
 		},
-		attached_at: record.attachedAt,
-		updated_at: record.updatedAt,
-		expires_at: record.expiresAt,
-		detached_at: record.detachedAt,
-		last_error: record.lastError,
 	};
 }
 
-function writeMissingSessionRuntime(
+function writeA2ABadRequest(
 	res: import("node:http").ServerResponse,
-	agentSessionUid: string,
+	message: string,
+	field?: string,
 ) {
-	json(res, 404, {
-		ok: false,
-		error: "session_runtime_not_attached",
-		message: "No live runtime is attached for this backend session.",
-		agent_session_uid: agentSessionUid,
-	});
+	writeA2AJson(res, 400, buildA2ABadRequestError(message, field));
 }
 
-function createDetachedRuntimeResponse(): import("node:http").ServerResponse {
+function buildJsonRpcError(id: unknown, code: number, message: string, data?: unknown) {
 	return {
-		writableEnded: false,
-		destroyed: false,
-		headersSent: false,
-		writeHead() {
-			return this;
+		jsonrpc: "2.0",
+		id: id ?? null,
+		error: {
+			code,
+			message,
+			...(data !== undefined ? { data } : {}),
 		},
-		write() {
-			return true;
+	};
+}
+
+function normalizeA2AMetadata(value: unknown): Record<string, unknown> {
+	return isPlainObject(value) ? value : {};
+}
+
+function extractA2AStringArray(value: unknown): string[] {
+	if (!Array.isArray(value)) return [];
+	return value.filter((entry): entry is string => typeof entry === "string" && entry.trim().length > 0);
+}
+
+function extractA2AMessageText(parts: unknown):
+	| { ok: true; text: string }
+	| { ok: false; message: string; field: string } {
+	if (!Array.isArray(parts) || parts.length === 0) {
+		return {
+			ok: false,
+			message: "A2A message.parts must contain at least one part.",
+			field: "message.parts",
+		};
+	}
+	const textParts: string[] = [];
+	for (const [index, part] of parts.entries()) {
+		if (!isPlainObject(part)) {
+			return {
+				ok: false,
+				message: "A2A message parts must be objects.",
+				field: `message.parts[${index}]`,
+			};
+		}
+		if (typeof part.text === "string") {
+			textParts.push(part.text);
+			continue;
+		}
+		if (part.data !== undefined) {
+			textParts.push(JSON.stringify(part.data));
+			continue;
+		}
+		return {
+			ok: false,
+			message: "Only text and data A2A message parts are supported in this adapter pass.",
+			field: `message.parts[${index}]`,
+		};
+	}
+	const text = textParts.join("\n").trim();
+	if (!text) {
+		return {
+			ok: false,
+			message: "A2A message.parts did not contain non-empty text or data.",
+			field: "message.parts",
+		};
+	}
+	return { ok: true, text };
+}
+
+function resolveA2AStandardResponseFormat(input: {
+	envelope: Record<string, unknown>;
+	message: Record<string, unknown>;
+}): {
+	responseFormat: A2AResponseFormat;
+	strictJson: boolean;
+	jsonRepairAttempts: number;
+} {
+	const configuration = extractObjectPropertyRecord(input.envelope, "configuration") ?? {};
+	const metadata = {
+		...normalizeA2AMetadata(input.message.metadata),
+		...normalizeA2AMetadata(input.envelope.metadata),
+	};
+	const outputContract = isPlainObject(metadata[A2A_OUTPUT_CONTRACT_EXTENSION_URI])
+		? (metadata[A2A_OUTPUT_CONTRACT_EXTENSION_URI] as Record<string, unknown>)
+		: {};
+	const acceptedOutputModes = extractA2AStringArray(configuration.acceptedOutputModes);
+	const explicitResponseFormat =
+		outputContract.response_format ??
+		outputContract.responseFormat ??
+		configuration.response_format ??
+		configuration.responseFormat;
+	const jsonRepairAttempts = Math.max(
+		0,
+		Math.floor(
+			Number(
+				outputContract.json_repair_attempts ??
+					outputContract.jsonRepairAttempts ??
+					configuration.json_repair_attempts ??
+					configuration.jsonRepairAttempts ??
+					3,
+			) || 0,
+		),
+	);
+	if (explicitResponseFormat !== undefined) {
+		return {
+			responseFormat: normalizeA2AResponseFormat(explicitResponseFormat),
+			strictJson: true,
+			jsonRepairAttempts,
+		};
+	}
+	if (outputContract.schema !== undefined) {
+		return {
+			responseFormat: {
+				type: "json_schema",
+				strict: true,
+				schema: outputContract.schema,
+			},
+			strictJson: true,
+			jsonRepairAttempts,
+		};
+	}
+	if (acceptedOutputModes.some((mode) => mode.toLowerCase() === "application/json")) {
+		return {
+			responseFormat: {
+				type: "dictionary",
+				strict: true,
+			},
+			strictJson: true,
+			jsonRepairAttempts,
+		};
+	}
+	return {
+		responseFormat: null,
+		strictJson: false,
+		jsonRepairAttempts,
+	};
+}
+
+function resolveA2ARuntimeTurnTimeoutSeconds(input: {
+	envelope: Record<string, unknown>;
+	message: Record<string, unknown>;
+}): number {
+	const metadata = {
+		...normalizeA2AMetadata(input.message.metadata),
+		...normalizeA2AMetadata(input.envelope.metadata),
+	};
+	const runtimeControls = isPlainObject(metadata[A2A_RUNTIME_EXTENSION_URI])
+		? (metadata[A2A_RUNTIME_EXTENSION_URI] as Record<string, unknown>)
+		: {};
+	const value =
+		runtimeControls.runtime_turn_timeout_seconds ??
+		runtimeControls.runtimeTurnTimeoutSeconds ??
+		input.envelope.runtime_turn_timeout_seconds ??
+		input.envelope.runtimeTurnTimeoutSeconds;
+	const numeric = Number(value);
+	if (!Number.isFinite(numeric) || numeric <= 0) return 0;
+	return Math.floor(numeric);
+}
+
+function shouldReturnA2AImmediately(envelope: Record<string, unknown>): boolean {
+	const configuration = extractObjectPropertyRecord(envelope, "configuration") ?? {};
+	return configuration.returnImmediately === true || configuration.blocking === false;
+}
+
+function prepareA2AStandardTurn(
+	envelope: Record<string, unknown>,
+): { ok: true; value: A2AStandardPreparedTurnDraft } | { ok: false; message: string; field?: string } {
+	const message = extractObjectPropertyRecord(envelope, "message");
+	if (!message) {
+		return {
+			ok: false,
+			message: "A2A request body must include a message object.",
+			field: "message",
+		};
+	}
+	const role = extractStringProperty(message, "role");
+	if (role && role !== "ROLE_USER" && role !== "user") {
+		return {
+			ok: false,
+			message: "A2A message.role must be ROLE_USER.",
+			field: "message.role",
+		};
+	}
+	const contextId = normalizeRuntimeSessionId(
+		extractStringProperty(message, "contextId", "context_id") ??
+			extractStringProperty(envelope, "contextId", "context_id"),
+	);
+	if (!contextId) {
+		return {
+			ok: false,
+			message:
+				"Phase 1 A2A requests require message.contextId mapped to an existing Main Sequence AgentSession.uid.",
+			field: "message.contextId",
+		};
+	}
+	const messageId = extractStringProperty(message, "messageId", "message_id");
+	if (!messageId) {
+		return {
+			ok: false,
+			message: "A2A message.messageId is required and must be generated by the client.",
+			field: "message.messageId",
+		};
+	}
+	const text = extractA2AMessageText(message.parts);
+	if (text.ok === false) return text;
+	const responseFormat = resolveA2AStandardResponseFormat({ envelope, message });
+	return {
+		ok: true,
+		value: {
+			contextId,
+			messageId,
+			messageText: text.text,
+			responseFormat: responseFormat.responseFormat,
+			jsonRepairAttempts: responseFormat.jsonRepairAttempts,
+			strictJson: responseFormat.strictJson,
+			returnImmediately: shouldReturnA2AImmediately(envelope),
+			runtimeTurnTimeoutSeconds: resolveA2ARuntimeTurnTimeoutSeconds({ envelope, message }),
+			sourceBody: envelope,
 		},
-		end() {
-			return this;
+	};
+}
+
+function buildA2AAgentMessage(prepared: A2AStandardPreparedTurn, result: A2AStandardInternalResult) {
+	if (result.ok === false) {
+		return {
+			role: "ROLE_AGENT",
+			messageId: `msg-${randomUUID()}`,
+			contextId: prepared.contextId,
+			parts: [{ text: result.message }],
+		};
+	}
+	const jsonObject =
+		result.json !== null && isPlainObject(result.json) ? (result.json as Record<string, unknown>) : null;
+	return {
+		role: "ROLE_AGENT",
+		messageId: `msg-${randomUUID()}`,
+		contextId: prepared.contextId,
+		parts: jsonObject ? [{ data: jsonObject }] : [{ text: result.text }],
+	};
+}
+
+function buildA2AArtifactParts(result: A2AStandardInternalResult): Array<Record<string, unknown>> {
+	if (result.ok === false) return [{ text: result.message }];
+	if (result.json !== null && isPlainObject(result.json)) return [{ data: result.json }];
+	return [{ text: result.text }];
+}
+
+function createA2AStandardTask(contextId: string, state: A2AStandardTaskState): A2AStandardTaskRecord {
+	const now = new Date().toISOString();
+	const record: A2AStandardTaskRecord = {
+		id: `task-${randomUUID()}`,
+		contextId,
+		status: {
+			state,
+			timestamp: now,
 		},
-		destroy() {
-			return this;
+		artifacts: [],
+		createdAt: now,
+		updatedAt: now,
+	};
+	a2aStandardTasks.set(record.id, record);
+	if (a2aStandardTasks.size > 1000) {
+		const firstKey = a2aStandardTasks.keys().next().value;
+		if (typeof firstKey === "string") a2aStandardTasks.delete(firstKey);
+	}
+	return record;
+}
+
+function updateA2AStandardTask(
+	record: A2AStandardTaskRecord,
+	state: A2AStandardTaskState,
+	options: {
+		message?: string;
+		artifacts?: Array<Record<string, unknown>>;
+		error?: { code: string; message: string };
+	} = {},
+) {
+	const now = new Date().toISOString();
+	record.status = {
+		state,
+		timestamp: now,
+		...(options.message
+			? {
+					message: {
+						role: "ROLE_AGENT",
+						messageId: `msg-${randomUUID()}`,
+						contextId: record.contextId,
+						parts: [{ text: options.message }],
+					},
+			  }
+			: {}),
+	};
+	record.updatedAt = now;
+	if (options.artifacts) record.artifacts = options.artifacts;
+	if (options.error) record.error = options.error;
+	a2aStandardTasks.set(record.id, record);
+}
+
+function serializeA2AStandardTask(record: A2AStandardTaskRecord) {
+	return {
+		id: record.id,
+		contextId: record.contextId,
+		status: record.status,
+		...(record.artifacts.length ? { artifacts: record.artifacts } : {}),
+		...(record.error ? { metadata: { error: record.error } } : {}),
+	};
+}
+
+function buildA2ACompletedArtifacts(result: A2AStandardInternalResult): Array<Record<string, unknown>> {
+	return [
+		{
+			artifactId: `artifact-${randomUUID()}`,
+			parts: buildA2AArtifactParts(result),
 		},
-		once() {
-			return this;
+	];
+}
+
+function parseInternalA2ASse(raw: string): Array<Record<string, unknown>> {
+	const events: Array<Record<string, unknown>> = [];
+	const blocks = raw.split(/\n\n+/);
+	for (const block of blocks) {
+		const trimmed = block.trim();
+		if (!trimmed) continue;
+		const event: Record<string, unknown> = {};
+		const dataLines: string[] = [];
+		for (const line of trimmed.split(/\r?\n/)) {
+			if (!line || line.startsWith(":")) continue;
+			const separatorIndex = line.indexOf(":");
+			const key = separatorIndex === -1 ? line : line.slice(0, separatorIndex);
+			const rawValue = separatorIndex === -1 ? "" : line.slice(separatorIndex + 1).replace(/^ /, "");
+			if (key === "data") {
+				dataLines.push(rawValue);
+			} else if (key) {
+				event[key] = rawValue;
+			}
+		}
+		if (dataLines.length > 0) {
+			const data = dataLines.join("\n");
+			if (data === "[DONE]") {
+				event.done = true;
+				event.data = data;
+			} else {
+				try {
+					event.data = JSON.parse(data);
+				} catch {
+					event.data = data;
+				}
+			}
+		}
+		events.push(event);
+	}
+	return events;
+}
+
+function extractInternalA2AResult(raw: string): A2AStandardInternalResult {
+	const events = parseInternalA2ASse(raw);
+	let text = "";
+	let usage: unknown = null;
+	for (const event of events) {
+		const data = event.data;
+		if (!isPlainObject(data)) continue;
+		if (data.type === "error") {
+			return {
+				ok: false,
+				statusCode: 502,
+				code: typeof data.error_code === "string" ? data.error_code : "a2a_runtime_error",
+				message: typeof data.error === "string" ? data.error : "A2A runtime returned an error.",
+				detail: typeof data.error_detail === "string" ? data.error_detail : undefined,
+				raw: data,
+			};
+		}
+		if (data.type === "text-delta" && typeof data.textDelta === "string") {
+			text += data.textDelta;
+		} else if (data.type === "assistant-text" && typeof data.text === "string") {
+			text += data.text;
+		} else if (data.type === "finish") {
+			usage = data.usage ?? null;
+		}
+	}
+	const trimmedText = text.trim();
+	let parsedJson: unknown = null;
+	if (trimmedText) {
+		try {
+			parsedJson = JSON.parse(trimmedText);
+		} catch {
+			parsedJson = null;
+		}
+	}
+	return {
+		ok: true,
+		text: trimmedText,
+		json: parsedJson,
+		usage,
+		events,
+	};
+}
+
+function buildA2AStandardRuntimeChatPayload(prepared: A2AStandardPreparedTurn): Record<string, unknown> {
+	const caller = {
+		agent_type: "a2a-client",
+		protocol: "a2a",
+	};
+	const responseFormat = prepared.responseFormat ?? null;
+	return {
+		runtime_session_uid: prepared.contextId,
+		newChat: false,
+		threadId: prepared.contextId,
+		agentType: prepared.agentType,
+		user_uid: prepared.userUid,
+		system: buildA2ASystemInstruction({
+			callerAgentType: caller.agent_type,
+			responseFormat,
+			callerMetadata: caller,
+		}),
+		tools: {},
+		messages: [
+			{
+				role: "user",
+				content: [
+					{
+						type: "text",
+						text: prepared.messageText,
+					},
+				],
+			},
+		],
+		omit_reasoning: true,
+		response_format: responseFormat ?? undefined,
+		json_repair: {
+			attempts: prepared.jsonRepairAttempts,
 		},
-	} as unknown as import("node:http").ServerResponse;
+		runtime_turn_timeout_seconds: prepared.runtimeTurnTimeoutSeconds,
+		context: {
+			surfaceId: "a2a",
+			surfaceTitle: "Agent-to-Agent",
+			surfaceContextSource: "a2a",
+			user_uid: prepared.userUid,
+			a2a: {
+				enabled: true,
+				protocol: "a2a",
+				requestMessageId: prepared.messageId,
+				publicAdapter: true,
+				caller,
+				responseFormat,
+				omitReasoning: true,
+				jsonRepair: {
+					attempts: prepared.jsonRepairAttempts,
+				},
+				target_agent_session_uid: prepared.contextId,
+				runtime_session_uid: prepared.contextId,
+			},
+		},
+	};
+}
+
+async function resolveA2AStandardRuntimeIdentity(
+	req: import("node:http").IncomingMessage,
+	url: URL,
+	body: Record<string, unknown>,
+): Promise<
+	| { ok: true; agentType: string; userUid: string }
+	| { ok: false; statusCode: number; message: string; field?: string }
+> {
+	const runtimeProfile = resolveRuntimeProfile();
+	const runtimeProfileValidation = validateRuntimeProfile(runtimeProfile);
+	if (runtimeProfileValidation.ok === false) {
+		return {
+			ok: false,
+			statusCode: runtimeProfileValidation.statusCode,
+			message: runtimeProfileValidation.message,
+		};
+	}
+
+	const userUid = resolveUserIdFromRequest(req, url, body);
+	if (!userUid) {
+		return {
+			ok: false,
+			statusCode: 401,
+			message:
+				"Missing user identity. Provide user_uid, a supported user UID header, or a Bearer JWT with a user_uid claim.",
+			field: "authorization",
+		};
+	}
+
+	const agentType = runtimeProfile.kind;
+	if (!ALLOWED_AGENT_TYPES.has(agentType)) {
+		return {
+			ok: false,
+			statusCode: 400,
+			message: `Unsupported runtime profile agent type "${agentType}".`,
+		};
+	}
+
+	return { ok: true, agentType, userUid };
+}
+
+async function runA2AStandardRuntimeTurn(
+	prepared: A2AStandardPreparedTurn,
+): Promise<A2AStandardInternalResult> {
+	const runtimeUrl = `http://127.0.0.1:${configuredPort}/api/chat`;
+	try {
+		const response = await fetch(runtimeUrl, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+				Accept: "text/event-stream",
+			},
+			body: JSON.stringify(buildA2AStandardRuntimeChatPayload(prepared)),
+		});
+		const raw = await response.text();
+		if (!response.ok) {
+			return {
+				ok: false,
+				statusCode: response.status,
+				code: "a2a_runtime_transport_error",
+				message: `A2A runtime transport failed with HTTP ${response.status}.`,
+				detail: raw,
+			};
+		}
+		return extractInternalA2AResult(raw);
+	} catch (error) {
+		return {
+			ok: false,
+			statusCode: 502,
+			code: "a2a_runtime_transport_error",
+			message: error instanceof Error ? error.message : String(error),
+		};
+	}
+}
+
+async function executeA2AStandardTask(record: A2AStandardTaskRecord, prepared: A2AStandardPreparedTurn) {
+	updateA2AStandardTask(record, "TASK_STATE_WORKING");
+	const result = await runA2AStandardRuntimeTurn(prepared);
+	if (result.ok === false) {
+		updateA2AStandardTask(record, "TASK_STATE_FAILED", {
+			message: result.message,
+			error: {
+				code: result.code,
+				message: result.detail ?? result.message,
+			},
+		});
+		return;
+	}
+	updateA2AStandardTask(record, "TASK_STATE_COMPLETED", {
+		artifacts: buildA2ACompletedArtifacts(result),
+	});
 }
 
 function getActiveStreamSessionKey(sessionKey: string, agentSessionId: string | null): string {
@@ -1810,127 +2435,6 @@ function extractUidProperty(record: Record<string, unknown>, ...keys: string[]):
 		if (value) return value;
 	}
 	return null;
-}
-
-function mergeSystemPrompt(base: string | undefined, injected: string): string {
-	const parts = [typeof base === "string" ? base.trim() : "", injected.trim()].filter(Boolean);
-	return parts.join("\n\n");
-}
-
-function normalizeA2AChatMessages(messages: unknown): Array<Record<string, unknown>> | null {
-	if (!Array.isArray(messages)) return null;
-	const normalized: Array<Record<string, unknown>> = [];
-	for (const entry of messages) {
-		if (!isPlainObject(entry)) continue;
-		const role = extractStringProperty(entry, "role");
-		if (!role) continue;
-		const rawContent = entry.content;
-		const content =
-			typeof rawContent === "string"
-				? [{ type: "text", text: rawContent }]
-				: Array.isArray(rawContent)
-					? rawContent
-					: null;
-		if (!content || extractText(content).trim().length === 0) continue;
-		normalized.push({
-			...entry,
-			role,
-			content,
-		});
-	}
-	return normalized.length > 0 ? normalized : null;
-}
-
-function normalizeA2AChatRequestBody(
-	body: Record<string, unknown>,
-): { ok: true; body: Record<string, unknown> } | { ok: false; statusCode: number; error: string; message: string } {
-	const runtimeSessionId =
-		extractStringProperty(body, "runtime_session_uid", "runtimeSessionUid") ?? null;
-	const normalizedMessages = normalizeA2AChatMessages(body.messages);
-	const task = extractStringProperty(body, "task", "message", "input", "prompt", "request");
-	if (!normalizedMessages && !task) {
-		return {
-			ok: false,
-			statusCode: 400,
-			error: "missing_a2a_task",
-			message:
-				"A2A chat requests require either canonical messages or a non-empty task, message, input, prompt, or request field.",
-		};
-	}
-
-	const caller =
-		extractObjectPropertyRecord(body, "caller", "caller_metadata", "callerMetadata") ?? {};
-	const callerAgentType =
-		extractStringProperty(caller, "agent_type", "agentType") ??
-		"unknown-agent";
-	const context = extractObjectPropertyRecord(body, "context") ?? {};
-	const a2aContext = extractObjectPropertyRecord(context, "a2a") ?? {};
-	const responseFormat = normalizeA2AResponseFormat(
-		body.response_format ??
-			body.responseFormat ??
-			a2aContext.response_format ??
-			a2aContext.responseFormat ??
-			context.response_format ??
-			context.responseFormat,
-	);
-	const a2aOutputOptions = normalizeA2AOutputOptions({
-		enabled: true,
-		body,
-		a2aContext,
-		context,
-	});
-	const userUid =
-		extractStringProperty(body, "user_uid") ??
-		extractStringProperty(context, "user_uid");
-	const mergedContext: Record<string, unknown> = {
-		...context,
-		surfaceId: "a2a",
-		surfaceTitle: "Agent-to-Agent",
-		surfaceContextSource: "a2a",
-		...(userUid ? { user_uid: userUid } : {}),
-		a2a: {
-			enabled: true,
-			caller,
-			responseFormat,
-			omitReasoning: a2aOutputOptions.omitReasoning,
-			jsonRepair: a2aOutputOptions.jsonRepair,
-		},
-	};
-
-	const injectedSystem = buildA2ASystemInstruction({
-		callerAgentType,
-		responseFormat,
-		callerMetadata: caller,
-	});
-
-	return {
-		ok: true,
-		body: {
-			...body,
-			...(runtimeSessionId ? { runtime_session_uid: runtimeSessionId } : {}),
-			...(body.newChat !== undefined ? { newChat: body.newChat } : {}),
-			...(runtimeSessionId ? { newChat: false } : {}),
-			system: mergeSystemPrompt(
-				typeof body.system === "string" ? body.system : undefined,
-				injectedSystem,
-			),
-			context: mergedContext,
-			tools: {},
-			messages:
-				normalizedMessages ??
-				[
-					{
-						role: "user",
-						content: [
-							{
-								type: "text",
-								text: task,
-							},
-						],
-					},
-				],
-		},
-	};
 }
 
 function extractBackendSessionAgentId(payload: Record<string, unknown>): string | null {
@@ -4825,8 +5329,7 @@ function logReadableChunk(ctx: RequestContext, chunk: ReturnType<typeof attachAg
 }
 
 function shouldSuppressClientChunk(ctx: RequestContext, chunk: ReturnType<typeof attachAgentUid>): boolean {
-	if (!ctx.a2aOutputOptions.omitReasoning) return false;
-	return chunk.type === "reasoning-start" || chunk.type === "reasoning-delta" || chunk.type === "reasoning-end";
+	return shouldSuppressA2AClientChunk(ctx.a2aOutputOptions, chunk);
 }
 
 function abortStreamOnPersistenceFailure(ctx: RequestContext, error: unknown) {
@@ -5038,6 +5541,10 @@ function appendStrictJsonAssistantText(ctx: RequestContext, text: string) {
 	ctx.strictJsonBufferedText += text;
 }
 
+function shouldBufferAssistantText(ctx: RequestContext): boolean {
+	return ctx.a2aOutputOptions.strictJson || ctx.a2aOutputOptions.omitReasoning;
+}
+
 type StrictJsonRepairResult =
 	| { ok: true; text: string }
 	| { ok: false; error: string };
@@ -5174,7 +5681,12 @@ function writeA2AInvalidJsonResponseError(ctx: RequestContext, detail: string) {
 
 async function finalizeStrictJsonAssistantText(ctx: RequestContext): Promise<boolean> {
 	const options = ctx.a2aOutputOptions;
-	if (!options.strictJson) return true;
+	if (!options.strictJson) {
+		if (options.omitReasoning) {
+			emitAssistantText(ctx, ctx.strictJsonBufferedText);
+		}
+		return true;
+	}
 
 	const originalText = ctx.strictJsonBufferedText;
 	let validation = validateStrictJsonText(originalText, options);
@@ -5321,21 +5833,6 @@ function writeDone(ctx: RequestContext) {
 	clearRuntimeTurnTimeout(ctx);
 	stopCheckpointLeaseRenewal(ctx);
 	clearActiveStreamSession(ctx);
-	if (ctx.agentSessionId) {
-		const runtimeRecord = a2aSessionRuntimeRegistry.get(ctx.agentSessionId);
-		if (runtimeRecord && runtimeRecord.state !== "detached") {
-			a2aSessionRuntimeRegistry.update(ctx.agentSessionId, {
-				state: ctx.terminalError ? "failed" : "ready",
-				lastError: ctx.terminalError
-					? {
-							code: ctx.terminalError.errorCode ?? "runtime_error",
-							message: ctx.terminalError.errorDetail ?? "Runtime ended with an error.",
-							at: new Date().toISOString(),
-					  }
-					: null,
-			});
-		}
-	}
 	if (ctx.clientAttached && !ctx.res.writableEnded && !ctx.res.destroyed) {
 		try {
 			ctx.res.write("data: [DONE]\n\n");
@@ -5756,7 +6253,7 @@ function handleAssistantDelta(ctx: RequestContext, evt: any) {
 			return;
 		case "text_start": {
 			ctx.piAssistantTextSeen = true;
-			if (ctx.a2aOutputOptions.strictJson) {
+			if (shouldBufferAssistantText(ctx)) {
 				return;
 			}
 			ctx.textCounter += 1;
@@ -5767,7 +6264,7 @@ function handleAssistantDelta(ctx: RequestContext, evt: any) {
 		case "text_delta":
 			if (typeof evt.delta === "string") {
 				ctx.piAssistantTextSeen = true;
-				if (ctx.a2aOutputOptions.strictJson) {
+				if (shouldBufferAssistantText(ctx)) {
 					appendStrictJsonAssistantText(ctx, evt.delta);
 					return;
 				}
@@ -5775,7 +6272,7 @@ function handleAssistantDelta(ctx: RequestContext, evt: any) {
 			}
 			return;
 		case "text_end":
-			if (ctx.a2aOutputOptions.strictJson) {
+			if (shouldBufferAssistantText(ctx)) {
 				return;
 			}
 			writeChunk(ctx, { type: "text-end" });
@@ -5848,12 +6345,39 @@ function handleAssistantMessageEnd(ctx: RequestContext, message: unknown) {
 	const text = extractTextParts((message as { content?: unknown }).content).trim();
 	if (!text) return;
 
-	if (ctx.a2aOutputOptions.strictJson) {
+	if (shouldBufferAssistantText(ctx)) {
 		appendStrictJsonAssistantText(ctx, text);
 		return;
 	}
 
 	emitAssistantText(ctx, text);
+}
+
+function isTerminalAssistantStopReason(stopReason: string | null): boolean {
+	if (!stopReason) return false;
+	const normalized = stopReason.toLowerCase().replace(/[\s_-]/g, "");
+	return normalized !== "tooluse" && normalized !== "toolcall" && normalized !== "toolcalls";
+}
+
+function completeWarmRunnerAssistantMessageEnd(
+	runner: WarmSessionRunner,
+	ctx: RequestContext,
+	message: unknown,
+) {
+	if (!message || typeof message !== "object") return;
+	const stopReason = normalizeLogString((message as { stopReason?: unknown }).stopReason);
+	if (!isTerminalAssistantStopReason(stopReason)) return;
+
+	if (stopReason === "error") {
+		writeChunk(ctx, buildProviderResponseErrorEvent(ctx.lastAssistantErrorMessage));
+		writeDone(ctx);
+		void completeWarmRunnerTurn(runner, "stream_error");
+		return;
+	}
+
+	startAssistantCompletion(ctx, stopReason ?? "stop", ctx.lastAssistantUsage);
+	const completion = ctx.assistantCompletionPending ?? Promise.resolve();
+	void completion.finally(() => completeWarmRunnerTurn(runner, "stream_finish"));
 }
 
 function isA2AWarmRunnerEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -6562,11 +7086,11 @@ async function completeWarmRunnerTurn(
 			...turn.prepared.preparedRuntime,
 			lastUsedAt: new Date().toISOString(),
 		};
-		runner.lastUsedAt = runner.preparedRuntime.lastUsedAt;
-		writePreparedSessionRuntime(runner.preparedRuntime);
-		if (runner.state === "idle") {
-			scheduleWarmRunnerIdleShutdown(runner);
-		}
+			runner.lastUsedAt = runner.preparedRuntime.lastUsedAt;
+			writePreparedSessionRuntime(runner.preparedRuntime);
+			if (runner.state === "idle") {
+				scheduleWarmRunnerIdleShutdown(runner);
+			}
 		turn.resolve();
 	}
 }
@@ -6651,6 +7175,7 @@ function handleWarmRunnerParsedLine(runner: WarmSessionRunner, parsed: any) {
 
 	if (parsed?.type === "message_end") {
 		handleAssistantMessageEnd(ctx, parsed.message);
+		completeWarmRunnerAssistantMessageEnd(runner, ctx, parsed.message);
 		return;
 	}
 
@@ -6815,7 +7340,6 @@ async function getCompatibleWarmRunner(input: {
 	projectId: string | null;
 }): Promise<WarmSessionRunner> {
 	const key = input.prepared.preparedRuntime.agentSessionUid;
-	await waitForA2ASessionRuntimeBootstrap(key);
 	const existing = warmSessionRunners.get(key);
 	if (existing) {
 		const compatible = warmRunnerCompatible(existing, input.prepared.preparedRuntime);
@@ -6887,7 +7411,6 @@ async function dispatchWarmRunnerTurn(
 		writeWarmRunnerCommand(runner, {
 			type: "prompt",
 			message: prompt,
-			streamingBehavior: "followUp",
 		})
 			.then((response) => {
 				if (!isPlainObject(response) || response.success !== true) {
@@ -7715,427 +8238,515 @@ function methodNotAllowed(
 	);
 }
 
-function updateSessionRuntimeFailure(
-	agentSessionUid: string,
-	code: string,
-	message: string,
-) {
-	a2aSessionRuntimeRegistry.update(agentSessionUid, {
-		state: "failed",
-		lastError: {
-			code,
-			message,
-			at: new Date().toISOString(),
-		},
-	});
+function a2aTaskStateIsTerminal(state: A2AStandardTaskState): boolean {
+	return (
+		state === "TASK_STATE_COMPLETED" ||
+		state === "TASK_STATE_FAILED" ||
+		state === "TASK_STATE_CANCELED" ||
+		state === "TASK_STATE_REJECTED"
+	);
 }
 
-function buildBackgroundRuntimeContext(input: {
-	agentSessionUid: string;
-	threadId: string;
-	agentType: string;
-	userUid: string;
-	metadata: SessionMetadata;
-}): RequestContext {
-	const a2aOutputOptions = normalizeA2AOutputOptions({
-		enabled: false,
-		body: {},
-		a2aContext: {},
-		context: {},
-		envelopeResponseFormat: null,
-	});
-	const a2aRuntimeOptions: A2ARuntimeOptions = {
-		turnTimeoutMs: 0,
-	};
-	return {
-		res: createDetachedRuntimeResponse(),
-		messageId: `attach_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e6).toString(36)}`,
-		threadId: input.threadId,
-		sessionKey: input.agentSessionUid,
-		agentId: input.metadata.agentId,
-		agentUniqueId: input.metadata.agentUniqueId,
-			agentSessionId: input.agentSessionUid,
-			agentType: input.agentType,
-			userId: input.userUid,
-			conversationStore: createConversationStore({
-				sessionDir,
-				sessionKey: input.agentSessionUid,
-				threadId: input.threadId,
-				agentType: input.agentType,
-			agentUid: input.metadata.agentId,
-			agentSessionUid: input.agentSessionUid,
-			startedAt: input.metadata.startedAt,
-			...(input.metadata.a2a ? { a2a: input.metadata.a2a } : {}),
-		}),
-		logState: {
-			reasoning: null,
-			text: null,
-			toolCalls: new Map(),
-		},
-		eventId: 0,
-		textCounter: 0,
-		reasoningCounter: 0,
-		activeReasoningAnnotationOrdinal: null,
-		runtimeToolCounter: 0,
-		toolCallIds: new Map(),
-		piProcess: null,
-		cancelKillTimer: null,
-		runtimeTurnTimeoutTimer: null,
-		cancellation: null,
-		warmRunner: null,
-		clientAttached: false,
-		cancelOnClientDisconnect: false,
-		streamAbortHandlerAttached: false,
-		runtimeStarted: false,
-		finished: false,
-		terminalError: null,
-		system: undefined,
-		uiContext: {},
-		uiTools: {},
-		a2aOutputOptions,
-		a2aRuntimeOptions,
-		strictJsonBufferedText: "",
-		strictJsonRepairRuntime: null,
-		assistantCompletionPending: null,
-		sessionModelBinding: input.metadata.sessionModelBinding,
-		sessionConfigOverrides: input.metadata.sessionConfigOverrides,
-		responseProvider: null,
-		responseModel: null,
-		piAssistantTextSeen: false,
-		lastAssistantFinishReason: null,
-		lastAssistantErrorMessage: null,
-		lastAssistantUsage: undefined,
-		checkpointLease: null,
-	};
-}
-
-async function hydrateSessionRuntimeMetadata(input: {
-	agentSessionUid: string;
-	userUid: string;
-	threadId: string | null;
-}): Promise<SessionMetadata> {
-	const existing = readSessionMetadata(input.agentSessionUid);
-	if (existing?.agentId && existing.sessionModelBinding) return existing;
-	const hydrated = await attachHydratedBackendSession({
-		runtimeSessionId: input.agentSessionUid,
-		userId: input.userUid,
-		requestedThreadId: input.threadId,
-		existingMetadata: existing,
-		log: (message) => console.log(`[astro-stream] ${message}`),
-	});
-	if (hydrated.ok === false) {
-		throw new Error(hydrated.message);
-	}
-	writeSessionMetadata(input.agentSessionUid, hydrated.hydrated.metadata);
-	return hydrated.hydrated.metadata;
-}
-
-async function bootstrapA2ASessionRuntime(input: {
-	record: A2ASessionRuntimeAttachment;
-	userUid: string;
-	runtimeProfile: RuntimeProfile;
-	requestBody: Record<string, unknown>;
-}) {
-	const { record } = input;
-	if (input.runtimeProfile.kind !== "project-executor") {
-		await ensureMainsequenceCliAuthReady();
-	}
-
-	const existingRunner = warmSessionRunners.get(record.agentSessionUid);
-	if (existingRunner && existingRunner.state !== "stopping" && existingRunner.state !== "stopped") {
-		a2aSessionRuntimeRegistry.update(record.agentSessionUid, {
-			state: existingRunner.readyEvent ? "ready" : "starting",
-			lastError: null,
-		});
-		if (!existingRunner.readyEvent) await waitForWarmRunnerReady(existingRunner);
-		a2aSessionRuntimeRegistry.update(record.agentSessionUid, {
-			state: "ready",
-			lastError: null,
-		});
-		return;
-	}
-
-	const metadata = await hydrateSessionRuntimeMetadata({
-		agentSessionUid: record.agentSessionUid,
-		userUid: input.userUid,
-		threadId: record.threadId,
-	});
-	if (!metadata.agentId) {
-		throw new Error("Backend session metadata does not include an agent uid.");
-	}
-	if (!metadata.sessionModelBinding) {
-		throw new Error("Backend session metadata does not include a session model binding.");
-	}
-
-	const projectAttachment = resolveProjectAttachment({
-		agentType: record.agentType,
-		body: input.requestBody,
-		existingSessionMetadata: metadata,
-		runtimeProfile: input.runtimeProfile,
-	});
-	if (projectAttachment.ok === false) {
-		throw new Error(projectAttachment.message);
-	}
-
-	const threadId = metadata.threadId ?? record.threadId ?? record.agentSessionUid;
-		const ctx = buildBackgroundRuntimeContext({
-			agentSessionUid: record.agentSessionUid,
-			threadId,
-			agentType: record.agentType,
-			userUid: input.userUid,
-			metadata,
-		});
-	const prepared = await prepareWarmPiRuntime(ctx, {
-		cwd: projectAttachment.cwd ?? repoRoot,
-		projectId: projectAttachment.projectId,
-		agentConfig: null,
-	});
+async function resolvePreparedA2AStandardTurn(
+	req: import("node:http").IncomingMessage,
+	url: URL,
+	body: Record<string, unknown>,
+): Promise<
+	| { ok: true; prepared: A2AStandardPreparedTurn }
+	| { ok: false; statusCode: number; message: string; field?: string }
+> {
+	const prepared = prepareA2AStandardTurn(body);
 	if (prepared.ok === false) {
-		if ("handled" in prepared && prepared.handled) {
-			throw new Error(ctx.terminalError?.errorDetail ?? "Session runtime preflight failed.");
-		}
-		const fallbackReason = "fallbackReason" in prepared ? prepared.fallbackReason : "Session runtime preflight failed.";
-		throw new Error(fallbackReason);
+		return {
+			ok: false,
+			statusCode: 400,
+			message: prepared.message,
+			field: prepared.field,
+		};
 	}
-
-	try {
-		const existing = warmSessionRunners.get(record.agentSessionUid);
-		if (existing && existing.state !== "stopping" && existing.state !== "stopped") {
-			await waitForWarmRunnerReady(existing);
-		} else {
-			await startWarmRunner({
-				ctx,
-				prepared: prepared.value,
-				cwd: projectAttachment.cwd ?? repoRoot,
-				projectId: projectAttachment.projectId,
-			});
-		}
-		a2aSessionRuntimeRegistry.update(record.agentSessionUid, {
-			state: "ready",
-			threadId,
-			lastError: null,
-		});
-	} finally {
-		await prepared.value.finalizeProviderCredentials("startup");
-	}
+	const identity = await resolveA2AStandardRuntimeIdentity(req, url, body);
+	if (identity.ok === false) return identity;
+	return {
+		ok: true,
+		prepared: {
+			...prepared.value,
+			agentType: identity.agentType,
+			userUid: identity.userUid,
+		},
+	};
 }
 
-function startA2ASessionRuntimeBootstrap(input: {
-	record: A2ASessionRuntimeAttachment;
-	userUid: string;
-	runtimeProfile: RuntimeProfile;
-	requestBody: Record<string, unknown>;
-}) {
-	const key = input.record.agentSessionUid;
-	if (a2aSessionRuntimeBootstrapTasks.has(key)) return;
-	const task = Promise.resolve()
-		.then(() => bootstrapA2ASessionRuntime(input))
-		.catch((error) => {
-			const message = error instanceof Error ? error.message : String(error);
-			updateSessionRuntimeFailure(key, "runtime_bootstrap_failed", message);
-			logStructuredEvent({
-				severity: "ERROR",
-				component: "astro-stream",
-				event: "a2a_session_runtime_bootstrap_failed",
-				message: "Astro failed to bootstrap an attached A2A session runtime.",
-				data: {
-					agentSessionUid: key,
-					error: message,
+async function executeA2AStandardMessageSend(
+	req: import("node:http").IncomingMessage,
+	url: URL,
+	body: Record<string, unknown>,
+): Promise<{ statusCode: number; body: Record<string, unknown> }> {
+	const resolved = await resolvePreparedA2AStandardTurn(req, url, body);
+	if (resolved.ok === false) {
+		return {
+			statusCode: resolved.statusCode,
+			body: buildA2ABadRequestError(resolved.message, resolved.field),
+		};
+	}
+	const { prepared } = resolved;
+	if (prepared.returnImmediately) {
+		const task = createA2AStandardTask(prepared.contextId, "TASK_STATE_SUBMITTED");
+		void executeA2AStandardTask(task, prepared).catch((error) => {
+			updateA2AStandardTask(task, "TASK_STATE_FAILED", {
+				message: error instanceof Error ? error.message : String(error),
+				error: {
+					code: "a2a_task_execution_failed",
+					message: error instanceof Error ? error.message : String(error),
 				},
 			});
-		})
-		.finally(() => {
-			if (a2aSessionRuntimeBootstrapTasks.get(key) === task) {
-				a2aSessionRuntimeBootstrapTasks.delete(key);
-			}
 		});
-	a2aSessionRuntimeBootstrapTasks.set(key, task);
-}
-
-async function waitForA2ASessionRuntimeBootstrap(agentSessionUid: string) {
-	const task = a2aSessionRuntimeBootstrapTasks.get(agentSessionUid);
-	if (task) await task;
-}
-
-async function handleA2ASessionRuntimeCancel(
-	res: import("node:http").ServerResponse,
-	agentSessionUid: string,
-	body: Record<string, unknown>,
-) {
-	const record = a2aSessionRuntimeRegistry.get(agentSessionUid);
-	if (!record || record.state === "detached") {
-		writeMissingSessionRuntime(res, agentSessionUid);
-		return;
+		return {
+			statusCode: 200,
+			body: { task: serializeA2AStandardTask(task) },
+		};
 	}
 
-	const activeCtx = getActiveStreamContext(agentSessionUid, agentSessionUid);
-	const requestedByHolderId = activeCtx?.checkpointLease?.holderId ?? resolveCheckpointHolderId();
-	const cancelMessage =
-		typeof body.message === "string" && body.message.trim()
-			? body.message.trim()
-			: typeof body.reason === "string" && body.reason.trim()
-				? body.reason.trim()
-				: null;
-	const client = new SessionCheckpointClient({
-		env: process.env,
-		log: (message) => console.log(`[astro-stream] ${message}`),
-	});
-	const cancelResult = await client.requestRuntimeCancel({
-		agentSessionUid,
-		requestedByHolderId,
-		reason: "user_requested",
-		message: cancelMessage,
-	});
-	if (cancelResult.ok === false) {
-		logStructuredEvent({
-			severity: "ERROR",
-			component: "astro-stream",
-			event: "session_runtime_cancel_request_failed",
-			message: "Backend rejected or failed the attached session runtime cancellation request.",
-			data: {
-				agentSessionUid,
-				requestedByHolderId,
-				status: cancelResult.status,
-				error: cancelResult.error,
-				backendResponseText: cancelResult.responseText,
-				backendResponseBody: cancelResult.body,
+	const result = await runA2AStandardRuntimeTurn(prepared);
+	if (result.ok === false) {
+		return {
+			statusCode: result.statusCode,
+			body: {
+				error: {
+					code: -32000,
+					message: result.message,
+					data: {
+						code: result.code,
+						detail: result.detail ?? null,
+					},
+				},
 			},
-		});
-		json(res, cancelResult.status ?? 502, {
-			ok: false,
-			error: "session_runtime_cancel_request_failed",
-			message: cancelResult.error,
-			backend_status: cancelResult.status,
-			backend_response_text: cancelResult.responseText,
-			backend_response_body: cancelResult.body,
-		});
-		return;
+		};
 	}
 
-	if (activeCtx && cancelResult.body.cancel_state === "requested") {
-		beginActiveRunCancellation(activeCtx, {
-			cancellationId: cancelResult.body.cancellation_id,
-			reason: "user_requested",
-			message: cancelMessage,
-		});
-		a2aSessionRuntimeRegistry.update(agentSessionUid, { state: "busy" });
-	}
+	return {
+		statusCode: 200,
+		body: {
+			message: buildA2AAgentMessage(prepared, result),
+		},
+	};
+}
 
-	const state =
-		activeCtx && cancelResult.body.cancel_state === "requested"
-			? "cancelling"
-			: cancelResult.body.cancel_state === "requested"
-				? "cancel_requested"
-				: "not_running";
-
-	json(res, 200, {
-		ok: true,
-		agent_session_uid: agentSessionUid,
-		state,
-		working: cancelResult.body.working,
-		cancellation_id: cancelResult.body.cancellation_id,
-		message:
-			state === "cancelling"
-				? "Cancellation requested and the active attached runtime turn is stopping."
-				: state === "cancel_requested"
-					? "Cancellation requested. The active runtime holder will stop the session."
-					: "Attached session runtime is not currently running a turn.",
+function writeA2AStreamHeaders(res: import("node:http").ServerResponse) {
+	res.writeHead(200, {
+		"Content-Type": "text/event-stream",
+		"Cache-Control": "no-cache, no-transform",
+		Connection: "keep-alive",
 	});
 }
 
-async function handleA2ASessionRuntimeRequest(
+function writeA2AStreamEvent(res: import("node:http").ServerResponse, body: unknown) {
+	res.write(`data: ${JSON.stringify(body)}\n\n`);
+}
+
+async function handleA2AStandardMessageStream(
 	req: import("node:http").IncomingMessage,
 	res: import("node:http").ServerResponse,
 	url: URL,
-	route: A2ASessionRuntimeRoute,
+	body: Record<string, unknown>,
+	options: { jsonRpcId?: unknown } = {},
 ) {
-	if (route.action === "runtime" && req.method === "GET") {
-		const record = a2aSessionRuntimeRegistry.get(route.agentSessionUid);
-		if (!record) {
-			writeMissingSessionRuntime(res, route.agentSessionUid);
-			return;
-		}
-		json(res, 200, serializeSessionRuntimeAttachment(record));
+	const resolved = await resolvePreparedA2AStandardTurn(req, url, body);
+	if (resolved.ok === false) {
+		writeA2ABadRequest(res, resolved.message, resolved.field);
+		return;
+	}
+	const { prepared } = resolved;
+	const task = createA2AStandardTask(prepared.contextId, "TASK_STATE_WORKING");
+	writeA2AStreamHeaders(res);
+	const wrap = (result: Record<string, unknown>) =>
+		options.jsonRpcId !== undefined
+			? {
+					jsonrpc: "2.0",
+					id: options.jsonRpcId,
+					result,
+			  }
+			: result;
+	writeA2AStreamEvent(res, wrap({ task: serializeA2AStandardTask(task) }));
+
+	const result = await runA2AStandardRuntimeTurn(prepared);
+	if (result.ok === false) {
+		updateA2AStandardTask(task, "TASK_STATE_FAILED", {
+			message: result.message,
+			error: {
+				code: result.code,
+				message: result.detail ?? result.message,
+			},
+		});
+		writeA2AStreamEvent(res, wrap({ task: serializeA2AStandardTask(task), final: true }));
+		res.end();
 		return;
 	}
 
-	if (route.action === "runtime" && req.method === "POST") {
+	const artifacts = buildA2ACompletedArtifacts(result);
+	updateA2AStandardTask(task, "TASK_STATE_COMPLETED", { artifacts });
+	writeA2AStreamEvent(res, wrap({ task: serializeA2AStandardTask(task), final: true }));
+	res.end();
+}
+
+function getA2AStandardTaskResult(taskId: string): { statusCode: number; body: Record<string, unknown> } {
+	const task = a2aStandardTasks.get(taskId);
+	if (!task) {
+		return {
+			statusCode: 404,
+			body: {
+				error: {
+					code: -32001,
+					message: `A2A task "${taskId}" was not found.`,
+				},
+			},
+		};
+	}
+	return {
+		statusCode: 200,
+		body: { task: serializeA2AStandardTask(task) },
+	};
+}
+
+async function executeA2AStandardTaskCancel(
+	taskId: string,
+	body: Record<string, unknown>,
+): Promise<{ statusCode: number; body: Record<string, unknown> }> {
+	const task = a2aStandardTasks.get(taskId);
+	if (!task) {
+		return {
+			statusCode: 404,
+			body: {
+				error: {
+					code: -32001,
+					message: `A2A task "${taskId}" was not found.`,
+				},
+			},
+		};
+	}
+	if (!a2aTaskStateIsTerminal(task.status.state)) {
+		const activeCtx = getActiveStreamContext(task.contextId, task.contextId);
+		if (activeCtx) {
+			const cancelMessage =
+				typeof body.message === "string" && body.message.trim()
+					? body.message.trim()
+					: "A2A task cancellation requested.";
+			beginActiveRunCancellation(activeCtx, {
+				reason: "a2a_task_cancel_requested",
+				message: cancelMessage,
+			});
+		}
+		updateA2AStandardTask(task, "TASK_STATE_CANCELED", {
+			message: "A2A task cancellation requested.",
+		});
+	}
+	return {
+		statusCode: 200,
+		body: { task: serializeA2AStandardTask(task) },
+	};
+}
+
+function serializeA2APushNotificationConfig(record: A2AStandardPushNotificationConfigRecord) {
+	return {
+		id: record.id,
+		taskId: record.taskId,
+		...record.config,
+		metadata: {
+			...(isPlainObject(record.config.metadata) ? record.config.metadata : {}),
+			createdAt: record.createdAt,
+			updatedAt: record.updatedAt,
+		},
+	};
+}
+
+function getPushConfigBucket(taskId: string): Map<string, A2AStandardPushNotificationConfigRecord> {
+	let bucket = a2aStandardPushNotificationConfigs.get(taskId);
+	if (!bucket) {
+		bucket = new Map<string, A2AStandardPushNotificationConfigRecord>();
+		a2aStandardPushNotificationConfigs.set(taskId, bucket);
+	}
+	return bucket;
+}
+
+function getA2APushConfigTaskOrError(taskId: string):
+	| { ok: true; task: A2AStandardTaskRecord }
+	| { ok: false; statusCode: number; body: Record<string, unknown> } {
+	const task = a2aStandardTasks.get(taskId);
+	if (!task) {
+		return {
+			ok: false,
+			statusCode: 404,
+			body: {
+				error: {
+					code: -32001,
+					message: `A2A task "${taskId}" was not found.`,
+				},
+			},
+		};
+	}
+	return { ok: true, task };
+}
+
+function createA2APushNotificationConfig(
+	taskId: string,
+	body: Record<string, unknown>,
+): { statusCode: number; body: Record<string, unknown> } {
+	const task = getA2APushConfigTaskOrError(taskId);
+	if (task.ok === false) return task;
+	const now = new Date().toISOString();
+	const id =
+		extractStringProperty(body, "id", "configId", "config_id") ??
+		`push-config-${randomUUID()}`;
+	const bucket = getPushConfigBucket(taskId);
+	const record: A2AStandardPushNotificationConfigRecord = {
+		id,
+		taskId,
+		config: body,
+		createdAt: bucket.get(id)?.createdAt ?? now,
+		updatedAt: now,
+	};
+	bucket.set(id, record);
+	return {
+		statusCode: 200,
+		body: {
+			pushNotificationConfig: serializeA2APushNotificationConfig(record),
+		},
+	};
+}
+
+function listA2APushNotificationConfigs(taskId: string): { statusCode: number; body: Record<string, unknown> } {
+	const task = getA2APushConfigTaskOrError(taskId);
+	if (task.ok === false) return task;
+	const bucket = getPushConfigBucket(taskId);
+	return {
+		statusCode: 200,
+		body: {
+			pushNotificationConfigs: Array.from(bucket.values()).map(serializeA2APushNotificationConfig),
+		},
+	};
+}
+
+function getA2APushNotificationConfig(
+	taskId: string,
+	configId: string,
+): { statusCode: number; body: Record<string, unknown> } {
+	const task = getA2APushConfigTaskOrError(taskId);
+	if (task.ok === false) return task;
+	const record = getPushConfigBucket(taskId).get(configId);
+	if (!record) {
+		return {
+			statusCode: 404,
+			body: {
+				error: {
+					code: -32002,
+					message: `A2A push notification config "${configId}" was not found for task "${taskId}".`,
+				},
+			},
+		};
+	}
+	return {
+		statusCode: 200,
+		body: {
+			pushNotificationConfig: serializeA2APushNotificationConfig(record),
+		},
+	};
+}
+
+function deleteA2APushNotificationConfig(
+	taskId: string,
+	configId: string,
+): { statusCode: number; body: Record<string, unknown> } {
+	const task = getA2APushConfigTaskOrError(taskId);
+	if (task.ok === false) return task;
+	const deleted = getPushConfigBucket(taskId).delete(configId);
+	if (!deleted) {
+		return {
+			statusCode: 404,
+			body: {
+				error: {
+					code: -32002,
+					message: `A2A push notification config "${configId}" was not found for task "${taskId}".`,
+				},
+			},
+		};
+	}
+	return {
+		statusCode: 200,
+		body: {
+			deleted: true,
+			taskId,
+			id: configId,
+		},
+	};
+}
+
+function resolveA2AAgentCardSessionUid(
+	req: import("node:http").IncomingMessage,
+	url: URL,
+): string | null {
+	return normalizeRuntimeSessionId(
+		url.searchParams.get("agent_session_uid") ??
+			url.searchParams.get("agentSessionUid") ??
+			url.searchParams.get("session_uid") ??
+			url.searchParams.get("sessionUid") ??
+			url.searchParams.get("context_id") ??
+			url.searchParams.get("contextId") ??
+			resolveHeaderString(req, [
+				"x-agent-session-uid",
+				"x-ms-agent-session-uid",
+				"x-a2a-context-id",
+			]),
+	);
+}
+
+async function fetchA2AExtendedAgentCard(
+	req: import("node:http").IncomingMessage,
+	url: URL,
+): Promise<{ statusCode: number; body: Record<string, unknown> }> {
+	const agentSessionUid = resolveA2AAgentCardSessionUid(req, url);
+	if (!agentSessionUid) {
+		return {
+			statusCode: 400,
+			body: buildA2ABadRequestError(
+				"Missing agent session uid. Provide agent_session_uid, session_uid, contextId, or X-Agent-Session-Uid.",
+				"agent_session_uid",
+			),
+		};
+	}
+
+	const fetched = await fetchBackendAgentSessionAgentCard({
+		agentSessionUid,
+		env: process.env,
+		log: (message) => console.log(`[astro-stream] ${message}`),
+	});
+	if (!fetched.ok) {
+		return {
+			statusCode: fetched.status ?? 502,
+			body: {
+				error: {
+					code: fetched.notFound ? -32001 : -32000,
+					message: fetched.error ?? "Backend session agent card fetch failed.",
+					data: {
+						code: fetched.notFound
+							? "backend_session_agent_card_not_found"
+							: "backend_session_agent_card_fetch_failed",
+						agent_session_uid: agentSessionUid,
+						endpoint: fetched.endpoint,
+					},
+				},
+			},
+		};
+	}
+
+	return {
+		statusCode: 200,
+		body: {
+			agent_session_uid: fetched.agentSessionUid ?? agentSessionUid,
+			agent_uid: fetched.agentUid,
+			agent_card: fetched.agentCard ?? {},
+		},
+	};
+}
+
+async function handleA2AStandardRequest(
+	req: import("node:http").IncomingMessage,
+	res: import("node:http").ServerResponse,
+	url: URL,
+	route: A2AStandardRoute,
+) {
+	if (route.kind === "extended_agent_card") {
+		if (req.method !== "GET") {
+			methodNotAllowed(res, ["GET"]);
+			return;
+		}
+		const result = await fetchA2AExtendedAgentCard(req, url);
+		writeA2AJson(res, result.statusCode, result.body);
+		return;
+	}
+
+	if (route.kind === "tasks" && req.method === "GET") {
+		writeA2AJson(res, 200, {
+			tasks: Array.from(a2aStandardTasks.values()).map(serializeA2AStandardTask),
+		});
+		return;
+	}
+
+	if (route.kind === "task_get" && req.method === "GET") {
+		const result = getA2AStandardTaskResult(route.taskId);
+		writeA2AJson(res, result.statusCode, result.body);
+		return;
+	}
+
+	if (route.kind === "task_cancel") {
+		if (req.method !== "POST") {
+			methodNotAllowed(res, ["POST"]);
+			return;
+		}
 		let body: Record<string, unknown>;
 		try {
 			body = await parseOptionalJsonObject(req);
 		} catch {
-			badRequest(res, "Invalid JSON body.");
+			writeA2ABadRequest(res, "Invalid JSON body.");
 			return;
 		}
-
-		const runtimeProfile = resolveRuntimeProfile();
-		const runtimeProfileValidation = validateRuntimeProfile(runtimeProfile);
-		if (runtimeProfileValidation.ok === false) {
-			json(res, runtimeProfileValidation.statusCode, {
-				error: runtimeProfileValidation.error,
-				message: runtimeProfileValidation.message,
-				runtime_profile: serializeRuntimeProfile(runtimeProfile),
-			});
-			return;
-		}
-
-		const userUid = resolveUserIdFromRequest(req, url, body);
-		if (!userUid) {
-			badRequest(
-				res,
-				"Missing or invalid user_uid for A2A session runtime attachment.",
-			);
-			return;
-		}
-
-		const agentType = runtimeProfile.kind;
-		if (!ALLOWED_AGENT_TYPES.has(agentType)) {
-			json(res, 400, {
-				error: "invalid_agent_type",
-				message: `Unsupported runtime profile agent type "${agentType}".`,
-			});
-			return;
-		}
-
-		const record = a2aSessionRuntimeRegistry.attach({
-			agentSessionUid: route.agentSessionUid,
-			threadId: null,
-			agentType,
-			userUid,
-		});
-		logStructuredEvent({
-			component: "astro-stream",
-			event: "a2a_session_runtime_attached",
-			message: "Astro attached an existing backend session UID to a session runtime.",
-			data: {
-				agentSessionUid: route.agentSessionUid,
-				agentType,
-				userUid,
-				state: record.state,
-			},
-		});
-		startA2ASessionRuntimeBootstrap({
-			record,
-			userUid,
-			runtimeProfile,
-			requestBody: body,
-		});
-		json(res, 200, serializeSessionRuntimeAttachment(record));
+		const result = await executeA2AStandardTaskCancel(route.taskId, body);
+		writeA2AJson(res, result.statusCode, result.body);
 		return;
 	}
 
-	if (route.action === "runtime") {
+	if (route.kind === "push_config_list") {
+		if (req.method === "GET") {
+			const result = listA2APushNotificationConfigs(route.taskId);
+			writeA2AJson(res, result.statusCode, result.body);
+			return;
+		}
+		if (req.method === "POST") {
+			let body: Record<string, unknown>;
+			try {
+				body = await parseOptionalJsonObject(req);
+			} catch {
+				writeA2ABadRequest(res, "Invalid JSON body.");
+				return;
+			}
+			const result = createA2APushNotificationConfig(route.taskId, body);
+			writeA2AJson(res, result.statusCode, result.body);
+			return;
+		}
 		methodNotAllowed(res, ["GET", "POST"]);
 		return;
 	}
 
-	const record = a2aSessionRuntimeRegistry.get(route.agentSessionUid);
-	if (!record || record.state === "detached") {
-		writeMissingSessionRuntime(res, route.agentSessionUid);
+	if (route.kind === "push_config_get") {
+		if (req.method === "GET") {
+			const result = getA2APushNotificationConfig(route.taskId, route.configId);
+			writeA2AJson(res, result.statusCode, result.body);
+			return;
+		}
+		if (req.method === "DELETE") {
+			const result = deleteA2APushNotificationConfig(route.taskId, route.configId);
+			writeA2AJson(res, result.statusCode, result.body);
+			return;
+		}
+		methodNotAllowed(res, ["GET", "DELETE"]);
 		return;
 	}
 
-	if (route.action === "cancel") {
+	if (route.kind === "task_subscribe") {
+		if (req.method !== "POST" && req.method !== "GET") {
+			methodNotAllowed(res, ["GET", "POST"]);
+			return;
+		}
+		const result = getA2AStandardTaskResult(route.taskId);
+		if (result.statusCode !== 200) {
+			writeA2AJson(res, result.statusCode, result.body);
+			return;
+		}
+		writeA2AStreamHeaders(res);
+		writeA2AStreamEvent(res, result.body);
+		res.end();
+		return;
+	}
+
+	if (route.kind === "message_send") {
 		if (req.method !== "POST") {
 			methodNotAllowed(res, ["POST"]);
 			return;
@@ -8144,42 +8755,183 @@ async function handleA2ASessionRuntimeRequest(
 		try {
 			body = await parseOptionalJsonObject(req);
 		} catch {
-			badRequest(res, "Invalid JSON body.");
+			writeA2ABadRequest(res, "Invalid JSON body.");
 			return;
 		}
-		await handleA2ASessionRuntimeCancel(res, route.agentSessionUid, body);
+		const result = await executeA2AStandardMessageSend(req, url, body);
+		writeA2AJson(res, result.statusCode, result.body);
 		return;
 	}
 
-	if (route.action === "detach") {
+	if (route.kind === "message_stream") {
 		if (req.method !== "POST") {
 			methodNotAllowed(res, ["POST"]);
 			return;
 		}
+		let body: Record<string, unknown>;
 		try {
-			await parseOptionalJsonObject(req);
+			body = await parseOptionalJsonObject(req);
 		} catch {
-			badRequest(res, "Invalid JSON body.");
+			writeA2ABadRequest(res, "Invalid JSON body.");
 			return;
 		}
-		const detached = a2aSessionRuntimeRegistry.detach(route.agentSessionUid);
-		if (!detached) {
-			writeMissingSessionRuntime(res, route.agentSessionUid);
-			return;
-		}
-		logStructuredEvent({
-			component: "astro-stream",
-			event: "a2a_session_runtime_detached",
-			message: "Astro detached a session runtime from an existing backend session UID.",
-			data: {
-				agentSessionUid: route.agentSessionUid,
-				agentType: detached.agentType,
-				threadId: detached.threadId,
-			},
-		});
-		json(res, 200, serializeSessionRuntimeAttachment(detached));
+		await handleA2AStandardMessageStream(req, res, url, body);
 		return;
 	}
+
+	if (route.kind === "rpc") {
+		await handleA2AStandardJsonRpcRequest(req, res, url);
+		return;
+	}
+
+	notFound(res);
+}
+
+async function handleA2AStandardJsonRpcRequest(
+	req: import("node:http").IncomingMessage,
+	res: import("node:http").ServerResponse,
+	url: URL,
+) {
+	if (req.method !== "POST") {
+		methodNotAllowed(res, ["POST"]);
+		return;
+	}
+	let body: Record<string, unknown>;
+	try {
+		body = await parseOptionalJsonObject(req);
+	} catch {
+		writeJsonRpcJson(res, 400, buildJsonRpcError(null, -32700, "Parse error."));
+		return;
+	}
+
+	const id = body.id ?? null;
+	if (body.jsonrpc !== "2.0") {
+		writeJsonRpcJson(res, 400, buildJsonRpcError(id, -32600, "Invalid JSON-RPC version."));
+		return;
+	}
+	const method = extractStringProperty(body, "method");
+	if (!method) {
+		writeJsonRpcJson(res, 400, buildJsonRpcError(id, -32600, "Missing JSON-RPC method."));
+		return;
+	}
+	const params = extractObjectPropertyRecord(body, "params") ?? {};
+
+	if (method === "SendMessage" || method === "message/send") {
+		const result = await executeA2AStandardMessageSend(req, url, params);
+		if (result.statusCode >= 400) {
+			writeJsonRpcJson(
+				res,
+				result.statusCode,
+				buildJsonRpcError(
+					id,
+					isPlainObject(result.body.error) && typeof result.body.error.code === "number"
+						? result.body.error.code
+						: -32000,
+					isPlainObject(result.body.error) && typeof result.body.error.message === "string"
+						? result.body.error.message
+						: "A2A JSON-RPC SendMessage failed.",
+					isPlainObject(result.body.error) ? result.body.error.data : result.body,
+				),
+			);
+			return;
+		}
+		writeJsonRpcJson(res, 200, {
+			jsonrpc: "2.0",
+			id,
+			result: result.body,
+		});
+		return;
+	}
+
+	if (method === "SendStreamingMessage" || method === "message/stream") {
+		await handleA2AStandardMessageStream(req, res, url, params, { jsonRpcId: id });
+		return;
+	}
+
+	if (method === "GetTask" || method === "tasks/get") {
+		const taskId = extractStringProperty(params, "id", "taskId", "task_id");
+		if (!taskId) {
+			writeJsonRpcJson(
+				res,
+				400,
+				buildJsonRpcError(id, -32602, "GetTask requires params.id."),
+			);
+			return;
+		}
+		const result = getA2AStandardTaskResult(taskId);
+		if (result.statusCode >= 400) {
+			writeJsonRpcJson(
+				res,
+				result.statusCode,
+				buildJsonRpcError(
+					id,
+					isPlainObject(result.body.error) && typeof result.body.error.code === "number"
+						? result.body.error.code
+						: -32000,
+					isPlainObject(result.body.error) && typeof result.body.error.message === "string"
+						? result.body.error.message
+						: "A2A JSON-RPC GetTask failed.",
+					result.body,
+				),
+			);
+			return;
+		}
+		writeJsonRpcJson(res, 200, {
+			jsonrpc: "2.0",
+			id,
+			result: result.body,
+		});
+		return;
+	}
+
+	if (method === "ListTasks" || method === "tasks/list") {
+		writeJsonRpcJson(res, 200, {
+			jsonrpc: "2.0",
+			id,
+			result: {
+				tasks: Array.from(a2aStandardTasks.values()).map(serializeA2AStandardTask),
+			},
+		});
+		return;
+	}
+
+	if (method === "CancelTask" || method === "tasks/cancel") {
+		const taskId = extractStringProperty(params, "id", "taskId", "task_id");
+		if (!taskId) {
+			writeJsonRpcJson(
+				res,
+				400,
+				buildJsonRpcError(id, -32602, "CancelTask requires params.id."),
+			);
+			return;
+		}
+		const result = await executeA2AStandardTaskCancel(taskId, params);
+		if (result.statusCode >= 400) {
+			writeJsonRpcJson(
+				res,
+				result.statusCode,
+				buildJsonRpcError(
+					id,
+					isPlainObject(result.body.error) && typeof result.body.error.code === "number"
+						? result.body.error.code
+						: -32000,
+					isPlainObject(result.body.error) && typeof result.body.error.message === "string"
+						? result.body.error.message
+						: "A2A JSON-RPC CancelTask failed.",
+					result.body,
+				),
+			);
+			return;
+		}
+		writeJsonRpcJson(res, 200, {
+			jsonrpc: "2.0",
+			id,
+			result: result.body,
+		});
+		return;
+	}
+
+	writeJsonRpcJson(res, 404, buildJsonRpcError(id, -32601, `Unknown A2A JSON-RPC method "${method}".`));
 }
 
 process.once("SIGINT", () => {
@@ -8215,6 +8967,12 @@ async function handleStreamRequest(
 
 	if (req.method === "GET" && url.pathname === "/health") {
 		json(res, 200, buildRuntimeHealthSnapshot());
+		return;
+	}
+
+	const a2aStandardRoute = matchA2AStandardRoute(url.pathname);
+	if (a2aStandardRoute) {
+		await handleA2AStandardRequest(req, res, url, a2aStandardRoute);
 		return;
 	}
 
@@ -8575,12 +9333,6 @@ async function handleStreamRequest(
 		return;
 	}
 
-	const a2aSessionRuntimeRoute = matchA2ASessionRuntimeRoute(url.pathname);
-	if (a2aSessionRuntimeRoute && a2aSessionRuntimeRoute.action !== "chat") {
-		await handleA2ASessionRuntimeRequest(req, res, url, a2aSessionRuntimeRoute);
-		return;
-	}
-
 	if (req.method === "GET" && url.pathname === "/api/chat/session-model") {
 		const sessionKey = normalizeRuntimeSessionId(
 			url.searchParams.get("sessionUid") ??
@@ -8836,10 +9588,8 @@ async function handleStreamRequest(
 	}
 
 	const isHumanChatRequest = url.pathname === "/api/chat";
-	const isA2ASessionRuntimeChatRequest = a2aSessionRuntimeRoute?.action === "chat";
-	const isA2AChatRequest = isA2ASessionRuntimeChatRequest;
 
-	if (req.method !== "POST" || (!isHumanChatRequest && !isA2AChatRequest)) {
+	if (req.method !== "POST" || !isHumanChatRequest) {
 		notFound(res);
 		return;
 	}
@@ -8851,51 +9601,9 @@ async function handleStreamRequest(
 		badRequest(res, "Invalid JSON.");
 		return;
 	}
-	if (isA2ASessionRuntimeChatRequest) {
-		const route = a2aSessionRuntimeRoute;
-		if (!route || route.action !== "chat") {
-			notFound(res);
-			return;
-		}
-		const record = a2aSessionRuntimeRegistry.get(route.agentSessionUid);
-		if (!record || record.state === "detached") {
-			writeMissingSessionRuntime(res, route.agentSessionUid);
-			return;
-		}
-		const rawBody = isPlainObject(body) ? body : {};
-		body = {
-			...rawBody,
-			runtime_session_uid: route.agentSessionUid,
-			threadId: record.threadId ?? route.agentSessionUid,
-			agentType: record.agentType,
-			user_uid: record.userUid,
-		};
-		logStructuredEvent({
-			component: "astro-stream",
-			event: "a2a_session_runtime_chat_attached",
-			message: "Astro routed an A2A chat turn through an attached session runtime.",
-			data: {
-				agentSessionUid: route.agentSessionUid,
-				threadId: body.threadId,
-				agentType: body.agentType,
-			},
-		});
-		}
 
 	if (logRequestBodies) {
 		console.log(`[astro-stream] IN ${url.pathname}: ${JSON.stringify(body)}`);
-	}
-
-	if (isA2AChatRequest) {
-		const normalizedA2ARequest = normalizeA2AChatRequestBody(isPlainObject(body) ? body : {});
-		if (normalizedA2ARequest.ok === false) {
-			json(res, normalizedA2ARequest.statusCode, {
-				error: normalizedA2ARequest.error,
-				message: normalizedA2ARequest.message,
-			});
-			return;
-		}
-		body = normalizedA2ARequest.body;
 	}
 
 	const messages = Array.isArray(body.messages) ? body.messages : [];
@@ -8970,11 +9678,12 @@ async function handleStreamRequest(
 	const a2aContext = extractObjectPropertyRecord(context, "a2a") ?? {};
 	const a2aCaller = extractObjectPropertyRecord(a2aContext, "caller") ?? {};
 	const requestA2AEnvelope = buildRequestA2AEnvelope({
-		enabled: isA2AChatRequest || a2aContext.enabled === true,
+		enabled: a2aContext.enabled === true,
 		body: isPlainObject(body) ? body : {},
 		a2aContext,
 		caller: a2aCaller,
 	});
+	const isA2ARuntimeTurn = requestA2AEnvelope?.enabled === true;
 
 	const fixedAgentType = runtimeProfile.fixedAgentType;
 	const rawRequestedAgentType = normalizeAgentType(body.agentType);
@@ -9445,7 +10154,7 @@ async function handleStreamRequest(
 			  })
 			: null;
 	const a2aOutputOptions = normalizeA2AOutputOptions({
-		enabled: isA2AChatRequest || a2aContext.enabled === true || effectiveA2AEnvelope?.enabled === true,
+		enabled: isA2ARuntimeTurn,
 		body: isPlainObject(body) ? body : {},
 		a2aContext,
 		context,
@@ -9473,7 +10182,7 @@ async function handleStreamRequest(
 			},
 		});
 	}
-	if (isA2AChatRequest) {
+	if (isA2ARuntimeTurn) {
 		logStructuredEvent({
 			component: "astro-stream",
 			event: "a2a_runtime_options_resolved",
@@ -9503,13 +10212,13 @@ async function handleStreamRequest(
 		existingSessionMetadata?.agentSessionId ?? runtimeSessionId;
 	startedAt = existingSessionMetadata?.startedAt ?? null;
 	sessionKey = runtimeSessionId;
-		const warmA2ATurnEligible =
-			isA2AChatRequest &&
-			isA2AWarmRunnerEnabled() &&
-			agentSessionId != null &&
-			agentConfig == null;
-	const sessionRuntimeTurnQueueEligible = Boolean(isA2ASessionRuntimeChatRequest && agentSessionId);
-		const shouldQueueA2ATurn = warmA2ATurnEligible || sessionRuntimeTurnQueueEligible;
+	const warmA2ATurnEligible =
+		isA2ARuntimeTurn &&
+		isA2AWarmRunnerEnabled() &&
+		agentSessionId != null &&
+		agentConfig == null;
+	const a2aTurnQueueEligible = Boolean(isA2ARuntimeTurn && agentSessionId);
+	const shouldQueueA2ATurn = warmA2ATurnEligible || a2aTurnQueueEligible;
 
 		const activeRun = getActiveStreamSession(sessionKey, agentSessionId);
 		if (activeRun && !shouldQueueA2ATurn) {
@@ -9626,7 +10335,7 @@ async function handleStreamRequest(
 		cancellation: null,
 		warmRunner: null,
 		clientAttached: true,
-		cancelOnClientDisconnect: isA2AChatRequest,
+		cancelOnClientDisconnect: isA2ARuntimeTurn,
 		streamAbortHandlerAttached: false,
 		runtimeStarted: false,
 		finished: false,
@@ -9669,12 +10378,6 @@ async function handleStreamRequest(
 			return;
 		}
 		ctx.runtimeStarted = true;
-		if (ctx.agentSessionId) {
-			a2aSessionRuntimeRegistry.update(ctx.agentSessionId, {
-				state: "busy",
-				lastError: null,
-			});
-		}
 		markActiveStreamSession(ctx);
 		logStructuredEvent({
 			severity: "INFO",
@@ -9688,7 +10391,7 @@ async function handleStreamRequest(
 				agentType: ctx.agentType,
 				queueWaitMs: Date.now() - queuedAt,
 				warmA2ATurnEligible,
-				sessionRuntimeTurnQueueEligible,
+				a2aTurnQueueEligible,
 			},
 		});
 
@@ -9812,7 +10515,7 @@ async function handleStreamRequest(
 				agentType: ctx.agentType,
 				existingWarmQueue,
 				warmA2ATurnEligible,
-				sessionRuntimeTurnQueueEligible,
+				a2aTurnQueueEligible,
 			},
 		});
 	}
@@ -9895,5 +10598,5 @@ if (startupRuntimeProfileValidation.ok === false) {
 
 server.listen(port, host, () => {
 	console.log(`[astro-stream] Listening on http://${host}:${port}`);
-	console.log("[astro-stream] POST /api/llm/chat for stateless JSON, POST /api/chat or POST /api/a2a/sessions/{agent_session_uid}/runtime/chat for streaming runtime turns");
+	console.log("[astro-stream] POST /api/llm/chat for stateless JSON, POST /api/chat for UI streaming, or POST /api/a2a/v1/message:send for public A2A turns");
 });

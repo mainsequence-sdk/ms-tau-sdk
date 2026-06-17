@@ -7,12 +7,12 @@ zero-capability materialization, reuses unchanged non-zero capability materializ
 signature, can validate provider credential cache entries against backend version/hash when remote
 checks are explicitly enabled, invalidates provider credential cache on auth failure, runs
 capability and credential preparation concurrently behind strict launch barriers, and routes
-eligible `/api/a2a/chat` turns through a session-keyed warm Pi RPC runner with cold durable
+eligible legacy Astro A2A chat turns through a session-keyed warm Pi RPC runner with cold durable
 fallback.
 
 ## Context
 
-`POST /api/a2a/chat` currently enters the same durable stream execution path as a normal cold
+The legacy Astro A2A chat route currently enters the same durable stream execution path as a normal cold
 runtime turn. The backend owns session allocation, but Astro owns the local runtime execution path
 after a caller supplies an existing `AgentSession.uid`.
 
@@ -112,7 +112,7 @@ Implemented behavior:
   auth failure is observed after a Pi run.
 - `runPiPrompt` starts capability preparation and provider credential preparation concurrently,
   then waits at an explicit launch barrier before spawning Pi.
-- eligible `/api/a2a/chat` turns use `pi --mode rpc` through a warm runner keyed by
+- eligible legacy Astro A2A chat turns use `pi --mode rpc` through a warm runner keyed by
   `agentSessionId`.
 - warm runner compatibility is checked against persisted `PreparedSessionRuntime` identity,
   model/provider/reasoning, cwd/project, session config, capability state, provider credential
@@ -362,7 +362,7 @@ This ADR does not:
 - make capability materialization fire-and-forget
 - allow Pi to start without required auth
 - allow Pi to start without required session-local skills
-- replace `/api/a2a/chat` with a status-only endpoint
+- replace the legacy Astro A2A chat route with a status-only endpoint
 - solve generic model latency after runtime launch
 
 ## Consequences
@@ -386,7 +386,7 @@ This ADR does not:
 
 ## Implementation Tasks
 
-- [x] Add timing instrumentation for the current `/api/a2a/chat` hot path.
+- [x] Add timing instrumentation for the current legacy Astro A2A hot path.
 - [x] Add structured logs for preflight cache hit, miss, and invalidation reason.
 - [x] Add structured logs for cold fallback after warm runner dispatch exists.
 - [x] Define the `PreparedSessionRuntime` data model and persistence location.
@@ -406,7 +406,7 @@ This ADR does not:
 - [x] Add a per-session turn queue so only one turn mutates session state at a time.
 - [x] Attach checkpoint lease lifecycle to the warm runner where safe.
 - [x] Define warm runner idle TTL, health checks, graceful shutdown, and forced restart behavior.
-- [x] Route `/api/a2a/chat` through warm runner dispatch when a compatible runner exists.
+- [x] Route legacy Astro A2A chat through warm runner dispatch when a compatible runner exists.
 - [x] Fall back to cold durable launch when no compatible warm runner exists.
 - [x] Add focused unit tests for zero-capability preparation cache reuse.
 - [x] Add focused unit tests for non-zero capability signature cache reuse and invalidation.

@@ -1,0 +1,16 @@
+{
+  "message": {
+    "messageId": "msg-agent-1",
+    "role": "ROLE_AGENT",
+    "contextId": "agent-session-uid-1",
+    "parts": [
+      {
+        "data": {
+          "summary": "Astro can coordinate Main Sequence agent work.",
+          "capabilities": ["session-scoped execution", "structured A2A responses"]
+        },
+        "mediaType": "application/json"
+      }
+    ]
+  }
+}

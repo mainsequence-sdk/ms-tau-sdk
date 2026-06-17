@@ -66,7 +66,7 @@ detail.
 ### Attach Session Runtime
 
 ```http
-POST /api/a2a/sessions/{agent_session_uid}/runtime
+Legacy session runtime attach route
 ```
 
 Request:
@@ -108,7 +108,7 @@ paths, and returning an endpoints object adds contract noise without solving the
 ### Runtime Status
 
 ```http
-GET /api/a2a/sessions/{agent_session_uid}/runtime
+Legacy session runtime status route
 ```
 
 Response:
@@ -142,7 +142,7 @@ per-request policy.
 ### Send Turn
 
 ```http
-POST /api/a2a/sessions/{agent_session_uid}/runtime/chat
+Legacy session runtime chat route
 ```
 
 The response transport remains SSE for streaming turns.
@@ -177,7 +177,7 @@ Rules:
 ### Cancel Active Turn
 
 ```http
-POST /api/a2a/sessions/{agent_session_uid}/runtime/cancel
+Legacy session runtime cancel route
 ```
 
 Request:
@@ -197,7 +197,7 @@ Rules:
 ### Detach Session Runtime
 
 ```http
-POST /api/a2a/sessions/{agent_session_uid}/runtime/detach
+Legacy session runtime detach route
 ```
 
 Request:
@@ -271,7 +271,7 @@ The client should not rebuild the full runtime/session envelope for every turn a
 
 ## Removed From The A2A Contract
 
-`POST /api/a2a/chat` is not part of the new A2A client contract.
+The previous Astro-specific chat route is not part of the new A2A client contract.
 
 New A2A clients must not use a one-request wrapper that hides attach, turn execution, and detach
 inside a single request. The supported client flow is:
@@ -300,7 +300,7 @@ If an old one-turn route still exists in code, it is legacy surface area, not th
 - [x] Track runtime state as `starting`, `ready`, `busy`, `failed`, or `detached`.
 - [x] Store only Astro runtime attachment state in the registry: session UID, hydrated thread UID
   when known, runtime profile, runner/preflight status, current turn state, expiry, and last error.
-- [x] Add `POST /api/a2a/sessions/{agent_session_uid}/runtime`.
+- [x] Add the legacy session runtime attach route.
 - [x] Remove caller-selected thread and agent identity from attach and attached chat request
   authority.
 - [ ] Make attach validate authorization for the existing backend session UID without creating a new
@@ -309,10 +309,10 @@ If an old one-turn route still exists in code, it is legacy surface area, not th
 - [x] Start Pi runner bootstrap and preflight preparation asynchronously from attach.
 - [x] Keep startup/preflight work out of the attach response path: no waiting for Pi readiness,
   checkpoint preparation, capability materialization, or provider credential hydration.
-- [x] Add `GET /api/a2a/sessions/{agent_session_uid}/runtime`.
+- [x] Add the legacy session runtime status route.
 - [x] Return clear status fields for runtime readiness, runner readiness, preflight readiness,
   expiry, and last error.
-- [x] Add `POST /api/a2a/sessions/{agent_session_uid}/runtime/chat`.
+- [x] Add the legacy session runtime chat route.
 - [x] Route chat turns to the attached session runtime and serialize same-session turns.
 - [x] Reuse the already-attached Pi RPC runner when it is ready.
 - [x] If chat arrives while the runtime is still starting, wait according to the chat request policy
@@ -320,14 +320,14 @@ If an old one-turn route still exists in code, it is legacy surface area, not th
 - [x] Preserve checkpoint/session-history safety for attached session runtimes.
 - [x] Remove the no-checkpoint/no-persistent-history branch from the A2A session runtime contract.
 - [x] Preserve ADR 34 output controls for strict JSON, JSON repair, and reasoning suppression.
-- [x] Add `POST /api/a2a/sessions/{agent_session_uid}/runtime/cancel`.
+- [x] Add the legacy session runtime cancel route.
 - [x] Make cancel stop only the active turn for the attached session runtime.
 - [ ] Report explicit cancel, client disconnect, timeout, and runtime failure as distinct outcomes.
-- [x] Add `POST /api/a2a/sessions/{agent_session_uid}/runtime/detach`.
+- [x] Add the legacy session runtime detach route.
 - [x] Make detach release the runtime attachment without deleting or closing the backend session.
 - [ ] Decide runner cleanup from runtime policy after detach: idle TTL or immediate stop.
 - [x] Define the new A2A client contract as session-runtime only.
-- [x] Remove `POST /api/a2a/chat` from the A2A server surface.
+- [x] Remove the previous Astro-specific chat route from the A2A server surface.
 - [ ] Update Python/Main Sequence client helpers to attach once, wait for readiness, send multiple
   turns, cancel when needed, and detach when done.
 - [ ] Add unit tests for attach immediate-return behavior, status transitions, chat routing,

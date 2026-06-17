@@ -238,88 +238,69 @@ Each stream chunk now has this envelope:
 }
 ```
 
-### A2A Session Runtime Endpoints
+### Public A2A Endpoints
 
-Machine-facing A2A callers attach an existing backend `agent_session_uid` to a live Astro/Pi runtime,
-then send turns to that attached session runtime. The old one-turn `/api/a2a/chat` route is not part
-of the A2A contract.
+Public A2A callers use the standard adapter surface. In the first implementation pass,
+`message.contextId` must be the existing Main Sequence `AgentSession.uid`; Astro maps that standard
+A2A context to the backend-owned session runtime internally.
 
-Attach an existing backend session:
+See [`docs/a2a/README.md`](../../docs/a2a/README.md) for the current endpoint contract, phase-1 task
+limitations, JSON-RPC mapping, and examples.
+
+Send a direct A2A request:
 
 ```http
-POST /api/a2a/sessions/{agent_session_uid}/runtime
+POST /api/a2a/v1/message:send
+Content-Type: application/a2a+json
 ```
-
-Request:
 
 ```json
 {
-  "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f"
-}
-```
-
-Attach returns immediately with runtime attachment state while startup/preflight continues
-asynchronously.
-
-The backend session UID in the path is the authority; Astro hydrates thread metadata from
-backend/session state and uses the deployed runtime profile.
-
-Poll attachment/runtime status:
-
-```http
-GET /api/a2a/sessions/{agent_session_uid}/runtime
-```
-
-Send a turn over SSE:
-
-```http
-POST /api/a2a/sessions/{agent_session_uid}/runtime/chat
-```
-
-Request:
-
-```json
-{
-  "message": "Inspect the prepared project and summarize the next implementation step.",
-  "omit_reasoning": true,
-  "json_repair": {
-    "attempts": 3
+  "message": {
+    "messageId": "msg-client-1",
+    "role": "ROLE_USER",
+    "contextId": "agent-session-uid",
+    "parts": [
+      {
+        "text": "Return a JSON dictionary describing what you can do."
+      }
+    ]
   },
-  "response_format": {
-    "type": "json_object",
-    "strict": true
+  "configuration": {
+    "acceptedOutputModes": ["application/json"],
+    "returnImmediately": false
   }
 }
 ```
 
-Attached chat requests carry only the turn input and per-turn output controls.
+Other public A2A endpoints include:
 
-Cancel the active turn:
+- `POST /api/a2a/v1/message:stream`
+- `GET /api/a2a/v1/tasks`
+- `GET /api/a2a/v1/tasks/{id}`
+- `POST /api/a2a/v1/tasks/{id}:cancel`
+- `GET|POST /api/a2a/v1/tasks/{id}:subscribe`
+- `GET|POST /api/a2a/v1/tasks/{id}/pushNotificationConfigs`
+- `GET|DELETE /api/a2a/v1/tasks/{id}/pushNotificationConfigs/{configId}`
+- `GET /api/a2a/v1/extendedAgentCard`
+- `POST /api/a2a/rpc`
 
-```http
-POST /api/a2a/sessions/{agent_session_uid}/runtime/cancel
-```
+### A2A Runtime Execution
 
-Detach the runtime attachment:
+The public A2A adapter dispatches turns through the same backend-owned session runtime as
+`POST /api/chat`. Runtime bootstrap, warm-runner reuse, checkpointing, and provider credential
+hydration are implementation details and are not exposed as separate A2A HTTP routes.
 
-```http
-POST /api/a2a/sessions/{agent_session_uid}/runtime/detach
-```
+Public callers should express output needs through the standard A2A request:
 
-The backend session is still owned by Main Sequence. Astro does not create backend sessions from this
-protocol, does not mint a public runtime id, and does not require clients to consume a generated
-endpoints map.
+- Use `configuration.acceptedOutputModes: ["application/json"]` for JSON-oriented responses.
+- Use the Main Sequence output-contract metadata extension for strict dictionary/JSON validation and
+  repair attempts.
+- Use the Main Sequence output-contract metadata extension to request answer-only responses that omit
+  reasoning, tool events, and raw text deltas from the public A2A response.
 
-A2A output options:
-
-- `omit_reasoning` / `omitReasoning`: suppresses outbound `reasoning-start`, `reasoning-delta`, and `reasoning-end` SSE events for this request only.
-- `response_format: "json"` or `{ "type": "json_object", "strict": true }`: enables strict JSON mode. Astro buffers assistant text, suppresses reasoning events by default, validates the buffered text at completion, and emits one canonical JSON text response only if validation succeeds.
-- `json_repair` / `jsonRepair`: configures strict JSON repair attempts. The default is `{ "attempts": 3 }`; `{ "attempts": 0 }` disables repair and hard-fails on the first validation error.
-- `runtime_turn_timeout_seconds` / `runtimeTurnTimeoutSeconds` or `runtime_turn_timeout_ms` / `runtimeTurnTimeoutMs`: optional per-request emergency watchdog for Pi execution after prompt dispatch/spawn. Omitted or `0` means Astro will not kill the turn by timer.
-
-Strict JSON guarantees the final assistant text payload, not that the HTTP transport envelope itself
-is JSON. If validation and all repair attempts fail, Astro emits
-`error_code: "a2a_invalid_json_response"` and does not emit the invalid assistant text.
+Strict JSON guarantees the final A2A `Message` or `Task` artifact payload. If validation and all
+repair attempts fail, Astro returns an A2A error instead of returning invalid assistant text.
 
 ### `GET /api/chat/session-model?sessionUid=<runtime_session_uid>`
 
