@@ -82,3 +82,9 @@ pre-UID API sketches have been removed from the active reference set.
   - Pi settings and prompt contract.
 - [`../components/scripts-and-runtime.md`](../components/scripts-and-runtime.md)
   - TypeScript runtime, startup scripts, and sidecar processes.
+
+## Observability
+
+- [`adr-38-dual-sink-logging-contract.md`](./adr-38-dual-sink-logging-contract.md)
+  - Astro emits one structured internal log event and renders it separately for machine JSON logs
+    and compact human terminal logs.

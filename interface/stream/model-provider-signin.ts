@@ -14,6 +14,7 @@ import {
 	withScopedPiAgentDir,
 	withScopedPiAgentDirAsync,
 } from "./model-provider-runtime.js";
+import { logStructuredEvent } from "../../pi/extensions/shared/structured-logging.js";
 
 export type ModelProviderSignInAttemptStatus =
 	| "pending"
@@ -69,6 +70,17 @@ type ActiveSignInAttempt = {
 	rejectManualInput: ((error: Error) => void) | null;
 	cancelled: boolean;
 };
+
+function logModelProviderSignInBackendMessage(message: string) {
+	logStructuredEvent({
+		component: "astro-stream",
+		event: "provider_signin.backend_log",
+		message,
+		data: {
+			detail: message,
+		},
+	});
+}
 
 type StartInteractiveSignInSuccess = {
 	ok: true;
@@ -479,7 +491,7 @@ async function runInteractiveSignIn(
 			provider: attempt.provider,
 			reason: "signin_completed",
 			env,
-			log: (message) => console.log(`[astro-stream] ${message}`),
+			log: logModelProviderSignInBackendMessage,
 		});
 		removeScopedPiCredential(activeAttempt.scopedPiAgentDir, attempt.provider);
 		if (flush.ok === false) {
@@ -596,7 +608,7 @@ export async function startModelProviderSignIn(
 			provider,
 			reason: "api_key_synced",
 			env: scopedEnv,
-			log: (message) => console.log(`[astro-stream] ${message}`),
+			log: logModelProviderSignInBackendMessage,
 		});
 		cleanupScopedPiAgentDir(scopedPiAgentDir);
 		if (flush.ok === false) {

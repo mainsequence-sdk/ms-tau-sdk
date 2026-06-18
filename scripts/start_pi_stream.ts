@@ -48,7 +48,17 @@ try {
 					stack: null,
 			  };
 	process.env.ASTRO_STREAM_BOOTSTRAP_ERROR = JSON.stringify(serialized);
-	console.error(`[astro-stream] bootstrap failed before server startup: ${serialized.message}`);
+	logStructuredEvent({
+		severity: "ERROR",
+		component: "astro-stream",
+		event: "stream.bootstrap.failed",
+		message: "Bootstrap failed before server startup.",
+		data: {
+			error: serialized.message,
+			errorType: serialized.name,
+			stack: serialized.stack,
+		},
+	});
 	throw error instanceof Error ? error : new Error(serialized.message);
 }
 

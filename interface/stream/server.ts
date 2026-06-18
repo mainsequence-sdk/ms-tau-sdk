@@ -379,7 +379,7 @@ async function flushActiveScopedProviderCredentialsForShutdown(signal: string) {
 				provider: record.provider,
 				reason: "shutdown_flush",
 				env: record.env,
-				log: (message) => console.log(`[astro-stream] ${message}`),
+				log: logExternalMessage("astro-stream", "provider_credentials.backend_log"),
 			});
 			if (flushed.ok === false) {
 				logStructuredEvent({
@@ -421,8 +421,33 @@ function persistRuntimeHealthSnapshot() {
 		writeFileSync(runtimeHealthStatePath, JSON.stringify(buildRuntimeHealthSnapshot(), null, 2));
 	} catch (error) {
 		const serialized = serializeRuntimeHealthError(error);
-		console.error(`[astro-stream] failed to persist runtime health state: ${serialized.message}`);
+		logStructuredEvent({
+			severity: "ERROR",
+			component: "astro-stream",
+			event: "runtime_health.persist_failed",
+			message: "Failed to persist runtime health state.",
+			data: {
+				path: runtimeHealthStatePath,
+				error: serialized.message,
+				errorType: serialized.name,
+			},
+		});
 	}
+}
+
+function logExternalMessage(
+	component: string,
+	event: string,
+	severity: "DEBUG" | "INFO" | "WARNING" | "ERROR" = "INFO",
+): (message: string) => void {
+	return (message: string) =>
+		logStructuredEvent({
+			severity,
+			component,
+			event,
+			message,
+			data: { detail: message },
+		});
 }
 
 function recordRuntimeHealthIssue(options: {
@@ -489,7 +514,7 @@ function ensureMainsequenceCredentialExchangeLoopStarted() {
 	if (mainsequenceCredentialExchangeLoopStarted) return;
 	mainsequenceCredentialExchangeLoop = startMainsequenceCredentialExchangeLoop({
 		env: process.env,
-		log: (message) => console.error(`[astro] ${message}`),
+		log: logExternalMessage("astro", "runtime_credential.exchange_loop"),
 	});
 	mainsequenceCredentialExchangeLoopStarted = true;
 }
@@ -503,7 +528,7 @@ async function ensureMainsequenceCliAuthReady() {
 	if (!mainsequenceCliAuthBootstrapPromise) {
 		mainsequenceCliAuthBootstrapPromise = bootstrapMainsequenceCliAuth({
 			env: process.env,
-			log: (message) => console.log(`[astro] ${message}`),
+			log: logExternalMessage("astro", "runtime_credential.bootstrap"),
 		})
 			.then(() => {
 				mainsequenceCliAuthReady = true;
@@ -532,7 +557,18 @@ process.on("uncaughtException", (error, origin) => {
 		error,
 		context: { origin },
 	});
-	console.error(`[astro-stream] captured uncaught exception issue=${issue.id}: ${issue.message}`);
+	logStructuredEvent({
+		severity: "ERROR",
+		component: "astro-stream",
+		event: "runtime.uncaught_exception",
+		message: "Captured uncaught exception.",
+		data: {
+			issueId: issue.id,
+			error: issue.message,
+			errorType: issue.name,
+			origin,
+		},
+	});
 });
 
 process.on("unhandledRejection", (reason) => {
@@ -541,7 +577,17 @@ process.on("unhandledRejection", (reason) => {
 		severity: "fatal",
 		error: reason,
 	});
-	console.error(`[astro-stream] captured unhandled rejection issue=${issue.id}: ${issue.message}`);
+	logStructuredEvent({
+		severity: "ERROR",
+		component: "astro-stream",
+		event: "runtime.unhandled_rejection",
+		message: "Captured unhandled rejection.",
+		data: {
+			issueId: issue.id,
+			error: issue.message,
+			errorType: issue.name,
+		},
+	});
 });
 
 type RequestContext = {
@@ -1857,7 +1903,7 @@ async function buildSessionRuntimeBootstrapContext(input: {
 		userId: input.userUid,
 		requestedThreadId,
 		existingMetadata,
-		log: (message) => console.log(`[astro-stream] ${message}`),
+		log: logExternalMessage("astro-stream", "backend.helper_log"),
 	});
 	if (hydration.ok === false) {
 		return {
@@ -2395,6 +2441,7 @@ function appendVaryHeader(res: import("node:http").ServerResponse, field: string
 }
 
 const trustedCorsOrigins = resolveTrustedCorsOrigins(process.env);
+const httpRequestIds = new WeakMap<import("node:http").IncomingMessage, string>();
 
 function applyCorsHeaders(
 	req: import("node:http").IncomingMessage,
@@ -2431,9 +2478,19 @@ function writeCorsOriginNotAllowed(
 	const allowedOrigins = Array.from(trustedCorsOrigins).sort();
 	const path = getRequestPathForLog(url);
 
-	console.error(
-		`[astro-cors] Rejected origin=${requestOrigin ?? "unknown"} method=${req.method ?? "UNKNOWN"} path=${path} trusted_origins=${allowedOrigins.length ? allowedOrigins.join(",") : "(none configured)"}`,
-	);
+	logStructuredEvent({
+		severity: "WARNING",
+		component: "astro-cors",
+		event: "cors.origin_rejected",
+		message: "Rejected request origin.",
+		data: {
+			requestId: getRequestId(req),
+			origin: requestOrigin ?? "unknown",
+			method: req.method ?? "UNKNOWN",
+			path,
+			trustedOriginCount: allowedOrigins.length,
+		},
+	});
 
 	json(res, 403, {
 		error: "cors_origin_not_allowed",
@@ -2455,6 +2512,47 @@ function getRequestPathForLog(url: URL): string {
 	return `${url.pathname}${search}`;
 }
 
+function normalizeRouteForLog(pathname: string): string {
+	if (/^\/api\/a2a\/sessions\/[^/]+\/runtime$/.test(pathname)) {
+		return "/api/a2a/sessions/{agent_session_uid}/runtime";
+	}
+	if (/^\/api\/a2a\/v1\/tasks\/[^/]+:cancel$/.test(pathname)) {
+		return "/api/a2a/v1/tasks/{task_id}:cancel";
+	}
+	if (/^\/api\/a2a\/v1\/tasks\/[^/]+:subscribe$/.test(pathname)) {
+		return "/api/a2a/v1/tasks/{task_id}:subscribe";
+	}
+	if (/^\/api\/a2a\/v1\/tasks\/[^/]+\/pushNotificationConfigs\/[^/]+$/.test(pathname)) {
+		return "/api/a2a/v1/tasks/{task_id}/pushNotificationConfigs/{config_id}";
+	}
+	if (/^\/api\/a2a\/v1\/tasks\/[^/]+\/pushNotificationConfigs$/.test(pathname)) {
+		return "/api/a2a/v1/tasks/{task_id}/pushNotificationConfigs";
+	}
+	if (/^\/api\/a2a\/v1\/tasks\/[^/]+$/.test(pathname)) {
+		return "/api/a2a/v1/tasks/{task_id}";
+	}
+	return pathname;
+}
+
+function normalizeRequestId(value: unknown): string | null {
+	if (typeof value !== "string") return null;
+	const trimmed = value.trim();
+	if (!trimmed) return null;
+	return trimmed.length > 128 ? trimmed.slice(0, 128) : trimmed;
+}
+
+function getRequestId(req: import("node:http").IncomingMessage): string {
+	const existing = httpRequestIds.get(req);
+	if (existing) return existing;
+	const forwarded =
+		normalizeRequestId(req.headers["x-request-id"]) ??
+		normalizeRequestId(req.headers["x-cloud-trace-context"]) ??
+		normalizeRequestId(req.headers["traceparent"]);
+	const requestId = forwarded ?? `req_${randomUUID()}`;
+	httpRequestIds.set(req, requestId);
+	return requestId;
+}
+
 function getRequestRemoteAddress(req: import("node:http").IncomingMessage): string | null {
 	const forwardedFor = req.headers["x-forwarded-for"];
 	if (typeof forwardedFor === "string") {
@@ -2465,22 +2563,6 @@ function getRequestRemoteAddress(req: import("node:http").IncomingMessage): stri
 		if (first) return first;
 	}
 	return req.socket.remoteAddress?.trim() || null;
-}
-
-function formatHttpAccessLogTimestamp(date: Date): string {
-	const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-	const pad2 = (value: number) => String(value).padStart(2, "0");
-	const offsetMinutes = -date.getTimezoneOffset();
-	const sign = offsetMinutes >= 0 ? "+" : "-";
-	const absoluteOffsetMinutes = Math.abs(offsetMinutes);
-	const offsetHours = Math.floor(absoluteOffsetMinutes / 60);
-	const offsetRemainderMinutes = absoluteOffsetMinutes % 60;
-	return `${pad2(date.getDate())}/${months[date.getMonth()]}/${date.getFullYear()}:${pad2(date.getHours())}:${pad2(date.getMinutes())}:${pad2(date.getSeconds())} ${sign}${pad2(offsetHours)}${pad2(offsetRemainderMinutes)}`;
-}
-
-function formatHttpAccessLogField(value: string | null): string {
-	if (!value) return "-";
-	return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
 }
 
 function getResponseSizeForLog(res: import("node:http").ServerResponse): string {
@@ -2508,17 +2590,34 @@ function registerHttpAccessLog(
 		const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
 		const method = req.method ?? "UNKNOWN";
 		const path = getRequestPathForLog(url);
+		const route = normalizeRouteForLog(url.pathname);
 		const protocol = req.httpVersion ? `HTTP/${req.httpVersion}` : "HTTP/1.1";
 		const statusCode = res.statusCode || 0;
 		const responseSize = getResponseSizeForLog(res);
-		const referer = formatHttpAccessLogField(
-			normalizeLogString(req.headers.referer) ?? normalizeLogString(req.headers.referrer),
-		);
-		const userAgent = formatHttpAccessLogField(normalizeLogString(req.headers["user-agent"]));
-		const suffix = state === "close" && !res.writableEnded ? " aborted=true" : "";
-		console.log(
-			`[astro-http] ${remoteAddress} - - [${formatHttpAccessLogTimestamp(new Date())}] "${method} ${path} ${protocol}" ${statusCode} ${responseSize} "${referer}" "${userAgent}" rt=${durationMs.toFixed(1)}ms${suffix}`,
-		);
+		const referer = normalizeLogString(req.headers.referer) ?? normalizeLogString(req.headers.referrer);
+		const userAgent = normalizeLogString(req.headers["user-agent"]);
+		const aborted = state === "close" && !res.writableEnded;
+		logStructuredEvent({
+			severity: statusCode >= 500 || aborted ? "ERROR" : statusCode >= 400 ? "WARNING" : "INFO",
+			component: "astro-http",
+			event: "http.request.completed",
+			message: "HTTP request completed.",
+			data: {
+				requestId: getRequestId(req),
+				method,
+				path,
+				route,
+				protocol,
+				statusCode,
+				responseSize,
+				durationMs,
+				remoteAddress,
+				referer,
+				userAgent,
+				aborted,
+				outcome: aborted ? "canceled" : statusCode >= 500 ? "failure" : "success",
+			},
+		});
 	};
 
 	res.once("finish", () => finalize("finish"));
@@ -4639,7 +4738,7 @@ async function fetchCheckpointForHistoryHydration(input: {
 }): Promise<SessionCheckpointClientResult<CheckpointLatestResponse>> {
 	const client = new SessionCheckpointClient({
 		env: process.env,
-		log: (message) => console.log(`[astro-stream] ${message}`),
+		log: logExternalMessage("astro-stream", "backend.helper_log"),
 	});
 	const latestCheckpoint = await client.latest({ agentSessionUid: input.agentSessionId });
 	if (latestCheckpoint.ok === true) {
@@ -4926,7 +5025,7 @@ async function hydrateLocalSessionFilesForRead(input: {
 	const fetched = await fetchBackendAgentSession({
 		agentSessionUid: input.sessionKey,
 		env: process.env,
-		log: (message) => console.log(`[astro-stream] ${message}`),
+		log: logExternalMessage("astro-stream", "backend.helper_log"),
 	});
 	if (!fetched.ok) {
 		return {
@@ -5116,7 +5215,7 @@ async function prepareCheckpointBeforePiLaunch(
 
 	const client = new SessionCheckpointClient({
 		env: process.env,
-		log: (message) => console.log(`[astro-stream] ${message}`),
+		log: logExternalMessage("astro-stream", "backend.helper_log"),
 	});
 	const holderId = resolveCheckpointHolderId();
 	const ttlSeconds = resolveCheckpointLeaseTtlSeconds();
@@ -5608,7 +5707,17 @@ function writeMockStreamResponse(
 		eventId += 1;
 		res.write(serializeSse(eventId, chunk));
 		if (logTraffic) {
-			console.log(`[astro-stream] MOCK thread=${input.threadId}: ${JSON.stringify(chunk)}`);
+			logStructuredEvent({
+				severity: "DEBUG",
+				component: "astro-stream",
+				event: "mock_stream.chunk",
+				message: "Mock stream chunk written.",
+				data: {
+					threadId: input.threadId,
+					chunkType: chunk.type,
+					...summarizeTextForLog(JSON.stringify(chunk), 240),
+				},
+			});
 		}
 	};
 
@@ -5633,7 +5742,15 @@ function writeMockStreamResponse(
 	writeMockChunk(attachAgentUid({ type: "finish", finishReason: "stop" }, null));
 	res.write("data: [DONE]\n\n");
 	if (logTraffic) {
-		console.log(`[astro-stream] MOCK thread=${input.threadId}: [DONE]`);
+		logStructuredEvent({
+			severity: "DEBUG",
+			component: "astro-stream",
+			event: "mock_stream.done",
+			message: "Mock stream done marker written.",
+			data: {
+				threadId: input.threadId,
+			},
+		});
 	}
 	res.end();
 }
@@ -5941,9 +6058,40 @@ function formatLoggedModel(ctx: Pick<RequestContext, "responseProvider" | "respo
 	return null;
 }
 
-function getOutgoingLogPrefix(ctx: RequestContext): string {
-	const model = formatLoggedModel(ctx);
-	return `[astro-stream] OUT agent_type=${ctx.agentType} session=${ctx.sessionKey} thread=${ctx.threadId}${model ? ` model=${model}` : ""}`;
+function getRuntimeLogData(ctx: RequestContext): Record<string, unknown> {
+	return {
+		sessionKey: ctx.sessionKey,
+		threadId: ctx.threadId,
+		agentSessionId: ctx.agentSessionId,
+		agentType: ctx.agentType,
+		model: formatLoggedModel(ctx),
+	};
+}
+
+function summarizeTextForLog(text: string, maxLength: number): Record<string, unknown> {
+	return {
+		bytes: Buffer.byteLength(text, "utf8"),
+		preview: compactLogValue(text, maxLength),
+	};
+}
+
+function logPiChunk(
+	ctx: RequestContext,
+	chunkType: string,
+	data: Record<string, unknown> = {},
+	severity: "DEBUG" | "INFO" | "WARNING" | "ERROR" = "DEBUG",
+) {
+	logStructuredEvent({
+		severity,
+		component: "astro-stream",
+		event: "pi.chunk",
+		message: "Pi stream chunk observed.",
+		data: {
+			...getRuntimeLogData(ctx),
+			chunkType,
+			...data,
+		},
+	});
 }
 
 function resolveToolCallLogEntry(
@@ -5965,28 +6113,29 @@ function resolveToolCallLogEntry(
 }
 
 function flushPendingReadableLogs(ctx: RequestContext, label = "partial") {
-	const prefix = getOutgoingLogPrefix(ctx);
-
 	if (ctx.logState.reasoning) {
-		const preview = compactLogValue(ctx.logState.reasoning.text, 180);
-		if (preview) {
-			console.log(`${prefix}: reasoning-${label} preview=${JSON.stringify(preview)}`);
-		}
+		logPiChunk(ctx, "reasoning", {
+			label,
+			...summarizeTextForLog(ctx.logState.reasoning.text, 180),
+		});
 		ctx.logState.reasoning = null;
 	}
 
 	if (ctx.logState.text) {
-		const preview = compactLogValue(ctx.logState.text.text, 320);
-		if (preview) {
-			console.log(`${prefix}: assistant-text-${label} text=${JSON.stringify(preview)}`);
-		}
+		logPiChunk(ctx, "assistant_text", {
+			label,
+			...summarizeTextForLog(ctx.logState.text.text, 320),
+		});
 		ctx.logState.text = null;
 	}
 
 	for (const [toolCallId, entry] of ctx.logState.toolCalls.entries()) {
-		const preview = compactLogValue(entry.args, 320);
-		const suffix = preview ? ` args=${JSON.stringify(preview)}` : "";
-		console.log(`${prefix}: tool-call-${label} tool=${entry.toolName} toolCallId=${toolCallId}${suffix}`);
+		logPiChunk(ctx, "tool_call", {
+			label,
+			toolCallId,
+			toolName: entry.toolName,
+			...summarizeTextForLog(entry.args, 320),
+		});
 	}
 	ctx.logState.toolCalls.clear();
 }
@@ -5994,16 +6143,15 @@ function flushPendingReadableLogs(ctx: RequestContext, label = "partial") {
 function logReadableChunk(ctx: RequestContext, chunk: ReturnType<typeof attachAgentUid>) {
 	if (!logTraffic) return;
 
-	const prefix = getOutgoingLogPrefix(ctx);
-
 	switch (chunk.type) {
 		case "new_session":
-			console.log(
-				`${prefix}: new_session agent_session_uid=${chunk.new_session.agent_session_uid} session_key=${chunk.new_session.session_key}`,
-			);
+			logPiChunk(ctx, "new_session", {
+				newAgentSessionUid: chunk.new_session.agent_session_uid,
+				newSessionKey: chunk.new_session.session_key,
+			});
 			return;
 		case "start":
-			console.log(`${prefix}: start messageId=${chunk.messageId}`);
+			logPiChunk(ctx, "start", { messageId: chunk.messageId });
 			return;
 		case "reasoning-start":
 			ctx.logState.reasoning = { id: chunk.id, text: "" };
@@ -6015,10 +6163,7 @@ function logReadableChunk(ctx: RequestContext, chunk: ReturnType<typeof attachAg
 			ctx.logState.reasoning.text += chunk.delta;
 			return;
 		case "reasoning-end": {
-			const preview = compactLogValue(ctx.logState.reasoning?.text ?? "", 180);
-			if (preview) {
-				console.log(`${prefix}: reasoning preview=${JSON.stringify(preview)}`);
-			}
+			logPiChunk(ctx, "reasoning", summarizeTextForLog(ctx.logState.reasoning?.text ?? "", 180));
 			ctx.logState.reasoning = null;
 			return;
 		}
@@ -6032,10 +6177,7 @@ function logReadableChunk(ctx: RequestContext, chunk: ReturnType<typeof attachAg
 			ctx.logState.text.text += chunk.textDelta;
 			return;
 		case "text-end": {
-			const preview = compactLogValue(ctx.logState.text?.text ?? "", 320);
-			if (preview) {
-				console.log(`${prefix}: assistant-text text=${JSON.stringify(preview)}`);
-			}
+			logPiChunk(ctx, "assistant_text", summarizeTextForLog(ctx.logState.text?.text ?? "", 320));
 			ctx.logState.text = null;
 			return;
 		}
@@ -6054,37 +6196,44 @@ function logReadableChunk(ctx: RequestContext, chunk: ReturnType<typeof attachAg
 		case "tool-call-end": {
 			const entry = resolveToolCallLogEntry(ctx, chunk.toolCallId);
 			if (!entry) {
-				console.log(`${prefix}: tool-call tool=unknown`);
+				logPiChunk(ctx, "tool_call", { toolName: "unknown" });
 				return;
 			}
-			const preview = compactLogValue(entry.args, 320);
-			const suffix = preview ? ` args=${JSON.stringify(preview)}` : "";
-			console.log(`${prefix}: tool-call tool=${entry.toolName} toolCallId=${entry.toolCallId}${suffix}`);
+			logPiChunk(ctx, "tool_call", {
+				toolCallId: entry.toolCallId,
+				toolName: entry.toolName,
+				...summarizeTextForLog(entry.args, 320),
+			});
 			ctx.logState.toolCalls.delete(entry.toolCallId);
 			return;
 		}
 		case "tool-result": {
-			const preview = compactLogValue(stringifyLogValue(chunk.result), 320);
-			console.log(
-				`${prefix}: tool-result toolCallId=${chunk.toolCallId}${preview ? ` result=${JSON.stringify(preview)}` : ""}`,
-			);
+			const result = stringifyLogValue(chunk.result);
+			logPiChunk(ctx, "tool_result", {
+				toolCallId: chunk.toolCallId,
+				...summarizeTextForLog(result, 320),
+			});
 			return;
 		}
 		case "finish": {
 			flushPendingReadableLogs(ctx);
-			const usageSuffix = chunk.usage
-				? ` usage=${JSON.stringify({
-						inputTokens: (chunk.usage as { inputTokens?: number }).inputTokens,
-						outputTokens: (chunk.usage as { outputTokens?: number }).outputTokens,
-				  })}`
-				: "";
-			console.log(`${prefix}: finish reason=${chunk.finishReason}${usageSuffix}`);
+			logPiChunk(ctx, "finish", {
+				finishReason: chunk.finishReason,
+				inputTokens: chunk.usage ? (chunk.usage as { inputTokens?: number }).inputTokens : undefined,
+				outputTokens: chunk.usage ? (chunk.usage as { outputTokens?: number }).outputTokens : undefined,
+			});
 			return;
 		}
 		case "error":
 			flushPendingReadableLogs(ctx);
-			console.log(
-				`${prefix}: error source=${chunk.error_source ?? "unknown"} ${JSON.stringify(compactLogValue(chunk.error, 320))}`,
+			logPiChunk(
+				ctx,
+				"error",
+				{
+					errorSource: chunk.error_source ?? "unknown",
+					error: compactLogValue(chunk.error, 320),
+				},
+				"ERROR",
 			);
 			return;
 	}
@@ -6096,9 +6245,16 @@ function shouldSuppressClientChunk(ctx: RequestContext, chunk: ReturnType<typeof
 
 function abortStreamOnPersistenceFailure(ctx: RequestContext, error: unknown) {
 	const message = error instanceof Error ? error.message : String(error);
-	console.error(
-		`[astro-stream] conversation persistence failed agent_type=${ctx.agentType} session=${ctx.sessionKey} thread=${ctx.threadId}: ${message}`,
-	);
+	logStructuredEvent({
+		severity: "ERROR",
+		component: "astro-stream",
+		event: "conversation.persistence_failed",
+		message: "Conversation persistence failed.",
+		data: {
+			...getRuntimeLogData(ctx),
+			error: message,
+		},
+	});
 	clearActiveStreamSession(ctx);
 	ctx.finished = true;
 	ctx.res.destroy(error instanceof Error ? error : new Error(message));
@@ -6599,7 +6755,7 @@ function writeDone(ctx: RequestContext) {
 		try {
 			ctx.res.write("data: [DONE]\n\n");
 			if (logTraffic) {
-				console.log(`${getOutgoingLogPrefix(ctx)}: [DONE]`);
+				logPiChunk(ctx, "done");
 			}
 			ctx.res.end();
 		} catch (error) {
@@ -6618,7 +6774,7 @@ function writeDone(ctx: RequestContext) {
 			});
 		}
 	} else if (logTraffic) {
-		console.log(`${getOutgoingLogPrefix(ctx)}: [DONE detached]`);
+		logPiChunk(ctx, "done_detached");
 	}
 	ctx.finished = true;
 	void completeWarmRunnerTurnForContext(ctx, "stream_finish");
@@ -7358,7 +7514,7 @@ async function prepareWarmPiRuntime(
 			agentSessionUid: ctx.agentSessionId!,
 			sessionAssetsRoot: getSessionAssetsRoot(),
 			env: piLaunchBaseEnv,
-			log: (message) => console.log(`[astro-stream] ${message}`),
+			log: logExternalMessage("astro-stream", "backend.helper_log"),
 		});
 		return {
 			capabilities,
@@ -7379,7 +7535,7 @@ async function prepareWarmPiRuntime(
 						sessionConfigOverrides: ctx.sessionConfigOverrides,
 						sessionSkillPaths: [],
 						env: piLaunchBaseEnv,
-						log: (message) => console.log(`[astro-stream] ${message}`),
+						log: logExternalMessage("astro-stream", "backend.helper_log"),
 					});
 					return {
 						hydratedProviderCredentials,
@@ -7570,7 +7726,7 @@ async function prepareWarmPiRuntime(
 				...piLaunchBaseEnv,
 				PI_CODING_AGENT_DIR: scopedPiAgentDir,
 			},
-			log: (message) => console.log(`[astro-stream] ${message}`),
+			log: logExternalMessage("astro-stream", "backend.helper_log"),
 		});
 		if (flushed.ok === false) {
 			logStructuredEvent({
@@ -8028,7 +8184,16 @@ async function startWarmRunner(input: {
 			parsed = JSON.parse(line);
 		} catch {
 			if (logTraffic) {
-				console.log(`[astro-stream] WARM_NONJSON session=${input.ctx.sessionKey}: ${line}`);
+				logStructuredEvent({
+					severity: "DEBUG",
+					component: "astro-stream",
+					event: "warm_runner.stdout_non_json",
+					message: "Warm Pi RPC runner emitted non-JSON stdout.",
+					data: {
+						...getRuntimeLogData(input.ctx),
+						...summarizeTextForLog(line, 240),
+					},
+				});
 			}
 			return;
 		}
@@ -8042,7 +8207,16 @@ async function startWarmRunner(input: {
 			if (runner.stderrLines.length > 20) runner.stderrLines.shift();
 		}
 		if (logTraffic) {
-			console.log(`[astro-stream] WARM_STDERR session=${input.ctx.sessionKey}: ${line}`);
+			logStructuredEvent({
+				severity: "DEBUG",
+				component: "astro-stream",
+				event: "warm_runner.stderr",
+				message: "Warm Pi RPC runner emitted stderr.",
+				data: {
+					...getRuntimeLogData(input.ctx),
+					...summarizeTextForLog(line, 240),
+				},
+			});
 		}
 	});
 
@@ -8332,7 +8506,7 @@ async function runPiPrompt(
 					agentSessionUid: ctx.agentSessionId!,
 					sessionAssetsRoot: getSessionAssetsRoot(),
 					env: piLaunchBaseEnv,
-					log: (message) => console.log(`[astro-stream] ${message}`),
+					log: logExternalMessage("astro-stream", "backend.helper_log"),
 				});
 				return {
 					capabilities,
@@ -8357,7 +8531,7 @@ async function runPiPrompt(
 						sessionConfigOverrides: ctx.sessionConfigOverrides,
 						sessionSkillPaths: [],
 						env: piLaunchBaseEnv,
-						log: (message) => console.log(`[astro-stream] ${message}`),
+						log: logExternalMessage("astro-stream", "backend.helper_log"),
 					});
 					return {
 						hydratedProviderCredentials,
@@ -8586,7 +8760,7 @@ async function runPiPrompt(
 				...piLaunchBaseEnv,
 				PI_CODING_AGENT_DIR: scopedPiAgentDir,
 			},
-			log: (message) => console.log(`[astro-stream] ${message}`),
+			log: logExternalMessage("astro-stream", "backend.helper_log"),
 		});
 		if (flushed.ok === false) {
 			logStructuredEvent({
@@ -8761,9 +8935,16 @@ async function runPiPrompt(
 			parsed = JSON.parse(line);
 		} catch {
 			if (logTraffic) {
-				console.log(
-					`[astro-stream] NONJSON agent_type=${ctx.agentType} session=${ctx.sessionKey} thread=${ctx.threadId}: ${line}`,
-				);
+				logStructuredEvent({
+					severity: "DEBUG",
+					component: "astro-stream",
+					event: "pi.stdout_non_json",
+					message: "Pi emitted non-JSON stdout.",
+					data: {
+						...getRuntimeLogData(ctx),
+						...summarizeTextForLog(line, 240),
+					},
+				});
 			}
 			return;
 		}
@@ -8810,9 +8991,16 @@ async function runPiPrompt(
 			if (childStderrLines.length > 20) childStderrLines.shift();
 		}
 		if (logTraffic) {
-			console.log(
-				`[astro-stream] STDERR agent_type=${ctx.agentType} session=${ctx.sessionKey} thread=${ctx.threadId}: ${line}`,
-			);
+			logStructuredEvent({
+				severity: "DEBUG",
+				component: "astro-stream",
+				event: "pi.stderr",
+				message: "Pi emitted stderr.",
+				data: {
+					...getRuntimeLogData(ctx),
+					...summarizeTextForLog(line, 240),
+				},
+			});
 		}
 		if (isNodeRuntimeWarningLine(line)) {
 			nodeRuntimeWarningActive = true;
@@ -8944,7 +9132,20 @@ const server = createServer((req, res) => {
 				url: req.url ?? null,
 			},
 		});
-		console.error(`[astro-stream] request failed issue=${issue.id}: ${issue.message}`);
+		logStructuredEvent({
+			severity: "ERROR",
+			component: "astro-stream",
+			event: "http.request_failed",
+			message: "HTTP request failed before Astro could complete the response.",
+			data: {
+				requestId: getRequestId(req),
+				issueId: issue.id,
+				method: req.method ?? null,
+				path: req.url ?? null,
+				error: issue.message,
+				errorType: issue.name,
+			},
+		});
 		if (!res.headersSent) {
 			json(res, 500, {
 				error: "internal_error",
@@ -9378,7 +9579,7 @@ async function fetchA2AExtendedAgentCard(
 	const fetched = await fetchBackendAgentSessionAgentCard({
 		agentSessionUid,
 		env: process.env,
-		log: (message) => console.log(`[astro-stream] ${message}`),
+		log: logExternalMessage("astro-stream", "backend.helper_log"),
 	});
 	if (!fetched.ok) {
 		return {
@@ -10281,7 +10482,7 @@ async function handleStreamRequest(
 			typeof body.message === "string" && body.message.trim() ? body.message.trim() : null;
 		const client = new SessionCheckpointClient({
 			env: process.env,
-			log: (message) => console.log(`[astro-stream] ${message}`),
+			log: logExternalMessage("astro-stream", "backend.helper_log"),
 		});
 		const cancelResult = await client.requestRuntimeCancel({
 			agentSessionUid: agentSessionId,
@@ -10371,7 +10572,18 @@ async function handleStreamRequest(
 	}
 
 	if (logRequestBodies) {
-		console.log(`[astro-stream] IN ${url.pathname}: ${JSON.stringify(body)}`);
+		logStructuredEvent({
+			severity: "DEBUG",
+			component: "astro-stream",
+			event: "http.request_body",
+			message: "HTTP request body captured for debugging.",
+			data: {
+				requestId: getRequestId(req),
+				method: req.method ?? "UNKNOWN",
+				path: url.pathname,
+				...summarizeTextForLog(JSON.stringify(body), 512),
+			},
+		});
 	}
 
 	const messages = Array.isArray(body.messages) ? body.messages : [];
@@ -11029,9 +11241,19 @@ async function handleStreamRequest(
 				responseModel: null,
 				sessionModelBinding,
 			}) ?? agentConfig?.model ?? null;
-		console.log(
-			`[astro-stream] SESSION agent_type=${responseAgentType} session_uid=${sessionKey} thread=${responseThreadId} agent_uid=${agentId} agent_session_uid=${agentSessionId ?? "n/a"}${selectedModelForLog ? ` model=${selectedModelForLog}` : ""}`,
-		);
+		logStructuredEvent({
+			component: "astro-stream",
+			event: "session.launch_resolved",
+			message: "Astro resolved the runtime session launch.",
+			data: {
+				agentType: responseAgentType,
+				sessionKey,
+				threadId: responseThreadId,
+				agentId,
+				agentSessionId,
+				model: selectedModelForLog,
+			},
+		});
 	}
 
 		let conversationStore: ConversationStore;
@@ -11047,11 +11269,18 @@ async function handleStreamRequest(
 				...(effectiveA2AEnvelope ? { a2a: effectiveA2AEnvelope } : {}),
 			});
 	} catch (error) {
-		console.error(
-			`[astro-stream] failed to initialize conversation history for session=${sessionKey}: ${
-				error instanceof Error ? error.message : String(error)
-			}`,
-		);
+		logStructuredEvent({
+			severity: "ERROR",
+			component: "astro-stream",
+			event: "conversation.init_failed",
+			message: "Failed to initialize conversation history before starting the stream.",
+			data: {
+				sessionKey,
+				threadId: responseThreadId,
+				agentType: responseAgentType,
+				error: error instanceof Error ? error.message : String(error),
+			},
+		});
 		json(res, 500, {
 			error: "conversation_persistence_failed",
 			message: "Failed to persist conversation history before starting the stream.",
@@ -11212,11 +11441,16 @@ async function handleStreamRequest(
 			});
 		} catch (error) {
 			if (runtimeTurnShouldStop(ctx)) return;
-			console.error(
-				`[astro-stream] failed to persist conversation launch files for session=${sessionKey}: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
-			);
+			logStructuredEvent({
+				severity: "ERROR",
+				component: "astro-stream",
+				event: "conversation.launch_persist_failed",
+				message: "Failed to persist conversation launch files before starting the stream.",
+				data: {
+					...getRuntimeLogData(ctx),
+					error: error instanceof Error ? error.message : String(error),
+				},
+			});
 			writeChunk(ctx, {
 				type: "error",
 				error: "Failed to persist conversation launch files before starting the stream.",
@@ -11317,7 +11551,18 @@ server.on("clientError", (error, socket) => {
 		},
 	});
 	if (logTraffic) {
-		console.log(`[astro-stream] client error issue=${issue.id}: ${issue.message}`);
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "http.client_error",
+			message: "HTTP client error captured.",
+			data: {
+				issueId: issue.id,
+				error: issue.message,
+				remoteAddress: remoteSocket.remoteAddress ?? null,
+				remotePort: remoteSocket.remotePort ?? null,
+			},
+		});
 	}
 	if (socket.writable) {
 		socket.end("HTTP/1.1 400 Bad Request\r\n\r\n");
@@ -11331,7 +11576,18 @@ server.on("error", (error) => {
 		error,
 		context: { host, port },
 	});
-	console.error(`[astro-stream] server error issue=${issue.id}: ${issue.message}`);
+	logStructuredEvent({
+		severity: "ERROR",
+		component: "astro-stream",
+		event: "http.server_error",
+		message: "HTTP server error captured.",
+		data: {
+			issueId: issue.id,
+			error: issue.message,
+			host,
+			port,
+		},
+	});
 });
 
 const startupRuntimeProfile = resolveRuntimeProfile();
@@ -11365,6 +11621,19 @@ if (startupRuntimeProfileValidation.ok === false) {
 }
 
 server.listen(port, host, () => {
-	console.log(`[astro-stream] Listening on http://${host}:${port}`);
-	console.log("[astro-stream] POST /api/llm/chat for stateless JSON, POST /api/chat for UI streaming, or POST /api/a2a/v1/message:send for public A2A turns");
+	logStructuredEvent({
+		component: "astro-stream",
+		event: "server.listening",
+		message: "Astro stream server is listening.",
+		data: {
+			host,
+			port,
+			baseUrl: `http://${host}:${port}`,
+			endpoints: [
+				"/api/llm/chat",
+				"/api/chat",
+				"/api/a2a/v1/message:send",
+			],
+		},
+	});
 });

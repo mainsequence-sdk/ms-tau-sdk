@@ -1,23 +1,56 @@
-# Structured Logging Contract
+# Logging Contract
 
-This page defines the structured JSON log contract for Astro services.
+This page defines Astro's dual-sink logging contract.
 
-Astro emits both:
+Astro emits one internal structured log event and renders it through configured sinks:
 
-- human-readable runtime diagnostics such as `[astro-stream] OUT ...`
-- structured JSON logs for machine parsing and operational tracing
+- machine JSON logs for Kubernetes/GKE scraping
+- compact human terminal logs for local/dev inspection
+- optional payload logs for raw large data when explicitly enabled
 
-Only the structured JSON logs on this page are the stable machine-readable contract.
+The machine JSON sink is the stable machine-readable contract. The human sink is a readable
+projection of the same event, not a separate ad hoc logging path.
 
 ## Scope
 
 This contract currently covers these structured-log services:
 
+- `astro`
+- `astro-cors`
+- `astro-http`
 - `astro-stream`
 - `astro-checkpoint-sidecar`
 - `agent-registration`
+- `astro-session-model`
 
-## Shared JSON shape
+## Configuration
+
+Recommended local/dev defaults:
+
+```bash
+ASTRO_LOG_MACHINE_SINK=off
+ASTRO_LOG_HUMAN_SINK=pretty
+ASTRO_LOG_LEVEL=info
+ASTRO_LOG_PAYLOADS=0
+ASTRO_LOG_STREAM_CHUNKS=0
+ASTRO_LOG_STACK_MODE=summary
+```
+
+Recommended Kubernetes/GKE defaults:
+
+```bash
+ASTRO_LOG_MACHINE_SINK=json
+ASTRO_LOG_HUMAN_SINK=off
+ASTRO_LOG_LEVEL=info
+ASTRO_LOG_PAYLOADS=0
+ASTRO_LOG_STREAM_CHUNKS=0
+ASTRO_LOG_STACK_MODE=summary
+```
+
+`ASTRO_LOG_FORMAT=json|pretty` remains accepted as a coarse compatibility switch, but new
+configuration should use the explicit machine/human sink variables.
+
+## Shared JSON Shape
 
 Every structured log entry is a single JSON object written on one line.
 
@@ -30,7 +63,9 @@ Canonical top-level shape:
   "component": "astro-stream",
   "event": "checkpoint_marker_written",
   "message": "Checkpoint marker written for sidecar flush.",
+  "request_id": "req_01",
   "session_id": "52",
+  "duration_ms": 42,
   "data": {
     "session_id": "52",
     "threadId": "52",
@@ -54,8 +89,34 @@ Field contract:
   - short human-readable summary
 - `session_id`
   - canonical runtime session id when the event is session-scoped
+- `request_id`
+  - request correlation id when the event belongs to an HTTP request
+- `duration_ms`
+  - duration for completed work units
 - `data`
   - event-specific payload
+
+Large values are summarized by default. Raw prompts, tool results, backend bodies, full stack
+traces, and SSE streams must not appear in normal logs unless payload logging is explicitly enabled.
+
+## Human Terminal Shape
+
+The human sink renders the same event as one compact line:
+
+```text
+12:17:52.018 INFO  a2a.message.completed req=req_01 session=0b270... status=200 842ms runner=warm
+12:17:54.000 ERROR backend.session.fetch.failed req=req_01 session=0b270... phase=auth_headers error=timeout 120000ms
+```
+
+Rules:
+
+- one line per event
+- no raw JSON blobs
+- no full tool results
+- no raw SSE chunks
+- no full prompt/system/skill files
+- no escaped multiline stack traces
+- IDs may be shortened for readability
 
 ## Session id normalization
 
@@ -371,15 +432,20 @@ The stream startup wrapper also emits `astro-stream` structured logs before any 
 
 These are valid structured logs and intentionally may omit `session_id`.
 
-## Plain logs that are not part of this contract
+## Legacy Mixed Logs
 
-These are still expected, but they are not the stable structured-log contract:
+Astro runtime code should not emit legacy mixed-format operational logs such as:
 
 - `[astro-stream] OUT ...`
 - `[astro-stream] STDERR ...`
 - `[astro-http] ...`
 
-They remain useful for local debugging and live operator inspection.
+Those are replaced by structured events such as:
+
+- `pi.chunk`
+- `pi.stderr`
+- `warm_runner.stderr`
+- `http.request.completed`
 
 ## Non-goals
 
@@ -387,7 +453,7 @@ This contract does not guarantee:
 
 - a closed global enum of every future `event` value forever
 - that every process-global startup log has a session id
-- that human-readable `[astro-*]` lines are parse-stable
+- that payload logging is safe to enable in production by default
 
 ## Related files
 

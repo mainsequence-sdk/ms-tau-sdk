@@ -33,6 +33,20 @@
   when an A2A response fails runtime JSON validation)
 - `ASTRO_RELEASE_VERSION` (the Astro release/build version baked into the image and exposed for
   runtime debugging)
+- `ASTRO_LOG_MACHINE_SINK` (`json` or `off`; defaults to `json` in Kubernetes/GKE-like
+  environments and `off` locally)
+- `ASTRO_LOG_HUMAN_SINK` (`pretty` or `off`; defaults to `off` in Kubernetes/GKE-like environments
+  and `pretty` locally)
+- `ASTRO_LOG_LEVEL` (`debug`, `info`, `warning`, or `error`; default `info`)
+- `ASTRO_LOG_PAYLOADS` (`1` preserves large payload fields in logs; default `0`, which summarizes
+  large values with byte counts, previews, and hashes)
+- `ASTRO_LOG_STREAM_CHUNKS` (`1` reserved for enabling additional stream chunk diagnostics; normal
+  stream/tool logs are summarized as structured events)
+- `ASTRO_LOG_STACK_MODE` (`summary` or `full`; default `summary`)
+- `ASTRO_LOG_MAX_FIELD_BYTES` (default `2048`; maximum string field size before summarization)
+- `ASTRO_LOG_MAX_ARRAY_ITEMS` (default `20`; maximum array preview length before summarization)
+- `ASTRO_LOG_MAX_DEPTH` (default `6`; maximum nested log object depth before summarization)
+- `ASTRO_LOG_FORMAT` (`json` or `pretty`; compatibility shorthand for the explicit sink settings)
 - `ASTRO_STREAM_LOG_TRAFFIC` (`0` disables logging)
 - `ASTRO_STREAM_LOG_HEALTH_TRAFFIC` (`1` enables `GET /health` access logs; health probe access
   lines are suppressed by default)

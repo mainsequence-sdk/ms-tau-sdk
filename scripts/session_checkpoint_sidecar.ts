@@ -23,9 +23,7 @@ import {
 	readSessionInsights,
 } from "../interface/stream/session-insights.js";
 import {
-	normalizeStructuredLogRecord,
-	shouldEmitStructuredLog,
-	resolveStructuredLogSessionId,
+	logStructuredEvent,
 } from "../pi/extensions/shared/structured-logging.js";
 
 type CheckpointReason =
@@ -161,7 +159,13 @@ const reasonPriority: Record<CheckpointReason, number> = {
 
 const checkpointClient = new SessionCheckpointClient({
 	env: process.env,
-	log: (message) => console.log(`[astro-checkpoint-sidecar] ${message}`),
+	log: (message) =>
+		logStructuredEvent({
+			component: "astro-checkpoint-sidecar",
+			event: "checkpoint_client.backend_log",
+			message,
+			data: { detail: message },
+		}),
 });
 
 const pendingFlushes = new Map<string, DirtySession>();
@@ -1654,26 +1658,13 @@ function sidecarLogSeverity(event: string): SidecarLogSeverity {
 
 function logEvent(event: string, data: Record<string, unknown>) {
 	const severity = sidecarLogSeverity(event);
-	if (!shouldEmitStructuredLog({ severity, component: "astro-checkpoint-sidecar", event })) {
-		return;
-	}
-	const normalizedData = normalizeStructuredLogRecord(data) ?? {};
-	const sessionId = resolveStructuredLogSessionId(normalizedData);
-	const payload = {
+	logStructuredEvent({
 		severity,
-		time: new Date().toISOString(),
 		component: "astro-checkpoint-sidecar",
 		event,
 		message: sidecarLogMessages[event] ?? event,
-		...(sessionId ? { session_id: sessionId } : {}),
-		...normalizedData,
-	};
-	const serialized = JSON.stringify(payload);
-	if (severity === "ERROR" || severity === "WARNING") {
-		console.error(serialized);
-		return;
-	}
-	console.log(serialized);
+		data,
+	});
 }
 
 function logMetrics() {
