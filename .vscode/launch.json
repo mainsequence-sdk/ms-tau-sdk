@@ -2,7 +2,7 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "A2A endpoint: ask capabilities JSON",
+      "name": "A2A message:send: ask capabilities JSON",
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "node",
@@ -20,7 +20,7 @@
       ]
     },
     {
-      "name": "A2A endpoint: ask dictionary JSON",
+      "name": "A2A message:send: ask dictionary JSON",
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "node",
@@ -42,7 +42,7 @@
     {
       "id": "astroStreamPort",
       "type": "promptString",
-      "description": "Host port for the running astro-pi-stream endpoint",
+      "description": "Host port for Astro; the debug script posts to /api/a2a/v1/message:send",
       "default": "8787"
     },
     {

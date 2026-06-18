@@ -1,6 +1,8 @@
 # A2A Standard Client Examples
 
 These examples use Astro's public A2A adapter, not the internal session runtime routes.
+They call `POST /api/a2a/v1/message:send` for direct request/response turns and never call
+`/api/chat`, `/api/a2a/chat`, or session runtime chat routes.
 
 Phase 1 requires `message.contextId` to be the existing Main Sequence `AgentSession.uid`.
 Clients must generate `message.messageId` and reuse the same value when retrying the same

@@ -1418,35 +1418,256 @@ async function resolveA2AStandardRuntimeIdentity(
 async function runA2AStandardRuntimeTurn(
 	prepared: A2AStandardPreparedTurn,
 ): Promise<A2AStandardInternalResult> {
-	const runtimeUrl = `http://127.0.0.1:${configuredPort}/api/chat`;
+	const runtimeProfile = resolveRuntimeProfile();
+	const runtimeProfileValidation = validateRuntimeProfile(runtimeProfile);
+	if (runtimeProfileValidation.ok === false) {
+		return {
+			ok: false,
+			statusCode: runtimeProfileValidation.statusCode,
+			code: runtimeProfileValidation.error,
+			message: runtimeProfileValidation.message,
+		};
+	}
+
 	try {
-		const response = await fetch(runtimeUrl, {
-			method: "POST",
-			headers: {
-				"Content-Type": "application/json",
-				Accept: "text/event-stream",
-			},
-			body: JSON.stringify(buildA2AStandardRuntimeChatPayload(prepared)),
+		if (runtimeProfile.kind !== "project-executor") {
+			await ensureMainsequenceCliAuthReady();
+		}
+	} catch (error) {
+		return {
+			ok: false,
+			statusCode: 503,
+			code: "runtime_auth_unavailable",
+			message:
+				error instanceof Error
+					? `Main Sequence runtime auth failed before the session started: ${error.message}`
+					: "Main Sequence runtime auth failed before the session started.",
+		};
+	}
+
+	const body = buildA2AStandardRuntimeChatPayload(prepared);
+	const capture = createCapturingRuntimeResponse();
+
+	try {
+		const resolved = await buildSessionRuntimeBootstrapContext({
+			agentSessionUid: prepared.contextId,
+			userUid: prepared.userUid,
+			body,
 		});
-		const raw = await response.text();
-		if (!response.ok) {
+		if (resolved.ok === false) {
 			return {
 				ok: false,
-				statusCode: response.status,
-				code: "a2a_runtime_transport_error",
-				message: `A2A runtime transport failed with HTTP ${response.status}.`,
-				detail: raw,
+				statusCode: resolved.statusCode,
+				code: resolved.error,
+				message: resolved.message,
 			};
 		}
-		return extractInternalA2AResult(raw);
+
+		const context = extractObjectPropertyRecord(body, "context") ?? {};
+		const a2aContext = extractObjectPropertyRecord(context, "a2a") ?? {};
+		const a2aCaller = extractObjectPropertyRecord(a2aContext, "caller") ?? {};
+		const effectiveA2AEnvelope = buildRequestA2AEnvelope({
+			enabled: true,
+			body,
+			a2aContext,
+			caller: a2aCaller,
+		});
+		const tools = extractObjectPropertyRecord(body, "tools") ?? {};
+		const system = typeof body.system === "string" ? body.system : undefined;
+		const ctx = resolved.ctx;
+		ctx.res = capture.res;
+		ctx.clientAttached = true;
+		ctx.cancelOnClientDisconnect = false;
+		ctx.system = system;
+		ctx.uiContext = context;
+		ctx.uiTools = tools;
+		ctx.a2aOutputOptions = normalizeA2AOutputOptions({
+			enabled: true,
+			body,
+			a2aContext,
+			context,
+			envelopeResponseFormat: prepared.responseFormat,
+		});
+		ctx.a2aRuntimeOptions = normalizeA2ARuntimeOptions({
+			body,
+			a2aContext,
+			context,
+		});
+
+		const executeRuntimeTurn = async () => {
+			ctx.runtimeStarted = true;
+			markActiveStreamSession(ctx);
+			logStructuredEvent({
+				severity: "INFO",
+				component: "astro-stream",
+				event: "runtime_turn_started",
+				message: "Astro started executing an A2A runtime turn directly without a localhost HTTP bridge.",
+				data: {
+					sessionKey: ctx.sessionKey,
+					threadId: ctx.threadId,
+					agentSessionId: ctx.agentSessionId,
+					agentType: ctx.agentType,
+					warmA2ATurnEligible: true,
+					a2aTurnQueueEligible: true,
+				},
+			});
+
+			try {
+				const checkpointReady = await prepareCheckpointBeforePiLaunch(ctx);
+				if (runtimeTurnShouldStop(ctx)) return;
+				if (checkpointReady.ok === false) {
+					writeChunk(ctx, checkpointReady.errorEvent);
+					writeDone(ctx);
+					return;
+				}
+			} catch (error) {
+				if (runtimeTurnShouldStop(ctx)) return;
+				writeChunk(ctx, {
+					type: "error",
+					error: error instanceof Error ? error.message : String(error),
+					error_source: "checkpoint",
+				});
+				writeDone(ctx);
+				return;
+			}
+			if (runtimeTurnShouldStop(ctx)) return;
+
+			try {
+				ctx.conversationStore.recordUserMessageSync({
+					text: prepared.messageText,
+					...(effectiveA2AEnvelope
+						? { provenance: a2aEnvelopeToUserProvenance(effectiveA2AEnvelope) }
+						: {}),
+				});
+			} catch (error) {
+				if (runtimeTurnShouldStop(ctx)) return;
+				writeChunk(ctx, {
+					type: "error",
+					error: "Failed to persist conversation launch files before starting the stream.",
+					error_source: "runtime",
+					error_code: "conversation_persistence_failed",
+					error_detail: error instanceof Error ? error.message : String(error),
+				});
+				writeDone(ctx);
+				return;
+			}
+			if (runtimeTurnShouldStop(ctx)) return;
+
+			writeChunk(ctx, { type: "start", messageId: ctx.messageId });
+			if (runtimeTurnShouldStop(ctx)) return;
+
+			const prompt = buildPrompt(system, prepared.messageText, context, tools);
+			const piOptions = {
+				cwd: resolved.cwd,
+				projectId: resolved.projectId,
+				agentConfig: null,
+			};
+
+			const warmResult = await runWarmPiPrompt(prompt, ctx, piOptions);
+			if (runtimeTurnShouldStop(ctx)) return;
+			if (warmResult.ok === true || "handled" in warmResult) return;
+			logStructuredEvent({
+				severity: "WARNING",
+				component: "astro-stream",
+				event: "warm_runner_cold_fallback",
+				message:
+					"Astro is falling back to cold durable Pi launch after direct A2A warm runner dispatch failed or was ineligible.",
+				data: {
+					agentType: ctx.agentType,
+					sessionKey: ctx.sessionKey,
+					threadId: ctx.threadId ?? null,
+					agentSessionId: ctx.agentSessionId,
+					reason: warmResult.fallbackReason,
+				},
+			});
+			if (runtimeTurnShouldStop(ctx)) return;
+			await runPiPrompt(prompt, ctx, piOptions);
+		};
+
+		await enqueueWarmSessionTurn(prepared.contextId, executeRuntimeTurn);
+		if (!ctx.finished) {
+			writeDone(ctx);
+		}
+
+		if (capture.destroyed) {
+			return {
+				ok: false,
+				statusCode: 500,
+				code: "a2a_runtime_response_destroyed",
+				message: capture.error?.message ?? "A2A runtime response capture was destroyed before completion.",
+			};
+		}
+		return extractInternalA2AResult(capture.raw());
 	} catch (error) {
 		return {
 			ok: false,
 			statusCode: 502,
-			code: "a2a_runtime_transport_error",
+			code: "a2a_runtime_execution_error",
 			message: error instanceof Error ? error.message : String(error),
 		};
 	}
+}
+
+function createCapturingRuntimeResponse(): {
+	res: import("node:http").ServerResponse;
+	raw: () => string;
+	readonly destroyed: boolean;
+	readonly error: Error | null;
+} {
+	let raw = "";
+	let headersSent = false;
+	let writableEnded = false;
+	let destroyed = false;
+	let error: Error | null = null;
+	const closeCallbacks: Array<() => void> = [];
+	const response = {
+		get writableEnded() {
+			return writableEnded;
+		},
+		get destroyed() {
+			return destroyed;
+		},
+		get headersSent() {
+			return headersSent;
+		},
+		writeHead() {
+			headersSent = true;
+			return this;
+		},
+		write(chunk?: unknown) {
+			if (chunk != null) raw += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+			return true;
+		},
+		end(chunk?: unknown) {
+			if (chunk != null) raw += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+			writableEnded = true;
+			for (const callback of closeCallbacks.splice(0)) callback();
+			return this;
+		},
+		destroy(reason?: unknown) {
+			destroyed = true;
+			writableEnded = true;
+			error = reason instanceof Error ? reason : reason == null ? null : new Error(String(reason));
+			for (const callback of closeCallbacks.splice(0)) callback();
+			return this;
+		},
+		once(event: string, callback: () => void) {
+			if (event === "close") {
+				closeCallbacks.push(callback);
+			}
+			return this;
+		},
+	} as unknown as import("node:http").ServerResponse;
+	return {
+		res: response,
+		raw: () => raw,
+		get destroyed() {
+			return destroyed;
+		},
+		get error() {
+			return error;
+		},
+	};
 }
 
 function createDetachedRuntimeResponse(): import("node:http").ServerResponse {
@@ -1587,8 +1808,6 @@ function createSessionRuntimeAttachment(input: {
 }
 
 async function buildSessionRuntimeBootstrapContext(input: {
-	req: import("node:http").IncomingMessage;
-	url: URL;
 	agentSessionUid: string;
 	userUid: string;
 	body: Record<string, unknown>;
@@ -1792,8 +2011,6 @@ async function buildSessionRuntimeBootstrapContext(input: {
 }
 
 function startA2ASessionRuntimeBootstrap(input: {
-	req: import("node:http").IncomingMessage;
-	url: URL;
 	record: A2ASessionRuntimeAttachment;
 	body: Record<string, unknown>;
 }) {
@@ -1801,8 +2018,6 @@ function startA2ASessionRuntimeBootstrap(input: {
 	const bootstrap = (async () => {
 		try {
 			const resolved = await buildSessionRuntimeBootstrapContext({
-				req: input.req,
-				url: input.url,
 				agentSessionUid: input.record.agentSessionUid,
 				userUid: input.record.userUid,
 				body: input.body,
@@ -1953,8 +2168,6 @@ async function handleA2ASessionRuntimeRequest(
 		},
 	});
 	startA2ASessionRuntimeBootstrap({
-		req,
-		url,
 		record,
 		body,
 	});
