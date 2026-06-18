@@ -159,8 +159,8 @@ const providerCredentialFlushIntervalMs = (() => {
 	return Number.isFinite(configured) && configured >= 1000 ? Math.trunc(configured) : 10000;
 })();
 const warmRunnerIdleTtlMs = (() => {
-	const configured = Number(process.env.ASTRO_A2A_WARM_RUNNER_IDLE_TTL_MS ?? "300000");
-	return Number.isFinite(configured) && configured >= 1000 ? Math.trunc(configured) : 300000;
+	const configured = Number(process.env.ASTRO_A2A_WARM_RUNNER_IDLE_TTL_MS ?? "3600000");
+	return Number.isFinite(configured) && configured >= 1000 ? Math.trunc(configured) : 3600000;
 })();
 const warmRunnerRpcCommandTimeoutMs = (() => {
 	const configured = Number(process.env.ASTRO_A2A_WARM_RUNNER_RPC_TIMEOUT_MS ?? "10000");
@@ -717,7 +717,7 @@ type A2ASessionRuntimeAttachment = {
 	agentSessionUid: string;
 	threadId: string | null;
 	agentType: string | null;
-	userUid: string;
+	userUid: string | null;
 	state: A2ASessionRuntimeState;
 	attachedAt: string;
 	updatedAt: string;
@@ -791,7 +791,7 @@ type A2AStandardPreparedTurn = {
 	messageId: string;
 	messageText: string;
 	agentType: string;
-	userUid: string;
+	userUid: string | null;
 	responseFormat: A2AResponseFormat;
 	jsonRepairAttempts: number;
 	strictJson: boolean;
@@ -1316,7 +1316,10 @@ function extractInternalA2AResult(raw: string): A2AStandardInternalResult {
 	};
 }
 
-function buildA2AStandardRuntimeChatPayload(prepared: A2AStandardPreparedTurn): Record<string, unknown> {
+function buildA2AStandardRuntimeChatPayload(
+	prepared: A2AStandardPreparedTurn,
+	userUid: string | null,
+): Record<string, unknown> {
 	const caller = {
 		agent_type: "a2a-client",
 		protocol: "a2a",
@@ -1327,7 +1330,7 @@ function buildA2AStandardRuntimeChatPayload(prepared: A2AStandardPreparedTurn): 
 		newChat: false,
 		threadId: prepared.contextId,
 		agentType: prepared.agentType,
-		user_uid: prepared.userUid,
+		...(userUid ? { user_uid: userUid } : {}),
 		system: buildA2ASystemInstruction({
 			callerAgentType: caller.agent_type,
 			responseFormat,
@@ -1355,7 +1358,7 @@ function buildA2AStandardRuntimeChatPayload(prepared: A2AStandardPreparedTurn): 
 			surfaceId: "a2a",
 			surfaceTitle: "Agent-to-Agent",
 			surfaceContextSource: "a2a",
-			user_uid: prepared.userUid,
+			...(userUid ? { user_uid: userUid } : {}),
 			a2a: {
 				enabled: true,
 				protocol: "a2a",
@@ -1379,7 +1382,7 @@ async function resolveA2AStandardRuntimeIdentity(
 	url: URL,
 	body: Record<string, unknown>,
 ): Promise<
-	| { ok: true; agentType: string; userUid: string }
+	| { ok: true; agentType: string; userUid: string | null }
 	| { ok: false; statusCode: number; message: string; field?: string }
 > {
 	const runtimeProfile = resolveRuntimeProfile();
@@ -1392,17 +1395,6 @@ async function resolveA2AStandardRuntimeIdentity(
 		};
 	}
 
-	const userUid = resolveUserIdFromRequest(req, url, body);
-	if (!userUid) {
-		return {
-			ok: false,
-			statusCode: 401,
-			message:
-				"Missing user identity. Provide user_uid, a supported user UID header, or a Bearer JWT with a user_uid claim.",
-			field: "authorization",
-		};
-	}
-
 	const agentType = runtimeProfile.kind;
 	if (!ALLOWED_AGENT_TYPES.has(agentType)) {
 		return {
@@ -1412,6 +1404,7 @@ async function resolveA2AStandardRuntimeIdentity(
 		};
 	}
 
+	const userUid = resolveUserIdFromRequest(req, url, body);
 	return { ok: true, agentType, userUid };
 }
 
@@ -1445,7 +1438,7 @@ async function runA2AStandardRuntimeTurn(
 		};
 	}
 
-	const body = buildA2AStandardRuntimeChatPayload(prepared);
+	let body = buildA2AStandardRuntimeChatPayload(prepared, prepared.userUid);
 	const capture = createCapturingRuntimeResponse();
 
 	try {
@@ -1463,6 +1456,7 @@ async function runA2AStandardRuntimeTurn(
 			};
 		}
 
+		body = buildA2AStandardRuntimeChatPayload(prepared, resolved.ctx.userId);
 		const context = extractObjectPropertyRecord(body, "context") ?? {};
 		const a2aContext = extractObjectPropertyRecord(context, "a2a") ?? {};
 		const a2aCaller = extractObjectPropertyRecord(a2aContext, "caller") ?? {};
@@ -1774,7 +1768,7 @@ function updateSessionRuntimeAttachment(
 
 function createSessionRuntimeAttachment(input: {
 	agentSessionUid: string;
-	userUid: string;
+	userUid: string | null;
 }): A2ASessionRuntimeAttachment {
 	const now = new Date().toISOString();
 	const expiresAt = Number.isFinite(warmRunnerIdleTtlMs)
@@ -1784,7 +1778,7 @@ function createSessionRuntimeAttachment(input: {
 	if (existing && existing.state !== "detached") {
 		const refreshed = {
 			...existing,
-			userUid: input.userUid,
+			userUid: input.userUid ?? existing.userUid,
 			updatedAt: now,
 			expiresAt,
 		};
@@ -1809,7 +1803,7 @@ function createSessionRuntimeAttachment(input: {
 
 async function buildSessionRuntimeBootstrapContext(input: {
 	agentSessionUid: string;
-	userUid: string;
+	userUid: string | null;
 	body: Record<string, unknown>;
 }): Promise<
 	| {
@@ -1950,7 +1944,7 @@ async function buildSessionRuntimeBootstrapContext(input: {
 		agentUniqueId: hydration.hydrated.agentUniqueId,
 		agentSessionId: input.agentSessionUid,
 		agentType,
-		userId: input.userUid,
+		userId: hydration.hydrated.effectiveUserId,
 		conversationStore,
 		logState: {
 			reasoning: null,
@@ -2046,6 +2040,7 @@ function startA2ASessionRuntimeBootstrap(input: {
 				state: "starting",
 				agentType: resolved.ctx.agentType,
 				threadId: resolved.ctx.threadId,
+				userUid: resolved.ctx.userId,
 				lastError: null,
 			});
 			const prepared = await prepareWarmPiRuntime(resolved.ctx, {
@@ -2078,6 +2073,7 @@ function startA2ASessionRuntimeBootstrap(input: {
 				state: "ready",
 				agentType: resolved.ctx.agentType,
 				threadId: resolved.ctx.threadId,
+				userUid: resolved.ctx.userId,
 				lastError: null,
 			});
 			logStructuredEvent({
@@ -2143,15 +2139,6 @@ async function handleA2ASessionRuntimeRequest(
 	}
 
 	const userUid = resolveUserIdFromRequest(req, url, body);
-	if (!userUid) {
-		json(res, 401, {
-			ok: false,
-			error: "missing_user_identity",
-			message:
-				"Missing user identity. Provide user_uid, a supported user UID header, or a Bearer JWT with a user_uid claim.",
-		});
-		return;
-	}
 
 	const record = createSessionRuntimeAttachment({
 		agentSessionUid: route.agentSessionUid,
@@ -2333,6 +2320,7 @@ type ThreadSessionBinding = {
 type HydratedBackendSession = {
 	agentId: string;
 	agentUniqueId: string | null;
+	effectiveUserId: string;
 	metadata: SessionMetadata;
 };
 
@@ -3374,7 +3362,7 @@ function buildRequestA2AEnvelope(input: {
 
 async function attachHydratedBackendSession(options: {
 	runtimeSessionId: string;
-	userId: string;
+	userId: string | null;
 	requestedThreadId: string | null;
 	existingMetadata?: SessionMetadata | null;
 	log?: (message: string) => void;
@@ -3507,7 +3495,7 @@ async function attachHydratedBackendSession(options: {
 			const userId = extractNumericProperty(sessionMetadata ?? {}, "created_by_user", "createdByUser");
 			return userId != null ? String(userId) : null;
 		})();
-	if (createdByUser && createdByUser !== options.userId) {
+	if (createdByUser && options.userId && createdByUser !== options.userId) {
 		logStructuredEvent({
 			severity: "WARNING",
 			component: "astro-stream",
@@ -3523,6 +3511,26 @@ async function attachHydratedBackendSession(options: {
 			ok: false,
 			error: "session_hydration_failed",
 			message: "The backend session belongs to a different user.",
+			statusCode: 409,
+		};
+	}
+	const effectiveUserId = options.userId ?? createdByUser ?? resolveUserId(undefined);
+	if (!effectiveUserId) {
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "backend_session_hydration_missing_user",
+			message:
+				"Backend session hydration could not derive a user uid from backend session metadata or deployment configuration.",
+			data: {
+				agentSessionUid: normalizedAgentSessionId,
+			},
+		});
+		return {
+			ok: false,
+			error: "backend_session_missing_user_identity",
+			message:
+				"Backend session hydration could not derive a user uid from backend session metadata or deployment configuration.",
 			statusCode: 409,
 		};
 	}
@@ -3554,8 +3562,8 @@ async function attachHydratedBackendSession(options: {
 	logStructuredEvent({
 		component: "astro-stream",
 		event: "backend_session_hydration_succeeded",
-			message: "Backend session hydration succeeded.",
-			data: {
+		message: "Backend session hydration succeeded.",
+		data: {
 			agentSessionUid: normalizedAgentSessionId,
 			agentId,
 			threadId: metadata.threadId,
@@ -3571,6 +3579,7 @@ async function attachHydratedBackendSession(options: {
 		hydrated: {
 			agentId,
 			agentUniqueId: metadata.agentUniqueId,
+			effectiveUserId,
 			metadata: {
 				...metadata,
 				agentSessionId: fetched.agentSessionUid ?? normalizedAgentSessionId,

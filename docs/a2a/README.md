@@ -54,14 +54,13 @@ Not implemented yet:
 
 ## Request Identity
 
-A2A requests need a user identity. Astro accepts the same identity sources used by the runtime:
+Public A2A callers do not provide `user_uid`.
 
-- `user_uid` in the request body when allowed by the caller path
-- supported user UID headers
-- Bearer JWT with a `user_uid` claim
-- runtime credential auth in local/debug flows
-
-If identity is missing, the public A2A endpoint returns a standard A2A/JSON-RPC error.
+A2A is session-bound: `message.contextId` is the existing backend `AgentSession.uid`.
+Astro hydrates that backend session and derives the effective user from backend-owned
+session metadata and deployment/runtime configuration before preparing Pi. If the backend
+session cannot provide a usable owner identity, that is a backend session/deployment
+configuration problem, not a client request-shape problem.
 
 ## Session Runtime Attach
 
