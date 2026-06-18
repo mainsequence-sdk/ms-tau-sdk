@@ -69,20 +69,15 @@ detail.
 Legacy session runtime attach route
 ```
 
-Request:
-
-```json
-{
-  "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f"
-}
-```
+Request body is optional. Attach is keyed by the path `agent_session_uid`.
 
 Rules:
 
 - `{agent_session_uid}` references an existing backend-owned session UID.
-- `user_uid` identifies the backend user that owns or is authorized for the existing session.
 - Thread identity is backend session metadata and is hydrated by Astro from backend/session state.
 - Runtime identity is the deployed Astro runtime profile, not a caller-selected request field.
+- Attach does not require, derive, or store `user_uid`; `AgentSession` is the session authority,
+  and Pi uses the deployment/runtime credentials available to Astro.
 - Attach must not create a backend session.
 - Attach must return immediately after registering the session runtime attachment.
 - Attach starts runtime bootstrap and runtime preparation asynchronously.
@@ -233,8 +228,8 @@ Astro's internal runtime attachment state binds:
 - prepared runtime state
 - expiry/idle policy
 
-Every session-runtime endpoint must authenticate the request and verify authorization for the
-underlying backend session.
+Every session-runtime endpoint must authenticate the request using the deployment/runtime
+authorization context. It must not require a request-level `user_uid`.
 
 Expired or missing attachments should return:
 
@@ -253,7 +248,6 @@ The intended Python client workflow is:
 ```python
 runtime = client.attach_session_runtime(
     agent_session_uid=session_uid,
-    user_uid=user_uid,
 )
 
 runtime.wait_until_ready()
@@ -303,8 +297,7 @@ If an old one-turn route still exists in code, it is legacy surface area, not th
 - [x] Add the legacy session runtime attach route.
 - [x] Remove caller-selected thread and agent identity from attach and attached chat request
   authority.
-- [ ] Make attach validate authorization for the existing backend session UID without creating a new
-  backend session.
+- [x] Remove `user_uid` from attach request handling and runtime attachment state.
 - [x] Make attach return immediately after registering or reusing the session runtime attachment.
 - [x] Start Pi runner bootstrap and preflight preparation asynchronously from attach.
 - [x] Keep startup/preflight work out of the attach response path: no waiting for Pi readiness,

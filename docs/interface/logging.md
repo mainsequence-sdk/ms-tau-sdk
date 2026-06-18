@@ -229,7 +229,6 @@ Current emitted `astro-stream` event keys:
 - `backend_session_hydration_not_found`
 - `backend_session_hydration_succeeded`
 - `backend_session_hydration_unavailable`
-- `backend_session_hydration_wrong_user`
 - `backend_session_hydration_missing_agent_type`
 - `chat_history_blocked_during_active_stream`
 - `chat_history_checkpoint_bundle_invalid`

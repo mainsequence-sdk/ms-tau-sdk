@@ -14,8 +14,8 @@ prepared before message delivery.
 
 Astro maps A2A `message.contextId` to an existing Main Sequence `AgentSession.uid`.
 
-The backend still owns session creation, target-session allocation, model binding, checkpoint
-state, and user identity. Astro does not create backend sessions from public A2A requests.
+The backend still owns session creation, target-session allocation, model binding, and checkpoint
+state. Astro does not create backend sessions from public A2A requests.
 
 For phase 1:
 
@@ -57,10 +57,10 @@ Not implemented yet:
 Public A2A callers do not provide `user_uid`.
 
 A2A is session-bound: `message.contextId` is the existing backend `AgentSession.uid`.
-Astro hydrates that backend session and derives the effective user from backend-owned
-session metadata and deployment/runtime configuration before preparing Pi. If the backend
-session cannot provide a usable owner identity, that is a backend session/deployment
-configuration problem, not a client request-shape problem.
+Astro hydrates that backend session for agent identity, model binding, checkpoint/session
+state, and project/runtime attachment. A2A does not derive or require a user identity from
+`AgentSession`; Pi runs with the runtime/deployment credentials already available to the
+Astro deployment.
 
 ## Session Runtime Attach
 

@@ -599,7 +599,7 @@ type RequestContext = {
 	agentUniqueId: string | null;
 	agentSessionId: string | null;
 	agentType: string;
-	userId: string;
+	userId: string | null;
 	conversationStore: ConversationStore;
 	logState: RequestLogState;
 	eventId: number;
@@ -674,7 +674,6 @@ type ActiveStreamSession = {
 type PreparedSessionRuntime = {
 	version: 1;
 	agentSessionUid: string;
-	userUid: string;
 	agentType: string;
 	cwd: string;
 	projectId: string | null;
@@ -763,7 +762,6 @@ type A2ASessionRuntimeAttachment = {
 	agentSessionUid: string;
 	threadId: string | null;
 	agentType: string | null;
-	userUid: string | null;
 	state: A2ASessionRuntimeState;
 	attachedAt: string;
 	updatedAt: string;
@@ -837,7 +835,6 @@ type A2AStandardPreparedTurn = {
 	messageId: string;
 	messageText: string;
 	agentType: string;
-	userUid: string | null;
 	responseFormat: A2AResponseFormat;
 	jsonRepairAttempts: number;
 	strictJson: boolean;
@@ -846,7 +843,7 @@ type A2AStandardPreparedTurn = {
 	sourceBody: Record<string, unknown>;
 };
 
-type A2AStandardPreparedTurnDraft = Omit<A2AStandardPreparedTurn, "agentType" | "userUid">;
+type A2AStandardPreparedTurnDraft = Omit<A2AStandardPreparedTurn, "agentType">;
 
 type A2AStandardInternalResult =
 	| {
@@ -1364,7 +1361,6 @@ function extractInternalA2AResult(raw: string): A2AStandardInternalResult {
 
 function buildA2AStandardRuntimeChatPayload(
 	prepared: A2AStandardPreparedTurn,
-	userUid: string | null,
 ): Record<string, unknown> {
 	const caller = {
 		agent_type: "a2a-client",
@@ -1376,7 +1372,6 @@ function buildA2AStandardRuntimeChatPayload(
 		newChat: false,
 		threadId: prepared.contextId,
 		agentType: prepared.agentType,
-		...(userUid ? { user_uid: userUid } : {}),
 		system: buildA2ASystemInstruction({
 			callerAgentType: caller.agent_type,
 			responseFormat,
@@ -1404,7 +1399,6 @@ function buildA2AStandardRuntimeChatPayload(
 			surfaceId: "a2a",
 			surfaceTitle: "Agent-to-Agent",
 			surfaceContextSource: "a2a",
-			...(userUid ? { user_uid: userUid } : {}),
 			a2a: {
 				enabled: true,
 				protocol: "a2a",
@@ -1423,12 +1417,8 @@ function buildA2AStandardRuntimeChatPayload(
 	};
 }
 
-async function resolveA2AStandardRuntimeIdentity(
-	req: import("node:http").IncomingMessage,
-	url: URL,
-	body: Record<string, unknown>,
-): Promise<
-	| { ok: true; agentType: string; userUid: string | null }
+async function resolveA2AStandardRuntimeIdentity(): Promise<
+	| { ok: true; agentType: string }
 	| { ok: false; statusCode: number; message: string; field?: string }
 > {
 	const runtimeProfile = resolveRuntimeProfile();
@@ -1450,8 +1440,7 @@ async function resolveA2AStandardRuntimeIdentity(
 		};
 	}
 
-	const userUid = resolveUserIdFromRequest(req, url, body);
-	return { ok: true, agentType, userUid };
+	return { ok: true, agentType };
 }
 
 async function runA2AStandardRuntimeTurn(
@@ -1484,13 +1473,12 @@ async function runA2AStandardRuntimeTurn(
 		};
 	}
 
-	let body = buildA2AStandardRuntimeChatPayload(prepared, prepared.userUid);
+	let body = buildA2AStandardRuntimeChatPayload(prepared);
 	const capture = createCapturingRuntimeResponse();
 
 	try {
 		const resolved = await buildSessionRuntimeBootstrapContext({
 			agentSessionUid: prepared.contextId,
-			userUid: prepared.userUid,
 			body,
 		});
 		if (resolved.ok === false) {
@@ -1502,7 +1490,7 @@ async function runA2AStandardRuntimeTurn(
 			};
 		}
 
-		body = buildA2AStandardRuntimeChatPayload(prepared, resolved.ctx.userId);
+		body = buildA2AStandardRuntimeChatPayload(prepared);
 		const context = extractObjectPropertyRecord(body, "context") ?? {};
 		const a2aContext = extractObjectPropertyRecord(context, "a2a") ?? {};
 		const a2aCaller = extractObjectPropertyRecord(a2aContext, "caller") ?? {};
@@ -1814,7 +1802,6 @@ function updateSessionRuntimeAttachment(
 
 function createSessionRuntimeAttachment(input: {
 	agentSessionUid: string;
-	userUid: string | null;
 }): A2ASessionRuntimeAttachment {
 	const now = new Date().toISOString();
 	const expiresAt = Number.isFinite(warmRunnerIdleTtlMs)
@@ -1824,7 +1811,6 @@ function createSessionRuntimeAttachment(input: {
 	if (existing && existing.state !== "detached") {
 		const refreshed = {
 			...existing,
-			userUid: input.userUid ?? existing.userUid,
 			updatedAt: now,
 			expiresAt,
 		};
@@ -1835,7 +1821,6 @@ function createSessionRuntimeAttachment(input: {
 		agentSessionUid: input.agentSessionUid,
 		threadId: null,
 		agentType: null,
-		userUid: input.userUid,
 		state: "starting",
 		attachedAt: now,
 		updatedAt: now,
@@ -1849,7 +1834,6 @@ function createSessionRuntimeAttachment(input: {
 
 async function buildSessionRuntimeBootstrapContext(input: {
 	agentSessionUid: string;
-	userUid: string | null;
 	body: Record<string, unknown>;
 }): Promise<
 	| {
@@ -1900,7 +1884,6 @@ async function buildSessionRuntimeBootstrapContext(input: {
 	const existingMetadata = readSessionMetadata(input.agentSessionUid);
 	const hydration = await attachHydratedBackendSession({
 		runtimeSessionId: input.agentSessionUid,
-		userId: input.userUid,
 		requestedThreadId,
 		existingMetadata,
 		log: logExternalMessage("astro-stream", "backend.helper_log"),
@@ -2059,7 +2042,6 @@ function startA2ASessionRuntimeBootstrap(input: {
 		try {
 			const resolved = await buildSessionRuntimeBootstrapContext({
 				agentSessionUid: input.record.agentSessionUid,
-				userUid: input.record.userUid,
 				body: input.body,
 			});
 			if (resolved.ok === false) {
@@ -2086,7 +2068,6 @@ function startA2ASessionRuntimeBootstrap(input: {
 				state: "starting",
 				agentType: resolved.ctx.agentType,
 				threadId: resolved.ctx.threadId,
-				userUid: resolved.ctx.userId,
 				lastError: null,
 			});
 			const prepared = await prepareWarmPiRuntime(resolved.ctx, {
@@ -2119,7 +2100,6 @@ function startA2ASessionRuntimeBootstrap(input: {
 				state: "ready",
 				agentType: resolved.ctx.agentType,
 				threadId: resolved.ctx.threadId,
-				userUid: resolved.ctx.userId,
 				lastError: null,
 			});
 			logStructuredEvent({
@@ -2158,7 +2138,7 @@ function startA2ASessionRuntimeBootstrap(input: {
 async function handleA2ASessionRuntimeRequest(
 	req: import("node:http").IncomingMessage,
 	res: import("node:http").ServerResponse,
-	url: URL,
+	_url: URL,
 	route: A2ASessionRuntimeRoute,
 ) {
 	if (req.method === "GET") {
@@ -2184,11 +2164,8 @@ async function handleA2ASessionRuntimeRequest(
 		return;
 	}
 
-	const userUid = resolveUserIdFromRequest(req, url, body);
-
 	const record = createSessionRuntimeAttachment({
 		agentSessionUid: route.agentSessionUid,
-		userUid,
 	});
 	logStructuredEvent({
 		component: "astro-stream",
@@ -2196,7 +2173,6 @@ async function handleA2ASessionRuntimeRequest(
 		message: "Astro attached an existing backend session UID to a session runtime.",
 		data: {
 			agentSessionUid: route.agentSessionUid,
-			userUid,
 			state: record.state,
 		},
 	});
@@ -2366,7 +2342,7 @@ type ThreadSessionBinding = {
 type HydratedBackendSession = {
 	agentId: string;
 	agentUniqueId: string | null;
-	effectiveUserId: string;
+	effectiveUserId: string | null;
 	metadata: SessionMetadata;
 };
 
@@ -2615,7 +2591,7 @@ function registerHttpAccessLog(
 				referer,
 				userAgent,
 				aborted,
-				outcome: aborted ? "canceled" : statusCode >= 500 ? "failure" : "success",
+				outcome: aborted ? "canceled" : statusCode >= 400 ? "failure" : "success",
 			},
 		});
 	};
@@ -3461,7 +3437,7 @@ function buildRequestA2AEnvelope(input: {
 
 async function attachHydratedBackendSession(options: {
 	runtimeSessionId: string;
-	userId: string | null;
+	userId?: string | null;
 	requestedThreadId: string | null;
 	existingMetadata?: SessionMetadata | null;
 	log?: (message: string) => void;
@@ -3478,7 +3454,6 @@ async function attachHydratedBackendSession(options: {
 			runtimeSessionId: options.runtimeSessionId,
 			normalizedAgentSessionId,
 			requestedThreadId: options.requestedThreadId,
-			userId: options.userId,
 		},
 	});
 	if (!normalizedAgentSessionId) {
@@ -3583,56 +3558,7 @@ async function attachHydratedBackendSession(options: {
 		};
 	}
 
-	const createdByUser =
-		extractStringProperty(sessionPayload, "created_by_user", "createdByUser") ??
-		(() => {
-			const userId = extractNumericProperty(sessionPayload, "created_by_user", "createdByUser");
-			return userId != null ? String(userId) : null;
-		})() ??
-		extractStringProperty(sessionMetadata ?? {}, "created_by_user", "createdByUser") ??
-		(() => {
-			const userId = extractNumericProperty(sessionMetadata ?? {}, "created_by_user", "createdByUser");
-			return userId != null ? String(userId) : null;
-		})();
-	if (createdByUser && options.userId && createdByUser !== options.userId) {
-		logStructuredEvent({
-			severity: "WARNING",
-			component: "astro-stream",
-			event: "backend_session_hydration_wrong_user",
-			message: "Backend session hydration was rejected because the backend session belongs to a different user.",
-			data: {
-				agentSessionUid: normalizedAgentSessionId,
-				createdByUser,
-				requestUserUid: options.userId,
-			},
-		});
-		return {
-			ok: false,
-			error: "session_hydration_failed",
-			message: "The backend session belongs to a different user.",
-			statusCode: 409,
-		};
-	}
-	const effectiveUserId = options.userId ?? createdByUser ?? resolveUserId(undefined);
-	if (!effectiveUserId) {
-		logStructuredEvent({
-			severity: "WARNING",
-			component: "astro-stream",
-			event: "backend_session_hydration_missing_user",
-			message:
-				"Backend session hydration could not derive a user uid from backend session metadata or deployment configuration.",
-			data: {
-				agentSessionUid: normalizedAgentSessionId,
-			},
-		});
-		return {
-			ok: false,
-			error: "backend_session_missing_user_identity",
-			message:
-				"Backend session hydration could not derive a user uid from backend session metadata or deployment configuration.",
-			statusCode: 409,
-		};
-	}
+	const effectiveUserId = options.userId ?? null;
 
 	const metadata = buildSessionMetadataFromBackendSessionPayload({
 		sessionKey: options.runtimeSessionId,
@@ -6500,7 +6426,7 @@ function runStrictJsonRepairAttempt(ctx: RequestContext, prompt: string): Promis
 				...(runtime.scopedPiAgentDir ? { PI_CODING_AGENT_DIR: runtime.scopedPiAgentDir } : {}),
 				PWD: runtime.cwd,
 				ASTRO_TELEMETRY: "0",
-				ASTRO_MAINSEQUENCE_USER_UID: ctx.userId,
+				...(ctx.userId ? { ASTRO_MAINSEQUENCE_USER_UID: ctx.userId } : {}),
 				...(runtime.projectId ? { ASTRO_TARGET_PROJECT_ID: runtime.projectId } : {}),
 			}),
 			stdio: ["ignore", "pipe", "pipe"],
@@ -7317,7 +7243,6 @@ function stableStringify(value: unknown): string {
 function buildPreparedRuntimeSignature(input: Omit<PreparedSessionRuntime, "signature">): string {
 	return stableStringify({
 		agentSessionUid: input.agentSessionUid,
-		userUid: input.userUid,
 		agentType: input.agentType,
 		cwd: input.cwd,
 		projectId: input.projectId,
@@ -7358,7 +7283,6 @@ function buildPreparedSessionRuntime(input: {
 	const base = {
 		version: 1 as const,
 		agentSessionUid: input.ctx.agentSessionId,
-		userUid: input.ctx.userId,
 		agentType: input.ctx.agentType,
 		cwd: path.resolve(input.cwd),
 		projectId: input.projectId,
@@ -7469,7 +7393,17 @@ async function prepareWarmPiRuntime(
 	const providerRequiresScopedCredentials = Boolean(
 		ctx.sessionModelBinding && resolveProviderDefinition(ctx.sessionModelBinding.provider),
 	);
-	if (providerRequiresScopedCredentials && !isScopedProviderCredentialCacheEnabled(piLaunchBaseEnv)) {
+	const scopedCredentialSessionModelBinding = ctx.sessionModelBinding;
+	const scopedCredentialUserId = ctx.userId;
+	const shouldHydrateScopedProviderCredentials = Boolean(
+		scopedCredentialSessionModelBinding &&
+			providerRequiresScopedCredentials &&
+			scopedCredentialUserId,
+	);
+	if (
+		shouldHydrateScopedProviderCredentials &&
+		!isScopedProviderCredentialCacheEnabled(piLaunchBaseEnv)
+	) {
 		return { ok: false, fallbackReason: "provider_credential_cache_disabled" };
 	}
 
@@ -7506,6 +7440,7 @@ async function prepareWarmPiRuntime(
 	let scopedPiAgentDir: string | null = null;
 	let scopedProviderCredentialProvider: string | null = null;
 	let activeProviderCredentialKey: string | null = null;
+	let activeProviderCredentialUserId: string | null = null;
 	let providerCredentialFinalized = false;
 
 	const capabilityPreparationStartedAt = Date.now();
@@ -7524,13 +7459,15 @@ async function prepareWarmPiRuntime(
 
 	const providerCredentialPreparationStartedAt = Date.now();
 	const providerCredentialPreparationPromise =
-		ctx.sessionModelBinding && providerRequiresScopedCredentials
+		shouldHydrateScopedProviderCredentials &&
+		scopedCredentialSessionModelBinding &&
+		scopedCredentialUserId
 			? (async () => {
 					const hydratedProviderCredentials = await hydrateScopedProviderCredentials({
-						createdByUser: ctx.userId,
+						createdByUser: scopedCredentialUserId,
 						agentSessionUid: ctx.agentSessionId,
 						sessionKey: ctx.sessionKey,
-						provider: ctx.sessionModelBinding.provider,
+						provider: scopedCredentialSessionModelBinding.provider,
 						holderId: `astro-pi-stream/${process.pid}/${ctx.sessionKey}`,
 						sessionConfigOverrides: ctx.sessionConfigOverrides,
 						sessionSkillPaths: [],
@@ -7540,6 +7477,7 @@ async function prepareWarmPiRuntime(
 					return {
 						hydratedProviderCredentials,
 						durationMs: Date.now() - providerCredentialPreparationStartedAt,
+						createdByUser: scopedCredentialUserId,
 					};
 			  })()
 			: Promise.resolve(null);
@@ -7671,9 +7609,10 @@ async function prepareWarmPiRuntime(
 		}
 		scopedProviderCredentialProvider = ctx.sessionModelBinding.provider;
 		activeProviderCredentialKey = `${ctx.sessionKey}:${scopedProviderCredentialProvider}`;
+		activeProviderCredentialUserId = providerCredentialPreparation.createdByUser;
 		activeScopedProviderCredentials.set(activeProviderCredentialKey, {
 			scopedPiAgentDir,
-			createdByUser: ctx.userId,
+			createdByUser: providerCredentialPreparation.createdByUser,
 			agentSessionId: ctx.agentSessionId,
 			provider: scopedProviderCredentialProvider,
 			sessionKey: ctx.sessionKey,
@@ -7715,10 +7654,10 @@ async function prepareWarmPiRuntime(
 	}
 
 	const flushProviderCredential = async (reason: string) => {
-		if (!scopedPiAgentDir || !scopedProviderCredentialProvider) return;
+		if (!scopedPiAgentDir || !scopedProviderCredentialProvider || !activeProviderCredentialUserId) return;
 		const flushed = await flushScopedProviderCredential({
 			scopedPiAgentDir,
-			createdByUser: ctx.userId,
+			createdByUser: activeProviderCredentialUserId,
 			agentSessionUid: ctx.agentSessionId,
 			provider: scopedProviderCredentialProvider,
 			reason,
@@ -8125,7 +8064,7 @@ async function startWarmRunner(input: {
 			...(input.prepared.scopedPiAgentDir ? { PI_CODING_AGENT_DIR: input.prepared.scopedPiAgentDir } : {}),
 			PWD: input.cwd,
 			ASTRO_TELEMETRY: "0",
-			ASTRO_MAINSEQUENCE_USER_UID: input.ctx.userId,
+			...(input.ctx.userId ? { ASTRO_MAINSEQUENCE_USER_UID: input.ctx.userId } : {}),
 			...(input.projectId ? { ASTRO_TARGET_PROJECT_ID: input.projectId } : {}),
 		}),
 		stdio: ["pipe", "pipe", "pipe"],
@@ -8447,6 +8386,7 @@ async function runPiPrompt(
 	let scopedPiAgentDir: string | null = null;
 	let scopedProviderCredentialProvider: string | null = null;
 	let activeProviderCredentialKey: string | null = null;
+	let activeProviderCredentialUserId: string | null = null;
 	let providerCredentialFlushTimer: ReturnType<typeof setInterval> | null = null;
 	let providerCredentialFinalized = false;
 	resetAssistantTurnOutputState(ctx);
@@ -8518,15 +8458,24 @@ async function runPiPrompt(
 	const providerRequiresScopedCredentials = Boolean(
 		ctx.sessionModelBinding && resolveProviderDefinition(ctx.sessionModelBinding.provider),
 	);
+	const scopedCredentialSessionModelBinding = ctx.sessionModelBinding;
+	const scopedCredentialUserId = ctx.userId;
+	const shouldHydrateScopedProviderCredentials = Boolean(
+		scopedCredentialSessionModelBinding &&
+			providerRequiresScopedCredentials &&
+			scopedCredentialUserId,
+	);
 	const providerCredentialPreparationStartedAt = Date.now();
 	const providerCredentialPreparationPromise =
-		ctx.sessionModelBinding && providerRequiresScopedCredentials
+		shouldHydrateScopedProviderCredentials &&
+		scopedCredentialSessionModelBinding &&
+		scopedCredentialUserId
 			? (async () => {
 					const hydratedProviderCredentials = await hydrateScopedProviderCredentials({
-						createdByUser: ctx.userId,
+						createdByUser: scopedCredentialUserId,
 						agentSessionUid: ctx.agentSessionId,
 						sessionKey: ctx.sessionKey,
-						provider: ctx.sessionModelBinding.provider,
+						provider: scopedCredentialSessionModelBinding.provider,
 						holderId: `astro-pi-stream/${process.pid}/${ctx.sessionKey}`,
 						sessionConfigOverrides: ctx.sessionConfigOverrides,
 						sessionSkillPaths: [],
@@ -8536,6 +8485,7 @@ async function runPiPrompt(
 					return {
 						hydratedProviderCredentials,
 						durationMs: Date.now() - providerCredentialPreparationStartedAt,
+						createdByUser: scopedCredentialUserId,
 					};
 			  })()
 			: Promise.resolve(null);
@@ -8687,9 +8637,10 @@ async function runPiPrompt(
 		}
 		scopedProviderCredentialProvider = ctx.sessionModelBinding.provider;
 		activeProviderCredentialKey = `${ctx.sessionKey}:${scopedProviderCredentialProvider}`;
+		activeProviderCredentialUserId = providerCredentialPreparation.createdByUser;
 		activeScopedProviderCredentials.set(activeProviderCredentialKey, {
 			scopedPiAgentDir,
-			createdByUser: ctx.userId,
+			createdByUser: providerCredentialPreparation.createdByUser,
 			agentSessionId: ctx.agentSessionId,
 			provider: scopedProviderCredentialProvider,
 			sessionKey: ctx.sessionKey,
@@ -8749,10 +8700,10 @@ async function runPiPrompt(
 	};
 
 	const flushProviderCredential = async (reason: string) => {
-		if (!scopedPiAgentDir || !scopedProviderCredentialProvider) return;
+		if (!scopedPiAgentDir || !scopedProviderCredentialProvider || !activeProviderCredentialUserId) return;
 		const flushed = await flushScopedProviderCredential({
 			scopedPiAgentDir,
-			createdByUser: ctx.userId,
+			createdByUser: activeProviderCredentialUserId,
 			agentSessionUid: ctx.agentSessionId,
 			provider: scopedProviderCredentialProvider,
 			reason,
@@ -8879,7 +8830,7 @@ async function runPiPrompt(
 			...(scopedPiAgentDir ? { PI_CODING_AGENT_DIR: scopedPiAgentDir } : {}),
 			PWD: options.cwd,
 			ASTRO_TELEMETRY: "0",
-			ASTRO_MAINSEQUENCE_USER_UID: ctx.userId,
+			...(ctx.userId ? { ASTRO_MAINSEQUENCE_USER_UID: ctx.userId } : {}),
 			...(options.agentConfig
 				? {
 						ASTRO_SUBAGENT_CHILD: "1",
@@ -9211,8 +9162,6 @@ function a2aTaskStateIsTerminal(state: A2AStandardTaskState): boolean {
 }
 
 async function resolvePreparedA2AStandardTurn(
-	req: import("node:http").IncomingMessage,
-	url: URL,
 	body: Record<string, unknown>,
 ): Promise<
 	| { ok: true; prepared: A2AStandardPreparedTurn }
@@ -9227,24 +9176,23 @@ async function resolvePreparedA2AStandardTurn(
 			field: prepared.field,
 		};
 	}
-	const identity = await resolveA2AStandardRuntimeIdentity(req, url, body);
+	const identity = await resolveA2AStandardRuntimeIdentity();
 	if (identity.ok === false) return identity;
 	return {
 		ok: true,
 		prepared: {
 			...prepared.value,
 			agentType: identity.agentType,
-			userUid: identity.userUid,
 		},
 	};
 }
 
 async function executeA2AStandardMessageSend(
-	req: import("node:http").IncomingMessage,
-	url: URL,
+	_req: import("node:http").IncomingMessage,
+	_url: URL,
 	body: Record<string, unknown>,
 ): Promise<{ statusCode: number; body: Record<string, unknown> }> {
-	const resolved = await resolvePreparedA2AStandardTurn(req, url, body);
+	const resolved = await resolvePreparedA2AStandardTurn(body);
 	if (resolved.ok === false) {
 		return {
 			statusCode: resolved.statusCode,
@@ -9307,13 +9255,13 @@ function writeA2AStreamEvent(res: import("node:http").ServerResponse, body: unkn
 }
 
 async function handleA2AStandardMessageStream(
-	req: import("node:http").IncomingMessage,
+	_req: import("node:http").IncomingMessage,
 	res: import("node:http").ServerResponse,
-	url: URL,
+	_url: URL,
 	body: Record<string, unknown>,
 	options: { jsonRpcId?: unknown } = {},
 ) {
-	const resolved = await resolvePreparedA2AStandardTurn(req, url, body);
+	const resolved = await resolvePreparedA2AStandardTurn(body);
 	if (resolved.ok === false) {
 		writeA2ABadRequest(res, resolved.message, resolved.field);
 		return;

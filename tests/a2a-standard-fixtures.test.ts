@@ -13,6 +13,14 @@ async function readFixture(name: string): Promise<Record<string, any>> {
 	return parsed;
 }
 
+function sourceSection(source: string, start: string, end: string): string {
+	const startIndex = source.indexOf(start);
+	const endIndex = source.indexOf(end, startIndex + start.length);
+	assert.notEqual(startIndex, -1, `Missing source marker: ${start}`);
+	assert.notEqual(endIndex, -1, `Missing source marker: ${end}`);
+	return source.slice(startIndex, endIndex);
+}
+
 function assertA2AMessage(message: Record<string, any>) {
 	assert.equal(typeof message.messageId, "string");
 	assert.ok(message.messageId.length > 0);
@@ -60,4 +68,27 @@ test("A2A JSON-RPC fixture wraps SendMessage result in JSON-RPC 2.0 envelope", a
 	assert.equal(response.id, request.id);
 	assert.deepEqual(Object.keys(response.result), ["message"]);
 	assertA2AMessage(response.result.message);
+});
+
+test("public A2A runtime path does not resolve or forward user identity", async () => {
+	const source = await readFile("interface/stream/server.ts", "utf8");
+	const payloadBuilder = sourceSection(
+		source,
+		"function buildA2AStandardRuntimeChatPayload",
+		"async function resolveA2AStandardRuntimeIdentity",
+	);
+	const identityResolver = sourceSection(
+		source,
+		"async function resolveA2AStandardRuntimeIdentity",
+		"async function runA2AStandardRuntimeTurn",
+	);
+	const runtimeAttachHandler = sourceSection(
+		source,
+		"async function handleA2ASessionRuntimeRequest",
+		"async function executeA2AStandardTask",
+	);
+
+	assert.doesNotMatch(payloadBuilder, /\buser_uid\b|userUid/);
+	assert.doesNotMatch(identityResolver, /resolveUserIdFromRequest|userUid/);
+	assert.doesNotMatch(runtimeAttachHandler, /resolveUserIdFromRequest|userUid/);
 });
