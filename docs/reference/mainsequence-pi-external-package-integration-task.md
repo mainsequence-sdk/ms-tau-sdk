@@ -99,16 +99,8 @@ Do not duplicate that component map inside Astro.
 
 ## SDK Skill Injection Facts
 
-Astro must not hardcode individual SDK skill slugs during stream bootstrap. The old direct
-materialization path has been removed:
-
-```text
-mainsequence skills path command_center/workspace_analysis
-mainsequence skills path a2a_communication
-```
-
-The package simulation replaces those direct hard-coded delivery paths with one package-owned
-extension flow:
+Astro must not hardcode individual SDK skill slugs during stream bootstrap. The package simulation
+replaces direct hard-coded delivery paths with one package-owned extension flow:
 
 ```text
 tmp_ms_pi/pi/extensions/hooks/scaffold-skill-discovery
@@ -209,15 +201,8 @@ Pi resources remain, Astro Core should eventually be able to run without a root 
 
 Implementation status: completed for the local `tmp_ms_pi` simulation.
 
-Direct startup materialization such as:
-
-```text
-mainsequence skills path command_center/workspace_analysis
-mainsequence skills path a2a_communication
-```
-
-has been replaced with package loading through `ASTRO_PI_PACKAGE_PATHS` plus the package-owned
-`resources_discover` skill seeding hook.
+Direct startup materialization has been replaced with package loading through
+`ASTRO_PI_PACKAGE_PATHS` plus the package-owned `resources_discover` skill seeding hook.
 
 If `tmp_ms_pi` seeds SDK-owned skills, Astro should not also materialize the same skills through
 bootstrap. The goal is one delivery path per resource, with the SDK/CLI owning the actual copy

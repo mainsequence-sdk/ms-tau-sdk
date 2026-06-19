@@ -44,7 +44,7 @@ export function buildA2ASystemInstruction(options: {
 }): string {
 	const lines = [
 		"This request arrived through Astro's A2A channel.",
-		"Load and follow the injected `a2a_communication` skill.",
+		"Follow any A2A instructions supplied by the active Pi packages or runtime context.",
 		`Caller agentType: ${options.callerAgentType}`,
 	];
 

@@ -849,10 +849,10 @@ interface/stream/session-capabilities.ts
 are not Astro Core in the target architecture either. They belong to the Main Sequence
 adapter/composition, not to the portable Pi package.
 
-Current runtime-injected library skills such as `command_center/workspace_analysis` and
-`a2a_communication` are not Astro-owned package contents. Bootstrap should stop hard-coding those
-slugs. The Main Sequence Pi package should expose a `resources_discover` hook that delegates skill
-copying/export to the SDK/CLI, so Astro TypeScript does not duplicate `agent_scaffold` copy logic.
+Current Main Sequence SDK library skills are not Astro-owned package contents. Astro bootstrap must
+not hard-code SDK skill slugs. The Main Sequence Pi package should expose a `resources_discover`
+hook that delegates skill copying/export to the SDK/CLI, so Astro TypeScript does not duplicate
+`agent_scaffold` copy logic.
 SDK-owned skills such as `project_builder` are source-of-truth SDK resources, not component maps
 Astro should copy.
 
