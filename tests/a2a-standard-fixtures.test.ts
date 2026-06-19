@@ -87,6 +87,21 @@ test("public A2A exposes message send without runtime attach or user identity co
 		"async function executeA2AStandardMessageSend",
 		"function writeA2AStreamHeaders",
 	);
+	const runtimeTurn = sourceSection(
+		source,
+		"async function runA2AStandardRuntimeTurn",
+		"function createCapturingRuntimeResponse",
+	);
+	const standardRequestHandler = sourceSection(
+		source,
+		"async function handleA2AStandardRequest",
+		"async function handleA2AStandardJsonRpcRequest",
+	);
+	const jsonRpcHandler = sourceSection(
+		source,
+		"async function handleA2AStandardJsonRpcRequest",
+		"async function handleStreamRequest",
+	);
 
 	assert.doesNotMatch(payloadBuilder, /\buser_uid\b|userUid/);
 	assert.doesNotMatch(identityResolver, /resolveUserIdFromRequest|userUid/);
@@ -99,4 +114,13 @@ test("public A2A exposes message send without runtime attach or user identity co
 	assert.match(messageSendExecutor, /a2aStandardMessageSends\.get\(key\)/);
 	assert.match(messageSendExecutor, /replayA2AStandardMessageSend\(existing\)/);
 	assert.match(messageSendExecutor, /buildA2AStandardMessageSendConflictResponse\(prepared\)/);
+	assert.match(messageSendExecutor, /runA2AStandardRuntimeTurn\(prepared, options\)/);
+	assert.match(source, /clientAbortSignal\?: AbortSignal/);
+	assert.match(runtimeTurn, /ctx\.cancelOnClientDisconnect = true/);
+	assert.doesNotMatch(runtimeTurn, /ctx\.cancelOnClientDisconnect = false/);
+	assert.match(runtimeTurn, /attachA2AStandardRuntimeClientAbort/);
+	assert.match(standardRequestHandler, /createHttpClientAbortSignal\(req, res\)/);
+	assert.match(standardRequestHandler, /canWriteHttpResponse\(res, clientAbort\.signal\)/);
+	assert.match(jsonRpcHandler, /createHttpClientAbortSignal\(req, res\)/);
+	assert.match(jsonRpcHandler, /canWriteHttpResponse\(res, clientAbort\.signal\)/);
 });

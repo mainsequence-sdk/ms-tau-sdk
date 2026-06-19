@@ -840,6 +840,10 @@ type A2AStandardMessageSendResponse = {
 	body: Record<string, unknown>;
 };
 
+type A2AStandardRuntimeTurnOptions = {
+	clientAbortSignal?: AbortSignal;
+};
+
 type A2AStandardMessageSendRecord = {
 	key: string;
 	contextId: string;
@@ -925,6 +929,37 @@ function writeJsonRpcJson(
 	body: unknown,
 ) {
 	writeJsonResponse(res, statusCode, body, "application/json");
+}
+
+function createHttpClientAbortSignal(
+	req: import("node:http").IncomingMessage,
+	res: import("node:http").ServerResponse,
+): { signal: AbortSignal; dispose: () => void } {
+	const controller = new AbortController();
+	const abort = () => {
+		if (!controller.signal.aborted) {
+			controller.abort(new Error("client_disconnected"));
+		}
+	};
+	const onResponseClose = () => {
+		if (!res.writableEnded) abort();
+	};
+	req.once("aborted", abort);
+	res.once("close", onResponseClose);
+	return {
+		signal: controller.signal,
+		dispose: () => {
+			req.off("aborted", abort);
+			res.off("close", onResponseClose);
+		},
+	};
+}
+
+function canWriteHttpResponse(
+	res: import("node:http").ServerResponse,
+	signal?: AbortSignal,
+): boolean {
+	return !res.destroyed && !res.writableEnded && signal?.aborted !== true;
 }
 
 function buildA2ABadRequestError(message: string, field?: string) {
@@ -1538,9 +1573,58 @@ async function resolveA2AStandardRuntimeIdentity(): Promise<
 	return { ok: true, agentType };
 }
 
+function attachA2AStandardRuntimeClientAbort(
+	ctx: RequestContext,
+	signal: AbortSignal | undefined,
+): () => void {
+	if (!signal) return () => {};
+	const abortRuntimeTurn = () => {
+		if (ctx.finished) return;
+		ctx.clientAttached = false;
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: ctx.runtimeStarted
+				? "a2a_message_client_disconnected_runtime_cancelled"
+				: "a2a_message_client_disconnected_before_runtime_start",
+			message: ctx.runtimeStarted
+				? "A2A message caller disconnected before completion; Astro is cancelling the active runtime turn."
+				: "A2A message caller disconnected before the queued runtime turn started; Astro will skip this abandoned turn.",
+			data: {
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId,
+				agentSessionId: ctx.agentSessionId,
+				agentType: ctx.agentType,
+				runtimeStarted: ctx.runtimeStarted,
+				hasPiProcess: Boolean(ctx.piProcess),
+			},
+		});
+		beginActiveRunCancellation(ctx, {
+			reason: "client_disconnected",
+			message: "A2A client disconnected before the runtime turn completed.",
+		});
+	};
+	if (signal.aborted) {
+		abortRuntimeTurn();
+		return () => {};
+	}
+	signal.addEventListener("abort", abortRuntimeTurn, { once: true });
+	return () => signal.removeEventListener("abort", abortRuntimeTurn);
+}
+
 async function runA2AStandardRuntimeTurn(
 	prepared: A2AStandardPreparedTurn,
+	options: A2AStandardRuntimeTurnOptions = {},
 ): Promise<A2AStandardInternalResult> {
+	if (options.clientAbortSignal?.aborted) {
+		return {
+			ok: false,
+			statusCode: 499,
+			code: "a2a_client_disconnected",
+			message: "A2A client disconnected before the runtime turn started.",
+		};
+	}
+
 	const runtimeProfile = resolveRuntimeProfile();
 	const runtimeProfileValidation = validateRuntimeProfile(runtimeProfile);
 	if (runtimeProfileValidation.ok === false) {
@@ -1599,8 +1683,8 @@ async function runA2AStandardRuntimeTurn(
 		const system = typeof body.system === "string" ? body.system : undefined;
 		const ctx = resolved.ctx;
 		ctx.res = capture.res;
-		ctx.clientAttached = true;
-		ctx.cancelOnClientDisconnect = false;
+		ctx.clientAttached = options.clientAbortSignal?.aborted !== true;
+		ctx.cancelOnClientDisconnect = true;
 		ctx.system = system;
 		ctx.uiContext = context;
 		ctx.uiTools = tools;
@@ -1617,7 +1701,13 @@ async function runA2AStandardRuntimeTurn(
 			context,
 		});
 
+		const detachClientAbort = attachA2AStandardRuntimeClientAbort(
+			ctx,
+			options.clientAbortSignal,
+		);
+		try {
 		const executeRuntimeTurn = async () => {
+			if (runtimeTurnShouldStop(ctx)) return;
 			ctx.runtimeStarted = true;
 			markActiveStreamSession(ctx);
 			logStructuredEvent({
@@ -1721,6 +1811,9 @@ async function runA2AStandardRuntimeTurn(
 			};
 		}
 		return extractInternalA2AResult(capture.raw());
+		} finally {
+			detachClientAbort();
+		}
 	} catch (error) {
 		return {
 			ok: false,
@@ -9022,6 +9115,7 @@ async function executeA2AStandardMessageSend(
 	_req: import("node:http").IncomingMessage,
 	_url: URL,
 	body: Record<string, unknown>,
+	options: A2AStandardRuntimeTurnOptions = {},
 ): Promise<A2AStandardMessageSendResponse> {
 	const resolved = await resolvePreparedA2AStandardTurn(body);
 	if (resolved.ok === false) {
@@ -9087,7 +9181,7 @@ async function executeA2AStandardMessageSend(
 		updatedAt: now,
 	};
 	const promise = (async () => {
-		const result = await runA2AStandardRuntimeTurn(prepared);
+		const result = await runA2AStandardRuntimeTurn(prepared, options);
 		const response = buildA2AStandardMessageSendResponse(prepared, result);
 		record.response = response;
 		record.updatedAt = new Date().toISOString();
@@ -9129,19 +9223,24 @@ function writeA2AStreamEvent(res: import("node:http").ServerResponse, body: unkn
 }
 
 async function handleA2AStandardMessageStream(
-	_req: import("node:http").IncomingMessage,
+	req: import("node:http").IncomingMessage,
 	res: import("node:http").ServerResponse,
 	_url: URL,
 	body: Record<string, unknown>,
 	options: { jsonRpcId?: unknown } = {},
 ) {
+	const clientAbort = createHttpClientAbortSignal(req, res);
+	try {
 	const resolved = await resolvePreparedA2AStandardTurn(body);
 	if (resolved.ok === false) {
-		writeA2ABadRequest(res, resolved.message, resolved.field);
+		if (canWriteHttpResponse(res, clientAbort.signal)) {
+			writeA2ABadRequest(res, resolved.message, resolved.field);
+		}
 		return;
 	}
 	const { prepared } = resolved;
 	const task = createA2AStandardTask(prepared.contextId, "TASK_STATE_WORKING");
+	if (!canWriteHttpResponse(res, clientAbort.signal)) return;
 	writeA2AStreamHeaders(res);
 	const wrap = (result: Record<string, unknown>) =>
 		options.jsonRpcId !== undefined
@@ -9153,7 +9252,9 @@ async function handleA2AStandardMessageStream(
 			: result;
 	writeA2AStreamEvent(res, wrap({ task: serializeA2AStandardTask(task) }));
 
-	const result = await runA2AStandardRuntimeTurn(prepared);
+	const result = await runA2AStandardRuntimeTurn(prepared, {
+		clientAbortSignal: clientAbort.signal,
+	});
 	if (result.ok === false) {
 		updateA2AStandardTask(task, "TASK_STATE_FAILED", {
 			message: result.message,
@@ -9162,15 +9263,22 @@ async function handleA2AStandardMessageStream(
 				message: result.detail ?? result.message,
 			},
 		});
-		writeA2AStreamEvent(res, wrap({ task: serializeA2AStandardTask(task), final: true }));
-		res.end();
+		if (canWriteHttpResponse(res, clientAbort.signal)) {
+			writeA2AStreamEvent(res, wrap({ task: serializeA2AStandardTask(task), final: true }));
+			res.end();
+		}
 		return;
 	}
 
 	const artifacts = buildA2ACompletedArtifacts(result);
 	updateA2AStandardTask(task, "TASK_STATE_COMPLETED", { artifacts });
-	writeA2AStreamEvent(res, wrap({ task: serializeA2AStandardTask(task), final: true }));
-	res.end();
+	if (canWriteHttpResponse(res, clientAbort.signal)) {
+		writeA2AStreamEvent(res, wrap({ task: serializeA2AStandardTask(task), final: true }));
+		res.end();
+	}
+	} finally {
+		clientAbort.dispose();
+	}
 }
 
 function getA2AStandardTaskResult(taskId: string): { statusCode: number; body: Record<string, unknown> } {
@@ -9543,8 +9651,17 @@ async function handleA2AStandardRequest(
 			writeA2ABadRequest(res, "Invalid JSON body.");
 			return;
 		}
-		const result = await executeA2AStandardMessageSend(req, url, body);
-		writeA2AJson(res, result.statusCode, result.body);
+		const clientAbort = createHttpClientAbortSignal(req, res);
+		try {
+			const result = await executeA2AStandardMessageSend(req, url, body, {
+				clientAbortSignal: clientAbort.signal,
+			});
+			if (canWriteHttpResponse(res, clientAbort.signal)) {
+				writeA2AJson(res, result.statusCode, result.body);
+			}
+		} finally {
+			clientAbort.dispose();
+		}
 		return;
 	}
 
@@ -9602,33 +9719,44 @@ async function handleA2AStandardJsonRpcRequest(
 	const params = extractObjectPropertyRecord(body, "params") ?? {};
 
 	if (method === "SendMessage" || method === "message/send") {
-		const result = await executeA2AStandardMessageSend(req, url, params);
-		if (result.statusCode >= 400) {
-			writeJsonRpcJson(
-				res,
-				result.statusCode,
-				buildJsonRpcError(
-					id,
-					isPlainObject(result.body.error) && typeof result.body.error.code === "number"
-						? result.body.error.code
-						: -32000,
-					isPlainObject(result.body.error) && typeof result.body.error.message === "string"
-						? result.body.error.message
-						: "A2A JSON-RPC SendMessage failed.",
-					isPlainObject(result.body.error) ? result.body.error.data : result.body,
-				),
-			);
-			return;
+		const clientAbort = createHttpClientAbortSignal(req, res);
+		try {
+			const result = await executeA2AStandardMessageSend(req, url, params, {
+				clientAbortSignal: clientAbort.signal,
+			});
+			if (!canWriteHttpResponse(res, clientAbort.signal)) return;
+			if (result.statusCode >= 400) {
+				writeJsonRpcJson(
+					res,
+					result.statusCode,
+					buildJsonRpcError(
+						id,
+						isPlainObject(result.body.error) && typeof result.body.error.code === "number"
+							? result.body.error.code
+							: -32000,
+						isPlainObject(result.body.error) && typeof result.body.error.message === "string"
+							? result.body.error.message
+							: "A2A JSON-RPC SendMessage failed.",
+						isPlainObject(result.body.error) ? result.body.error.data : result.body,
+					),
+				);
+				return;
+			}
+			writeJsonRpcJson(res, 200, {
+				jsonrpc: "2.0",
+				id,
+				result: result.body,
+			});
+		} finally {
+			clientAbort.dispose();
 		}
-		writeJsonRpcJson(res, 200, {
-			jsonrpc: "2.0",
-			id,
-			result: result.body,
-		});
 		return;
 	}
 
 	if (method === "SendStreamingMessage" || method === "message/stream") {
+		if (!canWriteHttpResponse(res)) {
+			return;
+		}
 		await handleA2AStandardMessageStream(req, res, url, params, { jsonRpcId: id });
 		return;
 	}
