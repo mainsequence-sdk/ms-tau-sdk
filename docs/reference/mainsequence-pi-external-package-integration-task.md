@@ -83,8 +83,8 @@ The external package should follow Pi package conventions:
 
 The package does not directly declare SDK-owned `pi/skills` while Astro is using the current
 Main Sequence SDK scaffold-copy flow. Instead, the package should provide a Pi extension that uses
-`resources_discover` to seed `.agents/skills` through the SDK-owned copy/export command when the
-runtime cwd does not already contain `.agents/skills`.
+extension activation plus `resources_discover` to seed `.agents/skills` through the SDK-owned
+skill root when the runtime cwd does not already contain `.agents/skills`.
 
 ## Required External Package Contents
 
@@ -104,11 +104,13 @@ replaces direct hard-coded delivery paths with one package-owned extension flow:
 
 ```text
 tmp_ms_pi/pi/extensions/hooks/scaffold-skill-discovery
+  extension activation:
+    ensure <cwd>/.agents/skills exists
+    if missing:
+      source = mainsequence skills path
+      copy source into <cwd>/.agents/skills/mainsequence
   resources_discover
-  if <cwd>/.agents/skills exists: no-op
-  else:
-    source = mainsequence skills path
-    copy source into <cwd>/.agents/skills/mainsequence
+    return <cwd>/.agents/skills
 ```
 
 This keeps the SDK as the source of truth for the skill set, avoids project `.venv` requirements in

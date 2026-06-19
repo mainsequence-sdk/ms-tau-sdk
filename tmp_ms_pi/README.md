@@ -43,16 +43,18 @@ pi/extensions/tools/mainsequence-cli-auth/index.ts
 pi/extensions/tools/mainsequence-runtime-info/index.ts
 ```
 
-The `scaffold-skill-discovery` hook uses Pi's `resources_discover` event. It does not maintain a
-hardcoded SDK skill allowlist. It only checks whether `<cwd>/.agents/skills` already exists; if it
-does, the hook leaves it alone. If it does not, the hook resolves the installed SDK skill root:
+The `scaffold-skill-discovery` extension seeds SDK skills as soon as Pi loads the extension, then
+returns the seeded path from Pi's `resources_discover` event. It does not maintain a hardcoded SDK
+skill allowlist. It only checks whether `<cwd>/.agents/skills` already exists; if it does, the hook
+leaves it alone. If it does not, the hook resolves the installed SDK skill root:
 
 ```text
 mainsequence skills path
 ```
 
-Then it copies that full SDK skill tree into `<cwd>/.agents/skills/mainsequence` and returns the
-created `.agents/skills` directory to Pi for the current discovery pass.
+Then it copies that full SDK skill tree into `<cwd>/.agents/skills/mainsequence`. During
+`resources_discover`, it returns the existing `.agents/skills` directory to Pi for the current
+discovery pass.
 
 ## Usage In This Repo
 

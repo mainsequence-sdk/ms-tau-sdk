@@ -132,17 +132,24 @@ function existingSkillRoot(cwd: string): string | null {
 	return skillRoot;
 }
 
-export default function (pi: ExtensionAPI) {
+async function ensureSdkSkillRoot(cwd: string): Promise<string> {
+	const existing = existingSkillRoot(cwd);
+	if (existing) return existing;
+	return copySdkSkills(cwd);
+}
+
+export default async function (pi: ExtensionAPI) {
+	if (!isDisabled(process.env)) {
+		await ensureSdkSkillRoot(process.cwd());
+	}
+
 	pi.on("resources_discover", async (event) => {
 		if (isDisabled(process.env)) return;
 
-		const existing = existingSkillRoot(event.cwd);
-		if (existing) return;
-
-		const created = await copySdkSkills(event.cwd);
+		const skillRoot = await ensureSdkSkillRoot(event.cwd);
 
 		return {
-			skillPaths: [created],
+			skillPaths: [skillRoot],
 		};
 	});
 }

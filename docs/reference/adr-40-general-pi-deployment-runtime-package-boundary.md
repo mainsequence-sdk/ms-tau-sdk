@@ -813,9 +813,8 @@ tmp_ms_pi/pi/system/APPEND_SYSTEM.md
 ```
 
 The package simulation does not directly declare `pi/skills`. SDK-owned skills remain source-of-truth
-SDK resources. The local package simulation seeds them through a Pi `resources_discover` extension
-that calls the SDK-owned copy/export command when the runtime cwd does not already contain
-`.agents/skills`.
+SDK resources. The local package simulation seeds them through a Pi discovery extension that runs
+when the extension is loaded and returns the seeded path from `resources_discover`.
 
 The following resources were split by concern during the local simulation:
 
@@ -850,8 +849,8 @@ are not Astro Core in the target architecture either. They belong to the Main Se
 adapter/composition, not to the portable Pi package.
 
 Current Main Sequence SDK library skills are not Astro-owned package contents. Astro bootstrap must
-not hard-code SDK skill slugs. The Main Sequence Pi package should expose a `resources_discover`
-hook that delegates skill copying/export to the SDK/CLI, so Astro TypeScript does not duplicate
+not hard-code SDK skill slugs. The Main Sequence Pi package should expose a discovery extension that
+delegates skill copying/export to the SDK/CLI, so Astro TypeScript does not duplicate
 `agent_scaffold` copy logic.
 SDK-owned skills such as `project_builder` are source-of-truth SDK resources, not component maps
 Astro should copy.

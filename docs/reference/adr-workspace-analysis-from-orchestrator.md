@@ -60,9 +60,10 @@ That means:
 
 1. The orchestrator prompt contract in `.pi/APPEND_SYSTEM.md` will explicitly include workspace
    analysis as an allowed capability.
-2. The Main Sequence Pi package simulation will run its `resources_discover` hook, resolve the
-   installed SDK skill root with `mainsequence skills path`, and copy that full tree into
-   `<cwd>/.agents/skills/mainsequence`.
+2. The Main Sequence Pi package simulation will seed SDK skills when Pi loads the package extension,
+   resolve the installed SDK skill root with `mainsequence skills path`, copy that full tree into
+   `<cwd>/.agents/skills/mainsequence`, and return `<cwd>/.agents/skills` during
+   `resources_discover`.
 3. The orchestrator will load and follow that injected skill at request time instead of inventing
    an ad hoc analysis workflow in the prompt.
 4. For a concrete workspace, the orchestrator must obtain the canonical analysis input with
@@ -93,7 +94,7 @@ workspace-analysis skill without additional conversational setup.
 At minimum, runtime setup must:
 
 - load the Main Sequence Pi package through `ASTRO_PI_PACKAGE_PATHS`
-- run the package-owned SDK skill discovery hook
+- run the package-owned SDK skill discovery extension
 - avoid hardcoding individual SDK skill slugs in Astro bootstrap code
 - leave the SDK/CLI responsible for copying all exported SDK skills into the runtime-visible
   `.agents/skills` tree
@@ -191,7 +192,7 @@ This readiness signal should exist before the first chat request is handled.
 
 - confirm the Main Sequence Pi package is present in generated Pi settings through
   `ASTRO_PI_PACKAGE_PATHS`
-- confirm the package-owned `resources_discover` hook seeds SDK skills into `.agents/skills`
+- confirm the package-owned extension seeds SDK skills into `.agents/skills`
 - confirm the orchestrator can answer a workspace-analysis request by following the injected skill
   without first performing user-visible skill discovery
 - confirm the orchestrator stays within the workspace-analysis scope defined in
@@ -206,7 +207,7 @@ This readiness signal should exist before the first chat request is handled.
   project implementation, and generic non-Main-Sequence repository analysis.
 - [x] Remove direct Astro bootstrap materialization for individual Main Sequence SDK skills.
 - [x] Load the Main Sequence Pi package through `ASTRO_PI_PACKAGE_PATHS`.
-- [x] Delegate SDK skill seeding to the package-owned `resources_discover` hook.
+- [x] Delegate SDK skill seeding to the package-owned discovery extension.
 - [x] Route capability 4 in `.pi/APPEND_SYSTEM.md` to the injected
   `command_center/workspace_analysis` skill instead of inventing a separate prompt-defined
   workflow.

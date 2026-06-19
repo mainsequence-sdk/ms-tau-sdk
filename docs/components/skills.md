@@ -9,11 +9,11 @@ In this repo, skills are not the main runtime mechanism. They are optional deepe
 Main Sequence product skills are no longer delivered from Astro root `pi/`, and they are not copied
 into `tmp_ms_pi/pi/skills`.
 
-The local package simulation owns the discovery hook:
+The local package simulation owns the discovery extension:
 
 - `tmp_ms_pi/pi/extensions/hooks/scaffold-skill-discovery/index.ts`
 
-That hook delegates skill seeding to the installed Main Sequence SDK/CLI:
+That extension delegates skill seeding to the installed Main Sequence SDK/CLI when Pi loads it:
 
 ```text
 mainsequence skills path
@@ -32,7 +32,7 @@ Astro Core primarily depends on:
 - prompt templates
 
 Main Sequence skills are composed by loading the Main Sequence Pi package through
-`ASTRO_PI_PACKAGE_PATHS`; the package hook then asks the SDK to populate `.agents/skills`.
+`ASTRO_PI_PACKAGE_PATHS`; the package extension then asks the SDK to populate `.agents/skills`.
 
 ## Related pages
 
