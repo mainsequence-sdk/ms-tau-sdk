@@ -29,8 +29,9 @@ This tells Pi what to load from the repository:
 
 This is Astro's shared always-on prompt.
 
-It contains the Main Sequence contract for both `astro-orchestrator` and fixed
-`project-executor` runtimes.
+It contains only the generic Astro-hosted Pi runtime contract. Platform-specific behavior,
+including Main Sequence behavior during the current local simulation, is composed through configured
+Pi packages such as `tmp_ms_pi`.
 
 ### Extensions
 
@@ -41,13 +42,15 @@ Extensions live under `pi/extensions/hooks/` and `pi/extensions/tools/` and do t
 
 ### Prompt templates
 
-Prompt templates in `pi/prompts/` are reusable workflows the parent can follow.
+Prompt templates are reusable workflows the parent can follow.
 
-They are useful when a task is repeatable but does not need a new extension.
+Main Sequence prompt templates are currently delivered by `tmp_ms_pi`, not root `pi/`.
 
 ### Skills
 
-Skills in `pi/skills/` are deeper instruction bundles the agent can load when relevant.
+Skills are deeper instruction bundles the agent can load when relevant.
+
+Main Sequence skills are currently delivered by `tmp_ms_pi` or SDK materialization, not root `pi/`.
 
 ### External packages
 
@@ -55,12 +58,12 @@ This repository keeps `pi-web-access` in normal `node_modules` and loads it from
 
 ## The key mental model
 
-Astro has two deployment identities:
+The current Main Sequence deployment composes two runtime identities around Astro:
 
 - `astro-orchestrator` sessions can handle platform, project creation, and workspace flows
 - fixed `project-executor` sessions work inside the prepared project cwd
 
-The shared prompt handles:
+The composed Main Sequence package/backend behavior handles:
 
 - intent translation
 - loading deeper skills when a branch needs more detailed guidance, such as new-project intake

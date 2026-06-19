@@ -6,7 +6,7 @@ Implementation Status: Partially implemented
 
 Initial implementation is complete for the TypeScript stream runtime, A2A runtime path, HTTP access
 logs, checkpoint sidecar, provider signin helper, and session-model extension hook. Standalone
-developer/bootstrap scripts that intentionally print interactive progress are still outside the
+developer/bootstrap entrypoints and tools that intentionally print interactive progress are still outside the
 central logger unless noted below.
 
 ## Context
@@ -417,10 +417,11 @@ Negative:
 
 Remaining known direct writes:
 
-- `scripts/start_pi.mjs` is a standalone local bootstrap script run directly by Node. It still emits
-  interactive setup progress with `[astro]` prefixes.
-- `scripts/patch_pi_rpc_ready.mjs` is a local maintenance script and still prints direct progress.
-- `scripts/debug_a2a_endpoint.mjs` is an interactive debug client and intentionally prints request
+- `bin/astro-pi-local.ts` is a standalone local bootstrap entrypoint. It still emits interactive
+  setup progress with `[astro]` prefixes.
+- `tools/build/patch-pi-rpc-ready.mjs` is a local maintenance script and still prints direct
+  progress.
+- `tools/a2a/debug-endpoint.mjs` is an interactive debug client and intentionally prints request
   and response JSON for humans.
 
 ## Out Of Scope

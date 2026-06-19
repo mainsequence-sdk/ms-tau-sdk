@@ -6,54 +6,55 @@ This page covers the Pi files that define Astro before any tool is called.
 
 This is the package entry point for Pi.
 
-It tells Pi to load:
+It tells Pi to load Astro root runtime resources:
 
-- `pi/extensions/hooks/`
-- `pi/extensions/tools/`
-- `pi/prompts/`
-- `pi/skills/`
+- `pi/extensions/hooks/agent-registration`
+- `pi/extensions/hooks/session-model`
+- `pi/extensions/hooks/telemetry`
+- `pi/extensions/tools/runtime-info`
 - the repository package itself
 - the repo-installed `pi-web-access` package
 
-This file is what makes Astro a project-local Pi package rather than just a folder of markdown.
+Main Sequence product skills/prompts/extensions are composed separately through
+`ASTRO_PI_PACKAGE_PATHS`, currently pointing at the local `tmp_ms_pi` simulation in Main Sequence
+deployments.
 
 ## `.pi/APPEND_SYSTEM.md`
 
-This is the shared static Astro prompt.
+This is the shared static Astro Core prompt.
 
-It defines Astro's Main Sequence contract:
+It defines only the generic Astro-hosted Pi runtime contract:
 
-- use the Main Sequence CLI
-- use `ASTRO_FIXED_AGENT_TYPE=project-executor` and `ASTRO_FIXED_PROJECT_CWD` to distinguish
-  project-attached and non-project-attached sessions
-- handle project creation/selection when not project-attached
-- work in the prepared project cwd when project-attached
-- use A2A through the global A2A contract when cross-runtime communication is needed
+- Astro runs around Pi and provides deployment/runtime services.
+- Pi should treat Astro runtime metadata as host-provided context.
+- Pi should keep runtime-specific behavior in Pi packages or backend adapters rather than assuming
+  one platform inside Astro Core.
 
-It also defines the global Main Sequence CLI failure contract. Any failed `mainsequence ...`
-command must be reported as a CLI error with the exact command, working directory when relevant,
-exit code or signal, CLI version or version lookup failure, stderr, stdout, and the concrete
-blocker or next action. Agents may retry auth failures once through `ensure_mainsequence_cli_auth`;
-for non-auth failures they must not invent causes or retry guessed command variants.
+Main Sequence-specific instructions are no longer stored in root `.pi/APPEND_SYSTEM.md`. During the
+local package simulation they are composed from:
+
+- `tmp_ms_pi/pi/system/APPEND_SYSTEM.md`
 
 The shared prompt is static on purpose. It is easier to inspect and reason about than generating
-runtime policy dynamically every run.
+runtime policy dynamically every run. Package-level prompt composition is explicit and driven by
+`ASTRO_PI_PACKAGE_PATHS`.
 
 ## Child runtime policy
 
 Runtime-owned child processes should not behave like the parent.
 
-Astro handles that with:
+The Main Sequence package simulation handles Main Sequence child-runtime policy with:
 
-- `pi/extensions/hooks/project-policy/index.ts`
+- `tmp_ms_pi/pi/extensions/hooks/project-policy/index.ts`
 
-The `project-policy` extension appends this child-only policy at `before_agent_start` only when Astro spawns a runtime-owned child process.
+The `project-policy` extension appends Main Sequence child-only policy at `before_agent_start`
+when the host marks the process as a Main Sequence child runtime.
 
 ## Why the split exists
 
 Astro keeps the shared prompt static and applies runtime-only child guardrails only to
-runtime-owned child processes. Core project executor behavior is now part of the shared prompt
-contract instead of a separate `.pi/agents` prompt file.
+runtime-owned child processes. Core Astro behavior is now part of the shared prompt contract. Main
+Sequence product behavior is composed from the package simulation instead of living in root `.pi`.
 
 ## Related pages
 

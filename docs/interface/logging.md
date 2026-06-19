@@ -458,5 +458,5 @@ This contract does not guarantee:
 
 - [structured-logging.ts](/Users/jose/code/MainSequenceServerSide/astro/pi/extensions/shared/structured-logging.ts)
 - [server.ts](/Users/jose/code/MainSequenceServerSide/astro/interface/stream/server.ts)
-- [session_checkpoint_sidecar.ts](/Users/jose/code/MainSequenceServerSide/astro/scripts/session_checkpoint_sidecar.ts)
-- [agent-registration.ts](/Users/jose/code/MainSequenceServerSide/astro/pi/extensions/shared/agent-registration.ts)
+- [sidecar.ts](/Users/jose/code/MainSequenceServerSide/astro/runtime/checkpoints/sidecar.ts)
+- [mainsequence-agent-registration.ts](/Users/jose/code/MainSequenceServerSide/astro/interface/stream/mainsequence-agent-registration.ts)

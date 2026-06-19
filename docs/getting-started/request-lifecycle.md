@@ -12,7 +12,7 @@ Pi discovers `.pi/settings.json` and loads:
 - the repository package itself
 - repo-installed packages such as `pi-web-access`
 
-The Astro launch scripts load `.env` from the repo root and prepare Main Sequence auth according
+The Astro entrypoints load `.env` from the repo root and prepare Main Sequence auth according
 to `MAINSEQUENCE_AUTH_MODE`.
 In production, `MAINSEQUENCE_AUTH_MODE=runtime_credential` uses
 `MAINSEQUENCE_RUNTIME_CREDENTIAL_ID` and `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET`; runtime
@@ -26,14 +26,18 @@ The deployable Docker targets boot the same runtime by copying only:
 - `.pi/`
 - `pi/`
 - `interface/`
-- `scripts/`
+- `runtime/`
+- `adapters/`
+- `bin/`
+- `tools/`
 - `package.json`
 - `package-lock.json`
 - `tsconfig.json`
 
 `docker-compose.yml` starts those same targets while bind-mounting only:
 
-- editable source paths such as `./.pi`, `./pi`, `./interface`, and `./scripts`
+- editable source paths such as `./.pi`, `./pi`, `./interface`, `./runtime`, `./adapters`,
+  `./bin`, and `./tools`
 - tmpfs-backed `astro_session_emptydir` volume at `/session-state` for pod-local session files
 
 For the HTTP stream service, compose also sets
@@ -88,26 +92,28 @@ Resume requests can reuse the stored session metadata.
 
 ## 2. Before the agent starts
 
-Astro keeps the shared prompt static and avoids auto-injecting repo docs into the agent context.
+Astro keeps the shared prompt static and avoids auto-injecting repository reference material into
+the agent context.
 
-The only runtime policy injection that remains is for runtime-owned child processes:
+Main Sequence child-process policy is package-provided when the Main Sequence package is configured:
 
-- `project-policy` appends child-only policy when the process is a child runtime process
+- `tmp_ms_pi/pi/extensions/hooks/project-policy/index.ts` appends child-only policy when the process
+  is a child runtime process
 
-## 3. The shared runtime contract decides what to do
+## 3. The composed runtime contract decides what to do
 
-The active Astro runtime reads:
+The active runtime uses only runtime inputs:
 
 - the user request
-- Astro docs context
-- relevant Main Sequence docs
+- the structured request `context`
+- installed Pi package prompts, skills, and extensions
+- backend/session/project metadata explicitly supplied by the runtime
 
-Then it decides whether the task is:
+Then the composed Astro/package contract decides whether the task is:
 
 - platform help
 - an SDK question
 - a normal Main Sequence project workflow
-- an Astro-internal review task
 - an explicitly requested standalone workflow prompt
 
 ## 4. Runtime profile tracks project context

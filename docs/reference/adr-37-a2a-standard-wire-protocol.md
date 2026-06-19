@@ -801,7 +801,7 @@ JSON-RPC errors should use:
 - [x] Add SDK/client examples for REST and JSON-RPC.
 - [x] Add endpoint-only VS Code A2A debug configurations for capabilities and dictionary JSON
       requests against `POST /api/a2a/v1/message:send`.
-- [x] Add `scripts/debug_a2a_endpoint.mjs` as a reusable local script that sends one simple
+- [x] Add `tools/a2a/debug-endpoint.mjs` as a reusable local script that sends one simple
       standard A2A request to `POST /api/a2a/v1/message:send`.
 - [x] Completely remove the old Astro-specific A2A HTTP routes instead of keeping them as 410,
       internal, or transitional routes.

@@ -1,0 +1,26 @@
+{
+  "name": "@mainsequence/pi",
+  "version": "0.0.0-local-simulation",
+  "private": true,
+  "description": "Temporary local simulation of the portable Main Sequence Pi package. Source of truth should live in the Main Sequence SDK repo or a sibling Main Sequence repo.",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "mainsequence"
+  ],
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": "*",
+    "@sinclair/typebox": "*"
+  },
+  "pi": {
+    "extensions": [
+      "./pi/extensions/hooks/scaffold-skill-discovery",
+      "./pi/extensions/hooks/project-policy",
+      "./pi/extensions/tools/mainsequence-cli-auth",
+      "./pi/extensions/tools/mainsequence-runtime-info"
+    ],
+    "prompts": [
+      "./pi/prompts"
+    ]
+  }
+}

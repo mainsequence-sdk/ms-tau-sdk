@@ -11,7 +11,7 @@ import {
 	resolveBackendAuthHeaders,
 	resolveBackendUrl,
 	type BackendAuthHeaders,
-} from "../../pi/extensions/shared/agent-registration.js";
+} from "./mainsequence-agent-registration.js";
 
 type CapabilitySourceType = "inline" | "registry" | "repository" | "api" | "external";
 type CapabilityKind = "skill" | "prompt" | "extension";

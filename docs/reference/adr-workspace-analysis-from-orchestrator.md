@@ -135,8 +135,8 @@ The deterministic preload belongs in Astro startup/bootstrap, not in user-turn r
 
 The intended implementation layer is the pre-server startup path, currently centered around:
 
-- `scripts/start_pi_stream.ts`
-- `scripts/bootstrap_pi_agent_dir.mjs`
+- `bin/astro-stream.ts`
+- `runtime/bootstrap/pi-agent-dir.mjs`
 
 This keeps workspace-analysis skill availability aligned with other runtime-managed setup behaviors and
 avoids making the first user turn responsible for hidden environment preparation.

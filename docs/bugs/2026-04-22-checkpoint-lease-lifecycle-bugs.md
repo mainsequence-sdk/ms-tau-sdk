@@ -34,7 +34,7 @@ If Astro renews the lease while the sidecar is flushing, the sidecar can overwri
 
 The risky write path is:
 
-- `scripts/session_checkpoint_sidecar.ts`
+- `runtime/checkpoints/sidecar.ts`
 - `writeCheckpointManifest(sessionKey, manifest, updates)`
 
 ## Bugs To Fix
@@ -84,7 +84,7 @@ The risky write path is:
 - Terminal checkpoint markers are skipped when no checkpoint lease exists.
 - Terminal checkpoint markers include lease identity, checkpoint version, and bundle hash.
 - Client aborts stop the active Pi child and write a terminal checkpoint marker when a lease exists.
-- `scripts/session_checkpoint_sidecar.ts` now preserves the freshest manifest lease metadata when
+- `runtime/checkpoints/sidecar.ts` now preserves the freshest manifest lease metadata when
   persisting checkpoint versions.
 - Sidecar skips stale terminal markers whose lease identity no longer matches the active manifest.
 - Sidecar retries terminal lease release before leaving the session blocked by backend TTL.

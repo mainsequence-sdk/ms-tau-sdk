@@ -123,7 +123,7 @@ The fake harness protects deterministic release behavior. When debugging a deplo
 running container, use the live workflow to see the real A2A request/response flow:
 
 ```bash
-node scripts/stress_a2a_live.mjs \
+node tools/a2a/stress-live.mjs \
   --base-url http://127.0.0.1:8787 \
   --agent-session-uid 0b2701a1-e777-4cfe-8437-b94025f00069 \
   --turns 10 \

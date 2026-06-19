@@ -9,7 +9,7 @@ Astro's repo-owned runtime extensions live under `pi/extensions/` and are docume
 - [`tools/`](./tools/README.md)
   - repo-owned tools the parent or child agents can call
 - [`shared/`](./shared/README.md)
-  - helper modules reused by hooks, tools, launch scripts, and the stream runtime
+  - helper modules reused by hooks, tools, entrypoints, and the stream runtime
 
 ## Source layout
 
@@ -23,5 +23,5 @@ pi/extensions/
 ## Related pages
 
 - [`../components/extensions.md`](../components/extensions.md)
-- [`../components/scripts-and-runtime.md`](../components/scripts-and-runtime.md)
+- [`../components/runtime-entrypoints-and-tools.md`](../components/runtime-entrypoints-and-tools.md)
 - [`../reference/folder-structure.md`](../reference/folder-structure.md)

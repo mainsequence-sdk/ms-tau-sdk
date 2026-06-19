@@ -49,7 +49,10 @@ To use Docker Compose in live-mounted dev mode:
 - `./.pi` -> `/app/.pi`
 - `./pi` -> `/app/pi`
 - `./interface` -> `/app/interface`
-- `./scripts` -> `/app/scripts`
+- `./runtime` -> `/app/runtime`
+- `./adapters` -> `/app/adapters`
+- `./bin` -> `/app/bin`
+- `./tools` -> `/app/tools`
 - `./docs` -> `/app/docs`
 - `./README.md` -> `/app/README.md`
 - `./package.json` -> `/app/package.json`
@@ -123,7 +126,7 @@ docker compose up astro-project-executor
 ## Start reading here
 
 - [`docs/README.md`](./docs/README.md)
-  - canonical documentation hub with the architecture diagram and ordered reading paths
+  - project overview with the architecture diagram and ordered reading paths
 - [`docs/getting-started/quickstart.md`](./docs/getting-started/quickstart.md)
   - shortest path to running Astro
 - [`docs/getting-started/pi-primer.md`](./docs/getting-started/pi-primer.md)
@@ -136,13 +139,7 @@ docker compose up astro-project-executor
 - [`docs/extensions/README.md`](./docs/extensions/README.md)
 - [`docs/components/agents.md`](./docs/components/agents.md)
 - [`docs/components/prompts.md`](./docs/components/prompts.md)
-- [`docs/prompts/README.md`](./docs/prompts/README.md)
 - [`docs/components/skills.md`](./docs/components/skills.md)
-- [`docs/components/knowledge.md`](./docs/components/knowledge.md)
-- [`docs/components/scripts-and-runtime.md`](./docs/components/scripts-and-runtime.md)
+- [`docs/components/runtime-entrypoints-and-tools.md`](./docs/components/runtime-entrypoints-and-tools.md)
 - [`docs/components/deployment-identities.md`](./docs/components/deployment-identities.md)
 - [`docs/components/remote-worker-image.md`](./docs/components/remote-worker-image.md)
-
-## Generated context
-
-Astro no longer uses a generated `knowledge/` cache. All canonical docs live under `docs/`.

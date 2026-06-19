@@ -4,48 +4,29 @@ Skills are local instruction bundles the agent can load when a task clearly matc
 
 In this repo, skills are not the main runtime mechanism. They are optional deeper guidance.
 
-## Repo-local skills
+## Main Sequence Package Simulation Skills
 
-### `pi/skills/mainsequence-project-creation/SKILL.md`
+Main Sequence product skills are no longer delivered from Astro root `pi/`.
+During the local package split simulation they are delivered by `tmp_ms_pi`. The package files are
+the source of truth.
 
-Use when:
+Current package skill roots:
 
-- creating a brand new Main Sequence project
-- turning a vague project idea into a structured creation intake
-- collecting the questionnaire details needed before `project validate-name` or `project create`
-
-### `pi/skills/mainsequence-sdk/SKILL.md`
-
-Use when:
-
-- answering questions about `mainsequence-sdk`
-
-### `pi/skills/extension-builder/SKILL.md`
-
-Use when:
-
-- adding a new extension
-- adding a new specialist
-- adding a new reusable prompt
-
-### `pi/skills/repo-docs/SKILL.md`
-
-Use when:
-
-- updating the documentation system
-- changing the documentation layout or navigation
-- keeping docs and runtime wiring in sync
+- `tmp_ms_pi/pi/skills/project_builder/SKILL.md`
+- `tmp_ms_pi/pi/skills/mainsequence-sdk/SKILL.md`
+- `tmp_ms_pi/pi/skills/command_center/workspace_analysis/SKILL.md`
+- `tmp_ms_pi/pi/skills/a2a_communication/SKILL.md`
 
 ## How skills fit into Astro
 
-Astro primarily depends on:
+Astro Core primarily depends on:
 
 - system prompts
 - extensions
-- specialists
 - prompt templates
 
-Skills are there for deeper task-specific guidance, not for the always-on architecture.
+Main Sequence skills are now composed through the package path configured by
+`ASTRO_PI_PACKAGE_PATHS`.
 
 ## Related pages
 

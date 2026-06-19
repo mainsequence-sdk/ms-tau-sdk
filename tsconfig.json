@@ -12,7 +12,9 @@
 		"pi/extensions/**/*.ts",
 		"pi/types/**/*.d.ts",
 		"interface/**/*.ts",
-		"scripts/**/*.ts",
+		"adapters/**/*.ts",
+		"bin/**/*.ts",
+		"runtime/**/*.ts",
 		"tests/**/*.ts",
 	]
 }

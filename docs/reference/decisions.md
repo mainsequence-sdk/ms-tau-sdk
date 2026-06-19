@@ -9,6 +9,9 @@ pre-UID API sketches have been removed from the active reference set.
   - `agentType` / `agent_type` is the backend/runtime identity field.
 - [`adr-30-runtime-profiles-vs-agent-type.md`](./adr-30-runtime-profiles-vs-agent-type.md)
   - Astro exposes only `astro-orchestrator` and `project-executor` as runtime/backend types.
+- [`adr-39-unified-pi-runtime-context.md`](./adr-39-unified-pi-runtime-context.md)
+  - Astro Core should use one Pi runtime context; orchestrator is the no-project edge case, and
+    backend `agent_type` must not define separate local runtime architectures.
 - [`adr-31-backend-uid-identity.md`](./adr-31-backend-uid-identity.md)
   - Backend resource lookup is by `uid`, not deprecated `id`.
 - [`../components/deployment-identities.md`](../components/deployment-identities.md)
@@ -78,11 +81,17 @@ pre-UID API sketches have been removed from the active reference set.
   - Shared Astro instruction contract for both deployment identities.
 - [`../components/settings-and-system-prompt.md`](../components/settings-and-system-prompt.md)
   - Pi settings and prompt contract.
-- [`../components/scripts-and-runtime.md`](../components/scripts-and-runtime.md)
-  - TypeScript runtime, startup scripts, and sidecar processes.
+- [`../components/runtime-entrypoints-and-tools.md`](../components/runtime-entrypoints-and-tools.md)
+  - TypeScript runtime, entrypoints, tools, and sidecar processes.
 
 ## Observability
 
 - [`adr-38-dual-sink-logging-contract.md`](./adr-38-dual-sink-logging-contract.md)
   - Astro emits one structured internal log event and renders it separately for machine JSON logs
     and compact human terminal logs.
+
+## Runtime Package Boundary
+
+- [`adr-40-general-pi-deployment-runtime-package-boundary.md`](./adr-40-general-pi-deployment-runtime-package-boundary.md)
+  - Astro Core should become a general Pi deployment runtime; Main Sequence behavior should move
+    toward Pi package and backend adapter boundaries.

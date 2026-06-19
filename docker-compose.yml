@@ -22,13 +22,18 @@ services:
       ASTRO_PROVIDER_CREDENTIAL_DIR: /session-state/pi-agent-auth
       ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS: ${ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS:-10000}
       ASTRO_CHECKPOINT_HOLDER_ID: pod/local-compose-astro-pi-stream
+      ASTRO_PI_PACKAGE_PATHS: ${ASTRO_PI_PACKAGE_PATHS:-/app/tmp_ms_pi}
       BUILD_AGENTS_IN_BACKEND: "1"
       A2A_DEV_PROJECT_MOUNTED_PATH: /workspace/a2a-dev-project
     volumes:
       - ./.pi:/app/.pi
       - ./pi:/app/pi
       - ./interface:/app/interface
-      - ./scripts:/app/scripts
+      - ./runtime:/app/runtime
+      - ./adapters:/app/adapters
+      - ./bin:/app/bin
+      - ./tools:/app/tools
+      - ./tmp_ms_pi:/app/tmp_ms_pi
       - ./docs:/app/docs
       - ./README.md:/app/README.md
       - ./package.json:/app/package.json
@@ -72,7 +77,9 @@ services:
   #     - ./.pi:/app/.pi
   #     - ./pi:/app/pi
   #     - ./interface:/app/interface
-  #     - ./scripts:/app/scripts
+  #     - ./runtime:/app/runtime
+  #     - ./adapters:/app/adapters
+  #     - ./bin:/app/bin
   #     - ./docs:/app/docs
   #     - ./README.md:/app/README.md
   #     - ./package.json:/app/package.json
@@ -88,7 +95,7 @@ services:
   #         echo "A2A_DEV_PROJECT must point to a checked-out Main Sequence project for the local executor harness." >&2
   #         exit 64
   #       fi
-  #       exec /app/node_modules/.bin/tsx /app/scripts/start_pi_stream.ts
+  #       exec /app/node_modules/.bin/tsx /app/bin/astro-stream.ts
   #   ports:
   #     - "${ASTRO_EXECUTOR_STREAM_PORT:-8790}:8787"
 
@@ -119,7 +126,8 @@ services:
     volumes:
       - ./pi:/app/pi
       - ./interface:/app/interface
-      - ./scripts:/app/scripts
+      - ./runtime:/app/runtime
+      - ./adapters:/app/adapters
       - ./package.json:/app/package.json
       - ./package-lock.json:/app/package-lock.json
       - ./tsconfig.json:/app/tsconfig.json
@@ -154,7 +162,8 @@ services:
   #   volumes:
   #     - ./pi:/app/pi
   #     - ./interface:/app/interface
-  #     - ./scripts:/app/scripts
+  #     - ./runtime:/app/runtime
+  #     - ./adapters:/app/adapters
   #     - ./package.json:/app/package.json
   #     - ./package-lock.json:/app/package-lock.json
   #     - ./tsconfig.json:/app/tsconfig.json

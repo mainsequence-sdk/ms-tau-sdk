@@ -27,7 +27,8 @@ The resulting container has two distinct roots:
 - `/app`
   - Astro runtime
   - copied from this repo
-  - contains Astro's `.pi`, `pi`, `interface`, `scripts`, and `node_modules`
+  - contains Astro's `.pi`, `pi`, `interface`, `runtime`, `adapters`, `bin`, `tools`, and
+    `node_modules`
 - `${SKEL_APP_DIR}`
   - canonical cloned project tree from the existing project-image scaffold
   - defaults to `/usr/local/share/user-skel/app`
@@ -55,7 +56,10 @@ executor:
 - `.pi/`
 - `pi/`
 - `interface/`
-- `scripts/`
+- `runtime/`
+- `adapters/`
+- `bin/`
+- `tools/`
 - `node_modules/`
 
 This is what lets the downstream project-executor build work without checking out the Astro repo as
@@ -87,7 +91,7 @@ The final part adds Astro to the already-built project image:
 - starts Astro with:
 
 ```bash
-cd "${ASTRO_FIXED_PROJECT_CWD}" && tsx /app/scripts/start_pi_stream.ts
+cd "${ASTRO_FIXED_PROJECT_CWD}" && tsx /app/bin/astro-stream.ts
 ```
 
 ## Build arguments
@@ -245,6 +249,6 @@ It pushes:
 
 ## Related pages
 
-- [`scripts-and-runtime.md`](./scripts-and-runtime.md)
+- [`runtime-entrypoints-and-tools.md`](./runtime-entrypoints-and-tools.md)
 - [`../interface/environment.md`](../interface/environment.md)
 - [`../interface/overview.md`](../interface/overview.md)

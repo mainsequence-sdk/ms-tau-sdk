@@ -6,7 +6,7 @@
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "node",
-      "program": "${workspaceFolder}/scripts/stress_a2a_live.mjs",
+      "program": "${workspaceFolder}/tools/a2a/stress-live.mjs",
       "args": [
         "--base-url",
         "http://127.0.0.1:${input:astroStreamPort}",

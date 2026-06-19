@@ -30,10 +30,14 @@ RUN npm install --include=dev --no-audit --no-fund \
 
 COPY .pi ./.pi
 COPY pi ./pi
+COPY tmp_ms_pi ./tmp_ms_pi
 COPY interface ./interface
-COPY scripts ./scripts
+COPY runtime ./runtime
+COPY adapters ./adapters
+COPY bin ./bin
+COPY tools ./tools
 
-RUN node scripts/patch_pi_rpc_ready.mjs \
+RUN node tools/build/patch-pi-rpc-ready.mjs \
  && npm run check
 
 FROM astro-base AS astro-mainsequence
@@ -89,12 +93,12 @@ ENV ASTRO_STREAM_HOST=0.0.0.0 \
 
 EXPOSE 8787
 
-CMD ["/app/node_modules/.bin/tsx", "scripts/start_pi_stream.ts"]
+CMD ["/app/node_modules/.bin/tsx", "bin/astro-stream.ts"]
 
 FROM astro-runtime AS astro-session-checkpoint-sidecar
 
-CMD ["/app/node_modules/.bin/tsx", "scripts/session_checkpoint_sidecar.ts"]
+CMD ["/app/node_modules/.bin/tsx", "runtime/checkpoints/sidecar.ts"]
 
 FROM astro-runtime AS astro-pi
 
-CMD ["node", "scripts/start_pi.mjs"]
+CMD ["/app/node_modules/.bin/tsx", "bin/astro-pi-local.ts"]

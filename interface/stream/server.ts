@@ -120,23 +120,22 @@ import {
 	handleStatelessLlmChat,
 	type StatelessLlmLogEvent,
 } from "./llm-passthrough.js";
-import type { AgentConfig } from "../../pi/extensions/tools/specialist-delegate/agents.js";
 import {
 	fetchBackendAgentSessionAgentCard,
 	fetchBackendAgentSession,
 	resolveMainsequenceUserId,
 	shouldRegisterAgents,
-} from "../../pi/extensions/shared/agent-registration.js";
+} from "./mainsequence-agent-registration.js";
 import {
 	buildA2ASystemInstruction,
-} from "../../pi/extensions/shared/a2a.js";
+} from "./a2a-runtime.js";
 import { logStructuredEvent } from "../../pi/extensions/shared/structured-logging.js";
 import {
 	buildMainsequenceStoredAuthEnv,
 	bootstrapMainsequenceCliAuth,
 	loadEnvFile,
 	startMainsequenceCredentialExchangeLoop,
-} from "../../scripts/mainsequence_runtime_auth.js";
+} from "../../adapters/mainsequence/runtime-auth.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..", "..");
@@ -148,6 +147,18 @@ const ASTRO_PROJECT_IMAGE_REF_ENV = "ASTRO_PROJECT_IMAGE_REF";
 const PROJECT_SESSION_AGENT_TYPES = new Set(["project-executor"]);
 const ALLOWED_AGENT_TYPES = new Set(["astro-orchestrator", ...PROJECT_SESSION_AGENT_TYPES]);
 const PI_BUILT_IN_TOOL_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
+
+type AgentConfig = {
+	promptName: string;
+	description: string;
+	tools?: string[];
+	model?: string;
+	systemPrompt: string;
+	outputFormat?: string;
+	appendPromptFiles?: string[];
+	source: "user" | "project";
+	filePath: string;
+};
 
 loadEnvFile(repoRoot);
 

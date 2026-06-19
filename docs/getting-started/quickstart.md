@@ -100,7 +100,10 @@ The compose file mounts:
 - `./.pi` -> `/app/.pi`
 - `./pi` -> `/app/pi`
 - `./interface` -> `/app/interface`
-- `./scripts` -> `/app/scripts`
+- `./runtime` -> `/app/runtime`
+- `./adapters` -> `/app/adapters`
+- `./bin` -> `/app/bin`
+- `./tools` -> `/app/tools`
 - `./docs` -> `/app/docs`
 - `./README.md` -> `/app/README.md`
 - `./package.json` -> `/app/package.json`

@@ -1,12 +1,14 @@
 # Shared backend session helpers
 
-Source: [`pi/extensions/shared/agent-registration.ts`](../../../pi/extensions/shared/agent-registration.ts)
+Source: [`interface/stream/mainsequence-agent-registration.ts`](../../../interface/stream/mainsequence-agent-registration.ts)
 
 ## Purpose
 
-Provide the Main Sequence backend session-fetch, auth-header, and user-uid helpers used by Astro and
-the stream runtime. The file still contains a legacy session-start helper, but chat/A2A runtime
-paths should no longer depend on Astro-initiated session creation.
+Provide the Main Sequence backend session-fetch, auth-header, and user-uid helpers used by the
+stream runtime. This is backend integration code, not an Astro Core Pi extension resource.
+
+The file still contains a legacy session-start helper, but chat/A2A runtime paths should no longer
+depend on Astro-initiated session creation.
 
 ## Main responsibilities
 

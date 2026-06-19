@@ -2,7 +2,7 @@ import {
 	resolveBackendAuthHeaders,
 	resolveBackendUrl,
 	type BackendAuthHeaders,
-} from "../../pi/extensions/shared/agent-registration.js";
+} from "./mainsequence-agent-registration.js";
 
 export type CheckpointBundle = {
 	pi_session_jsonl: string;
