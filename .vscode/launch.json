@@ -2,35 +2,22 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": "A2A message:send: ask capabilities JSON",
+      "name": "Live A2A workflow: 10 turns",
       "type": "node",
       "request": "launch",
       "runtimeExecutable": "node",
-      "program": "${workspaceFolder}/scripts/debug_a2a_endpoint.mjs",
+      "program": "${workspaceFolder}/scripts/stress_a2a_live.mjs",
       "args": [
-        "capabilities",
         "--base-url",
         "http://127.0.0.1:${input:astroStreamPort}",
         "--agent-session-uid",
-        "${input:a2aAgentSessionUid}"
-      ],
-      "console": "integratedTerminal",
-      "skipFiles": [
-        "<node_internals>/**"
-      ]
-    },
-    {
-      "name": "A2A message:send: ask dictionary JSON",
-      "type": "node",
-      "request": "launch",
-      "runtimeExecutable": "node",
-      "program": "${workspaceFolder}/scripts/debug_a2a_endpoint.mjs",
-      "args": [
-        "dictionary",
-        "--base-url",
-        "http://127.0.0.1:${input:astroStreamPort}",
-        "--agent-session-uid",
-        "${input:a2aAgentSessionUid}"
+        "${input:a2aAgentSessionUid}",
+        "--turns",
+        "10",
+        "--cancel-after-ms",
+        "500",
+        "--timeout-turn-ms",
+        "1000"
       ],
       "console": "integratedTerminal",
       "skipFiles": [

@@ -4,6 +4,8 @@ This document is the operational contract for Astro's public Agent-to-Agent inte
 It describes the endpoints that exist now, what each one actually does, and the current
 phase-1 limitations.
 
+Testing contract: see [testing.md](./testing.md).
+
 Astro no longer exposes the old Astro-specific A2A chat route. Public A2A clients must use
 the standard REST-style routes under `/api/a2a/v1` or the JSON-RPC binding at `/api/a2a/rpc`.
 

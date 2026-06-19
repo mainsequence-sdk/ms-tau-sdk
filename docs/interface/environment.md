@@ -29,6 +29,8 @@
   new warm Pi RPC runner to emit its `runtime_ready` sentinel)
 - `ASTRO_A2A_WARM_RUNNER_RPC_TIMEOUT_MS` (default `10000`; timeout for warm runner RPC command
   acknowledgements)
+- `ASTRO_A2A_WARM_RUNNER_TURN_TIMEOUT_MS` (default `120000`; server-side guard for a warm runner
+  that accepts a prompt but never emits assistant completion events)
 - `ASTRO_A2A_JSON_REPAIR_TIMEOUT_MS` (default `60000`; timeout for each strict JSON repair attempt
   when an A2A response fails runtime JSON validation)
 - `ASTRO_RELEASE_VERSION` (the Astro release/build version baked into the image and exposed for

@@ -102,9 +102,17 @@ test("public A2A exposes message send without runtime attach or user identity co
 		"async function handleA2AStandardJsonRpcRequest",
 		"async function handleStreamRequest",
 	);
+	const backendSessionHydration = sourceSection(
+		source,
+		"function extractBackendSessionProviderCredentialUserId",
+		"function extractRequestedAgentId",
+	);
 
 	assert.doesNotMatch(payloadBuilder, /\buser_uid\b|userUid/);
 	assert.doesNotMatch(identityResolver, /resolveUserIdFromRequest|userUid/);
+	assert.match(backendSessionHydration, /created_by_user_uid/);
+	assert.match(backendSessionHydration, /bound_handle/);
+	assert.match(source, /providerCredentialUserId/);
 	assert.doesNotMatch(
 		source,
 		new RegExp(["handleA2A", "SessionRuntimeRequest|matchA2A", "SessionRuntimeRoute"].join("")),
@@ -119,6 +127,10 @@ test("public A2A exposes message send without runtime attach or user identity co
 	assert.match(runtimeTurn, /ctx\.cancelOnClientDisconnect = true/);
 	assert.doesNotMatch(runtimeTurn, /ctx\.cancelOnClientDisconnect = false/);
 	assert.match(runtimeTurn, /attachA2AStandardRuntimeClientAbort/);
+	assert.match(runtimeTurn, /reapStaleWarmSessionTurnQueue\(prepared\.contextId\)/);
+	assert.match(runtimeTurn, /event: "runtime_turn_queued"/);
+	assert.match(runtimeTurn, /const queueWaitMs = Date\.now\(\) - queuedAt/);
+	assert.match(runtimeTurn, /queueWaitMs/);
 	assert.match(standardRequestHandler, /createHttpClientAbortSignal\(req, res\)/);
 	assert.match(standardRequestHandler, /canWriteHttpResponse\(res, clientAbort\.signal\)/);
 	assert.match(jsonRpcHandler, /createHttpClientAbortSignal\(req, res\)/);

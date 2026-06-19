@@ -45,6 +45,20 @@ import {
 	type A2ARuntimeOptions,
 } from "./a2a-runtime-options.js";
 import {
+	A2A_STANDARD_REST_BASE,
+	matchA2AStandardRoute,
+	type A2AStandardRoute,
+} from "./a2a-standard-routing.js";
+import {
+	SameSessionTurnQueue,
+	warmRunnerTurnExpired,
+} from "./a2a-turn-lifecycle.js";
+import {
+	canWriteHttpResponse,
+	createHttpClientAbortSignal,
+} from "./http-client-abort.js";
+import { resolveWarmRunnerTimeoutConfig } from "./warm-runner-config.js";
+import {
 	repairPiSessionJsonlCurrentBranch,
 	validatePiSessionJsonlCurrentBranch,
 	type PiSessionJsonlRepair,
@@ -158,18 +172,11 @@ const providerCredentialFlushIntervalMs = (() => {
 	const configured = Number(process.env.ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS ?? "10000");
 	return Number.isFinite(configured) && configured >= 1000 ? Math.trunc(configured) : 10000;
 })();
-const warmRunnerIdleTtlMs = (() => {
-	const configured = Number(process.env.ASTRO_A2A_WARM_RUNNER_IDLE_TTL_MS ?? "3600000");
-	return Number.isFinite(configured) && configured >= 1000 ? Math.trunc(configured) : 3600000;
-})();
-const warmRunnerRpcCommandTimeoutMs = (() => {
-	const configured = Number(process.env.ASTRO_A2A_WARM_RUNNER_RPC_TIMEOUT_MS ?? "10000");
-	return Number.isFinite(configured) && configured >= 1000 ? Math.trunc(configured) : 10000;
-})();
-const warmRunnerStartupTimeoutMs = (() => {
-	const configured = Number(process.env.ASTRO_A2A_WARM_RUNNER_STARTUP_TIMEOUT_MS ?? "120000");
-	return Number.isFinite(configured) && configured >= 1000 ? Math.trunc(configured) : 120000;
-})();
+const warmRunnerTimeoutConfig = resolveWarmRunnerTimeoutConfig(process.env);
+const warmRunnerIdleTtlMs = warmRunnerTimeoutConfig.idleTtlMs;
+const warmRunnerRpcCommandTimeoutMs = warmRunnerTimeoutConfig.rpcCommandTimeoutMs;
+const warmRunnerStartupTimeoutMs = warmRunnerTimeoutConfig.startupTimeoutMs;
+const warmRunnerTurnTimeoutMs = warmRunnerTimeoutConfig.turnTimeoutMs;
 const sessionCancelGraceMs = (() => {
 	const configured = Number(process.env.ASTRO_SESSION_CANCEL_GRACE_MS ?? "5000");
 	return Number.isFinite(configured) && configured >= 500 ? Math.trunc(configured) : 5000;
@@ -752,21 +759,7 @@ type WarmSessionRunner = {
 const activeStreamSessions = new Map<string, ActiveStreamSession>();
 const activeStreamContexts = new Map<string, RequestContext>();
 const warmSessionRunners = new Map<string, WarmSessionRunner>();
-const warmSessionTurnQueues = new Map<string, Promise<void>>();
-
-type A2AStandardRoute =
-	| { kind: "message_send" }
-	| { kind: "message_stream" }
-	| { kind: "tasks" }
-	| { kind: "task_get"; taskId: string }
-	| { kind: "task_cancel"; taskId: string }
-	| { kind: "task_subscribe"; taskId: string }
-	| { kind: "push_config_create"; taskId: string }
-	| { kind: "push_config_list"; taskId: string }
-	| { kind: "push_config_get"; taskId: string; configId: string }
-	| { kind: "push_config_delete"; taskId: string; configId: string }
-	| { kind: "extended_agent_card" }
-	| { kind: "rpc" };
+const warmSessionTurnQueues = new SameSessionTurnQueue();
 
 type A2AStandardTaskState =
 	| "TASK_STATE_SUBMITTED"
@@ -856,8 +849,6 @@ type A2AStandardMessageSendRecord = {
 	updatedAt: string;
 };
 
-const A2A_STANDARD_REST_BASE = "/api/a2a/v1";
-const A2A_STANDARD_RPC_PATH = "/api/a2a/rpc";
 const A2A_OUTPUT_CONTRACT_EXTENSION_URI =
 	"https://mainsequence.ai/a2a/extensions/output-contract/v1";
 const A2A_RUNTIME_EXTENSION_URI = "https://mainsequence.ai/a2a/extensions/runtime/v1";
@@ -867,41 +858,6 @@ const a2aStandardPushNotificationConfigs = new Map<
 	string,
 	Map<string, A2AStandardPushNotificationConfigRecord>
 >();
-
-function matchA2AStandardRoute(pathname: string): A2AStandardRoute | null {
-	if (pathname === `${A2A_STANDARD_REST_BASE}/message:send`) return { kind: "message_send" };
-	if (pathname === `${A2A_STANDARD_REST_BASE}/message:stream`) return { kind: "message_stream" };
-	if (pathname === `${A2A_STANDARD_REST_BASE}/tasks`) return { kind: "tasks" };
-	if (pathname === `${A2A_STANDARD_REST_BASE}/extendedAgentCard`) {
-		return { kind: "extended_agent_card" };
-	}
-	if (pathname === A2A_STANDARD_RPC_PATH) return { kind: "rpc" };
-
-	const taskCancelMatch = pathname.match(/^\/api\/a2a\/v1\/tasks\/([^/]+):cancel$/);
-	if (taskCancelMatch) return { kind: "task_cancel", taskId: decodeURIComponent(taskCancelMatch[1]) };
-
-	const taskSubscribeMatch = pathname.match(/^\/api\/a2a\/v1\/tasks\/([^/]+):subscribe$/);
-	if (taskSubscribeMatch) {
-		return { kind: "task_subscribe", taskId: decodeURIComponent(taskSubscribeMatch[1]) };
-	}
-
-	const pushConfigMatch = pathname.match(
-		/^\/api\/a2a\/v1\/tasks\/([^/]+)\/pushNotificationConfigs(?:\/([^/]+))?$/,
-	);
-	if (pushConfigMatch) {
-		const taskId = decodeURIComponent(pushConfigMatch[1]);
-		const configId = pushConfigMatch[2] ? decodeURIComponent(pushConfigMatch[2]) : null;
-		if (configId) {
-			return { kind: "push_config_get", taskId, configId };
-		}
-		return { kind: "push_config_list", taskId };
-	}
-
-	const taskGetMatch = pathname.match(/^\/api\/a2a\/v1\/tasks\/([^/]+)$/);
-	if (taskGetMatch) return { kind: "task_get", taskId: decodeURIComponent(taskGetMatch[1]) };
-
-	return null;
-}
 
 function writeJsonResponse(
 	res: import("node:http").ServerResponse,
@@ -929,37 +885,6 @@ function writeJsonRpcJson(
 	body: unknown,
 ) {
 	writeJsonResponse(res, statusCode, body, "application/json");
-}
-
-function createHttpClientAbortSignal(
-	req: import("node:http").IncomingMessage,
-	res: import("node:http").ServerResponse,
-): { signal: AbortSignal; dispose: () => void } {
-	const controller = new AbortController();
-	const abort = () => {
-		if (!controller.signal.aborted) {
-			controller.abort(new Error("client_disconnected"));
-		}
-	};
-	const onResponseClose = () => {
-		if (!res.writableEnded) abort();
-	};
-	req.once("aborted", abort);
-	res.once("close", onResponseClose);
-	return {
-		signal: controller.signal,
-		dispose: () => {
-			req.off("aborted", abort);
-			res.off("close", onResponseClose);
-		},
-	};
-}
-
-function canWriteHttpResponse(
-	res: import("node:http").ServerResponse,
-	signal?: AbortSignal,
-): boolean {
-	return !res.destroyed && !res.writableEnded && signal?.aborted !== true;
 }
 
 function buildA2ABadRequestError(message: string, field?: string) {
@@ -1612,17 +1537,21 @@ function attachA2AStandardRuntimeClientAbort(
 	return () => signal.removeEventListener("abort", abortRuntimeTurn);
 }
 
+function buildA2AClientDisconnectedResult(): A2AStandardInternalResult {
+	return {
+		ok: false,
+		statusCode: 499,
+		code: "a2a_client_disconnected",
+		message: "A2A client disconnected before the runtime turn started.",
+	};
+}
+
 async function runA2AStandardRuntimeTurn(
 	prepared: A2AStandardPreparedTurn,
 	options: A2AStandardRuntimeTurnOptions = {},
 ): Promise<A2AStandardInternalResult> {
 	if (options.clientAbortSignal?.aborted) {
-		return {
-			ok: false,
-			statusCode: 499,
-			code: "a2a_client_disconnected",
-			message: "A2A client disconnected before the runtime turn started.",
-		};
+		return buildA2AClientDisconnectedResult();
 	}
 
 	const runtimeProfile = resolveRuntimeProfile();
@@ -1706,8 +1635,50 @@ async function runA2AStandardRuntimeTurn(
 			options.clientAbortSignal,
 		);
 		try {
+		if (runtimeTurnShouldStop(ctx)) {
+			return buildA2AClientDisconnectedResult();
+		}
+		reapStaleWarmSessionTurnQueue(prepared.contextId);
+		const existingWarmQueue = warmSessionTurnQueues.has(prepared.contextId);
+		const queuedAt = Date.now();
+		logStructuredEvent({
+			severity: "INFO",
+			component: "astro-stream",
+			event: "runtime_turn_queued",
+			message: "Astro queued a standard A2A runtime turn behind the same backend agent session.",
+			data: {
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId,
+				agentSessionId: ctx.agentSessionId,
+				agentType: ctx.agentType,
+				existingWarmQueue,
+				warmA2ATurnEligible: true,
+				a2aTurnQueueEligible: true,
+			},
+		});
 		const executeRuntimeTurn = async () => {
-			if (runtimeTurnShouldStop(ctx)) return;
+			if (
+				runtimeTurnShouldStop(ctx) ||
+				!ctx.clientAttached ||
+				ctx.res.destroyed ||
+				ctx.res.writableEnded
+			) {
+				logStructuredEvent({
+					severity: "INFO",
+					component: "astro-stream",
+					event: "runtime_turn_skipped_after_client_detach",
+					message: "Astro skipped a queued standard A2A runtime turn because the client disconnected before execution started.",
+					data: {
+						sessionKey: ctx.sessionKey,
+						threadId: ctx.threadId,
+						agentSessionId: ctx.agentSessionId,
+						agentType: ctx.agentType,
+						queueWaitMs: Date.now() - queuedAt,
+					},
+				});
+				return;
+			}
+			const queueWaitMs = Date.now() - queuedAt;
 			ctx.runtimeStarted = true;
 			markActiveStreamSession(ctx);
 			logStructuredEvent({
@@ -1722,6 +1693,7 @@ async function runA2AStandardRuntimeTurn(
 					agentType: ctx.agentType,
 					warmA2ATurnEligible: true,
 					a2aTurnQueueEligible: true,
+					queueWaitMs,
 				},
 			});
 
@@ -2192,6 +2164,7 @@ type SessionMetadata = {
 	agentId: string | null;
 	agentUniqueId: string | null;
 	agentSessionId: string | null;
+	providerCredentialUserId: string | null;
 	threadId: string | null;
 	startedAt: string | null;
 	agentType: string | null;
@@ -3188,6 +3161,42 @@ function extractBackendSessionAgentId(payload: Record<string, unknown>): string 
 	);
 }
 
+function extractBackendSessionProviderCredentialUserId(
+	payload: Record<string, unknown>,
+	sessionMetadata: Record<string, unknown> | null,
+): string | null {
+	const direct =
+		extractStringProperty(payload, "created_by_user_uid", "createdByUserUid", "owner_user_uid", "ownerUserUid") ??
+		extractStringProperty(
+			sessionMetadata ?? {},
+			"created_by_user_uid",
+			"createdByUserUid",
+			"owner_user_uid",
+			"ownerUserUid",
+		);
+	if (direct) return resolveUserId(direct);
+
+	const boundHandle = extractObjectPropertyRecord(payload, "bound_handle", "boundHandle");
+	const boundHandleUser =
+		boundHandle != null
+			? extractStringProperty(
+					boundHandle,
+					"owner_user_uid",
+					"ownerUserUid",
+					"created_by_user_uid",
+					"createdByUserUid",
+			  )
+			: null;
+	if (boundHandleUser) return resolveUserId(boundHandleUser);
+
+	const createdByUser = extractObjectPropertyRecord(payload, "created_by_user", "createdByUser");
+	const createdByUserUid =
+		createdByUser != null
+			? extractStringProperty(createdByUser, "uid", "user_uid", "userUid")
+			: null;
+	return createdByUserUid ? resolveUserId(createdByUserUid) : null;
+}
+
 function extractRequestedAgentId(payload: Record<string, unknown>): string | null {
 	return (
 		extractUidProperty(payload, "agent_uid", "agentUid") ??
@@ -3482,8 +3491,6 @@ async function attachHydratedBackendSession(options: {
 		};
 	}
 
-	const effectiveUserId = options.userId ?? null;
-
 	const metadata = buildSessionMetadataFromBackendSessionPayload({
 		sessionKey: options.runtimeSessionId,
 		sessionPayload,
@@ -3507,6 +3514,7 @@ async function attachHydratedBackendSession(options: {
 			statusCode: 409,
 		};
 	}
+	const effectiveUserId = options.userId ?? metadata.providerCredentialUserId ?? null;
 
 	logStructuredEvent({
 		component: "astro-stream",
@@ -3705,6 +3713,9 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 		const rawCapabilities = (parsed as { capabilities?: unknown }).capabilities;
 		const rawA2A = (parsed as { a2a?: unknown }).a2a;
 		const rawHistoryAnnotations = (parsed as { history_annotations?: unknown }).history_annotations;
+		const rawProviderCredentialUserId =
+			(parsed as { providerCredentialUserId?: unknown }).providerCredentialUserId ??
+			(parsed as { provider_credential_user_id?: unknown }).provider_credential_user_id;
 		const normalizedAgentId =
 			typeof rawAgentId === "string" && rawAgentId.trim() ? rawAgentId.trim() : null;
 		const normalizedAgentSessionId =
@@ -3734,6 +3745,7 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 			agentId: normalizedAgentId,
 			agentUniqueId: normalizedAgentUniqueId,
 			agentSessionId: normalizedAgentSessionId,
+			providerCredentialUserId: resolveUserId(rawProviderCredentialUserId),
 			threadId: normalizedThreadId,
 			startedAt: normalizedStartedAt,
 			agentType: normalizedAgentType,
@@ -4708,12 +4720,16 @@ function buildSessionMetadataFromBackendCheckpoint(input: {
 		extractStringProperty(bundleMetadata, "startedAt", "started_at") ??
 		extractStringProperty(input.sessionPayload, "started_at", "startedAt") ??
 		extractStringProperty(sessionMetadata ?? {}, "started_at", "startedAt");
+	const providerCredentialUserId =
+		extractBackendSessionProviderCredentialUserId(input.sessionPayload, sessionMetadata) ??
+		resolveUserId(extractStringProperty(bundleMetadata, "providerCredentialUserId", "provider_credential_user_id"));
 	const a2a = extractCanonicalA2AEnvelope(bundleMetadata, sessionMetadata, input.sessionPayload);
 
 	return {
 		agentId,
 		agentUniqueId,
 		agentSessionId: input.agentSessionId,
+		providerCredentialUserId,
 		threadId,
 		startedAt,
 		agentType,
@@ -4765,6 +4781,10 @@ function buildSessionMetadataFromRequestSessionPayload(input: {
 		extractUidProperty(input.sessionPayload, "uid", "agent_session_uid", "agentSessionUid") ??
 		input.existingMetadata?.agentSessionId ??
 		input.sessionKey;
+	const providerCredentialUserId =
+		extractBackendSessionProviderCredentialUserId(input.sessionPayload, sessionMetadata) ??
+		input.existingMetadata?.providerCredentialUserId ??
+		null;
 	const a2a =
 		extractCanonicalA2AEnvelope(sessionMetadata, input.sessionPayload) ??
 		input.existingMetadata?.a2a ??
@@ -4774,6 +4794,7 @@ function buildSessionMetadataFromRequestSessionPayload(input: {
 		agentId,
 		agentUniqueId,
 		agentSessionId: normalizedAgentSessionId,
+		providerCredentialUserId,
 		threadId,
 		startedAt,
 		agentType,
@@ -4826,6 +4847,10 @@ function buildSessionMetadataFromBackendSessionPayload(input: {
 		extractUidProperty(input.sessionPayload, "uid", "agent_session_uid", "agentSessionUid") ??
 		input.existingMetadata?.agentSessionId ??
 		input.sessionKey;
+	const providerCredentialUserId =
+		extractBackendSessionProviderCredentialUserId(input.sessionPayload, sessionMetadata) ??
+		input.existingMetadata?.providerCredentialUserId ??
+		null;
 	const a2a =
 		extractCanonicalA2AEnvelope(sessionMetadata, input.sessionPayload) ??
 		input.existingMetadata?.a2a ??
@@ -4835,6 +4860,7 @@ function buildSessionMetadataFromBackendSessionPayload(input: {
 		agentId,
 		agentUniqueId,
 		agentSessionId: normalizedAgentSessionId,
+		providerCredentialUserId,
 		threadId,
 		startedAt,
 		agentType,
@@ -6918,6 +6944,108 @@ function cancellationTerminalError(ctx: RequestContext): { errorCode: string | n
 	};
 }
 
+function releaseWarmRunnerTurnForCancellation(ctx: RequestContext): boolean {
+	const runner = ctx.warmRunner;
+	if (!runner) return false;
+	const turn = runner.currentTurn;
+	if (!turn || turn.ctx !== ctx || turn.completed) return false;
+	turn.completed = true;
+	logStructuredEvent({
+		severity: "WARNING",
+		component: "astro-stream",
+		event: "warm_runner_turn_cancel_requested",
+		message: "Astro requested a warm runner turn abort after runtime cancellation.",
+		data: {
+			sessionKey: ctx.sessionKey,
+			threadId: ctx.threadId,
+			agentSessionId: ctx.agentSessionId,
+			key: runner.key,
+			reason: ctx.cancellation?.reason ?? null,
+			turnAgeMs: Date.now() - turn.startedAt,
+		},
+	});
+	if (!ctx.finished) {
+		writeChunk(ctx, buildCancellationErrorEvent(ctx));
+		writeDone(ctx);
+	}
+	void abortWarmRunnerTurnForCancellation(runner, turn, ctx);
+	return true;
+}
+
+async function abortWarmRunnerTurnForCancellation(
+	runner: WarmSessionRunner,
+	turn: WarmRunnerTurn,
+	ctx: RequestContext,
+) {
+	let abortSucceeded = false;
+	try {
+		await writeWarmRunnerCommand(runner, { type: "abort" });
+		abortSucceeded = true;
+		logStructuredEvent({
+			severity: "INFO",
+			component: "astro-stream",
+			event: "warm_runner_turn_abort_acknowledged",
+			message: "Warm Pi RPC runner acknowledged turn abort and can be reused.",
+			data: {
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId,
+				agentSessionId: ctx.agentSessionId,
+				key: runner.key,
+				turnAgeMs: Date.now() - turn.startedAt,
+			},
+		});
+	} catch (error) {
+		logStructuredEvent({
+			severity: "ERROR",
+			component: "astro-stream",
+			event: "warm_runner_turn_abort_failed",
+			message: "Warm Pi RPC runner did not acknowledge abort; Astro will stop the runner.",
+			data: {
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId,
+				agentSessionId: ctx.agentSessionId,
+				key: runner.key,
+				error: error instanceof Error ? error.message : String(error),
+			},
+		});
+	} finally {
+		await turn.prepared.finalizeProviderCredentials("shutdown").catch((error) => {
+			logStructuredEvent({
+				severity: "WARNING",
+				component: "astro-stream",
+				event: "warm_runner_cancel_finalize_failed",
+				message: "Astro could not finalize warm runner provider credentials after cancellation.",
+				data: {
+					sessionKey: ctx.sessionKey,
+					threadId: ctx.threadId,
+					agentSessionId: ctx.agentSessionId,
+					key: runner.key,
+					error: error instanceof Error ? error.message : String(error),
+				},
+			});
+		});
+		if (runner.currentTurn === turn) runner.currentTurn = null;
+		if (ctx.warmRunner === runner) ctx.warmRunner = null;
+		ctx.piProcess = null;
+		turn.resolve();
+	}
+
+	if (!abortSucceeded) {
+		stopWarmRunner(runner, "turn_abort_failed");
+		return;
+	}
+	if (runner.state !== "stopping" && runner.state !== "stopped") {
+		runner.state = "idle";
+		runner.preparedRuntime = {
+			...turn.prepared.preparedRuntime,
+			lastUsedAt: new Date().toISOString(),
+		};
+		runner.lastUsedAt = runner.preparedRuntime.lastUsedAt;
+		writePreparedSessionRuntime(runner.preparedRuntime);
+		scheduleWarmRunnerIdleShutdown(runner);
+	}
+}
+
 function beginActiveRunCancellation(
 	ctx: RequestContext,
 	input: {
@@ -6967,6 +7095,7 @@ function beginActiveRunCancellation(
 		writeDone(ctx);
 		return;
 	}
+	if (releaseWarmRunnerTurnForCancellation(ctx)) return;
 	try {
 		child.kill("SIGTERM");
 	} catch {
@@ -7256,17 +7385,14 @@ function warmRunnerCompatible(
 }
 
 function enqueueWarmSessionTurn(key: string, task: () => Promise<void>): Promise<void> {
-	const previous = warmSessionTurnQueues.get(key) ?? Promise.resolve();
-	const next = previous
-		.catch(() => undefined)
-		.then(task)
-		.finally(() => {
-			if (warmSessionTurnQueues.get(key) === next) {
-				warmSessionTurnQueues.delete(key);
-			}
-		});
-	warmSessionTurnQueues.set(key, next);
-	return next;
+	return warmSessionTurnQueues.enqueue(key, task);
+}
+
+function warmRunnerCurrentTurnExpired(runner: WarmSessionRunner): boolean {
+	return warmRunnerTurnExpired(runner.currentTurn, {
+		timeoutMs: warmRunnerTurnTimeoutMs,
+		isContextFinished: (ctx) => ctx.finished,
+	});
 }
 
 function activeWarmQueueHasLiveOwner(key: string): boolean {
@@ -7274,12 +7400,44 @@ function activeWarmQueueHasLiveOwner(key: string): boolean {
 	if (activeCtx && !activeCtx.finished && activeCtx.runtimeStarted) return true;
 	const runner = warmSessionRunners.get(key);
 	if (!runner) return false;
-	if (runner.currentTurn && !runner.currentTurn.completed && !runner.currentTurn.ctx.finished) return true;
+	if (warmRunnerCurrentTurnExpired(runner)) return false;
+	if (runner.currentTurn) return true;
 	return runner.state === "starting";
 }
 
 function reapStaleWarmSessionTurnQueue(key: string) {
-	if (!warmSessionTurnQueues.has(key) || activeWarmQueueHasLiveOwner(key)) return;
+	if (!warmSessionTurnQueues.has(key)) return;
+	const runner = warmSessionRunners.get(key);
+	const expiredTurn = runner && warmRunnerCurrentTurnExpired(runner) ? runner.currentTurn : null;
+	if (activeWarmQueueHasLiveOwner(key)) return;
+	if (runner && expiredTurn) {
+		logStructuredEvent({
+			severity: "ERROR",
+			component: "astro-stream",
+			event: "stale_warm_runner_turn_reaped",
+			message: "Astro found and reaped an expired warm runner turn while preparing a same-session request.",
+			data: {
+				agentSessionId: key,
+				key: runner.key,
+				turnAgeMs: Date.now() - expiredTurn.startedAt,
+				timeoutMs: warmRunnerTurnTimeoutMs,
+			},
+		});
+		if (!expiredTurn.ctx.finished) {
+			writeChunk(expiredTurn.ctx, {
+				type: "error",
+				error: `Warm Pi RPC runner did not complete the A2A turn within ${warmRunnerTurnTimeoutMs}ms.`,
+				error_source: "pi",
+				status: 504,
+				error_code: "warm_runner_turn_timeout",
+				error_detail: "The warm runner accepted the prompt but did not emit completion events.",
+			});
+			writeDone(expiredTurn.ctx);
+		}
+		void completeWarmRunnerTurn(runner, "stream_error").finally(() => {
+			stopWarmRunner(runner, "stale_turn_reaped");
+		});
+	}
 	warmSessionTurnQueues.delete(key);
 	logStructuredEvent({
 		severity: "WARNING",
@@ -7911,6 +8069,26 @@ function handleWarmRunnerParsedLine(runner: WarmSessionRunner, parsed: any) {
 			runner.pendingResponses.delete(id!);
 			pending.resolve(parsed);
 		}
+		const turn = runner.currentTurn;
+		if (
+			!pending &&
+			turn &&
+			!turn.completed &&
+			parsed.success === false &&
+			typeof parsed.error === "string"
+		) {
+			writeChunk(turn.ctx, {
+				type: "error",
+				error: parsed.error,
+				error_source: "pi",
+				error_code:
+					typeof parsed.command === "string"
+						? `warm_runner_${parsed.command}_failed`
+						: "warm_runner_response_failed",
+			});
+			writeDone(turn.ctx);
+			void completeWarmRunnerTurn(runner, "stream_error");
+		}
 		return;
 	}
 
@@ -8198,15 +8376,64 @@ async function dispatchWarmRunnerTurn(
 	startRuntimeTurnTimeout(ctx);
 
 	await new Promise<void>((resolve, reject) => {
+		const startedAt = Date.now();
+		let timeoutTimer: ReturnType<typeof setTimeout> | null = null;
+		const clearTurnTimeout = () => {
+			if (!timeoutTimer) return;
+			clearTimeout(timeoutTimer);
+			timeoutTimer = null;
+		};
+		const resolveTurn = () => {
+			clearTurnTimeout();
+			resolve();
+		};
+		const rejectTurn = (error: unknown) => {
+			clearTurnTimeout();
+			reject(error);
+		};
 		runner.currentTurn = {
 			ctx,
 			prompt,
 			prepared,
-			resolve,
-			reject,
+			resolve: resolveTurn,
+			reject: rejectTurn,
 			completed: false,
-			startedAt: Date.now(),
+			startedAt,
 		};
+		timeoutTimer = setTimeout(() => {
+			const activeTurn = runner.currentTurn;
+			if (!activeTurn || activeTurn.completed || activeTurn.ctx !== ctx) return;
+			logStructuredEvent({
+				severity: "ERROR",
+				component: "astro-stream",
+				event: "warm_runner_turn_timeout",
+				message: "Warm Pi RPC runner did not complete the active A2A turn before the server-side timeout.",
+				data: {
+					agentType: ctx.agentType,
+					sessionKey: ctx.sessionKey,
+					threadId: ctx.threadId ?? null,
+					agentSessionId: ctx.agentSessionId,
+					key: runner.key,
+					timeoutMs: warmRunnerTurnTimeoutMs,
+					durationMs: Date.now() - startedAt,
+				},
+			});
+			if (!ctx.finished) {
+				writeChunk(ctx, {
+					type: "error",
+					error: `Warm Pi RPC runner did not complete the A2A turn within ${warmRunnerTurnTimeoutMs}ms.`,
+					error_source: "pi",
+					status: 504,
+					error_code: "warm_runner_turn_timeout",
+					error_detail: "The warm runner accepted the prompt but did not emit completion events.",
+				});
+				writeDone(ctx);
+			}
+			void completeWarmRunnerTurn(runner, "stream_error").finally(() => {
+				stopWarmRunner(runner, "turn_timeout");
+			});
+		}, warmRunnerTurnTimeoutMs);
+		timeoutTimer.unref();
 		writeWarmRunnerCommand(runner, {
 			type: "prompt",
 			message: prompt,
@@ -8234,6 +8461,24 @@ async function dispatchWarmRunnerTurn(
 				void completeWarmRunnerTurn(runner, "stream_error");
 			});
 	});
+
+	if (ctx.cancellation?.requested) {
+		logStructuredEvent({
+			severity: "WARNING",
+			component: "astro-stream",
+			event: "warm_runner_dispatch_cancelled",
+			message: "Astro stopped waiting for a warm Pi RPC runner because the runtime turn was cancelled.",
+			data: {
+				agentType: ctx.agentType,
+				sessionKey: ctx.sessionKey,
+				threadId: ctx.threadId ?? null,
+				agentSessionId: ctx.agentSessionId,
+				key: runner.key,
+				reason: ctx.cancellation.reason,
+			},
+		});
+		return;
+	}
 
 	logStructuredEvent({
 		component: "astro-stream",
@@ -9125,6 +9370,9 @@ async function executeA2AStandardMessageSend(
 		};
 	}
 	const { prepared } = resolved;
+	if (options.clientAbortSignal?.aborted) {
+		return buildA2AStandardMessageSendResponse(prepared, buildA2AClientDisconnectedResult());
+	}
 	const key = buildA2AStandardMessageSendKey(prepared);
 	const requestFingerprint = buildA2AStandardMessageSendFingerprint(prepared);
 	const existing = a2aStandardMessageSends.get(key);
@@ -9136,6 +9384,9 @@ async function executeA2AStandardMessageSend(
 	}
 
 	const now = new Date().toISOString();
+	if (options.clientAbortSignal?.aborted) {
+		return buildA2AStandardMessageSendResponse(prepared, buildA2AClientDisconnectedResult());
+	}
 	if (prepared.returnImmediately) {
 		const task = createA2AStandardTask(prepared.contextId, "TASK_STATE_SUBMITTED");
 		const response: A2AStandardMessageSendResponse = {
@@ -11361,6 +11612,7 @@ async function handleStreamRequest(
 				agentId,
 				agentUniqueId,
 				agentSessionId,
+				providerCredentialUserId: existingSessionMetadata?.providerCredentialUserId ?? null,
 				threadId,
 				startedAt,
 				agentType: responseAgentType,

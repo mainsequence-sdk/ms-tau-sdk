@@ -339,6 +339,54 @@ Required timing fields for the complete warm-runner design:
 
 Logs should identify cache hit/miss and invalidation reason.
 
+## Required Stress Harness
+
+Warm A2A runtime behavior must be protected by an integration-style stress harness, not only by
+source-text or isolated unit tests. The harness must run against Astro's public
+`POST /api/a2a/v1/message:send` boundary with a fake backend session provider and fake Pi RPC
+runner, so it verifies the same lifecycle that production callers use without depending on the real
+backend, ngrok, CLI auth, or a real model provider.
+
+The required minimum scenario is:
+
+1. Send `message:send` request A with `contextId = <same AgentSession.uid>`.
+2. After 500ms, cancel request A at the HTTP client/socket level before the model response.
+3. Immediately send request B with the same `contextId` and a new `messageId`.
+4. Assert request B is not blocked behind request A after the runner acknowledges abort and reaches
+   runtime dispatch promptly.
+5. Assert request B receives one valid A2A `message` or `task` response, with no Pi/internal
+   stream chunks.
+6. Send request C with the same `contextId` after B completes.
+7. Assert request C reuses the same compatible warm runner after a successful abort handshake, or
+   performs a bounded explicit fallback only if the runner fails to acknowledge abort; it must not
+   hang behind stale queue state from A or B.
+
+The harness must assert:
+
+- the canceled request sends a Pi RPC `abort` to the active warm runner.
+- a successful abort acknowledgement returns the same warm runner to idle instead of killing the
+  process.
+- no later request waits for the canceled turn's Pi process exit, warm-runner timeout, or HTTP
+  request timeout.
+- at most one active turn mutates the session at a time.
+- stale `currentTurn` state is reaped before a later same-session request queues.
+- cancellation is observable through structured events such as `warm_runner_turn_cancel_requested`
+  and `warm_runner_turn_abort_acknowledged`.
+- the warm runner is stopped only when the abort command fails or times out.
+- queue wait, dispatch start, dispatch completion, timeout, and cancellation events carry the same
+  `request_id` and `agent_session_uid`.
+- a fake Pi runner that accepts a prompt but never emits `message_end` fails with a bounded
+  `warm_runner_turn_timeout` instead of leaving the session permanently blocked.
+
+This stress harness is a release gate for changes to:
+
+- same-session A2A queues
+- warm-runner lifecycle
+- HTTP client abort/cancel behavior
+- A2A `message:send` routing
+- runtime turn timeout handling
+- stale turn reaping
+
 ## Rollout Plan
 
 The rollout should be gated, measured, and reversible.
@@ -423,6 +471,14 @@ This ADR does not:
 - [x] Add tests proving checkpoint restore/finalization remains correct with warm runners.
 - [x] Update interface/runtime docs for the implemented preflight cache environment flags.
 - [x] Update interface/runtime docs after the warm-runner design is implemented.
+- [x] Add the required A2A stress harness for request A, cancel after 500ms, immediate request
+      B, and follow-up request C on the same `contextId`.
+- [x] Make the stress harness fail if cancellation waits for Pi process exit, warm-runner turn
+      timeout, or HTTP request timeout before releasing same-session queue ownership.
+- [x] Make the stress harness fail if a successful cancel/overlap path stops the warm runner instead
+      of reusing it after the abort command.
+- [x] Make the stress harness fail if any completed public A2A response includes raw Pi events,
+      tool traces, reasoning chunks, or Astro stream chunks.
 
 ## Related
 
