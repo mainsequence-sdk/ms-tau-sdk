@@ -5,7 +5,7 @@ Date: 2026-06-16
 
 ## Goal
 
-Reduce legacy Astro A2A chat time-to-dispatch by removing serialized startup work that does not need to
+Reduce A2A `message:send` time-to-dispatch by removing serialized startup work that does not need to
 block Pi runner startup.
 
 This document records the implementation discoveries from production traces and turns them into
@@ -210,7 +210,7 @@ These are separate tasks and should be expanded one by one:
 
 ### Discovery
 
-Current legacy Astro A2A chat treats every request as a durable session mutation. That forces checkpoint
+Current session-backed A2A execution treats every request as a durable session mutation. That forces checkpoint
 lease/restore/local validation before the prompt can be dispatched, even for A2A calls that are
 closer to API/tool calls than interactive UI turns.
 
@@ -266,7 +266,7 @@ Do not introduce request-level durability selectors inside the A2A runtime contr
 
 The split is now endpoint-level:
 
-- attached A2A session runtimes use backend session semantics and preserve checkpoint/session-history
+- session-backed A2A `message:send` uses backend session semantics and preserves checkpoint/session-history
   safety
 - stateless LLM passthrough uses `POST /api/llm/chat` and does not attach to a session, start Pi,
   acquire checkpoints, or persist history
@@ -276,7 +276,7 @@ mutation, it should call the stateless endpoint instead of sending an A2A sessio
 
 ### Safety Rules
 
-- Attached A2A runtime turns preserve checkpoint/session-history safety.
+- Session-backed A2A turns preserve checkpoint/session-history safety.
 - Stateless LLM passthrough must not mutate canonical session history.
 - Stateless LLM passthrough must not acquire checkpoint leases, restore checkpoints, start Pi, or
   write conversation history.
@@ -284,7 +284,7 @@ mutation, it should call the stateless endpoint instead of sending an A2A sessio
 
 ### Acceptance Criteria
 
-- Attached A2A runtime turns have no request-level durability selector.
+- Session-backed A2A turns have no request-level durability selector.
 - `POST /api/llm/chat` handles strict JSON machine calls without session attachment.
 - Logs distinguish attached runtime work from stateless LLM passthrough work by endpoint/event name,
   not by a mode flag.
@@ -293,5 +293,5 @@ mutation, it should call the stateless endpoint instead of sending an A2A sessio
 
 Stateless LLM passthrough removes checkpoint and Pi startup latency entirely from the request path.
 
-Attached A2A session runtimes remain optimized through attach-once, warm runner reuse, and explicit
-runtime lifecycle management.
+Session-backed A2A remains optimized through internal warm runner reuse behind
+`POST /api/a2a/v1/message:send`; clients do not call a separate attach/status endpoint.

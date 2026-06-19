@@ -753,33 +753,6 @@ const activeStreamSessions = new Map<string, ActiveStreamSession>();
 const activeStreamContexts = new Map<string, RequestContext>();
 const warmSessionRunners = new Map<string, WarmSessionRunner>();
 const warmSessionTurnQueues = new Map<string, Promise<void>>();
-const a2aSessionRuntimeAttachments = new Map<string, A2ASessionRuntimeAttachment>();
-const a2aSessionRuntimeBootstrapTasks = new Map<string, Promise<void>>();
-
-type A2ASessionRuntimeState = "starting" | "ready" | "busy" | "failed" | "detached";
-
-type A2ASessionRuntimeAttachment = {
-	agentSessionUid: string;
-	threadId: string | null;
-	agentType: string | null;
-	state: A2ASessionRuntimeState;
-	attachedAt: string;
-	updatedAt: string;
-	expiresAt: string | null;
-	detachedAt: string | null;
-	lastError: string | null;
-};
-
-type A2ASessionRuntimeRoute = {
-	agentSessionUid: string;
-};
-
-function matchA2ASessionRuntimeRoute(pathname: string): A2ASessionRuntimeRoute | null {
-	const match = pathname.match(/^\/api\/a2a\/sessions\/([^/]+)\/runtime$/);
-	if (!match) return null;
-	const agentSessionUid = normalizeRuntimeSessionId(decodeURIComponent(match[1]));
-	return agentSessionUid ? { agentSessionUid } : null;
-}
 
 type A2AStandardRoute =
 	| { kind: "message_send" }
@@ -862,12 +835,30 @@ type A2AStandardInternalResult =
 			raw?: unknown;
 	  };
 
+type A2AStandardMessageSendResponse = {
+	statusCode: number;
+	body: Record<string, unknown>;
+};
+
+type A2AStandardMessageSendRecord = {
+	key: string;
+	contextId: string;
+	messageId: string;
+	requestFingerprint: string;
+	taskId: string | null;
+	response: A2AStandardMessageSendResponse | null;
+	promise: Promise<A2AStandardMessageSendResponse> | null;
+	createdAt: string;
+	updatedAt: string;
+};
+
 const A2A_STANDARD_REST_BASE = "/api/a2a/v1";
 const A2A_STANDARD_RPC_PATH = "/api/a2a/rpc";
 const A2A_OUTPUT_CONTRACT_EXTENSION_URI =
 	"https://mainsequence.ai/a2a/extensions/output-contract/v1";
 const A2A_RUNTIME_EXTENSION_URI = "https://mainsequence.ai/a2a/extensions/runtime/v1";
 const a2aStandardTasks = new Map<string, A2AStandardTaskRecord>();
+const a2aStandardMessageSends = new Map<string, A2AStandardMessageSendRecord>();
 const a2aStandardPushNotificationConfigs = new Map<
 	string,
 	Map<string, A2AStandardPushNotificationConfigRecord>
@@ -1200,6 +1191,110 @@ function buildA2AAgentMessage(prepared: A2AStandardPreparedTurn, result: A2AStan
 		messageId: `msg-${randomUUID()}`,
 		contextId: prepared.contextId,
 		parts: jsonObject ? [{ data: jsonObject }] : [{ text: result.text }],
+	};
+}
+
+function buildA2AStandardMessageSendKey(prepared: A2AStandardPreparedTurn): string {
+	return `${prepared.contextId}\u0000${prepared.messageId}`;
+}
+
+function buildA2AStandardMessageSendFingerprint(prepared: A2AStandardPreparedTurn): string {
+	return stableStringify({
+		contextId: prepared.contextId,
+		messageId: prepared.messageId,
+		messageText: prepared.messageText,
+		responseFormat: prepared.responseFormat,
+		jsonRepairAttempts: prepared.jsonRepairAttempts,
+		strictJson: prepared.strictJson,
+		returnImmediately: prepared.returnImmediately,
+		runtimeTurnTimeoutSeconds: prepared.runtimeTurnTimeoutSeconds,
+		sourceBody: prepared.sourceBody,
+	});
+}
+
+function pruneA2AStandardMessageSends() {
+	while (a2aStandardMessageSends.size > 1000) {
+		const firstKey = a2aStandardMessageSends.keys().next().value;
+		if (typeof firstKey !== "string") return;
+		a2aStandardMessageSends.delete(firstKey);
+	}
+}
+
+function buildA2AStandardMessageSendConflictResponse(
+	prepared: A2AStandardPreparedTurn,
+): A2AStandardMessageSendResponse {
+	return {
+		statusCode: 409,
+		body: {
+			error: {
+				code: -32002,
+				message: "A2A message.messageId was already used for a different request in this context.",
+				data: {
+					code: "a2a_message_id_conflict",
+					contextId: prepared.contextId,
+					messageId: prepared.messageId,
+				},
+			},
+		},
+	};
+}
+
+function buildA2AStandardMessageSendResponse(
+	prepared: A2AStandardPreparedTurn,
+	result: A2AStandardInternalResult,
+): A2AStandardMessageSendResponse {
+	if (result.ok === false) {
+		return {
+			statusCode: result.statusCode,
+			body: {
+				error: {
+					code: -32000,
+					message: result.message,
+					data: {
+						code: result.code,
+						detail: result.detail ?? null,
+					},
+				},
+			},
+		};
+	}
+
+	return {
+		statusCode: 200,
+		body: {
+			message: buildA2AAgentMessage(prepared, result),
+		},
+	};
+}
+
+async function replayA2AStandardMessageSend(
+	record: A2AStandardMessageSendRecord,
+): Promise<A2AStandardMessageSendResponse> {
+	record.updatedAt = new Date().toISOString();
+	if (record.taskId) {
+		const task = a2aStandardTasks.get(record.taskId);
+		if (task) {
+			return {
+				statusCode: 200,
+				body: { task: serializeA2AStandardTask(task) },
+			};
+		}
+	}
+	if (record.response) return record.response;
+	if (record.promise) return record.promise;
+	return {
+		statusCode: 500,
+		body: {
+			error: {
+				code: -32000,
+				message: "A2A idempotency record is missing its response.",
+				data: {
+					code: "a2a_idempotency_record_invalid",
+					contextId: record.contextId,
+					messageId: record.messageId,
+				},
+			},
+		},
 	};
 }
 
@@ -1721,117 +1816,6 @@ function createDetachedRuntimeResponse(): import("node:http").ServerResponse {
 	} as unknown as import("node:http").ServerResponse;
 }
 
-function deriveSessionRuntimeState(record: A2ASessionRuntimeAttachment): A2ASessionRuntimeState {
-	if (record.state === "detached" || record.state === "failed") return record.state;
-	const active = getActiveStreamSession(record.agentSessionUid, record.agentSessionUid);
-	if (active) return "busy";
-	const runner = warmSessionRunners.get(record.agentSessionUid);
-	if (!runner) return record.state;
-	if (runner.currentTurn && !runner.currentTurn.completed) return "busy";
-	if (runner.state === "idle" && runner.readyEvent) return "ready";
-	if (runner.state === "running") return "busy";
-	if (runner.state === "starting") return "starting";
-	if (runner.state === "stopped" || runner.state === "stopping") return record.state;
-	return record.state;
-}
-
-function serializeSessionRuntimeAttachment(record: A2ASessionRuntimeAttachment) {
-	const runner = warmSessionRunners.get(record.agentSessionUid);
-	const preparedRuntime = readPreparedSessionRuntime(record.agentSessionUid);
-	const state = deriveSessionRuntimeState(record);
-	return {
-		ok: true,
-		agent_session_uid: record.agentSessionUid,
-		state,
-		runner: runner
-			? {
-					kind: "pi-rpc",
-					state: runner.state,
-					ready: Boolean(runner.readyEvent),
-					started_at: runner.startedAt,
-					last_used_at: runner.lastUsedAt,
-			  }
-			: {
-					kind: "pi-rpc",
-					state: "not_started",
-					ready: false,
-					started_at: null,
-					last_used_at: null,
-			  },
-		preflight: {
-			ready: Boolean(preparedRuntime),
-			prepared_at: preparedRuntime?.preparedAt ?? null,
-			last_used_at: preparedRuntime?.lastUsedAt ?? null,
-		},
-		agent_type: record.agentType,
-		thread_id: record.threadId,
-		attached_at: record.attachedAt,
-		updated_at: record.updatedAt,
-		expires_at: record.expiresAt,
-		detached_at: record.detachedAt,
-		last_error: record.lastError,
-	};
-}
-
-function writeMissingSessionRuntime(
-	res: import("node:http").ServerResponse,
-	agentSessionUid: string,
-) {
-	json(res, 404, {
-		ok: false,
-		error: "session_runtime_not_attached",
-		message: "No live runtime is attached for this backend session.",
-		agent_session_uid: agentSessionUid,
-	});
-}
-
-function updateSessionRuntimeAttachment(
-	agentSessionUid: string,
-	updates: Partial<Omit<A2ASessionRuntimeAttachment, "agentSessionUid" | "attachedAt">>,
-): A2ASessionRuntimeAttachment | null {
-	const current = a2aSessionRuntimeAttachments.get(agentSessionUid);
-	if (!current) return null;
-	const next: A2ASessionRuntimeAttachment = {
-		...current,
-		...updates,
-		updatedAt: new Date().toISOString(),
-	};
-	a2aSessionRuntimeAttachments.set(agentSessionUid, next);
-	return next;
-}
-
-function createSessionRuntimeAttachment(input: {
-	agentSessionUid: string;
-}): A2ASessionRuntimeAttachment {
-	const now = new Date().toISOString();
-	const expiresAt = Number.isFinite(warmRunnerIdleTtlMs)
-		? new Date(Date.now() + warmRunnerIdleTtlMs).toISOString()
-		: null;
-	const existing = a2aSessionRuntimeAttachments.get(input.agentSessionUid);
-	if (existing && existing.state !== "detached") {
-		const refreshed = {
-			...existing,
-			updatedAt: now,
-			expiresAt,
-		};
-		a2aSessionRuntimeAttachments.set(input.agentSessionUid, refreshed);
-		return refreshed;
-	}
-	const record: A2ASessionRuntimeAttachment = {
-		agentSessionUid: input.agentSessionUid,
-		threadId: null,
-		agentType: null,
-		state: "starting",
-		attachedAt: now,
-		updatedAt: now,
-		expiresAt,
-		detachedAt: null,
-		lastError: null,
-	};
-	a2aSessionRuntimeAttachments.set(input.agentSessionUid, record);
-	return record;
-}
-
 async function buildSessionRuntimeBootstrapContext(input: {
 	agentSessionUid: string;
 	body: Record<string, unknown>;
@@ -1870,8 +1854,8 @@ async function buildSessionRuntimeBootstrapContext(input: {
 		logStructuredEvent({
 			severity: "WARNING",
 			component: "astro-stream",
-			event: "a2a_session_runtime_checkpoint_hydration_skipped",
-			message: "Astro could not hydrate checkpoint files before session runtime attach; backend session metadata hydration will still be attempted.",
+			event: "a2a_message_checkpoint_hydration_skipped",
+			message: "Astro could not hydrate checkpoint files before A2A message execution; backend session metadata hydration will still be attempted.",
 			data: {
 				agentSessionUid: input.agentSessionUid,
 				statusCode: checkpointHydration.statusCode,
@@ -2031,156 +2015,6 @@ async function buildSessionRuntimeBootstrapContext(input: {
 		cwd: projectAttachment.cwd ?? resolveOrchestratorRuntimeCwd(),
 		projectId: projectAttachment.projectId,
 	};
-}
-
-function startA2ASessionRuntimeBootstrap(input: {
-	record: A2ASessionRuntimeAttachment;
-	body: Record<string, unknown>;
-}) {
-	if (a2aSessionRuntimeBootstrapTasks.has(input.record.agentSessionUid)) return;
-	const bootstrap = (async () => {
-		try {
-			const resolved = await buildSessionRuntimeBootstrapContext({
-				agentSessionUid: input.record.agentSessionUid,
-				body: input.body,
-			});
-			if (resolved.ok === false) {
-				updateSessionRuntimeAttachment(input.record.agentSessionUid, {
-					state: "failed",
-					lastError: resolved.message,
-				});
-				logStructuredEvent({
-					severity: "ERROR",
-					component: "astro-stream",
-					event: "a2a_session_runtime_bootstrap_failed",
-					message: "Astro could not bootstrap an attached A2A session runtime.",
-					data: {
-						agentSessionUid: input.record.agentSessionUid,
-						error: resolved.error,
-						statusCode: resolved.statusCode,
-						detail: resolved.message,
-					},
-				});
-				return;
-			}
-
-			updateSessionRuntimeAttachment(input.record.agentSessionUid, {
-				state: "starting",
-				agentType: resolved.ctx.agentType,
-				threadId: resolved.ctx.threadId,
-				lastError: null,
-			});
-			const prepared = await prepareWarmPiRuntime(resolved.ctx, {
-				cwd: resolved.cwd,
-				projectId: resolved.projectId,
-				agentConfig: null,
-			});
-			if (prepared.ok === false) {
-				updateSessionRuntimeAttachment(input.record.agentSessionUid, {
-					state: "failed",
-					lastError: prepared.handled === true ? "runtime_preflight_failed" : prepared.fallbackReason,
-				});
-				return;
-			}
-
-			try {
-				await getCompatibleWarmRunner({
-					ctx: resolved.ctx,
-					prepared: prepared.value,
-					cwd: resolved.cwd,
-					projectId: resolved.projectId,
-				});
-				await prepared.value.finalizeProviderCredentials("attach");
-			} catch (error) {
-				await prepared.value.finalizeProviderCredentials("stream_error");
-				throw error;
-			}
-
-			updateSessionRuntimeAttachment(input.record.agentSessionUid, {
-				state: "ready",
-				agentType: resolved.ctx.agentType,
-				threadId: resolved.ctx.threadId,
-				lastError: null,
-			});
-			logStructuredEvent({
-				component: "astro-stream",
-				event: "a2a_session_runtime_bootstrap_ready",
-				message: "Astro prepared an attached A2A session runtime.",
-				data: {
-					agentSessionUid: input.record.agentSessionUid,
-					threadId: resolved.ctx.threadId,
-					agentType: resolved.ctx.agentType,
-				},
-			});
-		} catch (error) {
-			const message = error instanceof Error ? error.message : String(error);
-			updateSessionRuntimeAttachment(input.record.agentSessionUid, {
-				state: "failed",
-				lastError: message,
-			});
-			logStructuredEvent({
-				severity: "ERROR",
-				component: "astro-stream",
-				event: "a2a_session_runtime_bootstrap_error",
-				message: "Astro hit an unexpected error while bootstrapping an attached A2A session runtime.",
-				data: {
-					agentSessionUid: input.record.agentSessionUid,
-					error: message,
-				},
-			});
-		}
-	})().finally(() => {
-		a2aSessionRuntimeBootstrapTasks.delete(input.record.agentSessionUid);
-	});
-	a2aSessionRuntimeBootstrapTasks.set(input.record.agentSessionUid, bootstrap);
-}
-
-async function handleA2ASessionRuntimeRequest(
-	req: import("node:http").IncomingMessage,
-	res: import("node:http").ServerResponse,
-	_url: URL,
-	route: A2ASessionRuntimeRoute,
-) {
-	if (req.method === "GET") {
-		const record = a2aSessionRuntimeAttachments.get(route.agentSessionUid);
-		if (!record || record.state === "detached") {
-			writeMissingSessionRuntime(res, route.agentSessionUid);
-			return;
-		}
-		json(res, 200, serializeSessionRuntimeAttachment(record));
-		return;
-	}
-
-	if (req.method !== "POST") {
-		methodNotAllowed(res, ["GET", "POST"]);
-		return;
-	}
-
-	let body: Record<string, unknown>;
-	try {
-		body = await parseOptionalJsonObject(req);
-	} catch {
-		badRequest(res, "Invalid JSON body.");
-		return;
-	}
-
-	const record = createSessionRuntimeAttachment({
-		agentSessionUid: route.agentSessionUid,
-	});
-	logStructuredEvent({
-		component: "astro-stream",
-		event: "a2a_session_runtime_attached",
-		message: "Astro attached an existing backend session UID to a session runtime.",
-		data: {
-			agentSessionUid: route.agentSessionUid,
-			state: record.state,
-		},
-	});
-	startA2ASessionRuntimeBootstrap({
-		record,
-		body,
-	});
-	json(res, 200, serializeSessionRuntimeAttachment(record));
 }
 
 async function executeA2AStandardTask(record: A2AStandardTaskRecord, prepared: A2AStandardPreparedTurn) {
@@ -2489,9 +2323,6 @@ function getRequestPathForLog(url: URL): string {
 }
 
 function normalizeRouteForLog(pathname: string): string {
-	if (/^\/api\/a2a\/sessions\/[^/]+\/runtime$/.test(pathname)) {
-		return "/api/a2a/sessions/{agent_session_uid}/runtime";
-	}
 	if (/^\/api\/a2a\/v1\/tasks\/[^/]+:cancel$/.test(pathname)) {
 		return "/api/a2a/v1/tasks/{task_id}:cancel";
 	}
@@ -9191,7 +9022,7 @@ async function executeA2AStandardMessageSend(
 	_req: import("node:http").IncomingMessage,
 	_url: URL,
 	body: Record<string, unknown>,
-): Promise<{ statusCode: number; body: Record<string, unknown> }> {
+): Promise<A2AStandardMessageSendResponse> {
 	const resolved = await resolvePreparedA2AStandardTurn(body);
 	if (resolved.ok === false) {
 		return {
@@ -9200,8 +9031,36 @@ async function executeA2AStandardMessageSend(
 		};
 	}
 	const { prepared } = resolved;
+	const key = buildA2AStandardMessageSendKey(prepared);
+	const requestFingerprint = buildA2AStandardMessageSendFingerprint(prepared);
+	const existing = a2aStandardMessageSends.get(key);
+	if (existing) {
+		if (existing.requestFingerprint !== requestFingerprint) {
+			return buildA2AStandardMessageSendConflictResponse(prepared);
+		}
+		return replayA2AStandardMessageSend(existing);
+	}
+
+	const now = new Date().toISOString();
 	if (prepared.returnImmediately) {
 		const task = createA2AStandardTask(prepared.contextId, "TASK_STATE_SUBMITTED");
+		const response: A2AStandardMessageSendResponse = {
+			statusCode: 200,
+			body: { task: serializeA2AStandardTask(task) },
+		};
+		const record: A2AStandardMessageSendRecord = {
+			key,
+			contextId: prepared.contextId,
+			messageId: prepared.messageId,
+			requestFingerprint,
+			taskId: task.id,
+			response,
+			promise: null,
+			createdAt: now,
+			updatedAt: now,
+		};
+		a2aStandardMessageSends.set(key, record);
+		pruneA2AStandardMessageSends();
 		void executeA2AStandardTask(task, prepared).catch((error) => {
 			updateA2AStandardTask(task, "TASK_STATE_FAILED", {
 				message: error instanceof Error ? error.message : String(error),
@@ -9210,36 +9069,51 @@ async function executeA2AStandardMessageSend(
 					message: error instanceof Error ? error.message : String(error),
 				},
 			});
+		}).finally(() => {
+			record.updatedAt = new Date().toISOString();
 		});
-		return {
-			statusCode: 200,
-			body: { task: serializeA2AStandardTask(task) },
-		};
+		return response;
 	}
 
-	const result = await runA2AStandardRuntimeTurn(prepared);
-	if (result.ok === false) {
-		return {
-			statusCode: result.statusCode,
+	const record: A2AStandardMessageSendRecord = {
+		key,
+		contextId: prepared.contextId,
+		messageId: prepared.messageId,
+		requestFingerprint,
+		taskId: null,
+		response: null,
+		promise: null,
+		createdAt: now,
+		updatedAt: now,
+	};
+	const promise = (async () => {
+		const result = await runA2AStandardRuntimeTurn(prepared);
+		const response = buildA2AStandardMessageSendResponse(prepared, result);
+		record.response = response;
+		record.updatedAt = new Date().toISOString();
+		return response;
+	})().catch((error) => {
+		const message = error instanceof Error ? error.message : String(error);
+		const response: A2AStandardMessageSendResponse = {
+			statusCode: 502,
 			body: {
 				error: {
 					code: -32000,
-					message: result.message,
+					message,
 					data: {
-						code: result.code,
-						detail: result.detail ?? null,
+						code: "a2a_message_send_execution_error",
 					},
 				},
 			},
 		};
-	}
-
-	return {
-		statusCode: 200,
-		body: {
-			message: buildA2AAgentMessage(prepared, result),
-		},
-	};
+		record.response = response;
+		record.updatedAt = new Date().toISOString();
+		return response;
+	});
+	record.promise = promise;
+	a2aStandardMessageSends.set(key, record);
+	pruneA2AStandardMessageSends();
+	return promise;
 }
 
 function writeA2AStreamHeaders(res: import("node:http").ServerResponse) {
@@ -9878,12 +9752,6 @@ async function handleStreamRequest(
 
 	if (req.method === "GET" && url.pathname === "/health") {
 		json(res, 200, buildRuntimeHealthSnapshot());
-		return;
-	}
-
-	const a2aSessionRuntimeRoute = matchA2ASessionRuntimeRoute(url.pathname);
-	if (a2aSessionRuntimeRoute) {
-		await handleA2ASessionRuntimeRequest(req, res, url, a2aSessionRuntimeRoute);
 		return;
 	}
 

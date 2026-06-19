@@ -36,7 +36,7 @@ This is not only a debug-level problem. It affects every severity and every log 
 - `ERROR`
 - HTTP access logs
 - runtime lifecycle logs
-- A2A message and runtime attach logs
+- A2A message and internal runtime bootstrap logs
 - backend fetch/auth logs
 - checkpoint logs
 - Pi child process logs
@@ -58,7 +58,7 @@ Current direct logging has these concrete problems:
 
 - request timelines cannot be reconstructed cleanly because events do not consistently carry a
   request id
-- overlapping `/runtime`, `/message:send`, backend fetches, warm-runner events, and retries are hard
+- overlapping `message:send`, backend fetches, internal runtime bootstrap, warm-runner events, and retries are hard
   to distinguish
 - raw tool results and prompt/system files can flood the terminal
 - raw SSE chunks expose internal runtime events instead of useful summaries
@@ -294,7 +294,7 @@ HTTP access logs must become normal structured events.
 Current text format:
 
 ```text
-[astro-http] 89.144.221.254 - - [18/Jun/2026:12:17:35 +0000] "POST /api/a2a/sessions/.../runtime HTTP/1.1" 200 - "-" "python-httpx/0.28.1" rt=7353.0ms
+[astro-http] 89.144.221.254 - - [18/Jun/2026:12:17:35 +0000] "POST /api/a2a/v1/message:send HTTP/1.1" 200 - "-" "python-httpx/0.28.1" rt=7353.0ms
 ```
 
 Target event:
@@ -306,8 +306,8 @@ Target event:
   "component": "astro-http",
   "request_id": "req_01",
   "method": "POST",
-  "route": "/api/a2a/sessions/{agent_session_uid}/runtime",
-  "path": "/api/a2a/sessions/0b2701a1-e777-4cfe-8437-b94025f00069/runtime",
+  "route": "/api/a2a/v1/message:send",
+  "path": "/api/a2a/v1/message:send",
   "status_code": 200,
   "duration_ms": 7353,
   "remote_address": "89.144.221.254",
@@ -318,7 +318,7 @@ Target event:
 Human rendering:
 
 ```text
-12:17:35 INFO  http.request.completed req=req_01 POST /api/a2a/sessions/{uid}/runtime status=200 7353ms
+12:17:35 INFO  http.request.completed req=req_01 POST /api/a2a/v1/message:send status=200 7353ms
 ```
 
 ## Stream And Tool Logs
@@ -378,8 +378,8 @@ Positive:
 - Request timelines are debuggable.
 - Large payloads stop flooding normal logs.
 - All severities and components share one logging contract.
-- A2A/runtime bugs become easier to trace because `/runtime`, `message:send`, backend fetch,
-  warm-runner, checkpoint, and Pi events share one `requestId`.
+- A2A/runtime bugs become easier to trace because `message:send`, backend fetch, internal runtime
+  bootstrap, warm-runner, checkpoint, and Pi events share one `requestId`.
 
 Negative:
 

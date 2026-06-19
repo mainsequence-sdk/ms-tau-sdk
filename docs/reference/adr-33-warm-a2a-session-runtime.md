@@ -7,14 +7,14 @@ zero-capability materialization, reuses unchanged non-zero capability materializ
 signature, can validate provider credential cache entries against backend version/hash when remote
 checks are explicitly enabled, invalidates provider credential cache on auth failure, runs
 capability and credential preparation concurrently behind strict launch barriers, and routes
-eligible legacy Astro A2A chat turns through a session-keyed warm Pi RPC runner with cold durable
+eligible A2A `message:send` turns through a session-keyed warm Pi RPC runner with cold durable
 fallback.
 
 ## Context
 
-The legacy Astro A2A chat route currently enters the same durable stream execution path as a normal cold
+The A2A `message:send` route can enter the same durable stream execution path as a normal cold
 runtime turn. The backend owns session allocation, but Astro owns the local runtime execution path
-after a caller supplies an existing `AgentSession.uid`.
+after a caller supplies an existing `AgentSession.uid` as `message.contextId`.
 
 A recent same-session A2A trace showed the second message for the same `agentSessionId` still paid
 the full runtime launch cost:
@@ -73,8 +73,9 @@ The result is a fixed per-turn cost that is paid even when:
 
 ## Decision
 
-Astro should introduce a warm A2A session runtime path, backed by cached preflight state and an
-explicit per-session runner lifecycle.
+Astro should introduce an internal warm A2A session runtime path, backed by cached preflight state
+and an explicit per-session runner lifecycle. This is not a public attach/status endpoint; public
+callers continue through `POST /api/a2a/v1/message:send`.
 
 The target behavior is:
 
@@ -112,7 +113,7 @@ Implemented behavior:
   auth failure is observed after a Pi run.
 - `runPiPrompt` starts capability preparation and provider credential preparation concurrently,
   then waits at an explicit launch barrier before spawning Pi.
-- eligible legacy Astro A2A chat turns use `pi --mode rpc` through a warm runner keyed by
+- eligible A2A `message:send` turns use `pi --mode rpc` through a warm runner keyed by
   `agentSessionId`.
 - warm runner compatibility is checked against persisted `PreparedSessionRuntime` identity,
   model/provider/reasoning, cwd/project, session config, capability state, provider credential
@@ -362,7 +363,7 @@ This ADR does not:
 - make capability materialization fire-and-forget
 - allow Pi to start without required auth
 - allow Pi to start without required session-local skills
-- replace the legacy Astro A2A chat route with a status-only endpoint
+- replace public A2A `message:send` with a separate public attach/status endpoint
 - solve generic model latency after runtime launch
 
 ## Consequences
@@ -406,7 +407,7 @@ This ADR does not:
 - [x] Add a per-session turn queue so only one turn mutates session state at a time.
 - [x] Attach checkpoint lease lifecycle to the warm runner where safe.
 - [x] Define warm runner idle TTL, health checks, graceful shutdown, and forced restart behavior.
-- [x] Route legacy Astro A2A chat through warm runner dispatch when a compatible runner exists.
+- [x] Route A2A `message:send` through warm runner dispatch when a compatible runner exists.
 - [x] Fall back to cold durable launch when no compatible warm runner exists.
 - [x] Add focused unit tests for zero-capability preparation cache reuse.
 - [x] Add focused unit tests for non-zero capability signature cache reuse and invalidation.

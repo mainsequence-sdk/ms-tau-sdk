@@ -39,14 +39,15 @@ Astro must never initiate backend `AgentSession` creation from the stream runtim
 This applies to:
 
 - `POST /api/chat`
-- the legacy Astro A2A chat route
+- `POST /api/a2a/v1/message:send`
 
 For every real non-mock streamed run:
 
-1. the caller must provide `runtime_session_uid`
-2. that value must be the existing backend `AgentSession.uid`
-3. Astro must attach to that existing session
-4. if request-carried full backend session JSON is missing, Astro must fetch the backend session
+1. `/api/chat` callers must provide `runtime_session_uid`
+2. A2A callers must provide `message.contextId`
+3. that value must be the existing backend `AgentSession.uid`
+4. Astro must attach execution to that existing session
+5. if request-carried full backend session JSON is missing, Astro must fetch the backend session
    and derive the runtime contract from backend authority before Pi launch
 
 `newChat` is no longer allowed to trigger session creation. It becomes a deprecated UI-only hint
@@ -56,7 +57,8 @@ that Astro must ignore for routing and allocation decisions.
 
 ### 1. No Astro-owned session creation
 
-Astro must not call backend `start_new_session` from `/api/chat` or the legacy Astro A2A chat route.
+Astro must not call backend `start_new_session` from `/api/chat` or
+`POST /api/a2a/v1/message:send`.
 
 That means:
 
@@ -66,19 +68,16 @@ That means:
 
 If a caller needs a new session, that session must be created by the backend control plane first.
 
-### 2. `runtime_session_uid` is mandatory
+### 2. Existing `AgentSession.uid` is mandatory
 
-For real execution requests, Astro must require `runtime_session_uid`.
+For real execution requests, Astro must require an existing backend `AgentSession.uid`.
 
-Allowed aliases remain:
+Chat-shaped stream requests provide it through:
 
 - `runtime_session_uid`
 - `runtimeSessionUid`
 
-But at least one of them must be present on:
-
-- `POST /api/chat`
-- the legacy Astro A2A chat route
+A2A message requests provide it through `message.contextId`.
 
 If no session id is provided, Astro must reject the request before Pi launch.
 
@@ -189,8 +188,9 @@ path because the stream runtime is no longer allowed to allocate sessions there.
 ## Implementation Tasks
 
 - [x] Remove Astro-owned session creation from `POST /api/chat`.
-- [x] Remove Astro-owned session creation from the legacy Astro A2A chat route.
+- [x] Remove Astro-owned session creation from `POST /api/a2a/v1/message:send`.
 - [x] Require `runtime_session_uid` on all real non-mock stream requests.
+- [x] Require `message.contextId` on standard A2A message requests.
 - [x] Treat request-carried `session` as optional optimization, not required authority.
 - [x] Fetch backend session authority before Pi launch whenever local/request metadata is
       insufficient.

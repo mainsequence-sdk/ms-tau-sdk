@@ -20,8 +20,7 @@ pre-UID API sketches have been removed from the active reference set.
 - [`adr-27-backend-only-session-initiation.md`](./adr-27-backend-only-session-initiation.md)
   - Astro attaches to existing backend sessions; chat and A2A do not create sessions.
 - [`adr-25-production-a2a-discovery-and-runtime-access.md`](./adr-25-production-a2a-discovery-and-runtime-access.md)
-  - Production A2A uses backend/CLI runtime access resolution. ADR 35 supersedes the old one-turn
-    chat route for new A2A clients.
+  - Production A2A uses backend/CLI runtime access resolution.
 - [`adr-28-durable-a2a-session-envelope.md`](./adr-28-durable-a2a-session-envelope.md)
   - A2A caller/linkage metadata is durable session state, not prompt-only scaffolding.
 - [`adr-33-warm-a2a-session-runtime.md`](./adr-33-warm-a2a-session-runtime.md)
@@ -31,9 +30,8 @@ pre-UID API sketches have been removed from the active reference set.
   - A2A output options must suppress reasoning and enforce strict JSON in Astro, not only through
     prompt guidance.
 - [`adr-35-a2a-runtime-attachment-protocol.md`](./adr-35-a2a-runtime-attachment-protocol.md)
-  - A2A clients should attach the existing backend session UID to a session-scoped Astro/Pi runtime
-    and send subsequent turns through that session runtime instead of rebuilding the full execution
-    envelope each time.
+  - Superseded proposal. Public A2A now continues sessions through `POST /api/a2a/v1/message:send`
+    with `message.contextId = AgentSession.uid` and idempotent `message.messageId` handling.
 
 ## Stateless LLM Passthrough
 

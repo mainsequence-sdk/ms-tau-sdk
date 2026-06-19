@@ -70,7 +70,7 @@ test("A2A JSON-RPC fixture wraps SendMessage result in JSON-RPC 2.0 envelope", a
 	assertA2AMessage(response.result.message);
 });
 
-test("public A2A runtime path does not resolve or forward user identity", async () => {
+test("public A2A exposes message send without runtime attach or user identity coupling", async () => {
 	const source = await readFile("interface/stream/server.ts", "utf8");
 	const payloadBuilder = sourceSection(
 		source,
@@ -82,13 +82,21 @@ test("public A2A runtime path does not resolve or forward user identity", async 
 		"async function resolveA2AStandardRuntimeIdentity",
 		"async function runA2AStandardRuntimeTurn",
 	);
-	const runtimeAttachHandler = sourceSection(
+	const messageSendExecutor = sourceSection(
 		source,
-		"async function handleA2ASessionRuntimeRequest",
-		"async function executeA2AStandardTask",
+		"async function executeA2AStandardMessageSend",
+		"function writeA2AStreamHeaders",
 	);
 
 	assert.doesNotMatch(payloadBuilder, /\buser_uid\b|userUid/);
 	assert.doesNotMatch(identityResolver, /resolveUserIdFromRequest|userUid/);
-	assert.doesNotMatch(runtimeAttachHandler, /resolveUserIdFromRequest|userUid/);
+	assert.doesNotMatch(
+		source,
+		new RegExp(["handleA2A", "SessionRuntimeRequest|matchA2A", "SessionRuntimeRoute"].join("")),
+	);
+	assert.doesNotMatch(source, /\/api\/a2a\/sessions\/\{agent_session_uid\}\/runtime/);
+	assert.match(messageSendExecutor, /buildA2AStandardMessageSendKey\(prepared\)/);
+	assert.match(messageSendExecutor, /a2aStandardMessageSends\.get\(key\)/);
+	assert.match(messageSendExecutor, /replayA2AStandardMessageSend\(existing\)/);
+	assert.match(messageSendExecutor, /buildA2AStandardMessageSendConflictResponse\(prepared\)/);
 });

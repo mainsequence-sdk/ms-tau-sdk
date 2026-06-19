@@ -148,7 +148,7 @@ changing the conversation role itself.
 
 ### 2. Materialize the A2A envelope before Pi launch
 
-When Astro accepts a real legacy Astro A2A chat request, it should materialize the normalized A2A
+When Astro accepts a real A2A `message:send` request, it should materialize the normalized A2A
 envelope into durable local session state before Pi launch instead of keeping it only in transient
 request context or prompt text.
 

@@ -32,7 +32,7 @@ Astro already has:
 - a prompt-layer A2A collaboration rule
 - a local debug A2A shim using `A2A_DEV_PROJECT`
 - an executor-facing streamer surface:
-  - the legacy Astro A2A chat route
+  - the standard A2A `message:send` route
   - `POST /api/a2a/cancel`
 
 Astro previously lacked a real non-debug production discovery and communication flow.
@@ -358,7 +358,7 @@ Those direct URLs are debug-only behavior.
 - Astro no longer needs to guess or hardcode target runtime URLs in non-debug mode
 - backend session allocation remains authoritative
 - runtime access tokens remain backend-controlled
-- the existing executor A2A streamer surface stays in use
+- the standard A2A `message:send` surface stays in use
 
 ### Negative
 
@@ -368,9 +368,8 @@ Those direct URLs are debug-only behavior.
   - session allocation
   - runtime access resolution
   - health readiness
-  - streamed runtime request
-- The legacy Astro A2A chat path must grow support for canonical `messages` input rather than only the current
-  task-alias shim
+- standard A2A `message:send` request
+- The A2A path must support standard `Message` input through `POST /api/a2a/v1/message:send`.
 
 ## Verification Plan
 
@@ -380,8 +379,8 @@ Those direct URLs are debug-only behavior.
   - `agent_description`
   - `a2a_card`
 - confirm selection uses backend/CLI ranking rather than local token-overlap scoring
-- confirm Astro requires an already-allocated backend session id before sending the streamed A2A
-  request
+- confirm Astro requires an already-allocated backend session id before sending the A2A
+  `message:send` request
 - confirm the non-debug A2A sender forwards the full backend session serializer together with the
   target session id on every request
 - confirm Astro resolves runtime access with

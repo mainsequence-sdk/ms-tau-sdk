@@ -65,7 +65,7 @@ Specific problems:
 
 - It requires backend/runtime identity such as `agent_session_uid` in places where A2A expects an
   agent endpoint plus `Message`, `contextId`, and `taskId` semantics.
-- It exposes a runtime attachment model instead of an A2A task/message model.
+- It exposed a runtime attachment model instead of an A2A task/message model.
 - It returns Astro stream chunks instead of A2A `Message`, `Task`, `TaskStatusUpdateEvent`, or
   `TaskArtifactUpdateEvent` objects.
 - It uses non-standard top-level output controls such as `response_format` and `omit_reasoning`
@@ -80,11 +80,11 @@ should see agent messages, task state, artifacts, and errors only.
 
 ## Decision
 
-Astro should define a standard A2A protocol surface and treat current Astro-specific A2A/runtime
-routes as internal or transitional adapters.
+Astro should define a standard A2A protocol surface and remove Astro-specific A2A/runtime routes
+from the public client contract.
 
 The public A2A surface must follow the A2A specification exactly enough that an A2A client can talk
-to Astro without knowing Main Sequence backend sessions, Pi, checkpointing, runtime attachment, or
+to Astro without knowing Main Sequence backend sessions, Pi, checkpointing, warm runners, or
 our local stream chunk vocabulary.
 
 The target public interface is:
@@ -102,7 +102,7 @@ session mapping before publishing a public discovery document that external clie
 Internal implementation may still use:
 
 - backend `AgentSession`
-- runtime attachments
+- runtime bootstrap state
 - warm Pi RPC runners
 - checkpoint/session state
 - provider credential hydration
@@ -607,12 +607,14 @@ Proposed internal mapping:
   execution, human input, or asynchronous completion.
 - Existing `AgentSession.uid` can be stored in internal task/session metadata, but should not be
   required as a public request path segment.
-- Existing runtime attachment can remain as an internal optimization behind the A2A adapter.
+- Existing runtime bootstrap and warm-runner state can remain as internal optimizations behind the
+  A2A adapter.
 - Authorization, runtime selection, checkpoint restore, and capability materialization continue to
   use backend `AgentSession` authority.
 
-This means ADR 35 should be reclassified as an internal Main Sequence runtime attachment protocol,
-not the public A2A client contract.
+ADR 35 is superseded. Public A2A session continuity now lives in the standard message envelope:
+`message.contextId` selects the backend `AgentSession.uid`, and `message.messageId` provides
+idempotency for retries.
 
 ## Output Shape And Structured JSON
 
@@ -767,7 +769,7 @@ JSON-RPC errors should use:
 
 ### Phase 0: Contract And Mapping
 
-- [ ] Reclassify ADR 35 as internal runtime attachment, not public A2A.
+- [x] Reclassify ADR 35 as superseded by standard `message:send`, not public A2A runtime attach.
 - [x] Define whether Phase 1 `contextId` is exactly `AgentSession.uid` or an opaque ID backed by
       `AgentSession.uid`.
 - [x] Define how an external A2A request resolves, allocates, or rejects missing backend
@@ -810,7 +812,7 @@ JSON-RPC errors should use:
 - [ ] Add a public Agent Card at `/.well-known/agent-card.json`.
 - [ ] Harden `GET /api/a2a/v1/extendedAgentCard` with authenticated tenant/user-specific metadata
       only after the public base routes and `AgentSession` mapping are stable.
-- [ ] Ensure the Agent Card does not expose runtime attachment, checkpoint, pod, or backend-secret
+- [ ] Ensure the Agent Card does not expose runtime bootstrap, checkpoint, pod, or backend-secret
       implementation details.
 
 ## Consequences

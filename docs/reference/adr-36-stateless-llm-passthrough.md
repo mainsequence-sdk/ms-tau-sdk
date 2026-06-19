@@ -8,18 +8,18 @@ Implementation Status: Partially implemented
 
 Astro now has two different runtime concerns:
 
-- attached A2A session runtimes, which preserve backend session semantics, checkpoints, history,
-  capabilities, credentials, and Pi runtime state
+- session-backed A2A message execution, which preserves backend session semantics, checkpoints,
+  history, capabilities, credentials, and Pi runtime state
 - simple machine calls that only need a direct LLM answer and do not need an agent session at all
 
-The attached runtime protocol in ADR 35 is correct for session-backed agent work, but it is the wrong
+The standard A2A `message:send` path is correct for session-backed agent work, but it is the wrong
 shape for "ask a model for a fast JSON answer." That request should not pay for checkpoint leases,
 session metadata validation, Pi runner startup, capability materialization, project attachment, or
 session-history writes.
 
 ## Problem
 
-Using an attached A2A runtime for stateless LLM calls creates unnecessary latency and confusing
+Using session-backed A2A execution for stateless LLM calls creates unnecessary latency and confusing
 semantics:
 
 - the caller must provide or create a backend `agent_session_uid` even though no session memory is
@@ -37,9 +37,9 @@ explicit.
 
 Astro will add a stateless LLM passthrough endpoint.
 
-This endpoint is not an A2A session runtime and is not an agent execution path. It is a direct
-request/response inference API that resolves an allowed provider/model, calls the model provider,
-enforces requested output controls, and returns the result.
+This endpoint is not session-backed A2A message execution and is not an agent execution path. It is
+a direct request/response inference API that resolves an allowed provider/model, calls the model
+provider, enforces requested output controls, and returns the result.
 
 The default endpoint returns a normal HTTP JSON response. This is a core part of the contract, not an
 optional client-side normalization step.
@@ -55,7 +55,7 @@ The endpoint must not:
 - create, read, or write session history
 - materialize session capabilities or agent skills
 - attach a project workspace
-- queue behind a session runtime
+- queue behind a session-backed agent turn
 - write backend session metadata
 
 The endpoint may still:
@@ -246,7 +246,7 @@ The endpoint should log timing for each major phase:
 - provider completion
 - JSON validation and repair
 
-The logs must not imply that a session runtime was involved.
+The logs must not imply that session-backed A2A execution was involved.
 
 Recommended events:
 
@@ -260,7 +260,7 @@ Recommended events:
 
 ## Error Contract
 
-Errors should be plain LLM passthrough errors, not session/runtime errors.
+Errors should be plain LLM passthrough errors, not session-backed runtime errors.
 
 Examples:
 
@@ -290,15 +290,15 @@ Examples:
 
 ## Relationship To Other ADRs
 
-ADR 35 remains the contract for session-backed A2A runtime work. Use ADR 35 when the caller needs
-agent continuity, checkpoint safety, capabilities, tools, project workspace state, or multiple turns
-against the same live runtime.
+Use the standard A2A `message:send` contract when the caller needs agent continuity, checkpoint
+safety, capabilities, tools, project workspace state, or multiple turns against the same backend
+`AgentSession.uid`.
 
 ADR 36 is for stateless inference only. The caller owns all context by sending `messages` on every
 request.
 
-ADR 34 output controls apply to both paths, but ADR 36 must enforce them without creating or using a
-session runtime.
+ADR 34 output controls apply to both paths, but ADR 36 must enforce them without creating or using
+session-backed A2A execution.
 
 ## Non-Goals
 
@@ -307,7 +307,7 @@ session runtime.
 - Do not expose tools, capabilities, skills, project files, or workspace execution.
 - Do not reuse Pi as an implementation detail for this fast path.
 - Do not add backend session creation or lookup.
-- Do not make this endpoint a replacement for attached A2A runtimes.
+- Do not make this endpoint a replacement for session-backed A2A `message:send`.
 
 ## Implementation Plan
 

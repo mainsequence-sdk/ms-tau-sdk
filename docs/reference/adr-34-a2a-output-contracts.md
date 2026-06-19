@@ -115,24 +115,24 @@ Astro will interpret these `response_format` forms as strict JSON:
 }
 ```
 
-For strict JSON over legacy Astro A2A chat, Astro must buffer assistant text instead of forwarding
-`text-start`, `text-delta`, and `text-end` immediately.
+For strict JSON over standard A2A `message:send`, Astro must buffer assistant text instead of
+forwarding raw text or stream chunks immediately.
 
 At assistant completion:
 
 - parse the accumulated assistant text as JSON
 - for `json_object`, require the parsed value to be a JSON object, not an array or primitive
 - for `json_schema`, validate against the schema if a validator is available in the runtime
-- if valid, emit one canonical JSON text response
+- if valid, return one canonical JSON response
 - if invalid, run the configured JSON repair loop before failing
 - if still invalid after all repair attempts, emit an error event with
   `error_code: "a2a_invalid_json_response"` and do not emit invalid assistant text
 
-This makes the SSE transport shape deterministic:
+This makes strict output behavior deterministic:
 
-- non-strict mode may stream text deltas normally
-- strict JSON mode emits no assistant text until validation succeeds
-- strict JSON mode emits either valid JSON text, repaired valid JSON text, or a structured error
+- non-strict mode may return normal assistant text
+- strict JSON mode returns no assistant content until validation succeeds
+- strict JSON mode returns either valid JSON data, repaired valid JSON data, or a structured error
 
 ### JSON Repair
 
@@ -169,7 +169,7 @@ Rules:
 - each repair output must be validated exactly like the original output
 - Astro must not emit the original invalid text or intermediate failed repair text
 - Astro should log repair attempts with attempt number and validation failure reason
-- if repair succeeds, Astro emits the repaired canonical JSON text
+- if repair succeeds, Astro returns the repaired canonical JSON response
 - if all attempts fail, Astro emits `a2a_invalid_json_response`
 
 Repair is allowed to change syntax and shape to satisfy the declared format. It must not be treated
@@ -177,41 +177,44 @@ as proof that the model response is semantically correct.
 
 ### Transport Boundary
 
-The legacy Astro A2A chat path remains an SSE endpoint. Strict JSON guarantees the assistant text payload, not the
-HTTP transport envelope.
+The active non-streaming A2A transport is `POST /api/a2a/v1/message:send`. Strict JSON guarantees
+the returned A2A `Message` part is valid JSON data when validation succeeds.
 
-If callers need the HTTP response itself to be JSON, Astro should support either:
-
-- a `stream: false` option on A2A chat, or
-- a separate non-streaming endpoint such as `/api/a2a/message/send`
-
-That non-streaming transport should return a JSON object with either:
+The transport returns a JSON object with either an A2A `message`/`task` result or an A2A error. A
+strict JSON direct-message response should contain the canonical JSON value in a `data` part, for
+example:
 
 ```json
 {
-  "ok": true,
-  "text": "{}",
-  "json": {}
+  "message": {
+    "role": "ROLE_AGENT",
+    "messageId": "msg-agent-1",
+    "contextId": "agent-session-uid",
+    "parts": [
+      {
+        "data": {}
+      }
+    ]
+  }
 }
 ```
 
-or:
+If validation and repair fail, Astro returns an A2A error instead of invalid assistant text:
 
 ```json
 {
-  "ok": false,
-  "error": "a2a_invalid_json_response",
-  "message": "The agent did not produce valid JSON after repair attempts."
+  "error": {
+    "code": -32000,
+    "message": "The agent did not produce valid JSON after repair attempts.",
+    "data": {
+      "code": "a2a_invalid_json_response"
+    }
+  }
 }
 ```
 
-The non-streaming transport is a separate implementation concern. It must reuse the same strict JSON
-validation rules as SSE.
-
-Transport decision: Astro should add a separate non-streaming endpoint, not overload
-legacy Astro A2A chat with `stream: false`. The preferred endpoint shape is a message-send route
-because it matches A2A naming, keeps legacy Astro A2A chat as an SSE-only route, and lets callers choose a
-plain HTTP JSON contract without changing the existing streaming route semantics.
+`POST /api/a2a/v1/message:stream` may expose task-state SSE, but it must not expose raw Pi
+reasoning, tool traces, or invalid strict JSON text.
 
 ## Per-request vs Durable State
 
@@ -297,22 +300,22 @@ This ADR does not:
 - [x] Validate buffered assistant text at completion.
 - [x] Add JSON repair loop for invalid strict JSON output.
 - [x] Validate every repaired output before emitting it.
-- [x] Canonicalize and emit one JSON text response when validation succeeds.
+- [x] Canonicalize and return one JSON response when validation succeeds.
 - [x] Emit `a2a_invalid_json_response` when validation and all repair attempts fail.
-- [x] Ensure strict JSON invalid output does not persist as normal assistant text in the stream
+- [x] Ensure strict JSON invalid output does not persist as normal assistant text in the
       conversation store.
 - [x] Add focused unit tests for output option resolution, strict JSON validation, and repair prompt
       construction.
-- [x] Add tests for reasoning suppression in A2A SSE.
+- [x] Add tests for reasoning suppression in A2A output.
 - [x] Add tests for strict `json_object` success.
 - [x] Add tests for strict `json_object` invalid prose failure.
 - [x] Add tests for JSON repair success after invalid first output.
 - [x] Add tests for JSON repair exhaustion producing `a2a_invalid_json_response`.
 - [x] Add tests for `json_repair.attempts: 0` hard-fail behavior.
-- [x] Add tests proving non-strict A2A still streams text deltas normally.
+- [x] Add tests proving non-strict A2A output behavior remains unchanged.
 - [x] Add tests covering warm RPC runner output and cold Pi output.
 - [x] Document request examples in the A2A interface docs.
-- [x] Decide whether to add `stream: false` or `/api/a2a/message/send` for HTTP JSON transport.
+- [x] Use `POST /api/a2a/v1/message:send` for HTTP JSON transport.
 
 ## Related
 
