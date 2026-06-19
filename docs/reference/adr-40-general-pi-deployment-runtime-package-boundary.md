@@ -980,9 +980,9 @@ External Pi package integration definition tasks:
   its own inventory and ownership decision.
 - Inventory existing orchestrator skill/prompt/extension delivery paths before deciding what
   `@mainsequence/pi` should expose to Astro.
-- Include at least these current delivery paths in the inventory:
-  - `runtime/bootstrap/pi-agent-dir.mjs` materialization of `command_center/workspace_analysis`
-  - `runtime/bootstrap/pi-agent-dir.mjs` materialization of `a2a_communication`
+- Include at least these delivery paths in the inventory:
+  - `ASTRO_PI_PACKAGE_PATHS` package loading for `tmp_ms_pi`
+  - `tmp_ms_pi/pi/extensions/hooks/scaffold-skill-discovery` SDK skill seeding
   - session capability materialization
 - For project-executor, create a separate inventory that classifies each behavior as one of:
   - generic Astro Core fixed-cwd runtime mechanic

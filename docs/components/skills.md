@@ -4,18 +4,24 @@ Skills are local instruction bundles the agent can load when a task clearly matc
 
 In this repo, skills are not the main runtime mechanism. They are optional deeper guidance.
 
-## Main Sequence Package Simulation Skills
+## Main Sequence SDK Skills
 
-Main Sequence product skills are no longer delivered from Astro root `pi/`.
-During the local package split simulation they are delivered by `tmp_ms_pi`. The package files are
-the source of truth.
+Main Sequence product skills are no longer delivered from Astro root `pi/`, and they are not copied
+into `tmp_ms_pi/pi/skills`.
 
-Current package skill roots:
+The local package simulation owns the discovery hook:
 
-- `tmp_ms_pi/pi/skills/project_builder/SKILL.md`
-- `tmp_ms_pi/pi/skills/mainsequence-sdk/SKILL.md`
-- `tmp_ms_pi/pi/skills/command_center/workspace_analysis/SKILL.md`
-- `tmp_ms_pi/pi/skills/a2a_communication/SKILL.md`
+- `tmp_ms_pi/pi/extensions/hooks/scaffold-skill-discovery/index.ts`
+
+That hook delegates skill seeding to the installed Main Sequence SDK/CLI:
+
+```text
+mainsequence skills path
+```
+
+The SDK remains the source of truth. At runtime, the copied skills live under the Pi working
+directory's `.agents/skills/mainsequence` folder and are discovered by Pi through its normal skill
+loader.
 
 ## How skills fit into Astro
 
@@ -25,10 +31,9 @@ Astro Core primarily depends on:
 - extensions
 - prompt templates
 
-Main Sequence skills are now composed through the package path configured by
-`ASTRO_PI_PACKAGE_PATHS`.
+Main Sequence skills are composed by loading the Main Sequence Pi package through
+`ASTRO_PI_PACKAGE_PATHS`; the package hook then asks the SDK to populate `.agents/skills`.
 
 ## Related pages
 
-- [`knowledge.md`](./knowledge.md)
 - [`prompts.md`](./prompts.md)

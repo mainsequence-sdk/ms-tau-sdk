@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync, statSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 
@@ -28,10 +28,8 @@ function quoteArg(value: string): string {
 	return JSON.stringify(value);
 }
 
-async function runSdkSkillCopy(cwd: string): Promise<void> {
+async function runMainsequence(args: string[], cwd: string): Promise<string> {
 	const command = skillCopyCommand(process.env);
-	const args = ["project", "update_agent_skills", "--path", cwd, "--json"];
-
 	const result = await new Promise<{
 		code: number | null;
 		stdout: string;
@@ -79,11 +77,11 @@ async function runSdkSkillCopy(cwd: string): Promise<void> {
 		});
 	});
 
-	if (result.code === 0 && !result.error) return;
+	if (result.code === 0 && !result.error) return result.stdout;
 
 	const commandText = [command, ...args].map(quoteArg).join(" ");
 	const details = [
-		`Main Sequence SDK skill copy failed while running: ${commandText}`,
+		`Main Sequence SDK skill discovery failed while running: ${commandText}`,
 		result.error ? `error=${result.error}` : null,
 		`exit_code=${result.code ?? "unknown"}`,
 		result.stderr ? `stderr=${result.stderr}` : null,
@@ -91,6 +89,38 @@ async function runSdkSkillCopy(cwd: string): Promise<void> {
 	].filter(Boolean);
 
 	throw new Error(details.join(" | "));
+}
+
+function lastNonEmptyLine(text: string): string {
+	return text
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.at(-1) ?? "";
+}
+
+async function resolveSdkSkillRoot(cwd: string): Promise<string> {
+	const sourceRoot = lastNonEmptyLine(await runMainsequence(["skills", "path"], cwd));
+	if (!sourceRoot) {
+		throw new Error("Main Sequence SDK skill discovery failed: `mainsequence skills path` returned no path.");
+	}
+	if (!existsSync(sourceRoot) || !statSync(sourceRoot).isDirectory()) {
+		throw new Error(`Main Sequence SDK skill discovery failed: ${sourceRoot} is not a directory.`);
+	}
+	return sourceRoot;
+}
+
+async function copySdkSkills(cwd: string): Promise<string> {
+	const skillRoot = join(cwd, ".agents", "skills");
+	const sourceRoot = await resolveSdkSkillRoot(cwd);
+
+	mkdirSync(skillRoot, { recursive: true });
+	cpSync(sourceRoot, join(skillRoot, "mainsequence"), {
+		recursive: true,
+		force: true,
+	});
+
+	return skillRoot;
 }
 
 function existingSkillRoot(cwd: string): string | null {
@@ -109,14 +139,7 @@ export default function (pi: ExtensionAPI) {
 		const existing = existingSkillRoot(event.cwd);
 		if (existing) return;
 
-		await runSdkSkillCopy(event.cwd);
-
-		const created = existingSkillRoot(event.cwd);
-		if (!created) {
-			throw new Error(
-				"Main Sequence SDK skill copy completed, but it did not create .agents/skills in the runtime cwd.",
-			);
-		}
+		const created = await copySdkSkills(event.cwd);
 
 		return {
 			skillPaths: [created],

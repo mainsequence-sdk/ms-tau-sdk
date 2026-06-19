@@ -2,7 +2,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..", "..");
@@ -17,15 +16,7 @@ const CONTAINER_PROVIDER_AUTH_ENTRIES = [
 const ASTRO_ORCHESTRATOR_CWD_ENV = "ASTRO_ORCHESTRATOR_CWD";
 const ASTRO_ORCHESTRATOR_PROJECT_PI_DIR_ENV = "ASTRO_ORCHESTRATOR_PROJECT_PI_DIR";
 const ASTRO_PI_PACKAGE_PATHS_ENV = "ASTRO_PI_PACKAGE_PATHS";
-const ASTRO_WORKSPACE_ANALYSIS_SKILL_PATH_ENV = "ASTRO_WORKSPACE_ANALYSIS_SKILL_PATH";
-const ASTRO_A2A_COMMUNICATION_SKILL_PATH_ENV = "ASTRO_A2A_COMMUNICATION_SKILL_PATH";
 const MAINSEQUENCE_PI_CLI_AUTH_REPAIR_COMMAND_ENV = "MAINSEQUENCE_PI_CLI_AUTH_REPAIR_COMMAND";
-const WORKSPACE_ANALYSIS_SKILL_SLUG = "command_center/workspace_analysis";
-const A2A_COMMUNICATION_SKILL_SLUG = "a2a_communication";
-const MAINSEQUENCE_SKILL_BOOTSTRAP_TIMEOUT_MS = (() => {
-	const configured = Number(process.env.ASTRO_MAINSEQUENCE_SKILL_BOOTSTRAP_TIMEOUT_MS ?? "5000");
-	return Number.isFinite(configured) && configured >= 1000 ? Math.trunc(configured) : 5000;
-})();
 
 function ensureDir(dirPath) {
 	fs.mkdirSync(dirPath, { recursive: true, mode: 0o700 });
@@ -608,105 +599,6 @@ function ensureMainsequenceCliAuthRepairCommand() {
 	return command;
 }
 
-function lastNonEmptyLine(text) {
-	return text
-		.split(/\r?\n/)
-		.map((line) => line.trim())
-		.filter(Boolean)
-		.at(-1) ?? "";
-}
-
-function resolveExecutableOnPath(command, pathValue, excludedDir = null) {
-	const normalizedExcludedDir = excludedDir ? path.resolve(excludedDir) : null;
-	for (const entry of (pathValue || "").split(path.delimiter)) {
-		const trimmed = entry.trim();
-		if (!trimmed) continue;
-		const resolvedEntry = path.resolve(trimmed);
-		if (normalizedExcludedDir && resolvedEntry === normalizedExcludedDir) continue;
-		const candidate = path.join(resolvedEntry, command);
-		if (!fs.existsSync(candidate)) continue;
-		try {
-			if (!fs.statSync(candidate).isFile()) continue;
-		} catch {
-			continue;
-		}
-		return candidate;
-	}
-	return null;
-}
-
-function uniqueExistingDirs(paths) {
-	const seen = new Set();
-	const dirs = [];
-	for (const candidate of paths) {
-		if (!candidate) continue;
-		const resolved = path.resolve(candidate);
-		if (seen.has(resolved)) continue;
-		seen.add(resolved);
-		try {
-			if (fs.statSync(resolved).isDirectory()) dirs.push(resolved);
-		} catch {
-			// Candidate does not exist in this image.
-		}
-	}
-	return dirs;
-}
-
-function collectPythonSitePackageDirs() {
-	const libRoots = uniqueExistingDirs([
-		process.env.VIRTUAL_ENV ? path.join(process.env.VIRTUAL_ENV, "lib") : null,
-		"/usr/local/lib",
-		"/usr/lib",
-		"/opt/venv/lib",
-		"/app/.venv/lib",
-	]);
-	const candidates = [];
-	for (const libRoot of libRoots) {
-		try {
-			for (const entry of fs.readdirSync(libRoot, { withFileTypes: true })) {
-				if (!entry.isDirectory() || !entry.name.startsWith("python")) continue;
-				candidates.push(path.join(libRoot, entry.name, "site-packages"));
-			}
-		} catch {
-			// Ignore unreadable roots.
-		}
-	}
-	return uniqueExistingDirs(candidates);
-}
-
-function normalizeSkillSource(candidate) {
-	if (!candidate) return null;
-	const resolved = path.resolve(candidate);
-	let stat;
-	try {
-		stat = fs.statSync(resolved);
-	} catch {
-		return null;
-	}
-	const sourceDir = stat.isDirectory() ? resolved : path.dirname(resolved);
-	const skillFilePath = stat.isDirectory() ? path.join(sourceDir, "SKILL.md") : resolved;
-	if (!fs.existsSync(skillFilePath)) return null;
-	return {
-		sourcePath: skillFilePath,
-		sourceDir,
-		skillFilePath,
-	};
-}
-
-function resolvePackageJson(packageDir) {
-	const packageJsonPath = path.join(packageDir, "package.json");
-	const parsed = readJsonFile(packageJsonPath);
-	return Object.keys(parsed).length ? parsed : null;
-}
-
-function resolvePackageResourceRoots(packageDir, resourceKey) {
-	const packageJson = resolvePackageJson(packageDir);
-	const entries = ensureArray(packageJson?.pi?.[resourceKey]);
-	return entries
-		.filter((entry) => typeof entry === "string" && entry.trim())
-		.map((entry) => resolveSettingPath(entry, packageDir));
-}
-
 function readTextFileIfPresent(filePath) {
 	try {
 		if (!fs.existsSync(filePath)) return null;
@@ -755,196 +647,6 @@ function buildRuntimeAppendSystem(sourcePiDir) {
 	return `${sections.join("\n\n")}\n`;
 }
 
-function findConfiguredPackageSkill(slug, env = process.env) {
-	const slugParts = slug.split("/");
-	for (const source of parseConfiguredPiPackagePaths(env)) {
-		const resolvedPackagePath = resolveConfiguredPackagePath(source);
-		if (!isLikelyLocalSource(source)) continue;
-
-		const packageDir = path.resolve(resolvedPackagePath);
-		for (const skillRoot of resolvePackageResourceRoots(packageDir, "skills")) {
-			const resolved = normalizeSkillSource(path.join(skillRoot, ...slugParts));
-			if (!resolved) continue;
-			return {
-				...resolved,
-				packageSource: source,
-				packageDir,
-			};
-		}
-	}
-	return null;
-}
-
-function collectMainsequenceSkillSourceCandidates({ slug, envVarName, targetPath }) {
-	const explicitSkillRoots = uniqueExistingDirs([
-		process.env.ASTRO_MAINSEQUENCE_SKILLS_ROOT,
-		process.env.MAINSEQUENCE_SKILLS_ROOT,
-	]);
-	const candidates = [
-		process.env[envVarName],
-		targetPath,
-		...explicitSkillRoots.map((root) => path.join(root, ...slug.split("/"))),
-		...collectPythonSitePackageDirs().map((sitePackages) =>
-			path.join(sitePackages, "agent_scaffold", "skills", ...slug.split("/")),
-		),
-	];
-	const seen = new Set();
-	return candidates.filter((candidate) => {
-		if (!candidate) return false;
-		const resolved = path.resolve(candidate);
-		if (seen.has(resolved)) return false;
-		seen.add(resolved);
-		return true;
-	});
-}
-
-function buildWorkspaceAnalysisBootstrapEnv(targetDir, runtimeCwd) {
-	const env = { ...process.env };
-	const existingPath = env.PATH ?? "";
-	const managedBinDir = path.join(path.resolve(targetDir), "bin");
-	const realMainsequence =
-		env.ASTRO_REAL_MAINSEQUENCE ??
-		resolveExecutableOnPath("mainsequence", existingPath, managedBinDir) ??
-		"mainsequence";
-	env.PATH = [managedBinDir, existingPath].filter(Boolean).join(path.delimiter);
-	env.PI_CODING_AGENT_DIR = path.resolve(targetDir);
-	env.PWD = runtimeCwd;
-	env.ASTRO_REAL_MAINSEQUENCE = realMainsequence;
-	return env;
-}
-
-function materializeMainsequenceSkill(options) {
-	const { targetDir, runtimeCwd, projectPiDir, slug, envVarName, label } = options;
-	const targetPath = path.join(
-		projectPiDir,
-		"skills",
-		...slug.split("/"),
-	);
-	const packagedSkill = findConfiguredPackageSkill(slug);
-	if (packagedSkill) {
-		process.env[envVarName] = packagedSkill.sourceDir;
-		return {
-			slug,
-			command: null,
-			cwd: runtimeCwd,
-			sourcePath: packagedSkill.sourcePath,
-			sourceDir: packagedSkill.sourceDir,
-			targetPath: packagedSkill.sourceDir,
-			skillFilePath: packagedSkill.skillFilePath,
-			resolution: "configured_pi_package",
-			packageSource: packagedSkill.packageSource,
-			packageDir: packagedSkill.packageDir,
-			durationMs: 0,
-			cliDurationMs: 0,
-		};
-	}
-	const env = buildWorkspaceAnalysisBootstrapEnv(targetDir, runtimeCwd);
-	const command = env.ASTRO_REAL_MAINSEQUENCE || "mainsequence";
-	const args = ["skills", "path", slug];
-	const startedAt = Date.now();
-	const result = spawnSync(command, args, {
-		cwd: runtimeCwd,
-		shell: false,
-		env,
-		encoding: "utf8",
-		timeout: MAINSEQUENCE_SKILL_BOOTSTRAP_TIMEOUT_MS,
-	});
-	const cliDurationMs = Date.now() - startedAt;
-	const commandText = [command, ...args].join(" ");
-	let cliFailureReason = null;
-
-	if (result.error) {
-		cliFailureReason =
-			result.error.code === "ETIMEDOUT"
-				? `${label} skill bootstrap timed out after ${MAINSEQUENCE_SKILL_BOOTSTRAP_TIMEOUT_MS}ms while running: ${commandText}`
-				: result.error.code === "ENOENT"
-				? `Missing required command while materializing ${label} skill: ${command}`
-				: `${label} skill bootstrap failed: ${result.error.message}`;
-	} else if ((result.status ?? 1) !== 0) {
-		const stdout = typeof result.stdout === "string" ? result.stdout : "";
-		const stderr = typeof result.stderr === "string" ? result.stderr : "";
-		const fragments = [
-			`${label} skill bootstrap failed while running: ${commandText}`,
-			`cwd=${runtimeCwd}`,
-			`exit_code=${result.status ?? "unknown"}`,
-		];
-		if (stderr.trim()) fragments.push(`stderr=${stderr.trim()}`);
-		if (stdout.trim()) fragments.push(`stdout=${stdout.trim()}`);
-		cliFailureReason = fragments.join(" | ");
-	} else {
-		const stdout = typeof result.stdout === "string" ? result.stdout : "";
-		const resolvedSourcePathText = lastNonEmptyLine(stdout);
-		if (!resolvedSourcePathText) {
-			cliFailureReason =
-				`${label} skill bootstrap failed: ${commandText} returned no usable path.`;
-		} else {
-			const resolvedSourcePath = path.resolve(resolvedSourcePathText);
-			const resolvedSource = normalizeSkillSource(resolvedSourcePath);
-			if (!resolvedSource) {
-				cliFailureReason =
-					`${label} skill bootstrap failed: resolved source path does not exist or is missing SKILL.md: ${resolvedSourcePath}`;
-			} else {
-				removePath(targetPath);
-				ensureDir(path.dirname(targetPath));
-				fs.cpSync(resolvedSource.sourceDir, targetPath, { recursive: true, force: true });
-
-				const skillFilePath = path.join(targetPath, "SKILL.md");
-				if (!fs.existsSync(skillFilePath)) {
-					cliFailureReason =
-						`${label} skill bootstrap failed: copied skill is missing SKILL.md at ${skillFilePath}`;
-				} else {
-					process.env[envVarName] = targetPath;
-					return {
-						slug,
-						command: commandText,
-						cwd: runtimeCwd,
-						sourcePath: resolvedSource.sourcePath,
-						sourceDir: resolvedSource.sourceDir,
-						targetPath,
-						skillFilePath,
-						resolution: "mainsequence_cli",
-						durationMs: Date.now() - startedAt,
-						cliDurationMs,
-					};
-				}
-			}
-		}
-	}
-
-	for (const candidate of collectMainsequenceSkillSourceCandidates({ slug, envVarName, targetPath })) {
-		const resolved = normalizeSkillSource(candidate);
-		if (!resolved) continue;
-		if (path.resolve(resolved.sourceDir) !== path.resolve(targetPath)) {
-			removePath(targetPath);
-			ensureDir(path.dirname(targetPath));
-			fs.cpSync(resolved.sourceDir, targetPath, { recursive: true, force: true });
-		}
-		const skillFilePath = path.join(targetPath, "SKILL.md");
-		if (!fs.existsSync(skillFilePath)) continue;
-		process.env[envVarName] = targetPath;
-		return {
-			slug,
-			command: commandText,
-			cwd: runtimeCwd,
-			sourcePath: resolved.sourcePath,
-			sourceDir: resolved.sourceDir,
-			targetPath,
-			skillFilePath,
-			resolution: path.resolve(resolved.sourceDir) === path.resolve(targetPath)
-				? "existing_target_fallback"
-				: "direct_source_fallback",
-			fallbackReason: cliFailureReason,
-			durationMs: Date.now() - startedAt,
-			cliDurationMs,
-		};
-	}
-
-	throw new Error(
-		cliFailureReason ??
-			`${label} skill bootstrap failed: no usable source found for ${slug}.`,
-	);
-}
-
 export function bootstrapPiAgentDir() {
 	const homeDir = process.env.HOME || os.homedir();
 	const targetDir = process.env.PI_CODING_AGENT_DIR || path.join(homeDir, ".pi", "agent");
@@ -966,22 +668,6 @@ export function bootstrapPiAgentDir() {
 	const piAgentHomeLink = ensurePiAgentHomeLink(homeDir, targetDir);
 	const streamSessions = ensureAstroStreamSessions(homeDir);
 	const sshRuntime = ensureRuntimeSshConfig(homeDir, containerData.rootDir);
-	const workspaceAnalysisSkill = materializeMainsequenceSkill({
-		targetDir,
-		runtimeCwd: orchestratorRuntime.runtimeCwd,
-		projectPiDir: orchestratorRuntime.projectPiDir,
-		slug: WORKSPACE_ANALYSIS_SKILL_SLUG,
-		envVarName: ASTRO_WORKSPACE_ANALYSIS_SKILL_PATH_ENV,
-		label: "Workspace-analysis",
-	});
-	const a2aCommunicationSkill = materializeMainsequenceSkill({
-		targetDir,
-		runtimeCwd: orchestratorRuntime.runtimeCwd,
-		projectPiDir: orchestratorRuntime.projectPiDir,
-		slug: A2A_COMMUNICATION_SKILL_SLUG,
-		envVarName: ASTRO_A2A_COMMUNICATION_SKILL_PATH_ENV,
-		label: "A2A communication",
-	});
 
 	return {
 		targetDir,
@@ -995,8 +681,6 @@ export function bootstrapPiAgentDir() {
 		mainsequenceShimPath,
 		mainsequenceCliAuthRepairCommand,
 		configuredPiPackages,
-		workspaceAnalysisSkill,
-		a2aCommunicationSkill,
 		prunedProviderAuthEntries,
 		prunedScopedProviderCredentialDir,
 	};

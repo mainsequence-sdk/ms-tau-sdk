@@ -2,8 +2,11 @@
 
 ## Status
 
-Accepted. Implemented through deterministic startup skill materialization and the shared Astro
-prompt contract.
+Accepted. Updated by ADR 40 package-boundary work.
+
+The capability remains accepted, but the implementation is no longer deterministic two-skill
+startup materialization. Workspace-analysis is now delivered through the Main Sequence Pi package
+simulation and SDK-owned skill discovery.
 
 ## Context
 
@@ -50,16 +53,16 @@ Astro will treat **workspace analysis** as a first-class orchestrator capability
 This capability is owned directly by `astro-orchestrator`. It is not a project-implementation
 workflow and must not depend on project-scoped specialist routing.
 
-Astro will implement workspace analysis as a real Pi skill and ensure that skill is materialized
-into the runtime-visible Pi skill surface during deterministic startup bootstrap.
+Astro implements workspace analysis as a real Pi skill and ensures that skill is available through
+the Main Sequence SDK-owned skill surface.
 
 That means:
 
 1. The orchestrator prompt contract in `.pi/APPEND_SYSTEM.md` will explicitly include workspace
    analysis as an allowed capability.
-2. Startup bootstrap will run `mainsequence skills path command_center/workspace_analysis`,
-   resolve the source skill directory, and copy it into the runtime Pi skill tree before Astro
-   loads the stream server.
+2. The Main Sequence Pi package simulation will run its `resources_discover` hook, resolve the
+   installed SDK skill root with `mainsequence skills path`, and copy that full tree into
+   `<cwd>/.agents/skills/mainsequence`.
 3. The orchestrator will load and follow that injected skill at request time instead of inventing
    an ad hoc analysis workflow in the prompt.
 4. For a concrete workspace, the orchestrator must obtain the canonical analysis input with
@@ -72,7 +75,7 @@ This ADR is only about:
 
 - orchestrator capability definition
 - orchestrator startup/runtime preparation
-- deterministic materialization of the workspace-analysis skill
+- SDK/package-owned discovery of the workspace-analysis skill
 - user-facing workspace-analysis behavior
 
 This ADR is not about:
@@ -84,22 +87,22 @@ This ADR is not about:
 
 ## Runtime Contract
 
-Before Astro starts serving chat requests, bootstrap must prepare the orchestrator runtime so that
-workspace analysis is available without additional conversational setup.
+Before the orchestrator handles analysis work, Pi must be able to discover the SDK-provided
+workspace-analysis skill without additional conversational setup.
 
-At minimum, bootstrap must:
+At minimum, runtime setup must:
 
-- run `mainsequence skills path command_center/workspace_analysis`
-- verify that the resolved source skill directory exists and contains the expected skill files
-- copy that skill into the runtime-visible Pi skill tree
-- persist or expose the copied-skill target path in a deterministic form the orchestrator can trust
-  at runtime
-- emit a structured readiness signal for observability
+- load the Main Sequence Pi package through `ASTRO_PI_PACKAGE_PATHS`
+- run the package-owned SDK skill discovery hook
+- avoid hardcoding individual SDK skill slugs in Astro bootstrap code
+- leave the SDK/CLI responsible for copying all exported SDK skills into the runtime-visible
+  `.agents/skills` tree
+- preserve observability through package/runtime readiness logs
 
-The copied-skill readiness may be represented by one or both of:
+Skill readiness may be represented by one or both of:
 
-- runtime environment variables
-- the copied runtime Pi skill directory itself
+- package discovery logs
+- the runtime `.agents/skills` directory itself
 
 The important rule is not the storage mechanism. The important rule is that the orchestrator must
 not guess whether the workspace-analysis skill exists.
@@ -175,26 +178,25 @@ This readiness signal should exist before the first chat request is handled.
 
 ### Negative
 
-- startup/bootstrap becomes responsible for one more runtime skill materialization contract
-- Astro must define and maintain one more injected runtime skill
-- prompt and bootstrap contracts must stay in sync
+- Main Sequence package loading must be configured correctly for deployments that need this skill
+- package, prompt, and SDK skill contracts must stay in sync
 
 ## Open Questions
 
-- what additional validation beyond `SKILL.md` existence should bootstrap require for the copied
-  skill
-- whether future runtime-injected Main Sequence skills should share the same materialization path
+- what additional validation should the SDK skill discovery hook report when SDK skill copying
+  succeeds but the expected skill is absent
+- whether future Main Sequence SDK skills need package-level enablement filters
 
 ## Verification Plan
 
-- confirm bootstrap materializes the `command_center/workspace_analysis` skill before the stream
-  server is imported
-- confirm a startup readiness event is emitted for this capability
+- confirm the Main Sequence Pi package is present in generated Pi settings through
+  `ASTRO_PI_PACKAGE_PATHS`
+- confirm the package-owned `resources_discover` hook seeds SDK skills into `.agents/skills`
 - confirm the orchestrator can answer a workspace-analysis request by following the injected skill
   without first performing user-visible skill discovery
 - confirm the orchestrator stays within the workspace-analysis scope defined in
   `.pi/APPEND_SYSTEM.md`
-- confirm bootstrap failure blocks startup deterministically
+- confirm SDK skill discovery failure is surfaced as a package/resource discovery error
 
 ## Tasks
 
@@ -202,17 +204,14 @@ This readiness signal should exist before the first chat request is handled.
   `astro-orchestrator` capability.
 - [x] Add orchestrator prompt rules that distinguish workspace analysis from project creation,
   project implementation, and generic non-Main-Sequence repository analysis.
-- [x] Add a deterministic startup bootstrap step that runs
-  `mainsequence skills path command_center/workspace_analysis` and copies the resolved skill before
-  the stream server loads.
-- [x] Persist the workspace-analysis skill in a runtime artifact the orchestrator can trust at
-  request time.
+- [x] Remove direct Astro bootstrap materialization for individual Main Sequence SDK skills.
+- [x] Load the Main Sequence Pi package through `ASTRO_PI_PACKAGE_PATHS`.
+- [x] Delegate SDK skill seeding to the package-owned `resources_discover` hook.
 - [x] Route capability 4 in `.pi/APPEND_SYSTEM.md` to the injected
   `command_center/workspace_analysis` skill instead of inventing a separate prompt-defined
   workflow.
-- [x] Emit a structured startup readiness event for workspace-analysis availability, including the
-  resolved source path and copied runtime skill path.
-- [x] Block startup when workspace-analysis skill materialization fails.
+- [x] Emit structured startup readiness for package/runtime settings.
+- [x] Surface SDK skill discovery failures through Pi package resource discovery.
 - [x] Add or update docs describing the startup preload contract and the orchestrator-owned
       workspace-analysis flow.
 - [ ] Add verification coverage or a scripted smoke check that proves the workspace-analysis skill

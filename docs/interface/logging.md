@@ -426,7 +426,6 @@ Current emitted `agent-registration` event keys:
 
 The stream startup wrapper also emits `astro-stream` structured logs before any session exists:
 
-- `workspace_analysis_skill_ready`
 - `orchestrator_runtime_ready`
 
 These are valid structured logs and intentionally may omit `session_id`.

@@ -64,6 +64,7 @@ ENV APP_USER=jovyan \
     ASTRO_CONTAINER_DATA_DIR=/home/jovyan/.astro-container-data \
     ASTRO_STREAM_SESSION_DIR=/session-state/sessions \
     ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/jovyan/.astro-container-data/.config/mainsequence \
+    ASTRO_PI_PACKAGE_PATHS=/app/tmp_ms_pi \
     PI_CODING_AGENT_DIR=/home/jovyan/.astro-container-data/.pi/agent
 
 RUN groupadd --gid "${APP_GID}" "${APP_GROUP}" \

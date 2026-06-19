@@ -97,30 +97,31 @@ https://github.com/mainsequence-sdk/mainsequence-sdk/tree/main/agent_scaffold/sk
 
 Do not duplicate that component map inside Astro.
 
-## Current SDK Skill Injection Facts
+## SDK Skill Injection Facts
 
-Astro currently injects some SDK skills before the stream server starts.
-
-Known current Astro bootstrap materialization:
+Astro must not hardcode individual SDK skill slugs during stream bootstrap. The old direct
+materialization path has been removed:
 
 ```text
-runtime/bootstrap/pi-agent-dir.mjs
-  mainsequence skills path command_center/workspace_analysis
-  mainsequence skills path a2a_communication
+mainsequence skills path command_center/workspace_analysis
+mainsequence skills path a2a_communication
 ```
 
-The package simulation should replace these direct hard-coded delivery paths with one package-owned
+The package simulation replaces those direct hard-coded delivery paths with one package-owned
 extension flow:
 
 ```text
 tmp_ms_pi/pi/extensions/hooks/scaffold-skill-discovery
   resources_discover
   if <cwd>/.agents/skills exists: no-op
-  else: mainsequence project update_agent_skills --path <cwd> --json
+  else:
+    source = mainsequence skills path
+    copy source into <cwd>/.agents/skills/mainsequence
 ```
 
-This keeps the copy rules in the SDK/CLI instead of reimplementing `agent_scaffold` copying in
-Astro TypeScript.
+This keeps the SDK as the source of truth for the skill set, avoids project `.venv` requirements in
+orchestrator runtimes, and allows Pi to see every skill exported by the installed SDK rather than a
+two-skill allowlist.
 
 The package simulation should still be compared against these existing delivery paths before any
 runtime cutover:
@@ -206,14 +207,16 @@ Pi resources remain, Astro Core should eventually be able to run without a root 
 
 ### Phase 4: Replace Bootstrap SDK Skill Materialization
 
-Replace direct startup materialization such as:
+Implementation status: completed for the local `tmp_ms_pi` simulation.
+
+Direct startup materialization such as:
 
 ```text
 mainsequence skills path command_center/workspace_analysis
 mainsequence skills path a2a_communication
 ```
 
-with package loading through `ASTRO_PI_PACKAGE_PATHS` plus the package-owned
+has been replaced with package loading through `ASTRO_PI_PACKAGE_PATHS` plus the package-owned
 `resources_discover` skill seeding hook.
 
 If `tmp_ms_pi` seeds SDK-owned skills, Astro should not also materialize the same skills through

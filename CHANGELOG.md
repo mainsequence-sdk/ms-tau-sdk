@@ -7,6 +7,7 @@
 - Added ADRs and implementation planning for separating Astro Core from Main Sequence-specific Pi resources and backend adapter concerns.
 - Introduced the local `tmp_ms_pi` simulation for the future external `@mainsequence/pi` package, including Main Sequence prompts, tools, project policy, and SDK-owned skill discovery.
 - Moved SDK skill delivery in the package simulation to a `resources_discover` Pi extension that delegates `.agents/skills` seeding to the installed Main Sequence SDK/CLI instead of duplicating `agent_scaffold` copy logic in Astro.
+- Removed the legacy orchestrator bootstrap path that copied only `a2a_communication` and `command_center/workspace_analysis`; the package hook now resolves the installed SDK skill root and exposes the full SDK skill tree through `.agents/skills/mainsequence`.
 - Reduced root `pi/` to Astro runtime-owned resources and removed Main Sequence product skills, prompts, project-policy hooks, and obsolete repo-maintenance/specialist resources from Astro Core.
 - Reorganized runtime entrypoints and support utilities out of the legacy `scripts/` folder into `bin/`, `runtime/`, `adapters/`, and `tools/`.
 - Updated docs, launch configuration, and A2A testing guidance for the standard A2A workflow and the moved live stress/debug client.
