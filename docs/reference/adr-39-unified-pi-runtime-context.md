@@ -1,8 +1,8 @@
 # ADR 39: Unified Pi Runtime Context
 
-Status: Proposed
+Status: Accepted
 Date: 2026-06-19
-Implementation Status: Not implemented
+Implementation Status: Implemented in Astro runtime on 2026-06-20.
 
 This ADR records the target runtime shape that should precede the broader Astro package-boundary
 split in ADR 40.
@@ -219,6 +219,93 @@ The migration should happen in small steps:
 - keep backend `agent_type` validation at the backend/session boundary
 - keep public API compatibility while removing local runtime branching by role name
 - only after this is stable, continue the ADR 40 package/adapter split
+
+## Implementation Tasks
+
+- [x] Replace the old runtime-profile kind implementation with a `RuntimeContext` shape that
+  includes `cwd`, `projectAttached`, `projectId`, `projectImageRef`, `backendAgentType`,
+  `backendAgentSessionUid`, and `skillLayers`.
+- [x] Add `resolveRuntimeContext(...)` so `cwd` and `projectAttached` come from configured runtime
+  state instead of deriving local runtime architecture from `agent_type`.
+- [x] Stop inferring `RuntimeProfileKind="project-executor"` from `ASTRO_FIXED_PROJECT_CWD`.
+  A fixed cwd now means project attachment, not a separate runtime kind.
+- [x] Allow `astro-orchestrator` backend sessions to run with `ASTRO_FIXED_PROJECT_CWD` when the
+  backend/session policy permits it.
+- [x] Reclassify `ASTRO_FIXED_AGENT_TYPE` as backend/session identity policy, not required local
+  runtime architecture selection.
+- [x] Remove new-deployment reliance on `ASTRO_EXECUTION_MODE=remote_project_worker`; keep it only
+  as tolerated legacy topology metadata for old deployments.
+- [x] Replace `project-executor` conditionals in request handling with checks for
+  `projectAttached`, fixed cwd, backend agent/session policy, or project metadata.
+- [x] Replace `resolveProjectAttachment(...)` logic that treated
+  `agentType === "project-executor"` as image-backed project execution. Prepared project behavior
+  now comes from runtime context fields such as `projectAttached`, `fixedProjectCwd`, and
+  `projectImageRef`.
+- [x] Preserve the prepared project runtime behavior where `projectId` may be omitted when the
+  runtime is already pinned to a prepared image/cwd, but move that rule onto runtime
+  context/project-attachment policy.
+- [x] Replace `fixedWorkerRequiresBackendSessionAuthority` checks based on
+  `runtimeProfile.kind === "project-executor"` with prepared-project/session-authority policy on
+  the runtime context.
+- [x] Preserve backend-authority-first model binding for prepared project-attached runtimes while
+  expressing that as runtime context/session-authority policy instead of `project-executor` role
+  logic.
+- [x] Remove the `project-executor` exception around `ensureMainsequenceCliAuthReady()`. Main
+  Sequence CLI auth preflight now runs for no-project and project-attached runtimes when the Main
+  Sequence adapter/package is active.
+- [x] Move `buildAgentUniqueId(...)` special handling for `project-executor` into an explicit Main
+  Sequence backend identity override table. Existing `project-executor` unique-id behavior is
+  preserved.
+- [x] Reclassify A2A current-agent identity resolution so defaulting to `astro-orchestrator` or
+  using `ASTRO_FIXED_AGENT_TYPE` is backend/session identity resolution, not local runtime-context
+  selection.
+- [x] Replace validation messages and error codes based on runtime profile with runtime-context
+  validation for missing or invalid fixed cwd/project attachment.
+- [x] Rename bootstrap helpers and generated paths that describe generic runtime workspaces as
+  orchestrator-only, including `ensureOrchestratorRuntimeProject(...)`, while keeping existing
+  path/env fallbacks such as `astro-orchestrator-runtime` working.
+- [x] Rewrite Main Sequence package prompt branches that used
+  `ASTRO_FIXED_AGENT_TYPE=project-executor` to describe project-attached vs non-project-attached
+  runtime behavior.
+- [x] Update launch/preflight logging to include both backend identity and runtime context fields:
+  `backendAgentType`, `projectAttached`, `cwd`, `projectId`, and `projectImageRef`.
+- [x] Update Astro-owned deployment env shapes so project-attached deployments only require
+  `ASTRO_FIXED_PROJECT_CWD`; legacy backend env combinations remain tolerated.
+- [x] Keep `BUILD_AGENTS_IN_BACKEND`, `MAINSEQUENCE_BACKEND`,
+  `ASTRO_MAINSEQUENCE_CONFIG_DIR`, and `MAINSEQUENCE_PROJECTS_BASE` classified as Main Sequence
+  adapter/session-authority env, not Astro Core runtime identity env.
+- [x] Ensure `ASTRO_PI_PACKAGE_PATHS` is present in no-project and project-attached Astro-owned
+  deployment images/examples so package skills load consistently.
+- [x] Update current docs that described `project-executor` as a separate local runtime
+  architecture so they describe backend identity plus project attachment instead.
+- [x] Update `Dockerfile.remote-worker` and deployment examples so new project-attached deployments
+  do not require `ASTRO_EXECUTION_MODE=remote_project_worker`; old env combinations remain
+  accepted where supplied by existing deployments.
+- [x] Add focused regression tests for the unified runtime-context contract, project-attached image
+  env, and preserved Main Sequence `project-executor` unique-id behavior.
+- [x] Mark this ADR implemented after code no longer uses backend role names as the deciding local
+  runtime architecture branch.
+
+## Backward Compatibility Requirements
+
+The migration must preserve existing deployed behavior while removing the internal role/runtime
+coupling.
+
+- Existing backend sessions with `agent_type=astro-orchestrator` remain valid.
+- Existing backend sessions with `agent_type=project-executor` remain valid.
+- Existing requests that send `agentType="project-executor"` continue to work.
+- Existing requests that send `agentType="astro-orchestrator"` continue to work.
+- Existing `Dockerfile.remote-worker` images that set `ASTRO_EXECUTION_MODE=remote_project_worker`,
+  `ASTRO_FIXED_AGENT_TYPE=project-executor`, and `ASTRO_FIXED_PROJECT_CWD` continue to boot.
+- Existing prepared image-backed project runtimes may still omit `projectId` when a fixed cwd/image
+  context already supplies the project workspace.
+- Existing Main Sequence backend identity behavior for `project-executor`, including the stable
+  adapter-level unique id currently produced as `project-executor`, is preserved.
+- Existing backend-owned session hydration, checkpoint, provider credential, capability, and model
+  binding behavior remains available for both no-project and project-attached runtimes.
+- Existing public A2A request/response contracts remain unchanged in this ADR.
+- New deployments should use the unified env shape, but old env combinations must be tolerated
+  until a separate deprecation ADR or migration removes them.
 
 ## Non-Goals
 

@@ -13,6 +13,8 @@ const CONTAINER_PROVIDER_AUTH_ENTRIES = [
 	"astro-model-provider-auth.json",
 	"astro-model-provider-signin.json",
 ];
+const ASTRO_RUNTIME_CWD_ENV = "ASTRO_RUNTIME_CWD";
+const ASTRO_RUNTIME_PROJECT_PI_DIR_ENV = "ASTRO_RUNTIME_PROJECT_PI_DIR";
 const ASTRO_ORCHESTRATOR_CWD_ENV = "ASTRO_ORCHESTRATOR_CWD";
 const ASTRO_ORCHESTRATOR_PROJECT_PI_DIR_ENV = "ASTRO_ORCHESTRATOR_PROJECT_PI_DIR";
 const ASTRO_PI_PACKAGE_PATHS_ENV = "ASTRO_PI_PACKAGE_PATHS";
@@ -369,13 +371,23 @@ function materializeRuntimeProjectPiDir(targetPiDir) {
 	return targetPiDir;
 }
 
-function ensureOrchestratorRuntimeProject(options) {
+function defaultRuntimeCwd(runtimeRoot) {
+	const neutral = path.join(runtimeRoot, "astro-runtime");
+	const legacy = path.join(runtimeRoot, "astro-orchestrator-runtime");
+	return fs.existsSync(legacy) && !fs.existsSync(neutral) ? legacy : neutral;
+}
+
+function ensureDefaultRuntimeProject(options) {
 	const { containerDataRoot, targetDir } = options;
 	const runtimeRoot = containerDataRoot ?? path.join(path.resolve(targetDir), ".astro-runtime");
-	const configuredRuntimeCwd = process.env[ASTRO_ORCHESTRATOR_CWD_ENV]?.trim();
-	const configuredProjectPiDir = process.env[ASTRO_ORCHESTRATOR_PROJECT_PI_DIR_ENV]?.trim();
+	const configuredRuntimeCwd =
+		process.env[ASTRO_RUNTIME_CWD_ENV]?.trim() ||
+		process.env[ASTRO_ORCHESTRATOR_CWD_ENV]?.trim();
+	const configuredProjectPiDir =
+		process.env[ASTRO_RUNTIME_PROJECT_PI_DIR_ENV]?.trim() ||
+		process.env[ASTRO_ORCHESTRATOR_PROJECT_PI_DIR_ENV]?.trim();
 	const runtimeCwd = path.resolve(
-		configuredRuntimeCwd || path.join(runtimeRoot, "astro-orchestrator-runtime"),
+		configuredRuntimeCwd || defaultRuntimeCwd(runtimeRoot),
 	);
 	const projectPiDir = path.resolve(
 		configuredProjectPiDir || path.join(runtimeRoot, ".pi", "project"),
@@ -386,6 +398,8 @@ function ensureOrchestratorRuntimeProject(options) {
 	const projectPiLink = path.join(runtimeCwd, ".pi");
 	const projectPiLinkChanged = ensureSymlink(projectPiDir, projectPiLink);
 
+	process.env[ASTRO_RUNTIME_CWD_ENV] = runtimeCwd;
+	process.env[ASTRO_RUNTIME_PROJECT_PI_DIR_ENV] = projectPiDir;
 	process.env[ASTRO_ORCHESTRATOR_CWD_ENV] = runtimeCwd;
 	process.env[ASTRO_ORCHESTRATOR_PROJECT_PI_DIR_ENV] = projectPiDir;
 
@@ -660,7 +674,7 @@ export function bootstrapPiAgentDir() {
 	const mainsequenceCliAuthRepairCommand = ensureMainsequenceCliAuthRepairCommand();
 	const runtimeSettingsPath = ensureRuntimeSettings(targetDir);
 	const configuredPiPackages = parseConfiguredPiPackagePaths();
-	const orchestratorRuntime = ensureOrchestratorRuntimeProject({
+	const runtimeProject = ensureDefaultRuntimeProject({
 		containerDataRoot: containerData.rootDir,
 		targetDir,
 	});
@@ -672,7 +686,8 @@ export function bootstrapPiAgentDir() {
 	return {
 		targetDir,
 		runtimeSettingsPath,
-		orchestratorRuntime,
+		runtimeProject,
+		orchestratorRuntime: runtimeProject,
 		containerData,
 		mainsequenceCliConfig,
 		piAgentHomeLink,

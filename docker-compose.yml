@@ -68,8 +68,6 @@ services:
   #     ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS: ${ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS:-10000}
   #     ASTRO_CHECKPOINT_HOLDER_ID: pod/local-compose-astro-project-executor
   #     BUILD_AGENTS_IN_BACKEND: "1"
-  #     ASTRO_EXECUTION_MODE: remote_project_worker
-  #     ASTRO_FIXED_AGENT_TYPE: project-executor
   #     ASTRO_FIXED_PROJECT_CWD: /workspace/project
   #     ASTRO_PROJECT_IMAGE_REF: local-mounted-project
   #     A2A_DEV_PROJECT_MOUNTED_PATH: /workspace/project

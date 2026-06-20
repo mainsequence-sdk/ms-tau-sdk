@@ -34,6 +34,7 @@ RUN npm install --include=dev --no-audit --no-fund \
 
 COPY .pi ./.pi
 COPY pi ./pi
+COPY tmp_ms_pi ./tmp_ms_pi
 COPY interface ./interface
 COPY scripts ./scripts
 
@@ -54,7 +55,7 @@ RUN pip install --no-cache-dir "${MAINSEQUENCE_PIP_SPEC}" uv playwright \
  && playwright install --with-deps chromium
 
 # =============================================================================
-# [ASTRO] Create the local executor runtime layout
+# [ASTRO] Create the local project-attached runtime layout
 # =============================================================================
 ENV APP_USER=jovyan \
     APP_GROUP=jovyan \
@@ -69,8 +70,7 @@ ENV APP_USER=jovyan \
     ASTRO_SESSION_OVERRIDES_DIR=/session-state/session-overrides \
     ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/jovyan/.astro-container-data/.config/mainsequence \
     PI_CODING_AGENT_DIR=/home/jovyan/.astro-container-data/.pi/agent \
-    ASTRO_EXECUTION_MODE=remote_project_worker \
-    ASTRO_FIXED_AGENT_TYPE=project-executor \
+    ASTRO_PI_PACKAGE_PATHS=/app/tmp_ms_pi \
     ASTRO_FIXED_PROJECT_CWD=/workspace/project \
     ASTRO_PROJECT_IMAGE_REF=local-mounted-project
 

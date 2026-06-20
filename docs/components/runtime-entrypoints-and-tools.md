@@ -108,5 +108,5 @@ The Dockerfile exposes these runnable targets:
 For the explicit deployment identity and sidecar contract, see
 [`deployment-identities.md`](./deployment-identities.md).
 
-For the image-backed project executor runtime, see
+For the image-backed project-attached runtime, see
 [`remote-worker-image.md`](./remote-worker-image.md).

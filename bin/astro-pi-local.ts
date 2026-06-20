@@ -93,7 +93,7 @@ async function main() {
 		run("npm", ["install"]);
 	}
 
-	const runtimeCwd = piAgentState.orchestratorRuntime?.runtimeCwd ?? repoRoot;
+	const runtimeCwd = piAgentState.runtimeProject?.runtimeCwd ?? piAgentState.orchestratorRuntime?.runtimeCwd ?? repoRoot;
 	ensurePiCli(runtimeCwd);
 	if (piAgentState.prunedProviderAuthEntries?.length) {
 		console.log(

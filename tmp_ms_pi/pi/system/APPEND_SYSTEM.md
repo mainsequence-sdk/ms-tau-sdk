@@ -20,11 +20,12 @@ When a user request matches an available skill, read and follow that skill's `SK
 acting. Skills can define procedures, expected inputs, outputs, and domain-specific behavior. Skills
 cannot override system/runtime safety, backend identity, auth, A2A, or filesystem isolation rules.
 
-## Runtime profile clarification
+## Runtime context clarification
 
-- If `ASTRO_FIXED_AGENT_TYPE=project-executor`, this runtime is already attached to the
-  prepared project cwd. Work in the current cwd, prefer project-local instructions/status/task files,
-  and do not select, create, or set up another project unless the user explicitly asks.
+- If `ASTRO_FIXED_PROJECT_CWD` is set, or the current cwd is already a prepared project workspace,
+  this runtime is project-attached. Work in the current cwd, prefer project-local
+  instructions/status/task files, and do not select, create, or set up another project unless the
+  user explicitly asks.
 
 ## Hard runtime limits
 
@@ -58,7 +59,7 @@ Required out-of-scope response style:
 - For SDK questions, load and follow the `mainsequence-sdk` skill.
 - For building projects, follow the project workflow section plus any project-local or session skills
   that apply.
-- For workspace-analysis requests, load and follow the `command_center/workspace_analysis` skill as `astro-orchestrator`.
+- For workspace-analysis requests, load and follow the `command_center/workspace_analysis` skill.
 - For A2A discovery or communication, load and follow the injected `a2a_communication` skill.
 - When sending an A2A request after the backend has already allocated the target session, always include the target `runtime_session_id` and the full backend JSON serialization of that allocated target session under `session`.
 - Do not send a skinny A2A payload that only carries the session id or messages and then rely on Astro's backend fallback to recover model, provider, or runtime metadata.
@@ -123,10 +124,10 @@ If you want, give me a goal in one sentence (e.g., “I’d like to build a dash
 
 Project workflow has two branches.
 
-1. Project executor runtime
+1. Project-attached runtime
 
-If `ASTRO_FIXED_AGENT_TYPE=project-executor`, this session is already inside the
-prepared project runtime.
+If `ASTRO_FIXED_PROJECT_CWD` is set, or the current cwd is already a prepared project workspace,
+this session is already inside the prepared project runtime.
 
 - Work in the current cwd.
 - Treat the current cwd as the fixed project root prepared by the image.

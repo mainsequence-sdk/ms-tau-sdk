@@ -144,8 +144,8 @@ const ASTRO_FIXED_AGENT_TYPE_ENV = "ASTRO_FIXED_AGENT_TYPE";
 const ASTRO_FIXED_PROJECT_ID_ENV = "ASTRO_FIXED_PROJECT_ID";
 const ASTRO_FIXED_PROJECT_CWD_ENV = "ASTRO_FIXED_PROJECT_CWD";
 const ASTRO_PROJECT_IMAGE_REF_ENV = "ASTRO_PROJECT_IMAGE_REF";
-const PROJECT_SESSION_AGENT_TYPES = new Set(["project-executor"]);
-const ALLOWED_AGENT_TYPES = new Set(["astro-orchestrator", ...PROJECT_SESSION_AGENT_TYPES]);
+const DEFAULT_BACKEND_AGENT_TYPE = "astro-orchestrator";
+const SUPPORTED_BACKEND_AGENT_TYPES = new Set([DEFAULT_BACKEND_AGENT_TYPE, "project-executor"]);
 const PI_BUILT_IN_TOOL_NAMES = new Set(["read", "bash", "edit", "write", "grep", "find", "ls"]);
 
 type AgentConfig = {
@@ -209,32 +209,47 @@ type ActiveScopedProviderCredential = {
 
 const activeScopedProviderCredentials = new Map<string, ActiveScopedProviderCredential>();
 
-function resolveOrchestratorRuntimeCwd(): string {
-	const configured = process.env.ASTRO_ORCHESTRATOR_CWD?.trim();
+function resolveDefaultRuntimeCwd(): string {
+	const configured = process.env.ASTRO_RUNTIME_CWD?.trim() || process.env.ASTRO_ORCHESTRATOR_CWD?.trim();
 	return configured ? path.resolve(configured) : repoRoot;
 }
 
-type RuntimeProfileKind = "astro-orchestrator" | "project-executor";
+type RuntimeSkillLayer = {
+	kind: "astro-core" | "pi-package" | "session" | "project-local";
+	root: string | null;
+};
 
-type RuntimeProfile = {
-	kind: RuntimeProfileKind;
+type RuntimeContext = {
+	cwd: string;
 	executionMode: string | null;
 	fixedAgentType: string | null;
 	fixedProjectId: string | null;
 	fixedProjectCwd: string | null;
+	projectId: string | null;
 	projectImageRef: string | null;
+	backendAgentType: string | null;
+	backendAgentSessionUid: string | null;
+	projectAttached: boolean;
+	preparedProjectRuntime: boolean;
+	skillLayers: RuntimeSkillLayer[];
 };
 
-type RuntimeProfileLogPayload = {
-	kind: RuntimeProfileKind;
+type RuntimeContextLogPayload = {
+	cwd: string;
 	executionMode: string | null;
 	fixedAgentType: string | null;
 	fixedProjectId: string | null;
 	fixedProjectCwd: string | null;
+	projectId: string | null;
 	projectImageRef: string | null;
+	backendAgentType: string | null;
+	backendAgentSessionUid: string | null;
+	projectAttached: boolean;
+	preparedProjectRuntime: boolean;
+	skillLayers: RuntimeSkillLayer[];
 };
 
-type RuntimeProfileValidationResult =
+type RuntimeContextValidationResult =
 	| { ok: true }
 	| {
 			ok: false;
@@ -265,7 +280,8 @@ type RuntimeHealthSnapshot = {
 	lastUpdatedAt: string;
 	uptimeSeconds: number;
 	healthStatePath: string;
-	runtimeProfile: RuntimeProfileLogPayload;
+	runtimeContext: RuntimeContextLogPayload;
+	runtimeProfile: RuntimeContextLogPayload;
 	issueCount: number;
 	recentIssues: RuntimeHealthIssue[];
 	previousRun: {
@@ -334,6 +350,7 @@ function redactRuntimeHealthText(value: string | null): string | null {
 function buildRuntimeHealthSnapshot(): RuntimeHealthSnapshot {
 	const lastUpdatedAt = new Date().toISOString();
 	const recentIssues = runtimeHealthIssues.slice(-MAX_RUNTIME_HEALTH_ISSUES);
+	const runtimeContext = serializeRuntimeContext(resolveRuntimeContext());
 	return {
 		ok: true,
 		status: recentIssues.length > 0 ? "degraded" : "ok",
@@ -343,7 +360,8 @@ function buildRuntimeHealthSnapshot(): RuntimeHealthSnapshot {
 		lastUpdatedAt,
 		uptimeSeconds: Math.round(process.uptime()),
 		healthStatePath: runtimeHealthStatePath,
-		runtimeProfile: serializeRuntimeProfile(resolveRuntimeProfile()),
+		runtimeContext,
+		runtimeProfile: runtimeContext,
 		issueCount: runtimeHealthIssueCount,
 		recentIssues,
 		previousRun: previousRuntimeHealthSnapshot
@@ -1487,22 +1505,22 @@ async function resolveA2AStandardRuntimeIdentity(): Promise<
 	| { ok: true; agentType: string }
 	| { ok: false; statusCode: number; message: string; field?: string }
 > {
-	const runtimeProfile = resolveRuntimeProfile();
-	const runtimeProfileValidation = validateRuntimeProfile(runtimeProfile);
-	if (runtimeProfileValidation.ok === false) {
+	const runtimeContext = resolveRuntimeContext();
+	const runtimeContextValidation = validateRuntimeContext(runtimeContext);
+	if (runtimeContextValidation.ok === false) {
 		return {
 			ok: false,
-			statusCode: runtimeProfileValidation.statusCode,
-			message: runtimeProfileValidation.message,
+			statusCode: runtimeContextValidation.statusCode,
+			message: runtimeContextValidation.message,
 		};
 	}
 
-	const agentType = runtimeProfile.kind;
-	if (!ALLOWED_AGENT_TYPES.has(agentType)) {
+	const agentType = runtimeContext.backendAgentType ?? DEFAULT_BACKEND_AGENT_TYPE;
+	if (!isSupportedBackendAgentType(agentType)) {
 		return {
 			ok: false,
 			statusCode: 400,
-			message: `Unsupported runtime profile agent type "${agentType}".`,
+			message: `Unsupported backend agent type "${agentType}".`,
 		};
 	}
 
@@ -1565,21 +1583,19 @@ async function runA2AStandardRuntimeTurn(
 		return buildA2AClientDisconnectedResult();
 	}
 
-	const runtimeProfile = resolveRuntimeProfile();
-	const runtimeProfileValidation = validateRuntimeProfile(runtimeProfile);
-	if (runtimeProfileValidation.ok === false) {
+	const runtimeContext = resolveRuntimeContext();
+	const runtimeContextValidation = validateRuntimeContext(runtimeContext);
+	if (runtimeContextValidation.ok === false) {
 		return {
 			ok: false,
-			statusCode: runtimeProfileValidation.statusCode,
-			code: runtimeProfileValidation.error,
-			message: runtimeProfileValidation.message,
+			statusCode: runtimeContextValidation.statusCode,
+			code: runtimeContextValidation.error,
+			message: runtimeContextValidation.message,
 		};
 	}
 
 	try {
-		if (runtimeProfile.kind !== "project-executor") {
-			await ensureMainsequenceCliAuthReady();
-		}
+		await ensureMainsequenceCliAuthReady();
 	} catch (error) {
 		return {
 			ok: false,
@@ -1909,14 +1925,14 @@ async function buildSessionRuntimeBootstrapContext(input: {
 			message: string;
 	  }
 > {
-	const runtimeProfile = resolveRuntimeProfile();
-	const runtimeProfileValidation = validateRuntimeProfile(runtimeProfile);
-	if (runtimeProfileValidation.ok === false) {
+	const runtimeContext = resolveRuntimeContext();
+	const runtimeContextValidation = validateRuntimeContext(runtimeContext);
+	if (runtimeContextValidation.ok === false) {
 		return {
 			ok: false,
-			statusCode: runtimeProfileValidation.statusCode,
-			error: runtimeProfileValidation.error,
-			message: runtimeProfileValidation.message,
+			statusCode: runtimeContextValidation.statusCode,
+			error: runtimeContextValidation.error,
+			message: runtimeContextValidation.message,
 		};
 	}
 
@@ -1957,13 +1973,13 @@ async function buildSessionRuntimeBootstrapContext(input: {
 		};
 	}
 
-	const agentType = hydration.hydrated.metadata.agentType ?? runtimeProfile.kind;
-	if (!ALLOWED_AGENT_TYPES.has(agentType)) {
+	const agentType = hydration.hydrated.metadata.agentType ?? runtimeContext.backendAgentType ?? DEFAULT_BACKEND_AGENT_TYPE;
+	if (!isSupportedBackendAgentType(agentType)) {
 		return {
 			ok: false,
 			statusCode: 400,
 			error: "invalid_agent_type",
-			message: `Unsupported runtime profile agent type "${agentType}".`,
+			message: `Unsupported backend agent type "${agentType}".`,
 		};
 	}
 	if (!hydration.hydrated.metadata.sessionModelBinding) {
@@ -1987,7 +2003,7 @@ async function buildSessionRuntimeBootstrapContext(input: {
 		agentType,
 		body: input.body,
 		existingSessionMetadata: metadata,
-		runtimeProfile,
+		runtimeContext,
 	});
 	if (projectAttachment.ok === false) {
 		return {
@@ -2088,7 +2104,7 @@ async function buildSessionRuntimeBootstrapContext(input: {
 	return {
 		ok: true,
 		ctx,
-		cwd: projectAttachment.cwd ?? resolveOrchestratorRuntimeCwd(),
+		cwd: projectAttachment.cwd ?? resolveDefaultRuntimeCwd(),
 		projectId: projectAttachment.projectId,
 	};
 }
@@ -2648,12 +2664,8 @@ function doesSessionModelIdentityMatch(
 
 async function ensureRequestCliAuth(
 	res: import("node:http").ServerResponse,
-	runtimeProfile: RuntimeProfile = resolveRuntimeProfile(),
+	_runtimeContext: RuntimeContext = resolveRuntimeContext(),
 ): Promise<{ ok: true } | { ok: false }> {
-	if (runtimeProfile.kind === "project-executor") {
-		return { ok: true };
-	}
-
 	try {
 		await ensureMainsequenceCliAuthReady();
 		return { ok: true };
@@ -2698,12 +2710,8 @@ function normalizeAgentType(value: unknown): string | null {
 	return trimmed ? trimmed : null;
 }
 
-function isProjectSessionAgentType(agentType: string | null | undefined): boolean {
-	return typeof agentType === "string" && PROJECT_SESSION_AGENT_TYPES.has(agentType);
-}
-
-function isImageBackedProjectExecutor(agentType: string | null | undefined): boolean {
-	return agentType === "project-executor";
+function isSupportedBackendAgentType(agentType: string | null | undefined): boolean {
+	return typeof agentType === "string" && SUPPORTED_BACKEND_AGENT_TYPES.has(agentType);
 }
 
 function resolveFixedAgentType(env: NodeJS.ProcessEnv = process.env): string | null {
@@ -2845,87 +2853,111 @@ function resolveConfiguredProjectImageRef(env: NodeJS.ProcessEnv = process.env):
 	return normalizeProjectImageRef(env[ASTRO_PROJECT_IMAGE_REF_ENV]);
 }
 
-function resolveRuntimeProfile(env: NodeJS.ProcessEnv = process.env): RuntimeProfile {
+function parseRuntimePiPackagePaths(env: NodeJS.ProcessEnv = process.env): string[] {
+	const rawValue = env.ASTRO_PI_PACKAGE_PATHS?.trim();
+	if (!rawValue) return [];
+
+	if (rawValue.startsWith("[")) {
+		try {
+			const parsed = JSON.parse(rawValue);
+			if (Array.isArray(parsed)) {
+				return parsed
+					.filter((entry): entry is string => typeof entry === "string")
+					.map((entry) => entry.trim())
+					.filter(Boolean);
+			}
+		} catch {
+			// Fall back to the simple delimited form used by local deployments.
+		}
+	}
+
+	return rawValue
+		.split(/[,\n]/)
+		.map((entry) => entry.trim())
+		.filter(Boolean);
+}
+
+function resolveRuntimeSkillLayers(options: {
+	cwd: string;
+	projectAttached: boolean;
+	env?: NodeJS.ProcessEnv;
+}): RuntimeSkillLayer[] {
+	const env = options.env ?? process.env;
+	const layers: RuntimeSkillLayer[] = [{ kind: "astro-core", root: path.join(repoRoot, "pi") }];
+
+	for (const packagePath of parseRuntimePiPackagePaths(env)) {
+		layers.push({
+			kind: "pi-package",
+			root: path.isAbsolute(packagePath) ? packagePath : path.resolve(repoRoot, packagePath),
+		});
+	}
+
+	const projectSkillRoot = path.join(options.cwd, ".agents", "skills");
+	if (options.projectAttached && isExistingDirectory(projectSkillRoot)) {
+		layers.push({ kind: "project-local", root: projectSkillRoot });
+	}
+
+	return layers;
+}
+
+function resolveRuntimeContext(env: NodeJS.ProcessEnv = process.env): RuntimeContext {
 	const fixedAgentType = resolveFixedAgentType(env);
 	const executionMode = normalizeExecutionMode(env[ASTRO_EXECUTION_MODE_ENV]);
 	const fixedProjectId = resolveFixedProjectId(env);
 	const fixedProjectCwd = resolveFixedProjectCwd(env);
 	const projectImageRef = resolveConfiguredProjectImageRef(env);
-	const kind: RuntimeProfileKind = fixedAgentType
-		? isProjectSessionAgentType(fixedAgentType)
-			? "project-executor"
-			: "astro-orchestrator"
-		: executionMode === "remote_project_worker" || fixedProjectCwd
-			? "project-executor"
-			: "astro-orchestrator";
+	const projectAttached = Boolean(fixedProjectCwd);
+	const preparedProjectRuntime = Boolean(fixedProjectCwd);
+	const cwd = fixedProjectCwd ?? resolveDefaultRuntimeCwd();
 
 	return {
-		kind,
+		cwd,
 		executionMode,
 		fixedAgentType,
 		fixedProjectId,
 		fixedProjectCwd,
+		projectId: fixedProjectId,
 		projectImageRef,
+		backendAgentType: fixedAgentType,
+		backendAgentSessionUid: null,
+		projectAttached,
+		preparedProjectRuntime,
+		skillLayers: resolveRuntimeSkillLayers({ cwd, projectAttached, env }),
 	};
 }
 
-function serializeRuntimeProfile(profile: RuntimeProfile): RuntimeProfileLogPayload {
+function serializeRuntimeContext(context: RuntimeContext): RuntimeContextLogPayload {
 	return {
-		kind: profile.kind,
-		executionMode: profile.executionMode,
-		fixedAgentType: profile.fixedAgentType,
-		fixedProjectId: profile.fixedProjectId,
-		fixedProjectCwd: profile.fixedProjectCwd,
-		projectImageRef: profile.projectImageRef,
+		cwd: context.cwd,
+		executionMode: context.executionMode,
+		fixedAgentType: context.fixedAgentType,
+		fixedProjectId: context.fixedProjectId,
+		fixedProjectCwd: context.fixedProjectCwd,
+		projectId: context.projectId,
+		projectImageRef: context.projectImageRef,
+		backendAgentType: context.backendAgentType,
+		backendAgentSessionUid: context.backendAgentSessionUid,
+		projectAttached: context.projectAttached,
+		preparedProjectRuntime: context.preparedProjectRuntime,
+		skillLayers: context.skillLayers,
 	};
 }
 
-function validateRuntimeProfile(profile: RuntimeProfile): RuntimeProfileValidationResult {
-	if (profile.fixedAgentType && !ALLOWED_AGENT_TYPES.has(profile.fixedAgentType)) {
+function validateRuntimeContext(context: RuntimeContext): RuntimeContextValidationResult {
+	if (context.fixedAgentType && !isSupportedBackendAgentType(context.fixedAgentType)) {
 		return {
 			ok: false,
 			statusCode: 503,
-			error: "invalid_runtime_profile",
-			message: `${ASTRO_FIXED_AGENT_TYPE_ENV} is set to unknown agent type "${profile.fixedAgentType}".`,
+			error: "invalid_runtime_context",
+			message: `${ASTRO_FIXED_AGENT_TYPE_ENV} is set to unknown backend agent type "${context.fixedAgentType}".`,
 		};
 	}
 
-	if (
-		profile.executionMode === "remote_project_worker" &&
-		profile.fixedAgentType &&
-		!isProjectSessionAgentType(profile.fixedAgentType)
-	) {
+	if (context.fixedProjectCwd && !isExistingDirectory(context.fixedProjectCwd)) {
 		return {
 			ok: false,
 			statusCode: 503,
-			error: "invalid_runtime_profile",
-			message: `${ASTRO_EXECUTION_MODE_ENV}=remote_project_worker requires ${ASTRO_FIXED_AGENT_TYPE_ENV}=project-executor.`,
-		};
-	}
-
-	if (profile.kind === "project-executor" && !profile.fixedAgentType) {
-		return {
-			ok: false,
-			statusCode: 503,
-			error: "invalid_runtime_profile",
-			message: `project-executor runtime profile requires ${ASTRO_FIXED_AGENT_TYPE_ENV}.`,
-		};
-	}
-
-	if (profile.kind === "project-executor" && !profile.fixedProjectCwd) {
-		return {
-			ok: false,
-			statusCode: 503,
-			error: "invalid_runtime_profile",
-			message: `project-executor runtime profile requires ${ASTRO_FIXED_PROJECT_CWD_ENV}.`,
-		};
-	}
-
-	if (profile.fixedProjectCwd && !isExistingDirectory(profile.fixedProjectCwd)) {
-		return {
-			ok: false,
-			statusCode: 503,
-			error: "invalid_runtime_profile",
+			error: "invalid_runtime_context",
 			message: `${ASTRO_FIXED_PROJECT_CWD_ENV} must point to an existing directory.`,
 		};
 	}
@@ -2958,19 +2990,18 @@ function resolveProjectAttachment(input: {
 	agentType: string;
 	body: Record<string, unknown>;
 	existingSessionMetadata: SessionMetadata;
-	runtimeProfile: RuntimeProfile;
+	runtimeContext: RuntimeContext;
 }): ProjectAttachmentResolution {
 	const requestedProjectId = normalizeProjectId(input.body.projectId);
 	const requestedCwd = normalizeProjectCwd(input.body.cwd);
-	const imageBackedProjectExecutor = isImageBackedProjectExecutor(input.agentType);
-	const fixedProjectId = imageBackedProjectExecutor ? null : input.runtimeProfile.fixedProjectId;
-	const fixedProjectCwd = input.runtimeProfile.fixedProjectCwd;
+	const preparedProjectRuntime = input.runtimeContext.preparedProjectRuntime;
+	const fixedProjectId = input.runtimeContext.fixedProjectId;
+	const fixedProjectCwd = input.runtimeContext.fixedProjectCwd;
 	const effectiveRequestedProjectId = requestedProjectId ?? fixedProjectId;
 	const effectiveRequestedCwd = requestedCwd ?? fixedProjectCwd;
 	const projectImageRef =
-		input.runtimeProfile.projectImageRef ?? input.existingSessionMetadata.projectImageRef ?? null;
-	const projectAttachmentRequired =
-		input.runtimeProfile.kind === "project-executor" || isProjectSessionAgentType(input.agentType);
+		input.runtimeContext.projectImageRef ?? input.existingSessionMetadata.projectImageRef ?? null;
+	const projectAttachmentRequired = input.runtimeContext.projectAttached;
 	const attached =
 		projectAttachmentRequired ||
 		Boolean(effectiveRequestedCwd ?? input.existingSessionMetadata.cwd);
@@ -2995,7 +3026,7 @@ function resolveProjectAttachment(input: {
 
 	if (
 		attached &&
-		!imageBackedProjectExecutor &&
+		!preparedProjectRuntime &&
 		input.existingSessionMetadata.projectId &&
 		effectiveRequestedProjectId &&
 		effectiveRequestedProjectId !== input.existingSessionMetadata.projectId
@@ -3024,10 +3055,10 @@ function resolveProjectAttachment(input: {
 
 	if (!attached) {
 		return {
-			ok: true,
-			attached: false,
-			projectId: null,
-			cwd: resolveOrchestratorRuntimeCwd(),
+				ok: true,
+				attached: false,
+				projectId: null,
+				cwd: resolveDefaultRuntimeCwd(),
 			repoRoot: null,
 			projectImageRef: null,
 			requestedProjectId,
@@ -3037,17 +3068,17 @@ function resolveProjectAttachment(input: {
 		};
 	}
 
-	const projectId = imageBackedProjectExecutor
+	const projectId = preparedProjectRuntime
 		? requestedProjectId ?? input.existingSessionMetadata.projectId ?? fixedProjectId ?? null
 		: effectiveRequestedProjectId ?? input.existingSessionMetadata.projectId ?? null;
 	const cwd = effectiveRequestedCwd ?? input.existingSessionMetadata.cwd ?? null;
 
-	if (!projectId && !imageBackedProjectExecutor) {
+	if (!projectId && !preparedProjectRuntime) {
 		return {
 			ok: false,
 			statusCode: 409,
 			error: "missing_project_id",
-			message: `${input.agentType} requires projectId.`,
+			message: "Project-attached runtime requires projectId unless a prepared project image/cwd supplies the workspace.",
 		};
 	}
 
@@ -3056,7 +3087,7 @@ function resolveProjectAttachment(input: {
 			ok: false,
 			statusCode: 409,
 			error: "missing_cwd",
-			message: `${input.agentType} requires cwd.`,
+			message: "Project-attached runtime requires cwd.",
 		};
 	}
 
@@ -3065,7 +3096,7 @@ function resolveProjectAttachment(input: {
 			ok: false,
 			statusCode: 409,
 			error: "invalid_cwd",
-			message: `${input.agentType} requires cwd to be an existing project directory.`,
+			message: "Project-attached runtime requires cwd to be an existing project directory.",
 		};
 	}
 
@@ -10212,7 +10243,8 @@ async function handleStreamRequest(
 
 	if (req.method === "GET" && url.pathname === "/api/chat/get_available_models") {
 		const userUid = resolveUserIdFromRequest(req, url);
-		const runtimeProfile = resolveRuntimeProfile();
+		const runtimeContext = resolveRuntimeContext();
+		const serializedRuntimeContext = serializeRuntimeContext(runtimeContext);
 		logStructuredEvent({
 			component: "astro-stream",
 			event: "available_models_request_started",
@@ -10220,7 +10252,8 @@ async function handleStreamRequest(
 			data: {
 				path: url.pathname,
 				userUid,
-				runtimeProfile: serializeRuntimeProfile(runtimeProfile),
+				runtimeContext: serializedRuntimeContext,
+				runtimeProfile: serializedRuntimeContext,
 			},
 		});
 		if (!userUid) {
@@ -10814,39 +10847,42 @@ async function handleStreamRequest(
 		return;
 	}
 
-	const runtimeProfile = resolveRuntimeProfile();
-	const runtimeProfileValidation = validateRuntimeProfile(runtimeProfile);
-	if (runtimeProfileValidation.ok === false) {
+	const runtimeContext = resolveRuntimeContext();
+	const runtimeContextValidation = validateRuntimeContext(runtimeContext);
+	const serializedRuntimeContext = serializeRuntimeContext(runtimeContext);
+	if (runtimeContextValidation.ok === false) {
 		logStructuredEvent({
 			severity: "ERROR",
 			component: "astro-stream",
-			event: "runtime_profile_invalid",
-			message: "Astro rejected a request because the runtime profile configuration is invalid.",
+			event: "runtime_context_invalid",
+			message: "Astro rejected a request because the runtime context configuration is invalid.",
 			data: {
 				path: url.pathname,
-				runtimeProfile: serializeRuntimeProfile(runtimeProfile),
-				error: runtimeProfileValidation.error,
-				statusCode: runtimeProfileValidation.statusCode,
+				runtimeContext: serializedRuntimeContext,
+				runtimeProfile: serializedRuntimeContext,
+				error: runtimeContextValidation.error,
+				statusCode: runtimeContextValidation.statusCode,
 			},
 		});
-		json(res, runtimeProfileValidation.statusCode, {
-			error: runtimeProfileValidation.error,
-			message: runtimeProfileValidation.message,
-			runtime_profile: serializeRuntimeProfile(runtimeProfile),
+		json(res, runtimeContextValidation.statusCode, {
+			error: runtimeContextValidation.error,
+			message: runtimeContextValidation.message,
+			runtime_context: serializedRuntimeContext,
 		});
 		return;
 	}
 	logStructuredEvent({
 		component: "astro-stream",
-		event: "request_runtime_profile_resolved",
-		message: "Astro resolved the runtime profile for the request.",
+		event: "request_runtime_context_resolved",
+		message: "Astro resolved the runtime context for the request.",
 		data: {
 			path: url.pathname,
-			runtimeProfile: serializeRuntimeProfile(runtimeProfile),
+			runtimeContext: serializedRuntimeContext,
+			runtimeProfile: serializedRuntimeContext,
 		},
 	});
 
-	if (!(await ensureRequestCliAuth(res, runtimeProfile)).ok) {
+	if (!(await ensureRequestCliAuth(res, runtimeContext)).ok) {
 		return;
 	}
 
@@ -10871,7 +10907,7 @@ async function handleStreamRequest(
 	});
 	const isA2ARuntimeTurn = requestA2AEnvelope?.enabled === true;
 
-	const fixedAgentType = runtimeProfile.fixedAgentType;
+	const fixedAgentType = runtimeContext.fixedAgentType;
 	const rawRequestedAgentType = normalizeAgentType(body.agentType);
 	if (fixedAgentType && rawRequestedAgentType && rawRequestedAgentType !== fixedAgentType) {
 		json(res, 409, {
@@ -10885,7 +10921,7 @@ async function handleStreamRequest(
 		badRequest(res, "Missing agentType.");
 		return;
 	}
-	if (!ALLOWED_AGENT_TYPES.has(requestedAgentType)) {
+	if (!isSupportedBackendAgentType(requestedAgentType)) {
 		json(res, 400, { error: "unknown_agent_type", message: `Unknown agent type "${requestedAgentType}".` });
 		return;
 	}
@@ -11086,12 +11122,12 @@ async function handleStreamRequest(
 	if (!existingSessionMetadata && hydratedBackendSession) {
 		existingSessionMetadata = hydratedBackendSession.metadata;
 	}
-	const fixedWorkerRequiresBackendSessionAuthority = runtimeProfile.kind === "project-executor";
+	const preparedProjectRuntimeRequiresBackendSessionAuthority = runtimeContext.preparedProjectRuntime;
 	if (
 		!existingSessionMetadata ||
 		!existingSessionMetadata.sessionModelBinding ||
 		existingSessionMetadata.agentId == null ||
-		fixedWorkerRequiresBackendSessionAuthority
+		preparedProjectRuntimeRequiresBackendSessionAuthority
 	) {
 		const hydrationResult = await attachHydratedBackendSession({
 			runtimeSessionId,
@@ -11193,13 +11229,13 @@ async function handleStreamRequest(
 		  })
 		: null;
 	const sessionModelBinding =
-		fixedWorkerRequiresBackendSessionAuthority
+		preparedProjectRuntimeRequiresBackendSessionAuthority
 			? existingSessionMetadata?.sessionModelBinding ?? requestSessionModelBinding ?? null
 			: requestSessionModelBinding ?? existingSessionMetadata?.sessionModelBinding ?? null;
 	let requestModelSource = "none";
 	if (hydratedBackendSession) {
 		requestModelSource = "backend_session_authority";
-	} else if (fixedWorkerRequiresBackendSessionAuthority && existingSessionMetadata?.sessionModelBinding) {
+	} else if (preparedProjectRuntimeRequiresBackendSessionAuthority && existingSessionMetadata?.sessionModelBinding) {
 		requestModelSource = "target_session_metadata";
 	} else if (requestSessionModelBinding) {
 		requestModelSource = "request_session_serializer";
@@ -11248,7 +11284,7 @@ async function handleStreamRequest(
 		agentType,
 		body,
 		existingSessionMetadata,
-		runtimeProfile,
+		runtimeContext,
 	});
 	if (projectAttachment.ok === false) {
 		json(res, projectAttachment.statusCode, {
@@ -11268,7 +11304,8 @@ async function handleStreamRequest(
 			agentType,
 			userUid: userId,
 			runtimeSessionId,
-			runtimeProfile: serializeRuntimeProfile(runtimeProfile),
+			runtimeContext: serializedRuntimeContext,
+			runtimeProfile: serializedRuntimeContext,
 			attached: projectAttachment.attached,
 			projectId,
 			cwd: agentCwd,
@@ -11797,32 +11834,35 @@ server.on("error", (error) => {
 	});
 });
 
-const startupRuntimeProfile = resolveRuntimeProfile();
-const startupRuntimeProfileValidation = validateRuntimeProfile(startupRuntimeProfile);
-const startupRuntimeProfileValidationDetails: Record<string, unknown> = {};
-if (startupRuntimeProfileValidation.ok === false) {
-	startupRuntimeProfileValidationDetails.error = startupRuntimeProfileValidation.error;
-	startupRuntimeProfileValidationDetails.statusCode = startupRuntimeProfileValidation.statusCode;
-	startupRuntimeProfileValidationDetails.message = startupRuntimeProfileValidation.message;
+const startupRuntimeContext = resolveRuntimeContext();
+const startupRuntimeContextValidation = validateRuntimeContext(startupRuntimeContext);
+const startupRuntimeContextValidationDetails: Record<string, unknown> = {};
+const serializedStartupRuntimeContext = serializeRuntimeContext(startupRuntimeContext);
+if (startupRuntimeContextValidation.ok === false) {
+	startupRuntimeContextValidationDetails.error = startupRuntimeContextValidation.error;
+	startupRuntimeContextValidationDetails.statusCode = startupRuntimeContextValidation.statusCode;
+	startupRuntimeContextValidationDetails.message = startupRuntimeContextValidation.message;
 }
 logStructuredEvent({
 	component: "astro-stream",
-	event: "runtime_profile_resolved",
-	message: "Astro resolved the runtime profile for this process.",
+	event: "runtime_context_resolved",
+	message: "Astro resolved the runtime context for this process.",
 	data: {
-		runtimeProfile: serializeRuntimeProfile(startupRuntimeProfile),
-		validationOk: startupRuntimeProfileValidation.ok,
-		...startupRuntimeProfileValidationDetails,
+		runtimeContext: serializedStartupRuntimeContext,
+		runtimeProfile: serializedStartupRuntimeContext,
+		validationOk: startupRuntimeContextValidation.ok,
+		...startupRuntimeContextValidationDetails,
 	},
 });
-if (startupRuntimeProfileValidation.ok === false) {
+if (startupRuntimeContextValidation.ok === false) {
 	recordRuntimeHealthIssue({
-		source: "runtime_profile",
+		source: "runtime_context",
 		severity: "error",
-		error: new Error(startupRuntimeProfileValidation.message),
+		error: new Error(startupRuntimeContextValidation.message),
 		context: {
-			runtimeProfile: serializeRuntimeProfile(startupRuntimeProfile),
-			error: startupRuntimeProfileValidation.error,
+			runtimeContext: serializedStartupRuntimeContext,
+			runtimeProfile: serializedStartupRuntimeContext,
+			error: startupRuntimeContextValidation.error,
 		},
 	});
 }

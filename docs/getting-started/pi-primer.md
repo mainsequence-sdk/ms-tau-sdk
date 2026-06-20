@@ -58,10 +58,12 @@ This repository keeps `pi-web-access` in normal `node_modules` and loads it from
 
 ## The key mental model
 
-The current Main Sequence deployment composes two runtime identities around Astro:
+The current Main Sequence deployment composes backend identities and runtime context around Astro:
 
-- `astro-orchestrator` sessions can handle platform, project creation, and workspace flows
-- fixed `project-executor` sessions work inside the prepared project cwd
+- no-project sessions can handle platform, project creation, and workspace flows
+- project-attached sessions work inside the prepared project cwd
+- backend `agent_type` values such as `astro-orchestrator` and `project-executor` remain session
+  metadata
 
 The composed Main Sequence package/backend behavior handles:
 

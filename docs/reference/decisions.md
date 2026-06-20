@@ -8,15 +8,14 @@ pre-UID API sketches have been removed from the active reference set.
 - [`adr-29-agent-type-identity.md`](./adr-29-agent-type-identity.md)
   - `agentType` / `agent_type` is the backend/runtime identity field.
 - [`adr-30-runtime-profiles-vs-agent-type.md`](./adr-30-runtime-profiles-vs-agent-type.md)
-  - Astro exposes only `astro-orchestrator` and `project-executor` as runtime/backend types.
+  - Superseded for local runtime architecture by ADR 39; backend identity values remain valid.
 - [`adr-39-unified-pi-runtime-context.md`](./adr-39-unified-pi-runtime-context.md)
   - Astro Core should use one Pi runtime context; orchestrator is the no-project edge case, and
     backend `agent_type` must not define separate local runtime architectures.
 - [`adr-31-backend-uid-identity.md`](./adr-31-backend-uid-identity.md)
   - Backend resource lookup is by `uid`, not deprecated `id`.
 - [`../components/deployment-identities.md`](../components/deployment-identities.md)
-  - Fixed executor deployment is selected by `ASTRO_FIXED_AGENT_TYPE=project-executor` plus
-    project cwd; `ASTRO_EXECUTION_MODE=remote_project_worker` is topology metadata only.
+  - Project attachment is selected by fixed project cwd; backend identity is separate metadata.
 
 ## Session Attach And A2A
 

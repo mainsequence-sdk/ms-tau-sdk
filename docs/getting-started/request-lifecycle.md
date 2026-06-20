@@ -116,18 +116,18 @@ Then the composed Astro/package contract decides whether the task is:
 - a normal Main Sequence project workflow
 - an explicitly requested standalone workflow prompt
 
-## 4. Runtime profile tracks project context
+## 4. Runtime context tracks project attachment
 
 For a normal Main Sequence project, the active runtime:
 
 1. uses the non-project-attached branch for project selection or creation
    - if the user wants a new project, the runtime loads the project-creation skill and uses it to collect the missing intake before creation
-2. uses the project-attached branch when `ASTRO_FIXED_AGENT_TYPE=project-executor`
-   and the cwd is already the prepared project root
+2. uses the project-attached branch when `ASTRO_FIXED_PROJECT_CWD` points at the prepared project
+   root
 3. keeps session identity backend-owned
    - A2A communication does not transfer session ownership
 
-## 5. Runtime profile stays explicit
+## 5. Runtime context stays explicit
 
 There is no longer an active `delegate_specialist` tool in the normal project workflow.
 
@@ -135,7 +135,7 @@ For the current creation-first flow:
 
 1. non-project-attached runtime handles project creation or selection
 2. project-attached runtime works in the prepared project cwd
-3. A2A, when needed, connects backend-owned sessions without changing local runtime identity
+3. A2A, when needed, connects backend-owned sessions without changing local runtime context
 
 If another runtime is used in a later phase, communication happens through A2A and backend session
 identity remains the source of truth.

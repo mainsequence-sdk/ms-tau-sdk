@@ -5,10 +5,13 @@ try {
 	const piAgentState = bootstrapPiAgentDir();
 	logStructuredEvent({
 		component: "astro-stream",
-		event: "orchestrator_runtime_ready",
-		message: "Astro orchestrator runtime cwd and project-local Pi package settings are ready.",
+		event: "runtime_project_ready",
+		message: "Astro runtime cwd and project-local Pi package settings are ready.",
 		data: {
 			piAgentDir: piAgentState.targetDir,
+			runtimeCwd: piAgentState.runtimeProject?.runtimeCwd,
+			runtimeProjectPiDir: piAgentState.runtimeProject?.projectPiDir,
+			runtimeProjectPiLink: piAgentState.runtimeProject?.projectPiLink,
 			orchestratorRuntimeCwd: piAgentState.orchestratorRuntime?.runtimeCwd,
 			orchestratorProjectPiDir: piAgentState.orchestratorRuntime?.projectPiDir,
 			orchestratorProjectPiLink: piAgentState.orchestratorRuntime?.projectPiLink,

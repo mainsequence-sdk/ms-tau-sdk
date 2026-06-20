@@ -15,13 +15,13 @@ Typical error responses:
 - `400` — `invalid_session_config` when the patch payload includes unsupported or invalid config fields
 - `404` — `provider_not_supported` for unsupported `GET/POST /api/model-providers/*` provider ids
 - `404` — `signin_attempt_not_found` for unknown `GET/POST /api/model-providers/:provider/signin/:attemptId*`
-- `400` — missing required project-scoped fields such as `cwd` when starting a project executor request
+- `400` — missing required project-scoped fields such as `cwd` when starting a project-attached request
 - `403` — `cors_origin_not_allowed` when the browser `Origin` is not listed in `ASTRO_STREAM_TRUSTED_ORIGINS`
 - `400` — `invalid_runtime_session_uid` when a missing local resume session uses a uid that cannot
   be queried as a backend `AgentSession.uid`
 - `409` — session mismatch for provided `runtime_session_uid`
-- `409` — `fixed_agent_type_mismatch` when a fixed runtime, for example
-  `ASTRO_FIXED_AGENT_TYPE=project-executor`, receives a different request `agentType`
+- `409` — `fixed_agent_type_mismatch` when a fixed backend identity receives a different request
+  `agentType`
 - `409` — `session_not_found` only when the backend authority reports that the requested
   `AgentSession.uid` does not exist
 - `409` — `session_hydration_unavailable` when local session files are missing but backend session
@@ -45,9 +45,8 @@ Typical error responses:
 - `500` — `model_catalog_unavailable` when `GET /api/models/catalog` fails unexpectedly
 - `500` — `available_models_unavailable` when `GET /api/chat/get_available_models` fails unexpectedly
 - `502` — backend session hydration/authority fetch failure before Pi launch
-- `503` — `invalid_runtime_profile` when fixed runtime env is internally inconsistent, for example
-  `ASTRO_EXECUTION_MODE=remote_project_worker` without
-  `ASTRO_FIXED_AGENT_TYPE=project-executor`
+- `503` — `invalid_runtime_context` when fixed runtime env is internally inconsistent, for example
+  `ASTRO_FIXED_PROJECT_CWD` points to a missing directory
 - `404` — unknown route
 
 ## CORS

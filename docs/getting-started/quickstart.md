@@ -125,9 +125,9 @@ stream session files have no host or repo-local source path in the container; ba
 checkpoints are the durable session source of truth. Container startup also removes stale Pi
 provider auth/signin files from `PI_CODING_AGENT_DIR`.
 
-Astro has two deployment identities: `astro-orchestrator` and `project-executor`. See
+Astro has one internal runtime context with backend identity metadata. See
 [`../components/deployment-identities.md`](../components/deployment-identities.md) before changing
-fixed runtime env or sidecar mounts.
+fixed project cwd, backend identity env, or sidecar mounts.
 
 At runtime, Astro runs as non-root `jovyan`. Rebuildable runtime state lives under
 `/home/jovyan/.astro-container-data`; active session files live under `/session-state/sessions` and
@@ -161,11 +161,12 @@ This launcher:
 
 Run Pi and use the `verify-mainsequence-tutorial` prompt template only when you explicitly want the fixed tutorial-regression workflow.
 
-## Run only the local executor runtime
+## Run only the local project-attached runtime
 
-Use the local executor container harness when you want to inspect or test the dedicated project
-runtime directly. This starts the same Astro stream runtime pinned to
-`ASTRO_FIXED_AGENT_TYPE=project-executor`; it does not use a separate executor prompt file.
+Use the local project-attached container harness when you want to inspect or test Astro running
+inside a prepared project cwd. This starts the same Astro stream runtime with
+`ASTRO_FIXED_PROJECT_CWD` pointing at the mounted project; it does not use a separate executor
+prompt file.
 
 ```bash
 export A2A_DEV_PROJECT=/absolute/path/to/checked-out-project

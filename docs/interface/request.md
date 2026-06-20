@@ -23,8 +23,8 @@ currently stored for that runtime session.
 - `tools` (object)
 - `session` (object; preferred full backend `AgentSession` serializer for metadata/model refresh;
   expected on outbound A2A requests)
-- `projectId` (string | number; optional project identity for project-scoped executor requests)
-- `cwd` (string; project working directory when the executor runtime is not already pinned)
+- `projectId` (string | number; optional project identity for project-attached requests)
+- `cwd` (string; project working directory when the runtime is not already pinned)
 - `sessionMetadata` (object; optional non-reserved metadata only)
 
 ## Notes
@@ -47,17 +47,16 @@ currently stored for that runtime session.
   `runtime_session_uid` before Pi launch instead of proceeding with no model binding.
 - `threadId` is informational/client-bookkeeping only when backend registration is enabled; it does
   not control session continuity.
-- `agentType` is the backend `Agent.agent_type` value
+- `agentType` is the backend `Agent.agent_type` value, not the local runtime architecture
   (unknown values return `error: unknown_agent_type`).
-- Valid deployment identity values are `astro-orchestrator` and `project-executor`.
-- Do not send `project_worker`; it is not a backend `agent_type` and not a public runtime profile.
-- A fixed `project-executor` runtime gets its identity from `ASTRO_FIXED_AGENT_TYPE=project-executor`.
-  If the request also sends `agentType`, it must match `project-executor`.
-- A mismatched request `agentType` on a fixed runtime returns `409 fixed_agent_type_mismatch`
-  before Pi launch.
+- Current Main Sequence backend identity values are `astro-orchestrator` and `project-executor`.
+- Do not send `project_worker`; it is not a backend `agent_type`.
+- `ASTRO_FIXED_AGENT_TYPE`, when set, pins backend/session identity only. Local project attachment is
+  controlled by `ASTRO_FIXED_PROJECT_CWD`.
+- A mismatched request `agentType` on a fixed backend identity returns
+  `409 fixed_agent_type_mismatch` before Pi launch.
 - When backend registration is enabled, `runtime_session_uid` is the backend `AgentSession.uid` string.
-- `project-executor` is the only project implementation runtime.
-- Project-scoped executor requests may rely on a deployment-pinned project cwd or supply `cwd`
+- Project-attached requests may rely on a deployment-pinned project cwd or supply `cwd`
   explicitly when the runtime is not already pinned.
 - `POST /api/chat` no longer uses a message-level `model` field as session authority.
 - Astro derives or refreshes its local `sessionModelBinding` from the request-carried `session`
@@ -154,7 +153,8 @@ Example resume request with session authority:
 }
 ```
 
-Example project-executor request:
+Example project-attached request using the legacy Main Sequence `project-executor` backend
+identity:
 
 ```json
 {

@@ -25,7 +25,7 @@ It does not contain Astro runtime/backend behavior.
 - Astro HTTP/SSE/REST server code
 - checkpoint/session/provider credential code
 - runtime credential exchange
-- Astro runtime profile logic
+- Astro runtime-context logic
 - Astro A2A routing
 - Astro-only repo maintenance skills
 - Astro Core runtime extensions that do not reference Main Sequence package resources

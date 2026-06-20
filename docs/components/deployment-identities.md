@@ -1,53 +1,51 @@
-# Deployment identities
+# Runtime Context And Backend Identity
 
-Astro has two deployment identities. They use the same public vocabulary as backend
-`Agent.agent_type`.
+Astro has one internal Pi runtime shape. It can run without a project attached, or it can run inside
+a prepared project cwd.
 
-Do not introduce a second public name such as `project_worker` for the `project-executor` runtime.
-`ASTRO_EXECUTION_MODE=remote_project_worker` is kept only as legacy topology metadata for existing
-worker images.
+Main Sequence backend identities such as `astro-orchestrator` and `project-executor` still exist,
+but they are backend/session metadata. They do not select separate Astro runtime architectures.
 
-## Contract matrix
+Do not introduce a second public name such as `project_worker`. `ASTRO_EXECUTION_MODE` may still
+exist as legacy topology metadata for old worker images, but new deployments should not rely on it
+for local runtime behavior.
 
-| Runtime identity | Selected by | Working root | Request `agentType` | Sidecar path contract |
+## Contract Matrix
+
+| Runtime context | Selected by | Working root | Backend `agentType` | Sidecar path contract |
 | --- | --- | --- | --- | --- |
-| `astro-orchestrator` | no fixed agent/project env | writable orchestrator runtime cwd | must be `astro-orchestrator` | shared `/session-state`, `/home/jovyan` data roots |
-| `project-executor` | `ASTRO_FIXED_AGENT_TYPE=project-executor` plus `ASTRO_FIXED_PROJECT_CWD` | prepared project cwd | may be omitted only because fixed env supplies it; if present it must be `project-executor` | shared `/session-state`, `/home/jovyan` data roots |
+| No project attached | no `ASTRO_FIXED_PROJECT_CWD` | writable Astro runtime cwd | usually `astro-orchestrator`, but backend-owned | shared `/session-state`, `/home/jovyan` data roots |
+| Project attached | `ASTRO_FIXED_PROJECT_CWD=<prepared project path>` | prepared project cwd | `astro-orchestrator`, `project-executor`, or adapter identity | shared `/session-state`, `/home/jovyan` data roots |
 
-`project-executor` is not a specialist prompt, not a separate prompt file, and not a `project_worker`
-agent type. It is the fixed project deployment identity of the Astro stream runtime.
+The important distinction is the fixed cwd. Backend identity remains useful for Main Sequence
+session ownership, analytics, routing, and product policy.
 
-## Identity rules
+## Identity Rules
 
 - Backend/session identity is `Agent.agent_type`.
-- Runtime profile names must use the same public values: `astro-orchestrator` and
-  `project-executor`.
-- Fixed runtimes validate request identity before Pi launch.
-- A fixed `project-executor` runtime rejects any explicit request/session `agentType` other than
-  `project-executor`.
-- `ASTRO_EXECUTION_MODE=remote_project_worker` may still appear in deployment env, but it must not
-  be exposed as runtime identity, prompt identity, or backend `agent_type`.
-- For backward compatibility, `ASTRO_EXECUTION_MODE=remote_project_worker` may remain as topology
-  metadata, but the backend/runtime identity still comes from `ASTRO_FIXED_AGENT_TYPE` and must be
-  `project-executor` for fixed executor deployments.
+- Current Main Sequence identity values are `astro-orchestrator` and `project-executor`.
+- `ASTRO_FIXED_AGENT_TYPE`, when set, pins backend/session identity.
+- `ASTRO_FIXED_PROJECT_CWD`, when set, attaches the runtime to a prepared project workspace.
+- Fixed backend identity validation still rejects mismatched request/session `agentType` before Pi
+  launch.
+- `ASTRO_EXECUTION_MODE=remote_project_worker` may remain in old deployments, but it must not be
+  used as the local runtime selector.
 
-## `astro-orchestrator`
+## No-Project Runtime
 
-This is the normal user-facing stream runtime.
+This is the normal user-facing stream shape when no prepared project cwd is attached.
 
 Selection:
 
-- `ASTRO_FIXED_AGENT_TYPE` is unset.
 - `ASTRO_FIXED_PROJECT_CWD` is unset.
-- requests must provide `agentType="astro-orchestrator"` unless a fixed runtime supplies it.
+- Requests provide or hydrate a backend `agentType`, usually `astro-orchestrator`.
 
 Runtime behavior:
 
-- runs platform, project-creation, workspace-analysis, SDK, and A2A orchestration workflows
-- uses a writable orchestrator cwd prepared at startup, normally
-  `/home/jovyan/.astro-container-data/astro-orchestrator-runtime`
-- does not treat the process cwd as a prepared project checkout
-- can allocate or communicate with project executors through backend-owned sessions and A2A
+- runs from the writable Astro runtime cwd prepared at startup
+- uses Astro Core and configured Pi package resources
+- can create/select projects or communicate with project-attached sessions through backend-owned
+  sessions and A2A
 
 Container shape:
 
@@ -55,26 +53,24 @@ Container shape:
 - paired with the `astro-session-checkpoint-sidecar` target from the same image
 - main container and sidecar must share `/session-state`
 
-## `project-executor`
+## Project-Attached Runtime
 
-This is the fixed project runtime.
+This is the same Astro stream runtime started inside a prepared project workspace.
 
 Selection:
 
-- `ASTRO_FIXED_AGENT_TYPE=project-executor`
 - `ASTRO_FIXED_PROJECT_CWD=<prepared project path>`
-- `ASTRO_EXECUTION_MODE=remote_project_worker` may also be set for existing worker topology
-- requests must omit `agentType` or send `agentType="project-executor"`
-- mismatched request/session `agentType` is rejected before launch
+- `ASTRO_PROJECT_IMAGE_REF=<image ref>` may record the prepared image source
+- `ASTRO_FIXED_AGENT_TYPE` may pin backend identity, commonly `project-executor` for existing Main
+  Sequence worker sessions
 
 Runtime behavior:
 
 - runs inside the prepared project cwd
 - treats the prepared project cwd as canonical project state
 - does not select, create, or set up another project unless explicitly asked
-- uses backend/session model authority for the target executor session
-- refreshes backend session authority before launch so parent/delegating state cannot accidentally
-  override target executor policy
+- uses backend/session model authority for the active session
+- may use project-local `.agents/skills` when the project provides them
 
 Container shape:
 
@@ -85,10 +81,10 @@ Container shape:
 - local mounted-project harness uses
   [`Dockerfile.remote-worker.local`](../../Dockerfile.remote-worker.local) and `/workspace/project`
 
-## Shared filesystem and sidecar contract
+## Shared Filesystem And Sidecar Contract
 
-Both deployment identities should use the same Astro runtime filesystem contract wherever the base
-image permits it:
+Both runtime contexts should use the same Astro filesystem contract wherever the base image permits
+it:
 
 ```text
 HOME=/home/jovyan
@@ -107,25 +103,16 @@ The checkpoint sidecar for a runtime must:
 - use the same home/config/Pi path contract as its matching stream container
 - never point at `/home/appuser` when the stream container uses `/home/jovyan`
 - flush checkpoint bundles keyed by backend `AgentSession.uid`
-- not infer runtime identity from local paths; use backend session metadata and the request/session
-  `agentType`
+- not infer backend identity from local paths
 
 If the stream container runs with `/home/jovyan` but the sidecar tries to initialize Main Sequence
 state under `/home/appuser`, provider credential hydration and checkpoint flushing can fail before
 history reaches the backend. That is a deployment bug, not a session-history bug.
 
-The only intentional filesystem difference between the two deployment identities is the working
-root used for Pi execution:
+## Prompt Contract
 
-- `astro-orchestrator`: writable orchestrator runtime cwd
-- `project-executor`: fixed prepared project cwd
+Both runtime contexts use the shared package/system prompt contract.
 
-## Prompt contract
-
-Both deployment identities use the shared `.pi/APPEND_SYSTEM.md` prompt contract.
-
-`project-executor` behavior is selected by the fixed runtime env and project cwd, not by a separate
-bundled prompt file.
-
-Project-local or session-local skills may extend behavior, but they do not change backend
-`agentType`, runtime identity, sidecar paths, A2A envelope rules, or filesystem isolation.
+Project-attached behavior is selected by runtime context, not by a separate bundled executor prompt
+file. Project-local or session-local skills may extend behavior, but they do not change backend
+`agentType`, sidecar paths, A2A envelope rules, or filesystem isolation.

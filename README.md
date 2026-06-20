@@ -2,12 +2,13 @@
 
 # Astro
 
-Astro is a Pi package that exposes Main Sequence assistant runtimes over HTTP.
+Astro is a Pi deployment runtime that exposes Main Sequence assistant sessions over HTTP.
 
-Astro has two deployment identities: `astro-orchestrator` and `project-executor`. The
-orchestrator handles the user-facing control-plane flow; the executor is a fixed project runtime
-selected by env/runtime profile, not by a separate prompt file. Both identities use the shared
-`.pi/APPEND_SYSTEM.md` contract.
+Astro now uses one internal Pi runtime shape. Backend identities such as `astro-orchestrator` and
+`project-executor` remain valid Main Sequence session metadata, but local behavior is selected by
+runtime context: primarily whether `ASTRO_FIXED_PROJECT_CWD` attaches the runtime to a prepared
+project workspace. Both no-project and project-attached deployments use the shared package/system
+prompt contract.
 
 ## Quick start
 
@@ -98,8 +99,8 @@ rebuildable runtime state lives under `/home/jovyan/.astro-container-data`.
 That keeps Linux virtualenvs isolated from macOS host paths and makes Docker behave closer to the
 pod-local `emptyDir` session model.
 
-To run the mounted-project local executor harness, set a host project path and launch the executor
-service from the normal compose file:
+To run the mounted-project local project-attached harness, set a host project path and launch the
+disabled compose harness after enabling it locally:
 
 ```bash
 export A2A_DEV_PROJECT=/Users/jose/mainsequence-dev/main-sequence-workbench/projects/hope-30-81
@@ -107,15 +108,15 @@ export ASTRO_EXECUTOR_PROJECT_ID=hope-30-81
 docker compose up astro-project-executor
 ```
 
-That local executor harness:
+That local project-attached harness:
 
-- starts Astro directly in `project-executor` mode with `ASTRO_FIXED_AGENT_TYPE=project-executor`
+- starts the same Astro stream runtime with `ASTRO_FIXED_PROJECT_CWD=/workspace/project`
 - mounts `A2A_DEV_PROJECT` into `/workspace/project`
-- rejects requests whose `agentType` does not match `project-executor`
+- keeps backend `agentType` as session metadata, not local runtime architecture
 - lives in the normal `docker-compose.yml` stack
-- keeps the orchestrator and executor as separate deployments of the same Astro stream runtime
+- uses the same stream runtime as the no-project deployment
 
-To run only the local executor runtime instead of the full orchestrator:
+To run only the local project-attached runtime:
 
 ```bash
 export A2A_DEV_PROJECT=/absolute/path/to/checked-out-project

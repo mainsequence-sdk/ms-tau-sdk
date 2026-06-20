@@ -1,6 +1,6 @@
 # Astro docs
 
-Astro is a Pi package that acts as a parent orchestrator for Main Sequence project assistants.
+Astro is a Pi deployment runtime for Main Sequence assistant sessions.
 
 This documentation set is organized for readers who may not know Pi yet. It explains Astro from the outside in:
 
@@ -9,10 +9,10 @@ This documentation set is organized for readers who may not know Pi yet. It expl
 3. how the prompt and runtime-agent layers drive project behavior
 4. where package-provided resources enter the runtime
 
-## Run the local executor runtime
+## Run the local project-attached runtime
 
-If you want to inspect the dedicated project runtime instead of the full Astro orchestrator, use
-the local executor container harness:
+If you want to inspect Astro running against a prepared project cwd, use the local
+project-attached container harness:
 
 ```bash
 export A2A_DEV_PROJECT=/absolute/path/to/checked-out-project
@@ -32,8 +32,8 @@ flowchart LR
     P --> PKG["Configured Pi packages"]
     PKG --> MSPI["tmp_ms_pi simulation"]
 
-    P --> IDENTITY["Deployment identity"]
-    IDENTITY --> TARGET["Project runtime when project-executor"]
+    P --> CTX["Runtime context"]
+    CTX --> TARGET["Optional prepared project cwd"]
 
     P --> DOCKER["Dockerfile runtime for Python/Node tasks"]
 ```
@@ -69,9 +69,9 @@ flowchart LR
 - [`components/runtime-entrypoints-and-tools.md`](./components/runtime-entrypoints-and-tools.md)
   - entrypoints, runtime services, tools, and Docker-backed Python path
 - [`components/deployment-identities.md`](./components/deployment-identities.md)
-  - `astro-orchestrator`, `project-executor`, fixed runtime env, and sidecar path contract
+  - backend identity, project attachment, fixed runtime env, and sidecar path contract
 - [`components/remote-worker-image.md`](./components/remote-worker-image.md)
-  - `Dockerfile.remote-worker`, image-backed executor pods, and required runtime env
+  - `Dockerfile.remote-worker`, image-backed project-attached pods, and required runtime env
 
 ## Interface
 

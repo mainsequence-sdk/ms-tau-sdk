@@ -56,26 +56,27 @@
 - `ASTRO_MAINSEQUENCE_CONFIG_DIR` (container-local Main Sequence CLI config; in containers use `/home/jovyan/.astro-container-data/.config/mainsequence`)
 - `PI_CODING_AGENT_DIR` (container-local Pi runtime state directory; in containers use `/home/jovyan/.astro-container-data/.pi/agent`)
 - `ASTRO_CONTAINER_DATA_DIR` (container-local rebuildable runtime root; in containers use `/home/jovyan/.astro-container-data`)
-- `ASTRO_ORCHESTRATOR_CWD` (optional writable cwd override for `astro-orchestrator`; defaults to `<ASTRO_CONTAINER_DATA_DIR>/astro-orchestrator-runtime`)
-- `ASTRO_ORCHESTRATOR_PROJECT_PI_DIR` (optional writable project `.pi` override for `astro-orchestrator`; defaults to `<ASTRO_CONTAINER_DATA_DIR>/.pi/project`)
+- `ASTRO_RUNTIME_CWD` (optional writable cwd override for the default no-project runtime)
+- `ASTRO_ORCHESTRATOR_CWD` (legacy alias for `ASTRO_RUNTIME_CWD`; defaults to `<ASTRO_CONTAINER_DATA_DIR>/astro-orchestrator-runtime` when the legacy path already exists)
+- `ASTRO_RUNTIME_PROJECT_PI_DIR` (optional writable runtime `.pi` override)
+- `ASTRO_ORCHESTRATOR_PROJECT_PI_DIR` (legacy alias for `ASTRO_RUNTIME_PROJECT_PI_DIR`)
 - `BUILD_AGENTS_IN_BACKEND` (enable backend-backed session start, hydration, and checkpoint coordination)
 - `OLLAMA_HOST` (optional Ollama host used by `GET /api/chat/get_available_models`, for example `http://localhost:11434`)
 
-## `project-executor` fixed runtime
+## Project-attached fixed runtime
 
-These env vars are used by image-backed `project-executor` pods:
+These env vars are used by image-backed project-attached pods:
 
 - `ASTRO_EXECUTION_MODE`
-  - set this to `remote_project_worker` for existing image-backed executor pods
+  - existing image-backed worker pods may still set `remote_project_worker`
   - this is topology metadata, not a second runtime identity
 - `ASTRO_FIXED_AGENT_TYPE`
-  - required value for new deployments: `project-executor`
-  - this is the fixed runtime identity and must match request/session `agentType`
-  - existing deployments may keep `ASTRO_EXECUTION_MODE=remote_project_worker`, but this env var is
-    still the source of the fixed backend/runtime identity
+  - optional backend/session identity pin, commonly `project-executor` for existing Main Sequence
+    worker sessions
+  - if set, it must match request/session `agentType`
 - `ASTRO_FIXED_PROJECT_CWD`
   - fixed project path inside the image, for example `/usr/local/share/user-skel/app`
-  - this tells Astro where the mounted or baked project lives for executor-mode work
+  - this tells Astro where the mounted or baked project lives for project-attached work
 - `ASTRO_PROJECT_IMAGE_REF`
   - optional image reference or digest persisted into project-session metadata
 

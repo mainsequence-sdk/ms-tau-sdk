@@ -39,6 +39,9 @@ export type BackendAgentSessionAgentCardFetchResult = {
 };
 
 const DEFAULT_BACKEND = "https://api.main-sequence.app";
+const MAINSEQUENCE_BACKEND_AGENT_UNIQUE_ID_OVERRIDES = new Map<string, string>([
+	["project-executor", "project-executor"],
+]);
 
 export type BackendAuthHeaders = Record<string, string>;
 
@@ -103,9 +106,8 @@ export function buildAgentUniqueId(options: {
 	userId: string;
 	projectId?: string | number | null;
 }): string {
-	if (options.agentType === "project-executor") {
-		return "project-executor";
-	}
+	const backendIdentityUniqueId = MAINSEQUENCE_BACKEND_AGENT_UNIQUE_ID_OVERRIDES.get(options.agentType);
+	if (backendIdentityUniqueId) return backendIdentityUniqueId;
 	const projectId = normalizeIdPart(options.projectId);
 	const safeAgentType = sanitizeId(options.agentType);
 	return projectId ? `${safeAgentType}_${options.userId}_${projectId}` : `${safeAgentType}_${options.userId}`;
