@@ -5,8 +5,8 @@
 Accepted. Updated by ADR 40 package-boundary work.
 
 The capability remains accepted, but the implementation is no longer deterministic two-skill
-startup materialization. Workspace-analysis is now delivered through the Main Sequence Pi package
-simulation and SDK-owned skill discovery.
+startup materialization. Workspace-analysis is now delivered through the Main Sequence adapter Pi
+overlay and SDK-owned skill discovery.
 
 ## Context
 
@@ -60,7 +60,7 @@ That means:
 
 1. The orchestrator prompt contract in `.pi/APPEND_SYSTEM.md` will explicitly include workspace
    analysis as an allowed capability.
-2. The Main Sequence Pi package simulation will seed SDK skills when Pi loads the package extension,
+2. The Main Sequence Pi adapter overlay will seed SDK skills when Pi loads the package extension,
    resolve the installed SDK skill root with `mainsequence skills path`, copy that full tree into
    `<cwd>/.agents/skills/mainsequence`, and return `<cwd>/.agents/skills` during
    `resources_discover`.

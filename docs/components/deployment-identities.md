@@ -49,8 +49,9 @@ Runtime behavior:
 
 Container shape:
 
-- built from the repo root [`Dockerfile`](../../Dockerfile) target `astro-pi-stream`
-- paired with the `astro-session-checkpoint-sidecar` target from the same image
+- built from the repo root [`Dockerfile`](../../Dockerfile) target
+  `astro-mainsequence-pi-stream`
+- paired with the `astro-mainsequence-session-checkpoint-sidecar` target from the same image
 - main container and sidecar must share `/session-state`
 
 ## Project-Attached Runtime

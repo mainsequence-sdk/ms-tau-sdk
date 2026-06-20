@@ -7,11 +7,11 @@ In this repo, skills are not the main runtime mechanism. They are optional deepe
 ## Main Sequence SDK Skills
 
 Main Sequence product skills are no longer delivered from Astro root `pi/`, and they are not copied
-into `tmp_ms_pi/pi/skills`.
+into `adapters/mainsequence/pi-overlay/pi/skills`.
 
-The local package simulation owns the discovery extension:
+The local adapter overlay owns the discovery extension:
 
-- `tmp_ms_pi/pi/extensions/hooks/scaffold-skill-discovery/index.ts`
+- `adapters/mainsequence/pi-overlay/pi/extensions/hooks/scaffold-skill-discovery/index.ts`
 
 That extension delegates skill seeding to the installed Main Sequence SDK/CLI when Pi loads it:
 

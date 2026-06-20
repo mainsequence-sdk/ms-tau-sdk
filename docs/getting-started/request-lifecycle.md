@@ -97,7 +97,7 @@ the agent context.
 
 Main Sequence child-process policy is package-provided when the Main Sequence package is configured:
 
-- `tmp_ms_pi/pi/extensions/hooks/project-policy/index.ts` appends child-only policy when the process
+- `adapters/mainsequence/pi-overlay/pi/extensions/hooks/project-policy/index.ts` appends child-only policy when the process
   is a child runtime process
 
 ## 3. The composed runtime contract decides what to do

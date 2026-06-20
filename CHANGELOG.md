@@ -5,8 +5,8 @@
 ### General Pi Runtime Package Boundary
 
 - Added ADRs and implementation planning for separating Astro Core from Main Sequence-specific Pi resources and backend adapter concerns.
-- Introduced the local `tmp_ms_pi` simulation for the future external `@mainsequence/pi` package, including Main Sequence prompts, tools, project policy, and SDK-owned skill discovery.
-- Moved SDK skill delivery in the package simulation to a `resources_discover` Pi extension that delegates `.agents/skills` seeding to the installed Main Sequence SDK/CLI instead of duplicating `agent_scaffold` copy logic in Astro.
+- Introduced the Main Sequence adapter-owned Pi resource overlay under `adapters/mainsequence/pi-overlay`, including Main Sequence prompts, tools, project policy, and SDK-owned skill discovery.
+- Moved SDK skill delivery in the adapter overlay to a `resources_discover` Pi extension that delegates `.agents/skills` seeding to the installed Main Sequence SDK/CLI instead of duplicating `agent_scaffold` copy logic in Astro.
 - Removed the legacy orchestrator bootstrap path that copied only `a2a_communication` and `command_center/workspace_analysis`; the package hook now resolves the installed SDK skill root and exposes the full SDK skill tree through `.agents/skills/mainsequence`.
 - Changed the package-owned Main Sequence skill discovery extension to seed `.agents/skills/mainsequence` when Pi loads the extension, so the runtime cwd has `.agents` before model-visible skill checks instead of waiting for a later discovery event.
 - Removed Main Sequence SDK skill slugs from Astro Core A2A instructions so package-provided A2A guidance stays in the active Pi package/runtime context.

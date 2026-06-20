@@ -171,7 +171,7 @@ substitutions:
   _AR_REPO: "tsorm-images"
   _IMAGE_NAME: "astro/astro-pi-stream"
   _BUNDLE_IMAGE_NAME: "astro/project-executor-bundle"
-  _DOCKER_TARGET: "astro-pi-stream"
+  _DOCKER_TARGET: "astro-mainsequence-pi-stream"
   _IMAGE_PREFIX: "${_AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE_NAME}"
   _BUNDLE_IMAGE_PREFIX: "${_AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_BUNDLE_IMAGE_NAME}"
   _LATEST_IMAGE: "${_IMAGE_PREFIX}:latest"

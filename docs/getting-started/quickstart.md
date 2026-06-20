@@ -55,7 +55,7 @@ MAINSEQUENCE_PIP_SPEC=mainsequence==0.1.2
 HTTP stream image:
 
 ```bash
-docker build --target astro-pi-stream -t astro:pi-stream .
+docker build --target astro-mainsequence-pi-stream -t astro:pi-stream .
 ```
 
 Run normal Pi:
@@ -183,7 +183,9 @@ pi
 
 ## Container runtime
 
-When running Astro in containers, use the repo-root `Dockerfile` targets `astro-pi` and `astro-pi-stream`.
+When running Astro in containers, use the repo-root `Dockerfile` targets
+`astro-mainsequence-pi` and `astro-mainsequence-pi-stream`. The older `astro-pi` and
+`astro-pi-stream` targets remain compatibility aliases.
 
 Run Python commands inside this same app container (do not use a separate Python-only container).
 The container image installs `mainsequence` from `MAINSEQUENCE_PIP_SPEC` in the final Docker layer. `.env` is not copied into the image, so pass env vars at runtime with `--env-file` or `-e`.

@@ -1,12 +1,20 @@
-# ADR 40: General Pi Deployment Runtime Package Boundary
+# ADR 40: General Pi Deployment Runtime Adapter Boundary
 
 Status: Proposed
 Date: 2026-06-19
-Implementation Status: Partially implemented. A temporary local simulation exists under
-`tmp_ms_pi`, Astro can consume additional Pi packages through `ASTRO_PI_PACKAGE_PATHS`, and root
-`pi/` no longer carries the Main Sequence product skills/prompts/tools now supplied by the
-simulation. No production external package has been created and Astro has not been cut over to a
-separate backend adapter split.
+Implementation Status: Partially implemented. ADR 39 is implemented, the Main Sequence
+adapter-owned Pi resource overlay now lives under `adapters/mainsequence/pi-overlay`, Astro can consume
+additional Pi package resource roots through `ASTRO_PI_PACKAGE_PATHS`, root `pi/` is treated as
+Astro Core Pi resources, and Main Sequence SDK skill discovery is delegated through the Main
+Sequence overlay. The generic backend adapter contract exists, `ASTRO_BACKEND=mainsequence` is the
+only supported implementation, and auth, identity, sessions, checkpoints, provider credentials,
+session capabilities, and model catalog access now enter through that adapter. Main Sequence
+CLI/config/shim bootstrap now enters through `adapter.bootstrap`. The Dockerfile now has a
+backend-neutral `astro-core` build stage and explicit `astro-mainsequence-*` deployment targets;
+current Compose and GCP deployment still intentionally select the Main Sequence target. The
+previous standalone external package cutover direction is superseded. Project attachment, A2A
+backend policy, a runnable null/custom backend, backend-neutral startup, and adapter-driven
+checkpoint sidecar behavior are still not complete.
 
 This ADR depends on
 [ADR 39: Unified Pi Runtime Context](./adr-39-unified-pi-runtime-context.md). ADR 39 defines the
@@ -22,20 +30,20 @@ The current codebase still ships as one `astro` package that contains:
 - Main Sequence backend/session/checkpoint/credential code
 - Main Sequence runtime/bootstrap logic
 
-Main Sequence Pi product resources are currently represented by the local `tmp_ms_pi` simulation,
-not by a production external package.
+Main Sequence Pi product resources are currently represented by the adapter-owned
+`adapters/mainsequence/pi-overlay` overlay. That overlay is adapter/deployment-specific. It is not a
+standalone production package boundary.
 
-The proposed direction is to split those responsibilities along Pi-native package boundaries and
-Astro backend-adapter boundaries.
+The proposed direction is to split those responsibilities along Astro Core and backend-adapter
+boundaries. SDK-owned skills and prompts stay source-of-truth in the Main Sequence SDK/CLI and are
+discovered by the Main Sequence adapter resource overlay.
 
 ## Implementation Task Documents
 
-This ADR is an architecture proposal. Concrete implementation work must be tracked in separate task
-documents.
-
-- [Integrate External `@mainsequence/pi` Package](./mainsequence-pi-external-package-integration-task.md)
-  defines how Astro consumes a Main Sequence-owned Pi package without becoming the source of truth
-  for that package.
+This ADR is an architecture proposal. Concrete implementation work may be tracked in separate task
+documents, but the standalone external package cutover task is no longer the active target for this
+ADR. The active target is the Main Sequence adapter-owned Pi resource overlay while SDK skills and
+prompts remain owned by the Main Sequence SDK/CLI.
 
 ## Current Decisions This ADR Must Preserve
 
@@ -125,10 +133,9 @@ Current `.pi/settings.json` loads this repository as a package:
 }
 ```
 
-No production Main Sequence Pi package exists today. The proposed package boundary in this ADR is a
-future extraction target, not current implementation. A local `tmp_ms_pi` directory may be used only
-to simulate the package contract before the real package is moved to the SDK repo or a sibling Main
-Sequence repo.
+No standalone production Main Sequence Pi package is required by this ADR. Main Sequence
+adapter-owned Pi resources live under `adapters/mainsequence/pi-overlay`, and that path is the adapter
+overlay loaded by Main Sequence Astro images.
 
 Current Astro root Pi resources in this repository are:
 
@@ -144,45 +151,48 @@ pi/extensions/tools/runtime-info/index.ts
 pi/types/pi-stubs.d.ts
 ```
 
-The local Main Sequence Pi package simulation currently carries the Main Sequence product resources:
+The Main Sequence adapter Pi resource overlay currently carries the Main Sequence product resources:
 
 ```text
-tmp_ms_pi/pi/extensions/hooks/project-policy/index.ts
-tmp_ms_pi/pi/extensions/hooks/scaffold-skill-discovery/index.ts
-tmp_ms_pi/pi/extensions/tools/mainsequence-cli-auth/index.ts
-tmp_ms_pi/pi/extensions/tools/mainsequence-runtime-info/index.ts
-tmp_ms_pi/pi/prompts/review-main-sequence-project.md
-tmp_ms_pi/pi/prompts/verify-mainsequence-tutorial.md
-tmp_ms_pi/pi/system/APPEND_SYSTEM.md
+adapters/mainsequence/pi-overlay/pi/extensions/hooks/project-policy/index.ts
+adapters/mainsequence/pi-overlay/pi/extensions/hooks/scaffold-skill-discovery/index.ts
+adapters/mainsequence/pi-overlay/pi/extensions/tools/mainsequence-cli-auth/index.ts
+adapters/mainsequence/pi-overlay/pi/extensions/tools/mainsequence-runtime-info/index.ts
+adapters/mainsequence/pi-overlay/pi/prompts/review-main-sequence-project.md
+adapters/mainsequence/pi-overlay/pi/prompts/verify-mainsequence-tutorial.md
+adapters/mainsequence/pi-overlay/pi/system/APPEND_SYSTEM.md
 ```
 
-Current server/runtime code directly imports Main Sequence/backend functionality:
+Current server/runtime code no longer imports the first adapter slices directly from
+Main Sequence/backend modules. The stream server resolves one backend adapter and requires the
+capabilities it needs:
 
 ```text
 interface/stream/server.ts
-  imports adapters/mainsequence/runtime-auth.ts
-  imports interface/stream/mainsequence-agent-registration.ts
-  imports session-checkpoint-client.ts
-  imports model-provider-credentials-client.ts
-  imports session-capabilities.ts
+  -> resolveBackendAdapter(process.env)
+  -> require auth, identity, sessions, checkpoints, providerCredentials, capabilities, modelCatalog
+
+adapters/mainsequence/adapter.ts
+  wraps Main Sequence auth/session/checkpoint/provider credential/capability/model modules
 ```
 
-Current bootstrap is also mixed:
+Current bootstrap is partially split. Astro Core prepares the generic runtime filesystem, then calls
+`backendAdapter.bootstrap` for backend-specific setup:
 
 ```text
 bin/astro-stream.ts
   -> bootstrapPiAgentDir()
      -> materialize runtime .pi settings and cwd
      -> compose configured Pi package settings and system prompts
-     -> create Main Sequence CLI config link
-     -> create managed mainsequence shim
-     -> resolve Main Sequence workspace-analysis skill from configured package or SDK fallback
-     -> resolve Main Sequence A2A communication skill from configured package or SDK fallback
+  -> backendAdapter.bootstrap?.prepareRuntime()
+     -> Main Sequence adapter creates CLI config link
+     -> Main Sequence adapter creates managed mainsequence shim
+     -> Main Sequence adapter wires CLI auth repair command
   -> import interface/stream/server.ts
 ```
 
-So the proposed architecture is not a rename. It requires moving real responsibilities out of the
-current combined package.
+So the proposed architecture is not a rename. It requires moving real responsibilities out of Astro
+Core and into the Main Sequence adapter/deployment composition.
 
 ## Current Runtime Identity Shape
 
@@ -219,17 +229,17 @@ Astro Core runtime
 Main Sequence deployment composition
   configures one Astro runtime as the Main Sequence orchestrator
   configures another Astro runtime as the Main Sequence project executor
-  supplies the Main Sequence Pi package
+  supplies the Main Sequence adapter-owned Pi resource overlay
   supplies the Main Sequence backend adapter
 ```
 
 In other words, Astro Core may support generic runtime shapes such as "default session runtime" and
 "fixed workspace cwd runtime", but `astro-orchestrator`, `project-executor`, and their product
-policies belong to the Main Sequence package/adapter/deployment composition.
+policies belong to the Main Sequence adapter/deployment composition.
 
 ### Project-Executor Boundary
 
-`project-executor` must not be treated as initial `@mainsequence/pi` package content.
+`project-executor` must not be treated as standalone portable Pi package content.
 
 In the current implementation, `project-executor` is a Main Sequence deployment composition made of:
 
@@ -245,12 +255,11 @@ In the current implementation, `project-executor` is a Main Sequence deployment 
   state, and running a warm process
 
 Those pieces are not the same kind of artifact as portable Pi skills/prompts/extensions. Therefore
-the first external package simulation must stay orchestrator-focused and must not bundle a
-standalone project-executor prompt, project setup workflow, checkpoint policy, fixed-cwd policy, or
-backend session policy.
+the Main Sequence Pi resource overlay must not bundle a standalone project-executor prompt, project
+setup workflow, checkpoint policy, fixed-cwd policy, or backend session policy.
 
-The only project-executor behavior that may eventually become portable Pi package content is a
-small project-attached policy fragment or skill, and only after an inventory proves it is not already
+The only project-executor behavior that may eventually become Pi resource overlay content is a small
+project-attached policy fragment or skill, and only after an inventory proves it is not already
 provided by project-local resources, backend materialization, or the prepared project image.
 
 The target ownership is:
@@ -267,9 +276,9 @@ Prepared project image/filesystem
   project source, dependencies, project-local instructions, task/status files,
   and project-local Pi resources
 
-External Main Sequence Pi package
-  orchestrator-facing portable Main Sequence skills/prompts/extensions first;
-  project-executor package resources only after explicit inventory and acceptance
+Main Sequence adapter Pi resource overlay
+  Main Sequence runtime-facing prompts/extensions/tools that depend on this deployment composition;
+  project-executor overlay resources only after explicit inventory and acceptance
 ```
 
 ## Pi Terminology Used Here
@@ -283,8 +292,10 @@ This ADR follows Pi terminology and only names resource types this repository ac
 - A Pi package is the installable bundle that declares those resources in `package.json` under the
   `pi` key.
 
-Therefore the portable Main Sequence artifact should be called a Pi package, not a Pi extension.
-Only TypeScript modules inside that package are Pi extensions.
+Therefore any Main Sequence resource overlay loaded through Pi package mechanics must still use Pi
+terminology correctly: TypeScript modules are extensions, Markdown prompt files are prompts, and SDK
+`SKILL.md` resources are skills. This ADR does not require those resources to be published as a
+separate external package.
 
 ## Problem
 
@@ -319,26 +330,21 @@ Astro Core
   local runtime state, local session files, stateless LLM passthrough, generic
   fixed-cwd/project-attached runtime mechanics, and adapter hooks.
 
-External Main Sequence Pi Package
-  Portable Main Sequence Pi behavior maintained outside Astro, preferably in
-  the Main Sequence SDK repo or a sibling Main Sequence-owned Pi integration repo.
-  Usable by plain Pi without Astro. Astro consumes this package; it does not own it.
-
 Main Sequence Astro Adapter
   Optional Main Sequence backend/runtime integration for Astro.
   Owns backend sessions, checkpoints, provider credentials, capabilities, runtime
   credentials, Main Sequence runtime bootstrap, Main Sequence A2A/backend mapping,
-  and Main Sequence runtime identity policy.
+  Main Sequence runtime identity policy, and the Main Sequence Pi resource overlay loaded by Astro.
 ```
 
-The package names are placeholders for the architecture boundary:
+The adapter package name is a placeholder for the architecture boundary:
 
 ```text
-@mainsequence/pi
 @mainsequence/astro-adapter
 ```
 
-This ADR does not claim those packages exist today. Today they are still folded into `astro`.
+This ADR does not claim that package exists today. Today the adapter code and resource overlay are
+still folded into `astro`.
 
 ## Ownership Boundaries
 
@@ -383,7 +389,7 @@ It should assemble:
 
 - Astro Core runtime
 - Main Sequence Astro adapter
-- external Main Sequence Pi package
+- Main Sequence adapter Pi resource overlay
 - deployment-specific environment and image wiring
 
 This composition may deploy two Astro Core runtimes, but Astro Core should see them as generic
@@ -741,94 +747,97 @@ The adapter should be the only layer that knows endpoint paths such as:
 /orm/api/agents/v1/model_provider_credentials/hydrate/
 ```
 
-### External Main Sequence Pi Package
+### Main Sequence Adapter Pi Resource Overlay
 
-The Main Sequence Pi package should be external to Astro. It should be a Pi package, not an Astro
-runtime package and not a backend adapter. It should contain only portable Pi resources that can run
-when Pi is launched without Astro:
+The current `adapters/mainsequence/pi-overlay` contents are intentionally not a standalone package
+boundary. They are a Main Sequence Astro runtime overlay:
 
-- SDK-owned Pi skills
-- SDK-owned Pi prompts
-- portable TypeScript extensions only when Main Sequence has actual Pi-harness behavior that does
-  not require Astro Core imports, Astro session files, or backend authority
-- supporting reference files used by those SDK-owned skills/prompts
-- package metadata using Pi's existing `package.json` `pi` field
+- `scaffold-skill-discovery` calls the installed `mainsequence` SDK/CLI to discover SDK-owned
+  skills.
+- `mainsequence-cli-auth` depends on Astro-managed Main Sequence runtime auth repair.
+- `mainsequence-runtime-info` reports runtime/deployment information.
+- `project-policy` is tied to this deployed Main Sequence Astro agent behavior.
+- `adapters/mainsequence/pi-overlay/pi/system/APPEND_SYSTEM.md` describes the Main Sequence Astro agent contract, not a
+  generic plain-Pi package contract.
 
-Astro must not be the source of truth for this package. The source of truth should be one of:
-
-- the Main Sequence SDK repository, for example under `agent_scaffold/skills/**` and
-  `agent_scaffold/prompts/**`
-- a sibling Main Sequence-owned repository dedicated to Pi integration
-
-The external package may be published as `@mainsequence/pi`, but its content must be maintained
-outside the Astro repository.
-
-The package must not contain:
-
-- Astro HTTP/SSE/REST server code
-- checkpoint clients, lease renewal, restore, flush, or cancel code
-- provider credential hydration/flush/revoke code
-- backend session hydration or `AgentSession.uid` lookup code
-- Main Sequence runtime credential exchange implementation
-- runtime-owned CLI auth repair that imports Astro host runtime code
-- deployment/runtime-profile wiring for Main Sequence identities such as `astro-orchestrator` and
-  `project-executor`
-- A2A request routing, task mapping, or backend session serialization rules
-- Kubernetes/Docker deployment wiring
-
-The package can still document and use the normal Main Sequence CLI and SDK. It may also expose
-portable Pi tools such as a CLI-auth repair tool, provided the host supplies the repair mechanism
-and the package does not import Astro host runtime code. The boundary is that normal CLI/SDK usage is
-portable; Astro-managed auth/session/checkpoint behavior is not.
-
-#### SDK-Owned Package Contents
-
-The independent Pi package should delegate project/component knowledge to the SDK-owned project
-builder skill rather than copying component maps into Astro:
+Therefore the target is not a standalone external package cutover. The target is:
 
 ```text
-https://github.com/mainsequence-sdk/mainsequence-sdk/tree/main/agent_scaffold/skills/project_builder
+Astro Core
+  root .pi/ and pi/ resources that are backend-neutral
+
+Main Sequence Astro adapter
+  Main Sequence backend/runtime adapter code
+  Main Sequence-specific Pi resource overlay
+  SDK skill/prompt discovery through the installed Main Sequence SDK/CLI
+
+Main Sequence SDK/CLI
+  source of truth for SDK-owned skills and prompts
 ```
 
-Main Sequence project creation, SDK explanation, workspace/product guidance, and any other portable
-Pi skills should live with that SDK-owned package source. Astro may consume them; Astro should not
-copy or fork them as package contents.
+The adapter-owned overlay may still be loaded through Pi package mechanics because that is how Pi
+discovers extensions and prompts. That does not make it a separate product package. It is part of
+the Main Sequence Astro adapter/deployment composition.
+
+#### SDK-Owned Resources
+
+SDK-owned skills and prompts must stay source-of-truth in the Main Sequence SDK/CLI, for example:
+
+```text
+agent_scaffold/skills/**
+agent_scaffold/prompts/**
+```
+
+Main Sequence project creation, SDK explanation, workspace/product guidance, and any other SDK-owned
+skill should be discovered or copied from the installed SDK/CLI. Astro must not copy component maps
+or fork SDK skill bodies into this repository.
+
+The adapter overlay can include a discovery extension that delegates to the SDK/CLI. That extension
+is adapter-owned because it depends on the Main Sequence runtime composition, but the skill content
+it exposes is SDK-owned.
 
 #### Current Astro Resources
 
-Root `pi/` and `.pi/` are now treated as Astro Core Pi resources. Main Sequence-facing Pi resources
-are represented by the local package simulation, not by root `pi/`.
-
-Resources that have moved into the local package simulation and should later be reconciled with the
-external package source of truth:
+Root `pi/` and `.pi/` are Astro Core Pi resources:
 
 ```text
-tmp_ms_pi/pi/prompts/review-main-sequence-project.md
-tmp_ms_pi/pi/prompts/verify-mainsequence-tutorial.md
-tmp_ms_pi/pi/extensions/hooks/scaffold-skill-discovery/
-tmp_ms_pi/pi/extensions/hooks/project-policy/
-tmp_ms_pi/pi/extensions/tools/mainsequence-cli-auth/
-tmp_ms_pi/pi/extensions/tools/mainsequence-runtime-info/
-tmp_ms_pi/pi/system/APPEND_SYSTEM.md
+.pi/APPEND_SYSTEM.md
+.pi/settings.json
+pi/extensions/hooks/agent-registration/index.ts
+pi/extensions/hooks/session-model/index.ts
+pi/extensions/hooks/telemetry/index.ts
+pi/extensions/shared/structured-logging.ts
+pi/extensions/shared/telemetry.ts
+pi/extensions/tools/runtime-info/index.ts
+pi/types/pi-stubs.d.ts
 ```
 
-The package simulation does not directly declare `pi/skills`. SDK-owned skills remain source-of-truth
-SDK resources. The local package simulation seeds them through a Pi discovery extension that runs
-when the extension is loaded and returns the seeded path from `resources_discover`.
+Current Main Sequence adapter overlay resources live in `adapters/mainsequence/pi-overlay`:
 
-The following resources were split by concern during the local simulation:
+```text
+adapters/mainsequence/pi-overlay/pi/prompts/review-main-sequence-project.md
+adapters/mainsequence/pi-overlay/pi/prompts/verify-mainsequence-tutorial.md
+adapters/mainsequence/pi-overlay/pi/extensions/hooks/scaffold-skill-discovery/
+adapters/mainsequence/pi-overlay/pi/extensions/hooks/project-policy/
+adapters/mainsequence/pi-overlay/pi/extensions/tools/mainsequence-cli-auth/
+adapters/mainsequence/pi-overlay/pi/extensions/tools/mainsequence-runtime-info/
+adapters/mainsequence/pi-overlay/pi/system/APPEND_SYSTEM.md
+```
+
+This is the target adapter-owned location. The ownership rule is the important boundary: these
+resources belong with the Main Sequence Astro adapter, not with Astro Core and not with an external
+plain-Pi package.
+
+The following split remains valid:
 
 ```text
 pi/extensions/tools/runtime-info/                  Astro runtime details only
-tmp_ms_pi/pi/extensions/tools/mainsequence-runtime-info/
+adapters/mainsequence/pi-overlay/pi/extensions/tools/mainsequence-runtime-info/
 .pi/APPEND_SYSTEM.md                              Astro Core runtime contract only
-tmp_ms_pi/pi/system/APPEND_SYSTEM.md              Main Sequence runtime contract
+adapters/mainsequence/pi-overlay/pi/system/APPEND_SYSTEM.md              Main Sequence runtime contract
 ```
 
-`runtime-info` should stay Astro-only. Main Sequence SDK/CLI version tooling belongs to the package
-simulation or the eventual external package.
-
-Astro Core/runtime-owned resources must stay out of the external package:
+Astro Core/runtime-owned resources must stay out of the Main Sequence overlay:
 
 ```text
 pi/extensions/hooks/session-model/
@@ -836,91 +845,49 @@ pi/extensions/hooks/telemetry/
 pi/extensions/shared/structured-logging.ts
 pi/extensions/shared/telemetry.ts
 interface/stream/a2a-runtime.ts
-interface/stream/mainsequence-agent-registration.ts
-adapters/mainsequence/runtime-auth.ts
 runtime/checkpoints/sidecar.ts
 interface/stream/session-checkpoint-client.ts
 interface/stream/model-provider-credentials-client.ts
 interface/stream/session-capabilities.ts
 ```
 
-`interface/stream/mainsequence-agent-registration.ts` and `adapters/mainsequence/runtime-auth.ts`
-are not Astro Core in the target architecture either. They belong to the Main Sequence
-adapter/composition, not to the portable Pi package.
-
-Current Main Sequence SDK library skills are not Astro-owned package contents. Astro bootstrap must
-not hard-code SDK skill slugs. The Main Sequence Pi package should expose a discovery extension that
-delegates skill copying/export to the SDK/CLI, so Astro TypeScript does not duplicate
-`agent_scaffold` copy logic.
-SDK-owned skills such as `project_builder` are source-of-truth SDK resources, not component maps
-Astro should copy.
-
-When the external package is introduced, Astro must account for the existing delivery paths. For
-each SDK-owned skill or prompt being tested, record whether it comes from:
+Main Sequence backend-specific modules are not Astro Core either. They belong to
+`adapters/mainsequence`, not to the Pi overlay:
 
 ```text
-runtime bootstrap/session/image materialization
-external @mainsequence/pi package loading
+interface/stream/mainsequence-agent-registration.ts
+adapters/mainsequence/runtime-auth.ts
 ```
 
-This is a cutover concern, not a new public contract.
-
-## Target Package Layout
+#### Target Layout
 
 The target layout should mirror current Pi resource types and avoid invented resource categories:
 
 ```text
-external @mainsequence/pi package
-  Lives outside Astro, preferably in the Main Sequence SDK repo or a sibling
-  Main Sequence-owned repo.
-  Uses Pi package metadata to expose skills, prompts, and optional portable
-  extensions.
-
-packages/mainsequence-astro-adapter/
-  package.json
-  src/
-    adapter.ts
-    auth.ts
-    sessions.ts
-    checkpoints.ts
-    provider-credentials.ts
-    capabilities.ts
-    model-catalog.ts
-    projects.ts
-    a2a.ts
-    runtime-bootstrap.ts
-    container.ts
+adapters/mainsequence/
+  adapter.ts
+  auth.ts
+  sessions.ts
+  checkpoints.ts
+  provider-credentials.ts
+  capabilities.ts
+  model-catalog.ts
+  projects.ts
+  a2a.ts
+  bootstrap.ts
   pi/
-    extensions/
-      hooks/
-      tools/
+    package.json
+    README.md
+    pi/
+      extensions/
+        hooks/
+        tools/
+      prompts/
+      system/
 ```
 
-The adapter may include Pi extensions only for behavior that must run inside the Pi harness but is
-not portable without the Astro/Main Sequence backend. Those adapter-owned extensions must be kept
-separate from the external portable Main Sequence Pi package.
-
-The external portable package contract should use Pi's existing package metadata:
-
-```json
-{
-  "name": "@mainsequence/pi",
-  "keywords": ["pi-package"],
-  "type": "module",
-  "pi": {
-    "extensions": [
-      "./pi/extensions/hooks",
-      "./pi/extensions/tools"
-    ],
-    "prompts": [
-      "./pi/prompts"
-    ],
-    "skills": [
-      "./pi/skills"
-    ]
-  }
-}
-```
+The Main Sequence image/deployment composition should then point `ASTRO_PI_PACKAGE_PATHS` at the
+adapter-owned Pi overlay path until a better in-process package registration mechanism exists.
 
 ## Endpoint Consequences
 
@@ -953,152 +920,223 @@ PATCH /api/chat/session-config
 This ADR explicitly excludes a return to public runtime attachment endpoints. The attach-like
 concept is now internal execution state: prepared runtime, cached preflight, and warm runner.
 
-## Migration Plan If Accepted
+## Implementation Tasks
 
-### Phase 1: Define Interfaces Without Moving Behavior
+This checklist is the implementation plan for ADR 40. Completed items describe current repository
+state. Unchecked items are the remaining work.
 
-Phase 1 is a definition phase, not an extraction phase. It must produce the exact boundary documents
-and implementation tasks before package creation or file movement.
+### Completed Foundation
 
-Definition deliverables:
+- [x] Implement ADR 39 so `astro-orchestrator` and `project-executor` are backend/session metadata,
+  not separate Astro Core runtime architectures.
+- [x] Keep this ADR as the source of truth for the proposed Astro Core / backend adapter /
+  adapter-owned Pi resource overlay split.
+- [x] Create the Main Sequence adapter-owned Pi resource overlay under `adapters/mainsequence/pi-overlay`.
+- [x] Keep `adapters/mainsequence/pi-overlay` private and adapter-owned; do not treat it as an external
+  production package source of truth.
+- [x] Wire Astro deployments to consume additional Pi packages through `ASTRO_PI_PACKAGE_PATHS`.
+- [x] Include `ASTRO_PI_PACKAGE_PATHS=/app/adapters/mainsequence/pi-overlay` in Astro-owned no-project and
+  project-attached Docker image/env examples.
+- [x] Keep root `pi/` limited to Astro Core Pi resources during the current overlay staging period.
+- [x] Move Main Sequence-facing prompts, system prompt content, and Pi tools/hooks out of root `pi/`
+  and into `adapters/mainsequence/pi-overlay`.
+- [x] Split `runtime-info` by concern: Astro runtime information stays in root `pi/`, while Main
+  Sequence SDK/CLI runtime information lives in `adapters/mainsequence/pi-overlay`.
+- [x] Remove hardcoded SDK skill-slug materialization from Astro bootstrap.
+- [x] Delegate SDK-owned skill discovery/copying to
+  `adapters/mainsequence/pi-overlay/pi/extensions/hooks/scaffold-skill-discovery`.
+- [x] Keep SDK-owned skills source-of-truth in the Main Sequence SDK/CLI. The overlay calls
+  `mainsequence skills path` instead of copying component maps or skill bodies into Astro.
+- [x] Do not add standalone `project-executor` package content to `adapters/mainsequence/pi-overlay`.
+- [x] Preserve public endpoints. This ADR does not add public runtime attachment endpoints.
+- [x] Keep public A2A on `POST /api/a2a/v1/message:send` and related standard A2A routes.
+- [x] Keep `/api/llm/chat` stateless and separate from Pi/session/checkpoint execution.
+- [x] Supersede the standalone external package cutover direction. The active target is a
+  Main Sequence adapter-owned Pi resource overlay plus SDK/CLI-owned skill content.
 
-- Keep this ADR as the source of truth for the proposed package/adapter split.
-- Use [Integrate External `@mainsequence/pi` Package](./mainsequence-pi-external-package-integration-task.md)
-  for the package integration task.
-- Add or update future implementation task documents for extraction, adapter creation, and runtime
-  cutover work.
-- Do not create, publish, or switch to a production package scaffold inside Astro. The temporary
-  `tmp_ms_pi` simulation is allowed only for local contract testing.
-- Root `pi/` should contain only Astro runtime-owned Pi resources during the local simulation.
-- Do not hardcode `tmp_ms_pi` into Astro Core. Main Sequence deployment configuration supplies it
-  through `ASTRO_PI_PACKAGE_PATHS`.
+### Next Step: Generic Backend Adapter Contract
 
-External Pi package integration definition tasks:
+The next step is not a Main Sequence-specific interface. Astro Core must first define the generic
+backend adapter contract. Main Sequence is then the first implementation of that contract.
 
-- Treat the temporary `tmp_ms_pi` simulation as orchestrator-focused only until project-executor has
-  its own inventory and ownership decision.
-- Inventory existing orchestrator skill/prompt/extension delivery paths before deciding what
-  `@mainsequence/pi` should expose to Astro.
-- Include at least these delivery paths in the inventory:
-  - `ASTRO_PI_PACKAGE_PATHS` package loading for `tmp_ms_pi`
-  - `tmp_ms_pi/pi/extensions/hooks/scaffold-skill-discovery` SDK skill seeding
-  - session capability materialization
-- For project-executor, create a separate inventory that classifies each behavior as one of:
-  - generic Astro Core fixed-cwd runtime mechanic
-  - Main Sequence adapter/deployment composition
-  - backend-owned session/project/checkpoint/credential/capability policy
-  - prepared project image/filesystem content
-  - project-local instruction/task/status/Pi resource
-  - future portable Pi package content
-- Do not add project-executor content to `tmp_ms_pi` unless that separate inventory proves the
-  behavior is portable Pi package content and not already supplied by the prepared project image or
-  project-local resources.
-- Classify every current `pi/skills/*` resource as one of:
-  - portable Main Sequence package content
-  - Astro/runtime content
-  - repository-maintenance content
-  - split-required content
-- Classify every current `pi/prompts/*` resource as one of:
-  - portable Main Sequence package content
-  - Astro/runtime content
-  - split-required content
-- Classify every current `pi/extensions/**` resource as one of:
-  - portable Main Sequence package extension
-  - Astro Core extension
-  - Main Sequence Astro adapter extension
-  - shared helper for one of those buckets
-  - repo-local TypeScript support
-- For every split-required file, list the exact portable text/behavior and the exact runtime-owned
-  text/behavior.
-- Define the expected external `@mainsequence/pi` manifest only as an external package contract, not
-  as an Astro-owned package file.
-- Do not add `packages/mainsequence-pi` to Astro. Astro should consume an external package source
-  after the temporary `tmp_ms_pi` simulation proves the package contract.
-- For every SDK-owned skill/prompt being tested, record the active Astro runtime delivery path:
-  - existing bootstrap/session/image materialization
-  - external `@mainsequence/pi` package loading
-- Use the temporary `tmp_ms_pi` package to make that delivery visible before any runtime cutover.
-- Define acceptance criteria for the future package extraction:
-  - Pi package resolver loads the extracted package.
-  - Portable skills/prompts do not reference `ASTRO_*` variables.
-  - Portable package does not import `interface/stream/*` or `adapters/mainsequence/runtime-auth.ts`.
-  - Portable package can be loaded by Pi without Astro runtime bootstrap.
+- [x] Add a backend adapter contract module, for example `adapters/types.ts` or
+  `runtime/backend-adapter.ts`.
+- [x] Define normalized shared values that cross the Astro Core/adapter boundary:
+  `BackendUserRef`, `BackendAgentRef`, `BackendSessionRef`, `BackendModelBinding`,
+  `BackendProjectAttachment`, `BackendAuthHeaders`, `AdapterFailure`, and `AdapterResult`.
+- [x] Define optional adapter capabilities:
+  `auth`, `sessions`, `checkpoints`, `providerCredentials`, `capabilities`, `modelCatalog`,
+  `projects`, `a2a`, and `bootstrap`.
+- [x] Document which capabilities each endpoint requires and which capabilities are optional.
+- [x] Define behavior when a configured adapter lacks a capability:
+  local-only fallback, optional skip, or clear unsupported-backend error.
+- [x] Add adapter resolution/selection with `ASTRO_BACKEND`, defaulting to `mainsequence` for
+  current deployment compatibility.
+- [x] Reject unknown `ASTRO_BACKEND` values with a clear startup/configuration error.
+- [x] Add adapter capability checks so endpoints can fail clearly when a required backend capability
+  is absent.
 
-Backend adapter definition tasks:
+#### Endpoint Capability Matrix
 
-- Treat the contracts in the "Backend Adapter Contract" section as the Phase 1 baseline.
-- Define normalized shared values: `BackendUserRef`, `BackendAgentRef`, `BackendSessionRef`,
-  `BackendModelBinding`, `BackendProjectAttachment`, `AdapterFailure`, and `AdapterResult`.
-- Define each optional adapter capability:
-  - `auth`
-  - `sessions`
-  - `checkpoints`
-  - `providerCredentials`
-  - `capabilities`
-  - `modelCatalog`
-  - `projects`
-  - `a2a`
-  - `bootstrap`
-- For each existing Main Sequence client/module, map it to exactly one adapter capability or mark it
-  as Astro Core:
-  - `adapters/mainsequence/runtime-auth.ts`
-  - `interface/stream/mainsequence-agent-registration.ts`
-  - `interface/stream/session-checkpoint-client.ts`
-  - `interface/stream/model-provider-credentials-client.ts`
-  - `interface/stream/session-capabilities.ts`
-  - runtime-owned skill materialization in bootstrap code
-- Define which endpoints require which adapter capabilities:
-  - `POST /api/llm/chat`
-  - `POST /api/chat`
-  - `POST /api/a2a/v1/message:send`
-  - `GET /api/chat/session-model`
-  - `PATCH /api/chat/session-config`
-- Define behavior when an adapter capability is absent:
-  - reject the endpoint with a clear configuration error
-  - use local-only behavior
-  - skip the optional operation
+This matrix describes the adapter capabilities each current endpoint should require after the
+adapter split. "Required" means the endpoint cannot perform its intended backend-aware behavior
+without that adapter capability. "Optional" means Astro Core can still answer the request, but may
+omit backend-enriched data or skip backend-specific behavior. "Current status" records whether the
+capability is already called through `backendAdapter` or still uses a direct module pending a later
+adapter slice.
 
-Implementation tasks after definitions are accepted:
+| Endpoint | Required adapter capabilities | Optional adapter capabilities | Current status |
+| --- | --- | --- | --- |
+| `OPTIONS *` | none | none | Core-only CORS preflight. |
+| `GET /health` | none | none | Core-only runtime health snapshot. |
+| `POST /api/llm/chat` | `providerCredentials` only when the selected provider requires backend-stored credentials and no usable env credential exists | `modelCatalog` for provider definition and future backend-owned provider/model validation | Stateless fast path. It does not require `auth`, `sessions`, `checkpoints`, `capabilities`, `projects`, or `a2a`. Provider credential and provider-definition access now enters through adapter capabilities. |
+| `GET /api/chat/get_available_models` | none for local/Pi registry models | `modelCatalog`, `providerCredentials` for backend-authenticated provider status | Server now calls `backendAdapter.modelCatalog`; the Main Sequence adapter wraps the existing model/provider modules. |
+| `GET /api/models/catalog` | none for local/Pi registry catalog | `modelCatalog`, `providerCredentials` for backend-authenticated provider status | Server now calls `backendAdapter.modelCatalog`; the Main Sequence adapter wraps the existing model/provider modules. |
+| `GET /api/model-providers` | `providerCredentials` | `modelCatalog` for known model counts | Server now calls `backendAdapter.providerCredentials`. |
+| `POST /api/model-providers/{provider}/signin` | `providerCredentials` | none | Server now calls `backendAdapter.providerCredentials`. |
+| `POST /api/model-providers/{provider}/signoff` | `providerCredentials` | none | Server now calls `backendAdapter.providerCredentials`. |
+| `GET /api/model-providers/{provider}/signin/{attemptId}` | `providerCredentials` | none | Server now calls `backendAdapter.providerCredentials`; local attempt state remains implementation detail behind the Main Sequence adapter wrapper. |
+| `POST /api/model-providers/{provider}/signin/{attemptId}/manual` | `providerCredentials` | none | Server now calls `backendAdapter.providerCredentials`; local attempt state remains implementation detail behind the Main Sequence adapter wrapper. |
+| `POST /api/model-providers/{provider}/signin/{attemptId}/cancel` | `providerCredentials` | none | Server now calls `backendAdapter.providerCredentials`; local attempt state remains implementation detail behind the Main Sequence adapter wrapper. |
+| `GET /api/chat/session-model` | `sessions` when local session metadata is missing and backend hydration is needed | `modelCatalog` for future backend-owned model metadata validation | `sessions` is already behind `backendAdapter.sessions`. Model metadata repair remains Core/session-file logic. |
+| `PATCH /api/chat/session-config` | `sessions` when local session metadata is missing and backend hydration is needed | `modelCatalog` for context-window/runtime-limit policy if moved out of Core | `sessions` is already behind `backendAdapter.sessions`. Runtime-limit validation is still direct/Core. |
+| `POST /api/chat/session/cancel` | `checkpoints` | none | Server now calls `backendAdapter.checkpoints`. |
+| `GET /api/chat` | none | none | Core-only usage hint. |
+| `POST /api/chat` | `auth`, `identity`, `sessions`, `checkpoints` | `providerCredentials`, `capabilities`, `modelCatalog`, `projects`, `a2a` | `auth`, `identity`, `sessions`, `checkpoints`, `providerCredentials`, `capabilities`, and `modelCatalog` are now behind `backendAdapter`. Project attachment and A2A policy remain Core/direct pending later slices. |
+| `POST /api/a2a/v1/message:send` | Same as `POST /api/chat` for Pi-backed execution | `a2a` for backend-owned A2A routing/agent discovery policy | Public A2A wrapper routes into the same runtime execution path today. |
+| `POST /api/a2a/v1/message:stream` | Same as `POST /api/chat` for Pi-backed execution | `a2a` for backend-owned A2A routing/agent discovery policy | Public A2A streaming wrapper routes into the same runtime execution path today. |
+| `POST /api/a2a/v1` JSON-RPC `SendMessage` / `message/send` | Same as `POST /api/chat` for Pi-backed execution | `a2a` for backend-owned A2A routing/agent discovery policy | JSON-RPC wrapper routes into the same runtime execution path today. |
+| `POST /api/a2a/v1` JSON-RPC `SendStreamingMessage` / `message/stream` | Same as `POST /api/chat` for Pi-backed execution | `a2a` for backend-owned A2A routing/agent discovery policy | JSON-RPC streaming wrapper routes into the same runtime execution path today. |
+| `GET /api/a2a/v1/agent-card` extended agent card | `sessions` | `a2a` for backend-owned card/routing enrichment | `sessions.fetchAgentCard` is already behind `backendAdapter.sessions`. |
+| `GET /api/a2a/v1/tasks` | none | `a2a` only if task state becomes backend-owned | Core in-memory task registry today. |
+| `GET /api/a2a/v1/tasks/{taskId}` | none | `a2a` only if task state becomes backend-owned | Core in-memory task registry today. |
+| `POST /api/a2a/v1/tasks/{taskId}:cancel` | none for local active-run cancellation | `checkpoints` if cancellation must propagate to a backend runtime holder; `a2a` if task state becomes backend-owned | Core local cancellation today. |
+| `GET` or `POST /api/a2a/v1/tasks/{taskId}:subscribe` | none | `a2a` only if task state/subscriptions become backend-owned | Core in-memory task registry today. |
+| `GET` or `POST /api/a2a/v1/tasks/{taskId}/pushNotificationConfigs` | none | `a2a` only if push config state becomes backend-owned | Core in-memory push config registry today. |
+| `GET` or `DELETE /api/a2a/v1/tasks/{taskId}/pushNotificationConfigs/{configId}` | none | `a2a` only if push config state becomes backend-owned | Core in-memory push config registry today. |
 
-- Add a Main Sequence adapter wrapper around current Main Sequence clients without changing public
-  endpoint behavior.
-- Add a null/local adapter for endpoints that do not need backend policy.
-- Keep public endpoint behavior unchanged.
-- Do not introduce new public attach endpoints.
+The immediate rule for implementation is:
 
-### Phase 2: Move Main Sequence API Clients Behind Adapter
+- Astro Core endpoints that are local/runtime-only must not require a backend adapter.
+- Pi/session execution endpoints require `auth`, `identity`, `sessions`, and `checkpoints`.
+- Backend-owned model/provider/session enrichment must be behind optional adapter capabilities.
+- Missing required capabilities must fail with a clear unsupported-backend/configuration error.
+- Missing optional capabilities must degrade explicitly: omit backend-enriched data, report unavailable
+  backend credential status, or skip backend-specific routing.
 
-- Move backend session hydration behind `adapter.sessions`.
-- Move checkpoint client behind `adapter.checkpoints`.
-- Move provider credential client behind `adapter.providerCredentials`.
-- Move capability client behind `adapter.capabilities`.
-- Move Main Sequence auth header resolution behind `adapter.auth`.
-- Move Main Sequence A2A backend mapping behind `adapter.a2a`.
+### First Implementation: Main Sequence Backend Adapter
 
-### Phase 3: Split Runtime Bootstrap
+- [x] Make `adapters/mainsequence` export a single Main Sequence adapter object that implements the
+  generic backend adapter contract.
+- [x] Keep the first Main Sequence adapter implementation behavior-preserving. It should wrap
+  existing modules before moving logic.
+- [x] Set `ASTRO_BACKEND=mainsequence` as the only supported backend initially.
+- [x] Keep the default backend as `mainsequence` until a separate migration changes deployment
+  defaults.
 
-- Keep generic Pi filesystem/bootstrap in Astro Core.
-- Move Main Sequence CLI auth, CLI shim, runtime credential exchange, and backend-owned skill
-  materialization into the Main Sequence Astro adapter.
-- Make Astro Core startup work without the `mainsequence` Python package when no Main Sequence
+### Adapter Slice 1: Auth And Session Authority
+
+- [x] Move `interface/stream/mainsequence-agent-registration.ts` behind
+  `mainsequenceAdapter.sessions` and `mainsequenceAdapter.identity`.
+- [x] Move `buildAgentUniqueId(...)` into Main Sequence adapter identity policy while preserving the
+  existing `project-executor -> project-executor` unique-id override.
+- [x] Move `resolveMainsequenceUserId(...)` behind adapter identity/session policy.
+- [x] Move `fetchBackendAgentSession(...)` and `fetchBackendAgentSessionAgentCard(...)` behind
+  `adapter.sessions`.
+- [x] Move `adapters/mainsequence/runtime-auth.ts` behind `adapter.auth`.
+- [x] Change `interface/stream/server.ts` to call `backendAdapter.auth` and
+  `backendAdapter.sessions` instead of importing Main Sequence modules directly.
+- [x] Change subprocess/Pi launch env construction to call `backendAdapter.auth.buildSubprocessEnv`
+  instead of `buildMainsequenceStoredAuthEnv(...)` directly.
+- [x] Keep public endpoint behavior and response shapes unchanged during this slice.
+- [x] Add regression tests proving chat/A2A/session-model flows still use existing Main Sequence
+  session authority.
+
+### Adapter Slice 2: Checkpoints, Credentials, Capabilities, Models
+
+- [x] Move `interface/stream/session-checkpoint-client.ts` behind `adapter.checkpoints`.
+- [x] Move `interface/stream/model-provider-credentials-client.ts` behind
+  `adapter.providerCredentials`.
+- [x] Move `interface/stream/session-capabilities.ts` behind `adapter.capabilities`.
+- [x] Move model catalog/session model binding policy behind `adapter.modelCatalog` where the logic
+  depends on Main Sequence provider/model metadata.
+- [x] Update `interface/stream/server.ts` so Astro Core calls adapter capabilities through a single
+  adapter object.
+- [x] Add adapter contract tests proving the default Main Sequence adapter exposes required
+  capabilities and missing required capabilities fail with a clear error.
+
+### Adapter Slice 3: Bootstrap
+
+- [x] Keep generic Pi filesystem/bootstrap in Astro Core.
+- [x] Move Main Sequence CLI config linking into `adapter.bootstrap`.
+- [x] Move managed `mainsequence` shim creation into `adapter.bootstrap`.
+- [x] Move Main Sequence CLI auth repair command wiring into `adapter.bootstrap`.
+- [x] Move Main Sequence workspace directory links into `adapter.bootstrap`.
+- [x] Move runtime credential exchange loop startup into `adapter.auth` or `adapter.bootstrap`.
+- [ ] Make Astro Core startup work without the `mainsequence` Python package when no Main Sequence
   adapter is enabled.
+- [x] Ensure adapter bootstrap logs clearly separate Astro Core bootstrap time from Main Sequence
+  adapter bootstrap time.
+- [x] Keep local Docker debug flows working with `ASTRO_BACKEND=mainsequence` and
+  `ASTRO_PI_PACKAGE_PATHS=/app/adapters/mainsequence/pi-overlay`.
 
-### Phase 4: Consume External Main Sequence Pi Package
+### Main Sequence Adapter Pi Resource Overlay
 
-- Move or define portable Main Sequence skills and prompts in the external package source, not in
-  Astro.
-- Move only portable TypeScript extensions into the external package source if such extensions are
-  actually needed.
-- Keep Astro/runtime-managed hooks and tools in Astro Core or `@mainsequence/astro-adapter`.
-- Update Astro deployment configuration to consume the external package.
+- [x] Keep SDK-owned skills source-of-truth in the Main Sequence SDK/CLI.
+- [x] Delegate SDK-owned skill discovery/copying to the overlay extension instead of hard-coding SDK
+  skill slugs in Astro Core bootstrap.
+- [x] Keep Main Sequence runtime-specific prompts/tools/hooks out of root `pi/`.
+- [x] Move or rename the overlay into the Main Sequence adapter area:
+  `adapters/mainsequence/pi-overlay`.
+- [x] Update Docker, Compose, GCP, and remote-worker bundle configuration so
+  `ASTRO_PI_PACKAGE_PATHS` points at `/app/adapters/mainsequence/pi-overlay`.
+- [x] Rename package metadata/descriptions so the overlay is not described as a standalone external
+  package.
+- [ ] Ensure adapter overlay loading remains behavior-compatible for local, GCP, and project-attached
+  Main Sequence deployments.
 
-### Phase 5: Split Images And Deployment Configuration
+### Image And Deployment Split
 
-- Build a backend-neutral Astro runtime image.
-- Build a Main Sequence image variant that installs Astro Core, `@mainsequence/astro-adapter`, and
-  the external `@mainsequence/pi` package.
-- Make checkpoint sidecar selection backend-policy driven.
-- Document final package selectors only after the package/adaptor mechanism exists.
+- [x] Add a backend-neutral `astro-core` Docker build stage that does not copy `adapters/mainsequence/pi-overlay`, does not
+  set Main Sequence runtime env, and does not install the `mainsequence` Python package.
+- [x] Add explicit Main Sequence Docker targets:
+  `astro-mainsequence-pi-stream`, `astro-mainsequence-session-checkpoint-sidecar`, and
+  `astro-mainsequence-pi`.
+- [x] Keep current compatibility target aliases:
+  `astro-base`, `astro-runtime`, `astro-pi-stream`, `astro-session-checkpoint-sidecar`, and
+  `astro-pi`.
+- [x] Keep the current GCP deployment Main Sequence-backed by selecting
+  `astro-mainsequence-pi-stream` while preserving the published image name
+  `astro/astro-pi-stream`.
+- [x] Keep local Compose Main Sequence-backed by selecting the explicit Main Sequence Docker targets
+  and setting `ASTRO_BACKEND=mainsequence`.
+- [ ] Make a backend-neutral Astro stream runtime boot and serve backend-free endpoints with no
+  Main Sequence adapter selected.
+- [x] Point the Main Sequence image at the adapter-owned Pi overlay path:
+  `/app/adapters/mainsequence/pi-overlay`.
+- [x] Build a Main Sequence image variant that installs Astro Core, the Main Sequence Astro adapter,
+  and the adapter-owned Pi overlay.
+- [ ] Make checkpoint sidecar behavior backend-adapter driven.
+- [x] Keep existing Main Sequence deployment env names working during migration.
+- [ ] Document final package/adapter selectors only after the package and adapter mechanism exists.
+
+### Acceptance Criteria
+
+- [x] `interface/stream/server.ts` does not import Main Sequence backend clients for auth,
+  identity, sessions, checkpoints, provider credentials, session capabilities, or model catalog
+  access directly.
+- [ ] Astro Core can start with a non-Main Sequence or null backend adapter for endpoints that do not
+  need backend policy.
+- [x] Main Sequence behavior remains unchanged when `ASTRO_BACKEND=mainsequence` for implemented
+  adapter slices.
+- [x] Existing backend-backed sessions continue to use `AgentSession.uid`.
+- [x] Existing checkpoint, provider credential, capability, and model catalog behavior remains
+  compatible through the adapter.
+- [ ] A2A backend policy and project attachment behavior move behind adapter capabilities.
+- [x] Public endpoints remain unchanged.
+- [x] No public runtime attachment endpoints are reintroduced.
+- [ ] Main Sequence adapter-owned Pi resources load through the Main Sequence deployment without
+  requiring root `pi/` to contain Main Sequence-specific resources.
 
 ## Compatibility Expectations
 
@@ -1145,7 +1183,9 @@ This ADR does not:
 
 - Astro Core becomes understandable as a Pi deployment runtime.
 - Main Sequence backend policy becomes explicit instead of scattered through stream handling.
-- Main Sequence Pi behavior becomes portable to plain Pi where it is actually portable.
+- Main Sequence runtime-specific Pi behavior becomes explicit as adapter/deployment overlay content.
+- SDK-owned skills remain portable through the Main Sequence SDK/CLI instead of being forked into
+  Astro.
 - Public A2A remains standard and does not leak runtime attachment mechanics.
 - Stateless LLM calls remain fast and separate from session-backed agent execution.
 - Startup and turn latency can be analyzed by layer: Astro Core, backend adapter, Pi package, or Pi
@@ -1160,11 +1200,12 @@ runtime package or extract the boundary described here:
 astro
   backend-neutral Pi deployment runtime
 
-@mainsequence/pi
-  external portable Main Sequence Pi package owned outside Astro
-
-@mainsequence/astro-adapter
+adapters/mainsequence or @mainsequence/astro-adapter
   Main Sequence backend/runtime adapter for Astro
+  Main Sequence Pi resource overlay for Astro deployments
+
+mainsequence SDK/CLI
+  source of truth for SDK-owned skills and prompts
 ```
 
 If the extraction is accepted, this ADR becomes the boundary for the refactor. If not, the better

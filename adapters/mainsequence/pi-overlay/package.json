@@ -1,8 +1,8 @@
 {
-  "name": "@mainsequence/pi",
-  "version": "0.0.0-local-simulation",
+  "name": "@mainsequence/astro-pi-overlay",
+  "version": "0.0.0",
   "private": true,
-  "description": "Temporary local simulation of the portable Main Sequence Pi package. Source of truth should live in the Main Sequence SDK repo or a sibling Main Sequence repo.",
+  "description": "Main Sequence adapter-owned Pi resource overlay for Astro deployments.",
   "type": "module",
   "keywords": [
     "pi-package",

@@ -94,7 +94,7 @@ prepared project cwd.
 - `ASTRO_SESSION_OVERRIDES_DIR=/session-state/session-overrides`
 - `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/${NB_USER}/.astro-container-data/.config/mainsequence`
 - `PI_CODING_AGENT_DIR=/home/${NB_USER}/.astro-container-data/.pi/agent`
-- `ASTRO_PI_PACKAGE_PATHS=/app/tmp_ms_pi`
+- `ASTRO_PI_PACKAGE_PATHS=/app/adapters/mainsequence/pi-overlay`
 
 ### Project-Attached Runtime Env
 

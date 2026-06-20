@@ -16,8 +16,8 @@ It tells Pi to load Astro root runtime resources:
 - the repo-installed `pi-web-access` package
 
 Main Sequence product skills/prompts/extensions are composed separately through
-`ASTRO_PI_PACKAGE_PATHS`, currently pointing at the local `tmp_ms_pi` simulation in Main Sequence
-deployments.
+`ASTRO_PI_PACKAGE_PATHS`, currently pointing at the adapter-owned
+`adapters/mainsequence/pi-overlay` overlay in Main Sequence deployments.
 
 ## `.pi/APPEND_SYSTEM.md`
 
@@ -31,9 +31,9 @@ It defines only the generic Astro-hosted Pi runtime contract:
   one platform inside Astro Core.
 
 Main Sequence-specific instructions are no longer stored in root `.pi/APPEND_SYSTEM.md`. During the
-local package simulation they are composed from:
+local adapter overlay they are composed from:
 
-- `tmp_ms_pi/pi/system/APPEND_SYSTEM.md`
+- `adapters/mainsequence/pi-overlay/pi/system/APPEND_SYSTEM.md`
 
 The shared prompt is static on purpose. It is easier to inspect and reason about than generating
 runtime policy dynamically every run. Package-level prompt composition is explicit and driven by
@@ -43,9 +43,9 @@ runtime policy dynamically every run. Package-level prompt composition is explic
 
 Runtime-owned child processes should not behave like the parent.
 
-The Main Sequence package simulation handles Main Sequence child-runtime policy with:
+The Main Sequence adapter overlay handles Main Sequence child-runtime policy with:
 
-- `tmp_ms_pi/pi/extensions/hooks/project-policy/index.ts`
+- `adapters/mainsequence/pi-overlay/pi/extensions/hooks/project-policy/index.ts`
 
 The `project-policy` extension appends Main Sequence child-only policy at `before_agent_start`
 when the host marks the process as a Main Sequence child runtime.
@@ -54,7 +54,7 @@ when the host marks the process as a Main Sequence child runtime.
 
 Astro keeps the shared prompt static and applies runtime-only child guardrails only to
 runtime-owned child processes. Core Astro behavior is now part of the shared prompt contract. Main
-Sequence product behavior is composed from the package simulation instead of living in root `.pi`.
+Sequence product behavior is composed from the adapter overlay instead of living in root `.pi`.
 
 ## Related pages
 

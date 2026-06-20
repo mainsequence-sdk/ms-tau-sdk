@@ -5,7 +5,7 @@ These pages document Astro's repo-owned tools under `pi/extensions/tools/`.
 ## Tools
 
 - Root Astro currently exposes `pi/extensions/tools/runtime-info`.
-- Main Sequence package tools are delivered by `tmp_ms_pi` and are not mirrored here.
+- Main Sequence package tools are delivered by `adapters/mainsequence/pi-overlay` and are not mirrored here.
 
 ## Notes
 

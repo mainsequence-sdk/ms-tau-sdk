@@ -32,7 +32,7 @@ deployment/
 
 The current `deployment/gcp/cloudbuild.yaml` has four responsibilities:
 
-1. Build the `astro-pi-stream` Docker target from the repo `Dockerfile`
+1. Build the `astro-mainsequence-pi-stream` Docker target from the repo `Dockerfile`
 2. Detect the Astro package version plus which `mainsequence`, Python, and Node versions were actually installed in the image
 3. Stamp OCI labels on the final image with the exact full detected versions
 4. Push five tags to Artifact Registry:
@@ -46,7 +46,7 @@ steps:
   - name: Build runtime image
     uses: docker build
     notes:
-      - target should be astro-pi-stream
+      - target should be astro-mainsequence-pi-stream
       - rely on the Dockerfile default so `mainsequence` resolves to latest
 
   - name: Detect Astro and installed mainsequence versions
@@ -234,7 +234,7 @@ substitutions:
   _AR_REGION: europe-west1
   _AR_REPO: tsorm-images
   _IMAGE_NAME: astro/astro-pi-stream
-  _DOCKER_TARGET: astro-pi-stream
+  _DOCKER_TARGET: astro-mainsequence-pi-stream
   _IMAGE_PREFIX: ${_AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE_NAME}
   _LATEST_IMAGE: ${_AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE_NAME}:latest
 
@@ -359,7 +359,8 @@ options:
 ## Notes Before Implementation
 
 - `.env` is excluded by `.dockerignore`, which is good and should stay that way
-- the deploy target should use the `astro-pi-stream` Docker target, not `astro-pi`
+- the deploy target should use the explicit `astro-mainsequence-pi-stream` Docker target, not
+  `astro-pi`; `astro-pi-stream` remains only a compatibility alias
 - the running service still needs writable container runtime state at `/home/jovyan/.astro-container-data`
 - rebuilding without bumping the Astro package version will repoint that `astro-<version>` tag to
   the newly built image

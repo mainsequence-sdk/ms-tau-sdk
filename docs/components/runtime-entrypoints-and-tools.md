@@ -80,7 +80,7 @@ Manual live A2A stress client. This is not a unit test; it targets a running Ast
 
 The repo root `Dockerfile` is the deployable app image definition.
 
-The shared `astro-base` stage includes:
+The backend-neutral `astro-core` stage includes:
 
 - Python 3.11
 - Node 20 for Pi
@@ -88,22 +88,30 @@ The shared `astro-base` stage includes:
 - the runtime folders Astro actually needs:
   - `.pi/`
   - `pi/`
-  - `tmp_ms_pi/`
   - `interface/`
   - `runtime/`
   - `adapters/`
   - `bin/`
   - `tools/`
 
+The Main Sequence source/runtime stages add:
+
+- `adapters/mainsequence/pi-overlay/`
+- the Python `mainsequence` package
+- Main Sequence runtime env defaults
+
 The Dockerfile exposes these runnable targets:
 
-- `astro-pi`
+- `astro-mainsequence-pi`
   - starts local Pi through `tsx bin/astro-pi-local.ts`
-- `astro-pi-stream`
+- `astro-mainsequence-pi-stream`
   - starts the HTTP stream server with `tsx bin/astro-stream.ts`
   - listens on port `8787`
-- `astro-session-checkpoint-sidecar`
+- `astro-mainsequence-session-checkpoint-sidecar`
   - starts the checkpoint sidecar with `tsx runtime/checkpoints/sidecar.ts`
+
+The older target names `astro-pi`, `astro-pi-stream`, and
+`astro-session-checkpoint-sidecar` remain compatibility aliases for the Main Sequence targets.
 
 For the explicit deployment identity and sidecar contract, see
 [`deployment-identities.md`](./deployment-identities.md).

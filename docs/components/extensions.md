@@ -1,7 +1,7 @@
 # Extensions
 
 Astro Core runtime extensions live under `pi/extensions/`. Main Sequence package extensions live
-under `tmp_ms_pi/pi/extensions/`. The package files are the source of truth.
+under `adapters/mainsequence/pi-overlay/pi/extensions/`. The package files are the source of truth.
 
 ## Read by area
 
@@ -18,7 +18,7 @@ under `tmp_ms_pi/pi/extensions/`. The package files are the source of truth.
 ## Tools
 
 - `runtime-info` lives at `pi/extensions/tools/runtime-info`.
-- Main Sequence tools are exposed by `tmp_ms_pi/package.json`.
+- Main Sequence tools are exposed by `adapters/mainsequence/pi-overlay/package.json`.
 
 ## Shared helpers
 

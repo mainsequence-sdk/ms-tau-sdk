@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
+import { resolveBackendAdapter } from "../adapters/backend.js";
+import { requireBackendCapability } from "../adapters/types.js";
 import { handleStatelessLlmChat } from "../interface/stream/llm-passthrough.js";
+
+const adapter = resolveBackendAdapter({ ASTRO_BACKEND: "mainsequence" });
+const llmAdapterOptions = {
+	providerCredentials: requireBackendCapability(adapter, "providerCredentials", adapter.providerCredentials),
+	modelCatalog: requireBackendCapability(adapter, "modelCatalog", adapter.modelCatalog),
+};
 
 function jsonResponse(body: unknown, init?: ResponseInit): Response {
 	return new Response(JSON.stringify(body), {
@@ -16,6 +24,7 @@ function jsonResponse(body: unknown, init?: ResponseInit): Response {
 test("stateless LLM passthrough rejects session and runtime fields", async () => {
 	let fetchCalled = false;
 	const result = await handleStatelessLlmChat({
+		...llmAdapterOptions,
 		body: {
 			agent_session_uid: "session-1",
 			messages: [
@@ -43,6 +52,7 @@ test("stateless LLM passthrough rejects session and runtime fields", async () =>
 test("stateless LLM passthrough rejects non-canonical request aliases", async () => {
 	let fetchCalled = false;
 	const result = await handleStatelessLlmChat({
+		...llmAdapterOptions,
 		body: {
 			provider: "openai",
 			model: "gpt-test",
@@ -76,6 +86,7 @@ test("stateless LLM passthrough rejects non-canonical request aliases", async ()
 test("stateless LLM passthrough returns application JSON with parsed strict JSON", async () => {
 	const calls: Array<{ url: string; payload: Record<string, unknown>; authorization: string | null }> = [];
 	const result = await handleStatelessLlmChat({
+		...llmAdapterOptions,
 		body: {
 			provider: "openai",
 			model: "gpt-test",
@@ -143,6 +154,7 @@ test("stateless LLM passthrough returns application JSON with parsed strict JSON
 test("stateless LLM passthrough repairs invalid strict JSON before returning", async () => {
 	let callCount = 0;
 	const result = await handleStatelessLlmChat({
+		...llmAdapterOptions,
 		body: {
 			provider: "openai",
 			model: "gpt-test",

@@ -64,21 +64,6 @@ import {
 	type PiSessionJsonlRepair,
 } from "./pi-history-projector.js";
 import {
-	SessionCheckpointClient,
-	type CheckpointBundle,
-	type CheckpointLatestResponse,
-	type CheckpointLeaseResponse,
-	type SessionCheckpointClientResult,
-} from "./session-checkpoint-client.js";
-import {
-	collectAvailableModels,
-	collectModelCatalog,
-	DEFAULT_OPENAI_MODEL,
-	DEFAULT_OPENAI_PROVIDER,
-	type AvailableModelsResponse,
-	type RunConfigReasoningEffort,
-} from "./available-models.js";
-import {
 	buildPiModelArgument,
 	buildSessionModelEnv,
 	deriveSessionModelBindingFromSessionPayload,
@@ -93,49 +78,29 @@ import {
 	validateSessionConfigPatch,
 	type SessionConfigOverrides,
 } from "./session-config.js";
-import {
-	materializeSessionCapabilities,
-	type SessionCapabilityMaterialization,
-} from "./session-capabilities.js";
-import { resolveProviderDefinition } from "./model-provider-definitions.js";
 import { readSessionInsights } from "./session-insights.js";
-import {
-	listModelProviderAuthStatuses,
-	signOffModelProvider,
-} from "./model-provider-auth.js";
-import {
-	cleanupScopedPiAgentDir,
-	flushScopedProviderCredential,
-	hydrateScopedProviderCredentials,
-	invalidateScopedProviderCredentialCache,
-	isScopedProviderCredentialCacheEnabled,
-} from "./model-provider-scoped-auth.js";
-import {
-	cancelModelProviderSignInAttempt,
-	getModelProviderSignInAttempt,
-	startModelProviderSignIn,
-	submitModelProviderSignInManualInput,
-} from "./model-provider-signin.js";
 import {
 	handleStatelessLlmChat,
 	type StatelessLlmLogEvent,
 } from "./llm-passthrough.js";
 import {
-	fetchBackendAgentSessionAgentCard,
-	fetchBackendAgentSession,
-	resolveMainsequenceUserId,
-	shouldRegisterAgents,
-} from "./mainsequence-agent-registration.js";
-import {
 	buildA2ASystemInstruction,
 } from "./a2a-runtime.js";
 import { logStructuredEvent } from "../../pi/extensions/shared/structured-logging.js";
+import { resolveBackendAdapter } from "../../adapters/backend.js";
 import {
-	buildMainsequenceStoredAuthEnv,
-	bootstrapMainsequenceCliAuth,
-	loadEnvFile,
-	startMainsequenceCredentialExchangeLoop,
-} from "../../adapters/mainsequence/runtime-auth.js";
+	requireBackendCapability,
+	type BackendCheckpointClient,
+	type BackendLoopHandle,
+	type AvailableModelsResponse,
+	type CheckpointBundle,
+	type CheckpointLatestResponse,
+	type CheckpointLeaseResponse,
+	type RunConfigReasoningEffort,
+	type SessionCapabilityMaterialization,
+	type SessionCheckpointClientResult,
+} from "../../adapters/types.js";
+import { loadEnvFile } from "../../runtime/env.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..", "..");
@@ -161,6 +126,18 @@ type AgentConfig = {
 };
 
 loadEnvFile(repoRoot);
+const backendAdapter = resolveBackendAdapter(process.env);
+const backendAuth = requireBackendCapability(backendAdapter, "auth", backendAdapter.auth);
+const backendIdentity = requireBackendCapability(backendAdapter, "identity", backendAdapter.identity);
+const backendSessions = requireBackendCapability(backendAdapter, "sessions", backendAdapter.sessions);
+const backendCheckpoints = requireBackendCapability(backendAdapter, "checkpoints", backendAdapter.checkpoints);
+const backendProviderCredentials = requireBackendCapability(
+	backendAdapter,
+	"providerCredentials",
+	backendAdapter.providerCredentials,
+);
+const backendCapabilities = requireBackendCapability(backendAdapter, "capabilities", backendAdapter.capabilities);
+const backendModelCatalog = requireBackendCapability(backendAdapter, "modelCatalog", backendAdapter.modelCatalog);
 
 const host = process.env.ASTRO_STREAM_HOST ?? "0.0.0.0";
 const configuredPort = Number(process.env.ASTRO_STREAM_PORT ?? "8787");
@@ -192,10 +169,10 @@ const sessionCancelGraceMs = (() => {
 	const configured = Number(process.env.ASTRO_SESSION_CANCEL_GRACE_MS ?? "5000");
 	return Number.isFinite(configured) && configured >= 500 ? Math.trunc(configured) : 5000;
 })();
-let mainsequenceCredentialExchangeLoop: ReturnType<typeof startMainsequenceCredentialExchangeLoop> | null = null;
-let mainsequenceCredentialExchangeLoopStarted = false;
-let mainsequenceCliAuthReady = false;
-let mainsequenceCliAuthBootstrapPromise: Promise<void> | null = null;
+let backendCredentialExchangeLoop: BackendLoopHandle = null;
+let backendCredentialExchangeLoopStarted = false;
+let backendRuntimeAuthReady = false;
+let backendRuntimeAuthBootstrapPromise: Promise<void> | null = null;
 let checkpointRestoreCount = 0;
 
 type ActiveScopedProviderCredential = {
@@ -408,7 +385,7 @@ async function flushActiveScopedProviderCredentialsForShutdown(signal: string) {
 	});
 	await Promise.allSettled(
 		records.map(async (record) => {
-			const flushed = await flushScopedProviderCredential({
+			const flushed = await backendProviderCredentials.flushScoped({
 				scopedPiAgentDir: record.scopedPiAgentDir,
 				createdByUser: record.createdByUser,
 				agentSessionUid: record.agentSessionId,
@@ -546,44 +523,44 @@ if (process.env.ASTRO_STREAM_BOOTSTRAP_ERROR) {
 	});
 }
 
-function ensureMainsequenceCredentialExchangeLoopStarted() {
-	if (mainsequenceCredentialExchangeLoopStarted) return;
-	mainsequenceCredentialExchangeLoop = startMainsequenceCredentialExchangeLoop({
+function ensureBackendCredentialExchangeLoopStarted() {
+	if (backendCredentialExchangeLoopStarted) return;
+	backendCredentialExchangeLoop = backendAuth.startCredentialRefreshLoop?.({
 		env: process.env,
 		log: logExternalMessage("astro", "runtime_credential.exchange_loop"),
-	});
-	mainsequenceCredentialExchangeLoopStarted = true;
+	}) ?? null;
+	backendCredentialExchangeLoopStarted = true;
 }
 
-async function ensureMainsequenceCliAuthReady() {
-	if (mainsequenceCliAuthReady) {
-		ensureMainsequenceCredentialExchangeLoopStarted();
+async function ensureBackendRuntimeAuthReady() {
+	if (backendRuntimeAuthReady) {
+		ensureBackendCredentialExchangeLoopStarted();
 		return;
 	}
 
-	if (!mainsequenceCliAuthBootstrapPromise) {
-		mainsequenceCliAuthBootstrapPromise = bootstrapMainsequenceCliAuth({
+	if (!backendRuntimeAuthBootstrapPromise) {
+		backendRuntimeAuthBootstrapPromise = backendAuth.prepareRuntime({
 			env: process.env,
 			log: logExternalMessage("astro", "runtime_credential.bootstrap"),
 		})
 			.then(() => {
-				mainsequenceCliAuthReady = true;
-				ensureMainsequenceCredentialExchangeLoopStarted();
+				backendRuntimeAuthReady = true;
+				ensureBackendCredentialExchangeLoopStarted();
 			})
 			.catch((error) => {
-				mainsequenceCliAuthReady = false;
+				backendRuntimeAuthReady = false;
 				throw error;
 			})
 			.finally(() => {
-				mainsequenceCliAuthBootstrapPromise = null;
+				backendRuntimeAuthBootstrapPromise = null;
 			});
 	}
 
-	await mainsequenceCliAuthBootstrapPromise;
+	await backendRuntimeAuthBootstrapPromise;
 }
 
 process.once("exit", () => {
-	mainsequenceCredentialExchangeLoop?.stop();
+	backendCredentialExchangeLoop?.stop();
 });
 
 process.on("uncaughtException", (error, origin) => {
@@ -1595,7 +1572,7 @@ async function runA2AStandardRuntimeTurn(
 	}
 
 	try {
-		await ensureMainsequenceCliAuthReady();
+		await ensureBackendRuntimeAuthReady();
 	} catch (error) {
 		return {
 			ok: false,
@@ -2637,11 +2614,11 @@ function buildRuntimeConfigSnapshot(sessionModelBinding: SessionModelBinding | n
 }
 
 function resolveBackendLlmProvider(sessionModelBinding: SessionModelBinding | null): string {
-	return sessionModelBinding?.provider ?? DEFAULT_OPENAI_PROVIDER;
+	return sessionModelBinding?.provider ?? backendModelCatalog.defaultOpenAiProvider;
 }
 
 function resolveBackendLlmModel(sessionModelBinding: SessionModelBinding | null): string {
-	return sessionModelBinding?.model ?? DEFAULT_OPENAI_MODEL;
+	return sessionModelBinding?.model ?? backendModelCatalog.defaultOpenAiModel;
 }
 
 function resolveBackendLlmThinking(sessionModelBinding: SessionModelBinding | null): string {
@@ -2667,7 +2644,7 @@ async function ensureRequestCliAuth(
 	_runtimeContext: RuntimeContext = resolveRuntimeContext(),
 ): Promise<{ ok: true } | { ok: false }> {
 	try {
-		await ensureMainsequenceCliAuthReady();
+		await ensureBackendRuntimeAuthReady();
 		return { ok: true };
 	} catch (error) {
 		const message =
@@ -2735,7 +2712,7 @@ function shouldUseMockResponse(latestUserMessage: string): boolean {
 }
 
 function resolveUserId(value: unknown): string | null {
-	return resolveMainsequenceUserId({ userId: value, env: process.env });
+	return backendIdentity.resolveUserId({ userId: value, env: process.env });
 }
 
 function resolveHeaderString(
@@ -3449,7 +3426,7 @@ async function attachHydratedBackendSession(options: {
 		};
 	}
 
-	const fetched = await fetchBackendAgentSession({
+	const fetched = await backendSessions.fetchByUid({
 		agentSessionUid: normalizedAgentSessionId,
 		env: process.env,
 		log: options.log,
@@ -4423,7 +4400,7 @@ function stopCheckpointLeaseRenewal(ctx: RequestContext) {
 	}
 }
 
-function startCheckpointLeaseRenewal(ctx: RequestContext, client: SessionCheckpointClient, ttlSeconds: number) {
+function startCheckpointLeaseRenewal(ctx: RequestContext, client: BackendCheckpointClient, ttlSeconds: number) {
 	stopCheckpointLeaseRenewal(ctx);
 	if (!ctx.checkpointLease || ctx.agentSessionId == null) return;
 
@@ -4640,7 +4617,7 @@ async function fetchCheckpointForHistoryHydration(input: {
 	agentSessionId: string;
 	sessionKey: string;
 }): Promise<SessionCheckpointClientResult<CheckpointLatestResponse>> {
-	const client = new SessionCheckpointClient({
+	const client = backendCheckpoints.createClient({
 		env: process.env,
 		log: logExternalMessage("astro-stream", "backend.helper_log"),
 	});
@@ -4931,7 +4908,7 @@ async function hydrateLocalSessionFilesForRead(input: {
 	| { ok: true; metadata: SessionMetadata }
 	| { ok: false; statusCode: number; error: string; message: string; errorDetail?: string | null }
 > {
-	if (!shouldRegisterAgents(process.env)) {
+	if (!backendIdentity.shouldRegisterAgents(process.env)) {
 		return {
 			ok: false,
 			statusCode: 404,
@@ -4940,7 +4917,7 @@ async function hydrateLocalSessionFilesForRead(input: {
 		};
 	}
 
-	const fetched = await fetchBackendAgentSession({
+	const fetched = await backendSessions.fetchByUid({
 		agentSessionUid: input.sessionKey,
 		env: process.env,
 		log: logExternalMessage("astro-stream", "backend.helper_log"),
@@ -5088,7 +5065,7 @@ async function hydrateLocalSessionFilesForRead(input: {
 async function prepareCheckpointBeforePiLaunch(
 	ctx: RequestContext,
 ): Promise<{ ok: true } | { ok: false; errorEvent: Extract<StreamEvent, { type: "error" }> }> {
-	if (ctx.agentSessionId == null || !shouldRegisterAgents(process.env)) return { ok: true };
+	if (ctx.agentSessionId == null || !backendIdentity.shouldRegisterAgents(process.env)) return { ok: true };
 
 	if (ctx.checkpointLease) {
 		const leaseExpiresAt = Date.parse(ctx.checkpointLease.leaseExpiresAt);
@@ -5131,7 +5108,7 @@ async function prepareCheckpointBeforePiLaunch(
 		});
 	}
 
-	const client = new SessionCheckpointClient({
+	const client = backendCheckpoints.createClient({
 		env: process.env,
 		log: logExternalMessage("astro-stream", "backend.helper_log"),
 	});
@@ -5144,7 +5121,7 @@ async function prepareCheckpointBeforePiLaunch(
 	)
 		? "renew"
 		: "acquire";
-	let leaseResult: Awaited<ReturnType<SessionCheckpointClient["acquireLease"]>>;
+	let leaseResult: Awaited<ReturnType<BackendCheckpointClient["acquireLease"]>>;
 	if (leaseAction === "renew") {
 		leaseResult = await client.renewLease({
 			agentSessionUid: ctx.agentSessionId,
@@ -6411,7 +6388,7 @@ function runStrictJsonRepairAttempt(ctx: RequestContext, prompt: string): Promis
 		let timer: ReturnType<typeof setTimeout> | null = null;
 		const child = spawn("pi", args, {
 			cwd: runtime.cwd,
-			env: buildMainsequenceStoredAuthEnv({
+			env: backendAuth.buildSubprocessEnv({
 				...process.env,
 				...buildSessionModelEnv(ctx.sessionModelBinding, process.env),
 				...(runtime.envOverrides ?? {}),
@@ -7515,7 +7492,7 @@ async function prepareWarmPiRuntime(
 		...(options.envOverrides ?? {}),
 	};
 	const providerRequiresScopedCredentials = Boolean(
-		ctx.sessionModelBinding && resolveProviderDefinition(ctx.sessionModelBinding.provider),
+		ctx.sessionModelBinding && backendModelCatalog.resolveProviderDefinition(ctx.sessionModelBinding.provider),
 	);
 	const scopedCredentialSessionModelBinding = ctx.sessionModelBinding;
 	const scopedCredentialUserId = ctx.userId;
@@ -7526,7 +7503,7 @@ async function prepareWarmPiRuntime(
 	);
 	if (
 		shouldHydrateScopedProviderCredentials &&
-		!isScopedProviderCredentialCacheEnabled(piLaunchBaseEnv)
+		!backendProviderCredentials.isScopedCacheEnabled(piLaunchBaseEnv)
 	) {
 		return { ok: false, fallbackReason: "provider_credential_cache_disabled" };
 	}
@@ -7569,7 +7546,7 @@ async function prepareWarmPiRuntime(
 
 	const capabilityPreparationStartedAt = Date.now();
 	const capabilityPreparationPromise = (async () => {
-		const capabilities = await materializeSessionCapabilities({
+		const capabilities = await backendCapabilities.materializeSession({
 			agentSessionUid: ctx.agentSessionId!,
 			sessionAssetsRoot: getSessionAssetsRoot(),
 			env: piLaunchBaseEnv,
@@ -7587,7 +7564,7 @@ async function prepareWarmPiRuntime(
 		scopedCredentialSessionModelBinding &&
 		scopedCredentialUserId
 			? (async () => {
-					const hydratedProviderCredentials = await hydrateScopedProviderCredentials({
+					const hydratedProviderCredentials = await backendProviderCredentials.hydrateScoped({
 						createdByUser: scopedCredentialUserId,
 						agentSessionUid: ctx.agentSessionId,
 						sessionKey: ctx.sessionKey,
@@ -7614,9 +7591,9 @@ async function prepareWarmPiRuntime(
 		const hydratedProviderCredentials = providerCredentialPreparation?.hydratedProviderCredentials;
 		if (
 			hydratedProviderCredentials?.ok === true &&
-			!isScopedProviderCredentialCacheEnabled(piLaunchBaseEnv)
+			!backendProviderCredentials.isScopedCacheEnabled(piLaunchBaseEnv)
 		) {
-			cleanupScopedPiAgentDir(hydratedProviderCredentials.value.scopedPiAgentDir);
+			backendProviderCredentials.cleanupScopedDir(hydratedProviderCredentials.value.scopedPiAgentDir);
 		}
 		return { ok: false, handled: true };
 	}
@@ -7771,15 +7748,15 @@ async function prepareWarmPiRuntime(
 		if (activeProviderCredentialKey) {
 			activeScopedProviderCredentials.delete(activeProviderCredentialKey);
 		}
-		if (!isScopedProviderCredentialCacheEnabled(piLaunchBaseEnv)) {
-			cleanupScopedPiAgentDir(scopedProviderCredentialProvider ? scopedPiAgentDir : null);
+		if (!backendProviderCredentials.isScopedCacheEnabled(piLaunchBaseEnv)) {
+			backendProviderCredentials.cleanupScopedDir(scopedProviderCredentialProvider ? scopedPiAgentDir : null);
 		}
 		return { ok: false, handled: true };
 	}
 
 	const flushProviderCredential = async (reason: string) => {
 		if (!scopedPiAgentDir || !scopedProviderCredentialProvider || !activeProviderCredentialUserId) return;
-		const flushed = await flushScopedProviderCredential({
+		const flushed = await backendProviderCredentials.flushScoped({
 			scopedPiAgentDir,
 			createdByUser: activeProviderCredentialUserId,
 			agentSessionUid: ctx.agentSessionId,
@@ -7828,7 +7805,7 @@ async function prepareWarmPiRuntime(
 	const invalidateProviderCredentialCacheIfAuthFailure = (errorMessage: string | null) => {
 		if (!scopedProviderCredentialProvider) return;
 		if (!isProviderCredentialAuthFailureMessage(errorMessage)) return;
-		invalidateScopedProviderCredentialCache({
+		backendProviderCredentials.invalidateScopedCache({
 			sessionKey: ctx.sessionKey,
 			provider: scopedProviderCredentialProvider,
 			env: piLaunchBaseEnv,
@@ -8202,7 +8179,7 @@ async function startWarmRunner(input: {
 	const spawnStartedAt = Date.now();
 	const child = spawn("pi", args, {
 		cwd: input.cwd,
-		env: buildMainsequenceStoredAuthEnv({
+		env: backendAuth.buildSubprocessEnv({
 			...process.env,
 			...buildSessionModelEnv(input.ctx.sessionModelBinding, process.env),
 			...(input.prepared.scopedPiAgentDir ? { PI_CODING_AGENT_DIR: input.prepared.scopedPiAgentDir } : {}),
@@ -8653,7 +8630,7 @@ async function runPiPrompt(
 	const shouldMaterializeSessionCapabilities = ctx.agentSessionId != null;
 	const capabilityPreparationPromise = shouldMaterializeSessionCapabilities
 		? (async () => {
-				const capabilities = await materializeSessionCapabilities({
+				const capabilities = await backendCapabilities.materializeSession({
 					agentSessionUid: ctx.agentSessionId!,
 					sessionAssetsRoot: getSessionAssetsRoot(),
 					env: piLaunchBaseEnv,
@@ -8667,7 +8644,7 @@ async function runPiPrompt(
 		: Promise.resolve(null);
 
 	const providerRequiresScopedCredentials = Boolean(
-		ctx.sessionModelBinding && resolveProviderDefinition(ctx.sessionModelBinding.provider),
+		ctx.sessionModelBinding && backendModelCatalog.resolveProviderDefinition(ctx.sessionModelBinding.provider),
 	);
 	const scopedCredentialSessionModelBinding = ctx.sessionModelBinding;
 	const scopedCredentialUserId = ctx.userId;
@@ -8682,7 +8659,7 @@ async function runPiPrompt(
 		scopedCredentialSessionModelBinding &&
 		scopedCredentialUserId
 			? (async () => {
-					const hydratedProviderCredentials = await hydrateScopedProviderCredentials({
+					const hydratedProviderCredentials = await backendProviderCredentials.hydrateScoped({
 						createdByUser: scopedCredentialUserId,
 						agentSessionUid: ctx.agentSessionId,
 						sessionKey: ctx.sessionKey,
@@ -8709,9 +8686,9 @@ async function runPiPrompt(
 		const hydratedProviderCredentials = providerCredentialPreparation?.hydratedProviderCredentials;
 		if (
 			hydratedProviderCredentials?.ok === true &&
-			!isScopedProviderCredentialCacheEnabled(piLaunchBaseEnv)
+			!backendProviderCredentials.isScopedCacheEnabled(piLaunchBaseEnv)
 		) {
-			cleanupScopedPiAgentDir(hydratedProviderCredentials.value.scopedPiAgentDir);
+			backendProviderCredentials.cleanupScopedDir(hydratedProviderCredentials.value.scopedPiAgentDir);
 		}
 		return;
 	}
@@ -8724,9 +8701,9 @@ async function runPiPrompt(
 		if (capabilities.ok === false) {
 			if (
 				providerCredentialPreparation?.hydratedProviderCredentials.ok === true &&
-				!isScopedProviderCredentialCacheEnabled(piLaunchBaseEnv)
+				!backendProviderCredentials.isScopedCacheEnabled(piLaunchBaseEnv)
 			) {
-				cleanupScopedPiAgentDir(
+				backendProviderCredentials.cleanupScopedDir(
 					providerCredentialPreparation.hydratedProviderCredentials.value.scopedPiAgentDir,
 				);
 			}
@@ -8791,8 +8768,8 @@ async function runPiPrompt(
 			? hydratedProviderCredentials.value.cacheReason ?? null
 			: null;
 		if (hydratedProviderCredentials.ok === false) {
-			if (!isScopedProviderCredentialCacheEnabled(piLaunchBaseEnv)) {
-				cleanupScopedPiAgentDir(
+			if (!backendProviderCredentials.isScopedCacheEnabled(piLaunchBaseEnv)) {
+				backendProviderCredentials.cleanupScopedDir(
 					ensureSessionScopedPiAgentDir({
 						sessionKey: ctx.sessionKey,
 						sessionConfigOverrides: ctx.sessionConfigOverrides,
@@ -8912,7 +8889,7 @@ async function runPiPrompt(
 
 	const flushProviderCredential = async (reason: string) => {
 		if (!scopedPiAgentDir || !scopedProviderCredentialProvider || !activeProviderCredentialUserId) return;
-		const flushed = await flushScopedProviderCredential({
+		const flushed = await backendProviderCredentials.flushScoped({
 			scopedPiAgentDir,
 			createdByUser: activeProviderCredentialUserId,
 			agentSessionUid: ctx.agentSessionId,
@@ -8978,8 +8955,8 @@ async function runPiPrompt(
 				activeScopedProviderCredentials.delete(activeProviderCredentialKey);
 				activeProviderCredentialKey = null;
 			}
-			if (!isScopedProviderCredentialCacheEnabled(piLaunchBaseEnv)) {
-				cleanupScopedPiAgentDir(scopedProviderCredentialProvider ? scopedPiAgentDir : null);
+			if (!backendProviderCredentials.isScopedCacheEnabled(piLaunchBaseEnv)) {
+				backendProviderCredentials.cleanupScopedDir(scopedProviderCredentialProvider ? scopedPiAgentDir : null);
 			}
 		}
 	};
@@ -8987,7 +8964,7 @@ async function runPiPrompt(
 	const invalidateProviderCredentialCacheIfAuthFailure = (errorMessage: string | null) => {
 		if (!scopedProviderCredentialProvider) return;
 		if (!isProviderCredentialAuthFailureMessage(errorMessage)) return;
-		invalidateScopedProviderCredentialCache({
+		backendProviderCredentials.invalidateScopedCache({
 			sessionKey: ctx.sessionKey,
 			provider: scopedProviderCredentialProvider,
 			env: piLaunchBaseEnv,
@@ -9034,7 +9011,7 @@ async function runPiPrompt(
 	const piSpawnStartedAt = Date.now();
 	const child = spawn("pi", args, {
 		cwd: options.cwd,
-		env: buildMainsequenceStoredAuthEnv({
+		env: backendAuth.buildSubprocessEnv({
 			...process.env,
 			...buildSessionModelEnv(ctx.sessionModelBinding, process.env),
 			...(options.envOverrides ?? {}),
@@ -9331,7 +9308,7 @@ async function handleShutdownSignal(signal: "SIGINT" | "SIGTERM") {
 		}
 		await flushActiveScopedProviderCredentialsForShutdown(signal);
 	} finally {
-		mainsequenceCredentialExchangeLoop?.stop();
+		backendCredentialExchangeLoop?.stop();
 		const forcedExit = setTimeout(() => process.exit(0), 3000);
 		forcedExit.unref();
 		server.close(() => {
@@ -9799,7 +9776,7 @@ async function fetchA2AExtendedAgentCard(
 		};
 	}
 
-	const fetched = await fetchBackendAgentSessionAgentCard({
+	const fetched = await backendSessions.fetchAgentCard({
 		agentSessionUid,
 		env: process.env,
 		log: logExternalMessage("astro-stream", "backend.helper_log"),
@@ -10213,6 +10190,8 @@ async function handleStreamRequest(
 			body,
 			userUid,
 			env: process.env,
+			providerCredentials: backendProviderCredentials,
+			modelCatalog: backendModelCatalog,
 			log: (event: StatelessLlmLogEvent) =>
 				logStructuredEvent({
 					severity: event.severity,
@@ -10276,7 +10255,7 @@ async function handleStreamRequest(
 			});
 		}
 		try {
-			const availableModels = await collectAvailableModels({
+			const availableModels = await backendModelCatalog.collectAvailableModels({
 				env: process.env,
 				userId: userUid,
 			});
@@ -10337,7 +10316,7 @@ async function handleStreamRequest(
 
 	if (req.method === "GET" && url.pathname === "/api/models/catalog") {
 		try {
-			const modelCatalog = await collectModelCatalog({
+			const modelCatalog = await backendModelCatalog.collectModelCatalog({
 				env: process.env,
 				userId: resolveUserIdFromRequest(req, url),
 			});
@@ -10376,7 +10355,7 @@ async function handleStreamRequest(
 			);
 			return;
 		}
-		const statuses = await listModelProviderAuthStatuses({
+		const statuses = await backendProviderCredentials.listAuthStatuses({
 			createdByUser,
 			env: process.env,
 		});
@@ -10410,7 +10389,7 @@ async function handleStreamRequest(
 					modelProviderSignInAttemptPath.action === "cancel")))
 	) {
 		if (req.method === "GET") {
-			const result = getModelProviderSignInAttempt(
+			const result = backendProviderCredentials.getSignInAttempt(
 				modelProviderSignInAttemptPath.provider,
 				modelProviderSignInAttemptPath.attemptId,
 				process.env,
@@ -10439,7 +10418,7 @@ async function handleStreamRequest(
 			}
 
 			const manualInput = typeof body?.input === "string" ? body.input : "";
-			const result = submitModelProviderSignInManualInput(
+			const result = backendProviderCredentials.submitSignInManualInput(
 				modelProviderSignInAttemptPath.provider,
 				modelProviderSignInAttemptPath.attemptId,
 				manualInput,
@@ -10461,7 +10440,7 @@ async function handleStreamRequest(
 			return;
 		}
 
-		const result = cancelModelProviderSignInAttempt(
+		const result = backendProviderCredentials.cancelSignInAttempt(
 			modelProviderSignInAttemptPath.provider,
 			modelProviderSignInAttemptPath.attemptId,
 			process.env,
@@ -10520,12 +10499,12 @@ async function handleStreamRequest(
 		const agentSessionId = resolveOptionalAgentSessionIdFromBodyOrSearch(body, url);
 		const result =
 			modelProviderAuthAction.action === "signin"
-				? await startModelProviderSignIn(modelProviderAuthAction.provider, {
+				? await backendProviderCredentials.startSignIn(modelProviderAuthAction.provider, {
 						createdByUser,
 						agentSessionId,
 						env: process.env,
 				  })
-				: await signOffModelProvider(modelProviderAuthAction.provider, {
+				: await backendProviderCredentials.signOff(modelProviderAuthAction.provider, {
 						createdByUser,
 						env: process.env,
 				  });
@@ -10719,7 +10698,7 @@ async function handleStreamRequest(
 		const requestedByHolderId = activeCtx?.checkpointLease?.holderId ?? resolveCheckpointHolderId();
 		const cancelMessage =
 			typeof body.message === "string" && body.message.trim() ? body.message.trim() : null;
-		const client = new SessionCheckpointClient({
+		const client = backendCheckpoints.createClient({
 			env: process.env,
 			log: logExternalMessage("astro-stream", "backend.helper_log"),
 		});
@@ -10948,7 +10927,7 @@ async function handleStreamRequest(
 		});
 		return;
 	}
-	const registrationRequired = shouldRegisterAgents(process.env);
+	const registrationRequired = backendIdentity.shouldRegisterAgents(process.env);
 	if (!registrationRequired) {
 		json(res, 503, {
 			error: "agent_registration_disabled",

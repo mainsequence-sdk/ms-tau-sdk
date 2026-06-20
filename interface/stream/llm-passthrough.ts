@@ -5,11 +5,11 @@ import {
 	validateStrictJsonText,
 	type A2AOutputOptions,
 } from "./a2a-output.js";
-import {
-	ModelProviderCredentialClient,
-	type PiCredential,
-} from "./model-provider-credentials-client.js";
-import { resolveProviderDefinition } from "./model-provider-definitions.js";
+import type { PiCredential } from "./model-provider-credentials-client.js";
+import type {
+	BackendModelCatalogCapability,
+	BackendProviderCredentialsCapability,
+} from "../../adapters/types.js";
 
 export type StatelessLlmMessage = {
 	role: "system" | "user" | "assistant";
@@ -261,9 +261,11 @@ async function resolveProviderCredential(input: {
 	provider: string;
 	userUid: string | null;
 	env: NodeJS.ProcessEnv;
+	providerCredentials: BackendProviderCredentialsCapability;
+	modelCatalog: BackendModelCatalogCapability;
 	log?: (event: StatelessLlmLogEvent) => void;
 }): Promise<ProviderCredential> {
-	const providerDefinition = resolveProviderDefinition(input.provider);
+	const providerDefinition = input.modelCatalog.resolveProviderDefinition(input.provider);
 	const envApiKey = providerDefinition?.readEnvApiKey(input.env) ?? null;
 	if (envApiKey) {
 		return {
@@ -302,14 +304,12 @@ async function resolveProviderCredential(input: {
 		};
 	}
 
-	const client = new ModelProviderCredentialClient({
+	const hydrated = await input.providerCredentials.hydrate({
 		env: input.env,
 		log: (message) => input.log?.({
 			event: "llm_passthrough_credentials_log",
 			message,
 		}),
-	});
-	const hydrated = await client.hydrate({
 		createdByUser: input.userUid,
 		agentSessionUid: null,
 		providers: [input.provider],
@@ -617,6 +617,8 @@ export async function handleStatelessLlmChat(input: {
 	userUid?: string | null;
 	env?: NodeJS.ProcessEnv;
 	fetchFn?: typeof fetch;
+	providerCredentials: BackendProviderCredentialsCapability;
+	modelCatalog: BackendModelCatalogCapability;
 	log?: (event: StatelessLlmLogEvent) => void;
 }): Promise<StatelessLlmChatResult> {
 	const env = input.env ?? process.env;
@@ -683,6 +685,8 @@ export async function handleStatelessLlmChat(input: {
 		provider,
 		userUid: input.userUid ?? null,
 		env,
+		providerCredentials: input.providerCredentials,
+		modelCatalog: input.modelCatalog,
 		log: input.log,
 	});
 	if (credential.ok === false) return credential.result;

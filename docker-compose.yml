@@ -3,7 +3,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: astro-pi-stream
+      target: astro-mainsequence-pi-stream
       args:
         MAINSEQUENCE_PIP_SPEC: ${MAINSEQUENCE_PIP_SPEC:-mainsequence}
     image: astro:pi-stream
@@ -22,7 +22,8 @@ services:
       ASTRO_PROVIDER_CREDENTIAL_DIR: /session-state/pi-agent-auth
       ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS: ${ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS:-10000}
       ASTRO_CHECKPOINT_HOLDER_ID: pod/local-compose-astro-pi-stream
-      ASTRO_PI_PACKAGE_PATHS: ${ASTRO_PI_PACKAGE_PATHS:-/app/tmp_ms_pi}
+      ASTRO_BACKEND: mainsequence
+      ASTRO_PI_PACKAGE_PATHS: ${ASTRO_PI_PACKAGE_PATHS:-/app/adapters/mainsequence/pi-overlay}
       BUILD_AGENTS_IN_BACKEND: "1"
       A2A_DEV_PROJECT_MOUNTED_PATH: /workspace/a2a-dev-project
     volumes:
@@ -33,7 +34,6 @@ services:
       - ./adapters:/app/adapters
       - ./bin:/app/bin
       - ./tools:/app/tools
-      - ./tmp_ms_pi:/app/tmp_ms_pi
       - ./docs:/app/docs
       - ./README.md:/app/README.md
       - ./package.json:/app/package.json
@@ -101,7 +101,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-      target: astro-session-checkpoint-sidecar
+      target: astro-mainsequence-session-checkpoint-sidecar
       args:
         MAINSEQUENCE_PIP_SPEC: ${MAINSEQUENCE_PIP_SPEC:-mainsequence}
     image: astro:session-checkpoint-sidecar
@@ -117,6 +117,7 @@ services:
       ASTRO_SESSION_OVERRIDES_DIR: /session-state/session-overrides
       ASTRO_PROVIDER_CREDENTIAL_DIR: /session-state/pi-agent-auth
       ASTRO_CHECKPOINT_HOLDER_ID: pod/local-compose-astro-pi-stream
+      ASTRO_BACKEND: mainsequence
       ASTRO_CHECKPOINT_SIDECAR_DEBOUNCE_MS: ${ASTRO_CHECKPOINT_SIDECAR_DEBOUNCE_MS:-1000}
       ASTRO_CHECKPOINT_SIDECAR_SCAN_INTERVAL_MS: ${ASTRO_CHECKPOINT_SIDECAR_SCAN_INTERVAL_MS:-10000}
       ASTRO_CHECKPOINT_SIDECAR_PERIODIC_FLUSH_MS: ${ASTRO_CHECKPOINT_SIDECAR_PERIODIC_FLUSH_MS:-30000}

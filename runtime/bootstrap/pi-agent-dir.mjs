@@ -18,7 +18,6 @@ const ASTRO_RUNTIME_PROJECT_PI_DIR_ENV = "ASTRO_RUNTIME_PROJECT_PI_DIR";
 const ASTRO_ORCHESTRATOR_CWD_ENV = "ASTRO_ORCHESTRATOR_CWD";
 const ASTRO_ORCHESTRATOR_PROJECT_PI_DIR_ENV = "ASTRO_ORCHESTRATOR_PROJECT_PI_DIR";
 const ASTRO_PI_PACKAGE_PATHS_ENV = "ASTRO_PI_PACKAGE_PATHS";
-const MAINSEQUENCE_PI_CLI_AUTH_REPAIR_COMMAND_ENV = "MAINSEQUENCE_PI_CLI_AUTH_REPAIR_COMMAND";
 
 function ensureDir(dirPath) {
 	fs.mkdirSync(dirPath, { recursive: true, mode: 0o700 });
@@ -481,41 +480,6 @@ function ensureAstroStreamSessions(homeDir) {
 	return link;
 }
 
-function ensureMainsequenceCliConfig(homeDir) {
-	const configuredDir = process.env.ASTRO_MAINSEQUENCE_CONFIG_DIR?.trim();
-	if (!configuredDir) {
-		return {
-			configDir: null,
-			targetPath: null,
-			migratedExistingState: false,
-		};
-	}
-
-	const sourceDir = path.resolve(configuredDir);
-	const targetPath = path.join(homeDir, ".config", "mainsequence");
-	ensureDir(sourceDir);
-	ensureDir(path.dirname(targetPath));
-
-	let migratedExistingState = false;
-	try {
-		const existingStat = fs.lstatSync(targetPath);
-		if (!existingStat.isSymbolicLink()) {
-			fs.cpSync(targetPath, sourceDir, { recursive: true, force: false, errorOnExist: false });
-			migratedExistingState = true;
-			removePath(targetPath);
-		}
-	} catch {
-		// target does not exist yet
-	}
-
-	ensureSymlink(sourceDir, targetPath);
-	return {
-		configDir: sourceDir,
-		targetPath,
-		migratedExistingState,
-	};
-}
-
 function ensureContainerDataRoots(homeDir) {
 	const configuredRoot = process.env.ASTRO_CONTAINER_DATA_DIR?.trim();
 	if (!configuredRoot) {
@@ -532,11 +496,6 @@ function ensureContainerDataRoots(homeDir) {
 		rootDir,
 		links: [
 			ensureRuntimeDirectoryLink(path.join(rootDir, ".ssh"), path.join(homeDir, ".ssh")),
-			ensureRuntimeDirectoryLink(path.join(rootDir, "mainsequence"), path.join(homeDir, "mainsequence")),
-			ensureRuntimeDirectoryLink(
-				path.join(rootDir, "mainsequence-dev"),
-				path.join(homeDir, "mainsequence-dev"),
-			),
 			ensureRuntimeDirectoryLink(path.join(rootDir, "uv"), path.join(homeDir, ".local", "share", "uv")),
 		],
 	};
@@ -577,40 +536,6 @@ function ensureRuntimeSshConfig(homeDir, rootDir) {
 		knownHostsPath,
 		configPath,
 	};
-}
-
-function ensureManagedMainsequenceShim(targetDir) {
-	const binDir = path.join(targetDir, "bin");
-	ensureDir(binDir);
-	const shimPath = path.join(binDir, "mainsequence");
-	const shimContents = `#!/bin/sh
-set -eu
-
-REAL_MAINSEQUENCE="\${ASTRO_REAL_MAINSEQUENCE:-mainsequence}"
-
-if [ "\${ASTRO_MAINSEQUENCE_BYPASS_SHIM:-0}" = "1" ]; then
-  exec "$REAL_MAINSEQUENCE" "$@"
-fi
-
-exec "$REAL_MAINSEQUENCE" "$@"
-`;
-	fs.writeFileSync(shimPath, shimContents, { mode: 0o755 });
-	return shimPath;
-}
-
-function shellQuote(value) {
-	return `'${String(value).replace(/'/g, "'\\''")}'`;
-}
-
-function ensureMainsequenceCliAuthRepairCommand() {
-	const configured = process.env[MAINSEQUENCE_PI_CLI_AUTH_REPAIR_COMMAND_ENV]?.trim();
-	if (configured) return configured;
-
-	const tsxBin = path.join(repoRoot, "node_modules", ".bin", process.platform === "win32" ? "tsx.cmd" : "tsx");
-	const repairScript = path.join(repoRoot, "adapters", "mainsequence", "bin", "cli-auth-repair.ts");
-	const command = `${shellQuote(tsxBin)} ${shellQuote(repairScript)}`;
-	process.env[MAINSEQUENCE_PI_CLI_AUTH_REPAIR_COMMAND_ENV] = command;
-	return command;
 }
 
 function readTextFileIfPresent(filePath) {
@@ -670,15 +595,12 @@ export function bootstrapPiAgentDir() {
 	const prunedProviderAuthEntries = pruneContainerProviderAuthState(path.resolve(targetDir));
 	const prunedScopedProviderCredentialDir = pruneScopedProviderCredentialState();
 	ensureDir(path.join(targetDir, "bin"));
-	const mainsequenceShimPath = ensureManagedMainsequenceShim(targetDir);
-	const mainsequenceCliAuthRepairCommand = ensureMainsequenceCliAuthRepairCommand();
 	const runtimeSettingsPath = ensureRuntimeSettings(targetDir);
 	const configuredPiPackages = parseConfiguredPiPackagePaths();
 	const runtimeProject = ensureDefaultRuntimeProject({
 		containerDataRoot: containerData.rootDir,
 		targetDir,
 	});
-	const mainsequenceCliConfig = ensureMainsequenceCliConfig(homeDir);
 	const piAgentHomeLink = ensurePiAgentHomeLink(homeDir, targetDir);
 	const streamSessions = ensureAstroStreamSessions(homeDir);
 	const sshRuntime = ensureRuntimeSshConfig(homeDir, containerData.rootDir);
@@ -689,12 +611,9 @@ export function bootstrapPiAgentDir() {
 		runtimeProject,
 		orchestratorRuntime: runtimeProject,
 		containerData,
-		mainsequenceCliConfig,
 		piAgentHomeLink,
 		streamSessions,
 		sshRuntime,
-		mainsequenceShimPath,
-		mainsequenceCliAuthRepairCommand,
 		configuredPiPackages,
 		prunedProviderAuthEntries,
 		prunedScopedProviderCredentialDir,

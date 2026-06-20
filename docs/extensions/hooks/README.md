@@ -10,7 +10,7 @@ These pages document Astro's repo-owned Pi hook extensions under `pi/extensions/
 ## Notes
 
 - Hooks are loaded by Pi at runtime; Astro uses root hooks for Astro Core lifecycle and telemetry.
-- Main Sequence package hooks are delivered by `tmp_ms_pi` and are not mirrored here.
+- Main Sequence package hooks are delivered by `adapters/mainsequence/pi-overlay` and are not mirrored here.
 
 ## Related pages
 

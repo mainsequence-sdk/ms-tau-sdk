@@ -30,8 +30,8 @@ This tells Pi what to load from the repository:
 This is Astro's shared always-on prompt.
 
 It contains only the generic Astro-hosted Pi runtime contract. Platform-specific behavior,
-including Main Sequence behavior during the current local simulation, is composed through configured
-Pi packages such as `tmp_ms_pi`.
+including Main Sequence behavior during the current adapter overlay, is composed through configured
+Pi packages such as `adapters/mainsequence/pi-overlay`.
 
 ### Extensions
 
@@ -44,13 +44,13 @@ Extensions live under `pi/extensions/hooks/` and `pi/extensions/tools/` and do t
 
 Prompt templates are reusable workflows the parent can follow.
 
-Main Sequence prompt templates are currently delivered by `tmp_ms_pi`, not root `pi/`.
+Main Sequence prompt templates are currently delivered by `adapters/mainsequence/pi-overlay`, not root `pi/`.
 
 ### Skills
 
 Skills are deeper instruction bundles the agent can load when relevant.
 
-Main Sequence skills are currently delivered by `tmp_ms_pi` or SDK materialization, not root `pi/`.
+Main Sequence skills are currently delivered by `adapters/mainsequence/pi-overlay` or SDK materialization, not root `pi/`.
 
 ### External packages
 

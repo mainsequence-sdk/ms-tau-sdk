@@ -4,12 +4,9 @@ import process from "node:process";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { bootstrapPiAgentDir } from "../runtime/bootstrap/pi-agent-dir.mjs";
-import {
-	buildMainsequenceStoredAuthEnv,
-	bootstrapMainsequenceCliAuth,
-	loadEnvFile,
-	startMainsequenceCredentialExchangeLoop,
-} from "../adapters/mainsequence/runtime-auth.js";
+import { resolveBackendAdapter } from "../adapters/backend.js";
+import { requireBackendCapability } from "../adapters/types.js";
+import { loadEnvFile } from "../runtime/env.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(__dirname, "..");
@@ -75,8 +72,18 @@ function ensurePiCli(cwd = repoRoot) {
 
 async function main() {
 	loadEnvFile(repoRoot);
+	const backendAdapter = resolveBackendAdapter(process.env);
+	const backendBootstrap = backendAdapter.bootstrap;
+	const backendAuth = requireBackendCapability(backendAdapter, "auth", backendAdapter.auth);
 	const piAgentState = bootstrapPiAgentDir();
-	await bootstrapMainsequenceCliAuth({
+	await backendBootstrap?.prepareRuntime({
+		env: process.env,
+		repoRoot,
+		piAgentDir: piAgentState.targetDir,
+		containerDataRoot: piAgentState.containerData?.rootDir ?? null,
+		log: (message) => console.log(`[astro] ${message}`),
+	});
+	await backendAuth.prepareRuntime({
 		env: process.env,
 		log: (message) => console.log(`[astro] ${message}`),
 	});
@@ -109,10 +116,10 @@ async function main() {
 	console.log("[astro] Running TypeScript check...");
 	run("npm", ["run", "check"]);
 
-	const credentialExchangeLoop = startMainsequenceCredentialExchangeLoop({
+	const credentialExchangeLoop = backendAuth.startCredentialRefreshLoop?.({
 		env: process.env,
 		log: (message) => console.log(`[astro] ${message}`),
-	});
+	}) ?? null;
 
 	console.log("[astro] Starting Pi...");
 	const child = spawn("pi", [], {
@@ -120,7 +127,7 @@ async function main() {
 		stdio: "inherit",
 		shell: false,
 		env: {
-			...buildMainsequenceStoredAuthEnv(process.env),
+			...backendAuth.buildSubprocessEnv(process.env),
 			PWD: runtimeCwd,
 			...(runtimeUserId ? { ASTRO_MAINSEQUENCE_USER_UID: runtimeUserId } : {}),
 		},

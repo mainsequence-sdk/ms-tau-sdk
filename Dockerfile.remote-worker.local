@@ -34,9 +34,11 @@ RUN npm install --include=dev --no-audit --no-fund \
 
 COPY .pi ./.pi
 COPY pi ./pi
-COPY tmp_ms_pi ./tmp_ms_pi
 COPY interface ./interface
-COPY scripts ./scripts
+COPY runtime ./runtime
+COPY adapters ./adapters
+COPY bin ./bin
+COPY tools ./tools
 
 RUN npm run check
 
@@ -70,7 +72,7 @@ ENV APP_USER=jovyan \
     ASTRO_SESSION_OVERRIDES_DIR=/session-state/session-overrides \
     ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/jovyan/.astro-container-data/.config/mainsequence \
     PI_CODING_AGENT_DIR=/home/jovyan/.astro-container-data/.pi/agent \
-    ASTRO_PI_PACKAGE_PATHS=/app/tmp_ms_pi \
+    ASTRO_PI_PACKAGE_PATHS=/app/adapters/mainsequence/pi-overlay \
     ASTRO_FIXED_PROJECT_CWD=/workspace/project \
     ASTRO_PROJECT_IMAGE_REF=local-mounted-project
 
@@ -96,4 +98,4 @@ WORKDIR /workspace/project
 
 EXPOSE 8787
 
-CMD ["/app/node_modules/.bin/tsx", "/app/scripts/start_pi_stream.ts"]
+CMD ["/app/node_modules/.bin/tsx", "/app/bin/astro-stream.ts"]

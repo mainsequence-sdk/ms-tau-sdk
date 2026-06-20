@@ -30,7 +30,7 @@ flowchart LR
     SET --> EXT["Extensions"]
 
     P --> PKG["Configured Pi packages"]
-    PKG --> MSPI["tmp_ms_pi simulation"]
+    PKG --> MSPI["Main Sequence pi-overlay package"]
 
     P --> CTX["Runtime context"]
     CTX --> TARGET["Optional prepared project cwd"]
