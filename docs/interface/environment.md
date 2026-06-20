@@ -106,19 +106,6 @@ For the full worker-image layout and pod contract, see
 For the two Astro deployment identities and sidecar expectations, see
 [`../components/deployment-identities.md`](../components/deployment-identities.md).
 
-## Local mounted-project executor harness
-
-These env vars are used by the `astro-project-executor` service in
-[`docker-compose.yml`](../../docker-compose.yml):
-
-- `A2A_DEV_PROJECT`
-  - required for the local executor harness and local A2A debug mode
-  - host path to mount into `/workspace/project` for the executor
-  - Astro also uses the mounted project to read `.agents/agent_card.json` during local A2A discovery
-- `ASTRO_EXECUTOR_STREAM_PORT`
-  - optional host port for the local executor HTTP stream
-  - defaults to `8790`
-
 ## Local A2A debug mode
 
 - `A2A_DEV_PROJECT`

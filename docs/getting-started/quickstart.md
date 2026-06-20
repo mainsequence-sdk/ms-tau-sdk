@@ -161,19 +161,6 @@ This launcher:
 
 Run Pi and use the `verify-mainsequence-tutorial` prompt template only when you explicitly want the fixed tutorial-regression workflow.
 
-## Run only the local project-attached runtime
-
-Use the local project-attached container harness when you want to inspect or test Astro running
-inside a prepared project cwd. This starts the same Astro stream runtime with
-`ASTRO_FIXED_PROJECT_CWD` pointing at the mounted project; it does not use a separate executor
-prompt file.
-
-```bash
-export A2A_DEV_PROJECT=/absolute/path/to/checked-out-project
-export ASTRO_EXECUTOR_PROJECT_ID=<project-id>
-docker compose up astro-project-executor
-```
-
 ## Manual commands
 
 ```bash

@@ -146,7 +146,7 @@ steps:
         MAINSEQUENCE_RUNTIME_IMAGE="$$(cat /workspace/mainsequence_runtime_image.txt)"
         docker push "$${MAINSEQUENCE_RUNTIME_IMAGE}"
 
-  - id: "push-astro-project-executor-bundle-version-image"
+  - id: "push-astro-runtime-bundle-version-image"
     waitFor:
       - "build-image-and-detect-mainsequence-version"
     name: "gcr.io/cloud-builders/docker"
@@ -158,7 +158,7 @@ steps:
         BUNDLE_VERSION_IMAGE="$$(cat /workspace/bundle_version_image.txt)"
         docker push "$${BUNDLE_VERSION_IMAGE}"
 
-  - id: "push-astro-project-executor-bundle-latest-image"
+  - id: "push-astro-runtime-bundle-latest-image"
     waitFor:
       - "build-image-and-detect-mainsequence-version"
     name: "gcr.io/cloud-builders/docker"

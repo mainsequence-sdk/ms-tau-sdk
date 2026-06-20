@@ -99,31 +99,6 @@ rebuildable runtime state lives under `/home/jovyan/.astro-container-data`.
 That keeps Linux virtualenvs isolated from macOS host paths and makes Docker behave closer to the
 pod-local `emptyDir` session model.
 
-To run the mounted-project local project-attached harness, set a host project path and launch the
-disabled compose harness after enabling it locally:
-
-```bash
-export A2A_DEV_PROJECT=/Users/jose/mainsequence-dev/main-sequence-workbench/projects/hope-30-81
-export ASTRO_EXECUTOR_PROJECT_ID=hope-30-81
-docker compose up astro-project-executor
-```
-
-That local project-attached harness:
-
-- starts the same Astro stream runtime with `ASTRO_FIXED_PROJECT_CWD=/workspace/project`
-- mounts `A2A_DEV_PROJECT` into `/workspace/project`
-- keeps backend `agentType` as session metadata, not local runtime architecture
-- lives in the normal `docker-compose.yml` stack
-- uses the same stream runtime as the no-project deployment
-
-To run only the local project-attached runtime:
-
-```bash
-export A2A_DEV_PROJECT=/absolute/path/to/checked-out-project
-export ASTRO_EXECUTOR_PROJECT_ID=<project-id>
-docker compose up astro-project-executor
-```
-
 ## Start reading here
 
 - [`docs/README.md`](./docs/README.md)

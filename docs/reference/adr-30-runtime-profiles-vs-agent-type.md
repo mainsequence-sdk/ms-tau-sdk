@@ -440,9 +440,9 @@ Canonical Astro runtime filesystem contract:
       to write under an unwritable home directory.
 - [x] Keep the effective working root as the intentional profile difference: orchestrator runtime
       cwd for non-project-attached sessions, prepared project cwd for project-attached sessions.
-- [x] Update `Dockerfile`, `Dockerfile.remote-worker.local`, `docker-compose.yml`, sidecar
-      deployment config, and deployment docs after the canonical contract is chosen. Do not change
-      `Dockerfile.remote-worker`.
+- [x] Update `Dockerfile`, `docker-compose.yml`, sidecar deployment config, and deployment docs
+      after the canonical contract is chosen. Remove the obsolete local mounted-project Dockerfile
+      harness. Do not change `Dockerfile.remote-worker`.
 
 ### Model and session policy
 

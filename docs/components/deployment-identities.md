@@ -79,8 +79,6 @@ Container shape:
 - Astro runtime lives under `/app`
 - prepared project tree lives at `ASTRO_FIXED_PROJECT_CWD`, normally
   `/usr/local/share/user-skel/app`
-- local mounted-project harness uses
-  [`Dockerfile.remote-worker.local`](../../Dockerfile.remote-worker.local) and `/workspace/project`
 
 ## Shared Filesystem And Sidecar Contract
 

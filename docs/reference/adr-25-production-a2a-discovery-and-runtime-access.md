@@ -345,7 +345,7 @@ When `A2A_DEV_PROJECT` is **not** set:
 
 - Astro must use the CLI-backed discovery and runtime-access flow defined by this ADR
 - Astro must not fall back to guessed service URLs such as:
-  - `http://astro-project-executor:8787`
+  - `http://<guessed-runtime-service>:8787`
   - `http://127.0.0.1:<port>`
 
 Those direct URLs are debug-only behavior.

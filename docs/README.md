@@ -9,17 +9,6 @@ This documentation set is organized for readers who may not know Pi yet. It expl
 3. how the prompt and runtime-agent layers drive project behavior
 4. where package-provided resources enter the runtime
 
-## Run the local project-attached runtime
-
-If you want to inspect Astro running against a prepared project cwd, use the local
-project-attached container harness:
-
-```bash
-export A2A_DEV_PROJECT=/absolute/path/to/checked-out-project
-export ASTRO_EXECUTOR_PROJECT_ID=<project-id>
-docker compose up astro-project-executor
-```
-
 ## Architecture
 
 ```mermaid

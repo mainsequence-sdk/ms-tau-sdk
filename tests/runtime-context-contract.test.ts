@@ -25,17 +25,14 @@ test("stream runtime no longer branches local architecture on project-executor i
 
 test("project-attached worker image uses fixed cwd instead of legacy runtime mode envs", () => {
 	const remoteWorkerDockerfile = readRepoFile("Dockerfile.remote-worker");
-	const localWorkerDockerfile = readRepoFile("Dockerfile.remote-worker.local");
 	const compose = readRepoFile("docker-compose.yml");
 
-	for (const source of [remoteWorkerDockerfile, localWorkerDockerfile, compose]) {
+	for (const source of [remoteWorkerDockerfile, compose]) {
 		assert.doesNotMatch(source, /ASTRO_EXECUTION_MODE[=:]\s*remote_project_worker/);
 		assert.doesNotMatch(source, /ASTRO_FIXED_AGENT_TYPE[=:]\s*project-executor/);
 	}
 	assert.match(remoteWorkerDockerfile, /ASTRO_FIXED_PROJECT_CWD/);
-	assert.match(localWorkerDockerfile, /ASTRO_FIXED_PROJECT_CWD/);
-	assert.match(remoteWorkerDockerfile, /ASTRO_PI_PACKAGE_PATHS=\/app\/adapters\/mainsequence\/pi/);
-	assert.match(localWorkerDockerfile, /ASTRO_PI_PACKAGE_PATHS=\/app\/adapters\/mainsequence\/pi/);
+	assert.match(remoteWorkerDockerfile, /ASTRO_PI_PACKAGE_PATHS=\/app\/adapters\/mainsequence\/pi-overlay/);
 });
 
 test("Main Sequence backend identity override preserves project-executor unique id", () => {

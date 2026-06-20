@@ -3,14 +3,6 @@
 This page documents [`Dockerfile.remote-worker`](../../Dockerfile.remote-worker), the image used
 when Astro is layered onto an existing prepared project image.
 
-For the local mounted-project harness, see:
-
-- [`Dockerfile.remote-worker.local`](../../Dockerfile.remote-worker.local)
-- the disabled `astro-project-executor` service example in [`../../docker-compose.yml`](../../docker-compose.yml)
-
-That local harness assumes the host project path mounted into `/workspace/project` is already the
-project root Astro should work against.
-
 ## Purpose
 
 `Dockerfile.remote-worker` does not replace the normal Astro stream image.
