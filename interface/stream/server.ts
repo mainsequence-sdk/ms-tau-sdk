@@ -609,7 +609,6 @@ type RequestContext = {
 	threadId: string;
 	sessionKey: string;
 	agentId: string | null;
-	agentUniqueId: string | null;
 	agentSessionId: string | null;
 	agentType: string;
 	userId: string | null;
@@ -1972,7 +1971,6 @@ async function buildSessionRuntimeBootstrapContext(input: {
 	const metadata: SessionMetadata = {
 		...hydration.hydrated.metadata,
 		agentId: hydration.hydrated.agentId,
-		agentUniqueId: hydration.hydrated.agentUniqueId,
 		agentSessionId: input.agentSessionUid,
 		agentType,
 	};
@@ -2023,7 +2021,6 @@ async function buildSessionRuntimeBootstrapContext(input: {
 		threadId,
 		sessionKey: input.agentSessionUid,
 		agentId: hydration.hydrated.agentId,
-		agentUniqueId: hydration.hydrated.agentUniqueId,
 		agentSessionId: input.agentSessionUid,
 		agentType,
 		userId: hydration.hydrated.effectiveUserId,
@@ -2166,7 +2163,6 @@ function getActiveStreamContext(sessionKey: string, agentSessionId: string | nul
 
 type SessionMetadata = {
 	agentId: string | null;
-	agentUniqueId: string | null;
 	agentSessionId: string | null;
 	providerCredentialUserId: string | null;
 	threadId: string | null;
@@ -2245,7 +2241,6 @@ type ThreadSessionBinding = {
 
 type HydratedBackendSession = {
 	agentId: string;
-	agentUniqueId: string | null;
 	effectiveUserId: string | null;
 	metadata: SessionMetadata;
 };
@@ -3232,23 +3227,6 @@ function extractRequestedAgentId(payload: Record<string, unknown>): string | nul
 	);
 }
 
-function extractRequestedAgentUniqueId(payload: Record<string, unknown>): string | null {
-	return (
-		extractStringProperty(payload, "agent_unique_id", "agentUniqueId") ??
-		(() => {
-			const sessionPayload = extractRequestSessionPayload(payload);
-			if (!sessionPayload) return null;
-			const agentRecord = extractObjectPropertyRecord(sessionPayload, "agent");
-			return agentRecord ? extractStringProperty(agentRecord, "agent_unique_id", "agentUniqueId") : null;
-		})() ??
-		(() => {
-			const sessionMetadata = extractObjectPropertyRecord(payload, "sessionMetadata", "session_metadata");
-			if (!sessionMetadata) return null;
-			return extractStringProperty(sessionMetadata, "agent_unique_id", "agentUniqueId");
-		})()
-	);
-}
-
 function extractRequestSessionPayload(payload: Record<string, unknown>): Record<string, unknown> | null {
 	return extractObjectPropertyRecord(
 		payload,
@@ -3543,7 +3521,6 @@ async function attachHydratedBackendSession(options: {
 			agentSessionUid: normalizedAgentSessionId,
 			agentId,
 			threadId: metadata.threadId,
-			agentUniqueId: metadata.agentUniqueId,
 			startedAt: metadata.startedAt,
 			agentType: metadata.agentType,
 			hasSessionModelBinding: Boolean(metadata.sessionModelBinding),
@@ -3554,7 +3531,6 @@ async function attachHydratedBackendSession(options: {
 		ok: true,
 		hydrated: {
 			agentId,
-			agentUniqueId: metadata.agentUniqueId,
 			effectiveUserId,
 			metadata: {
 				...metadata,
@@ -3708,9 +3684,6 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 			(parsed as { agent_uid?: unknown }).agent_uid ??
 			(parsed as { agentId?: unknown }).agentId ??
 			(parsed as { agent_id?: unknown }).agent_id;
-		const rawAgentUniqueId =
-			(parsed as { agentUniqueId?: unknown }).agentUniqueId ??
-			(parsed as { agent_unique_id?: unknown }).agent_unique_id;
 		const rawAgentSessionId =
 			(parsed as { agentSessionUid?: unknown }).agentSessionUid ??
 			(parsed as { agent_session_uid?: unknown }).agent_session_uid ??
@@ -3741,10 +3714,6 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 			typeof rawAgentSessionId === "string" && rawAgentSessionId.trim()
 				? rawAgentSessionId.trim()
 				: null;
-		const normalizedAgentUniqueId =
-			typeof rawAgentUniqueId === "string" && rawAgentUniqueId.trim()
-				? rawAgentUniqueId.trim()
-				: null;
 		const normalizedThreadId =
 			typeof rawThreadId === "string" && rawThreadId.trim() ? rawThreadId.trim() : null;
 		const normalizedStartedAt =
@@ -3762,7 +3731,6 @@ function readSessionMetadata(sessionKey: string): SessionMetadata | null {
 		const normalizedHistoryAnnotations = normalizeHistoryAnnotations(rawHistoryAnnotations);
 		return {
 			agentId: normalizedAgentId,
-			agentUniqueId: normalizedAgentUniqueId,
 			agentSessionId: normalizedAgentSessionId,
 			providerCredentialUserId: resolveUserId(rawProviderCredentialUserId),
 			threadId: normalizedThreadId,
@@ -3796,7 +3764,6 @@ function writeSessionMetadata(sessionKey: string, metadata: SessionMetadata) {
 		nextMetadata.agentUid = metadata.agentId;
 		nextMetadata.agent_uid = metadata.agentId;
 	}
-	if (metadata.agentUniqueId) nextMetadata.agent_unique_id = metadata.agentUniqueId;
 	if (metadata.agentSessionId != null) {
 		nextMetadata.agentSessionUid = metadata.agentSessionId;
 		nextMetadata.agent_session_uid = metadata.agentSessionId;
@@ -4723,14 +4690,10 @@ function buildSessionMetadataFromBackendCheckpoint(input: {
 		? input.checkpointBundle.astro_metadata_json
 		: {};
 	const historyAnnotations = normalizeHistoryAnnotations(bundleMetadata.history_annotations);
-	const agentRecord = extractObjectPropertyRecord(input.sessionPayload, "agent");
 	const agentType = extractAgentTypeFromSessionPayload(input.sessionPayload, sessionMetadata);
 	const agentId =
 		extractBackendSessionAgentId(input.sessionPayload) ??
 		extractUidProperty(bundleMetadata, "agentUid", "agent_uid");
-	const agentUniqueId =
-		(agentRecord ? extractStringProperty(agentRecord, "agent_unique_id", "agentUniqueId") : null) ??
-		extractStringProperty(bundleMetadata, "agentUniqueId", "agent_unique_id");
 	const threadId =
 		extractStringProperty(bundleMetadata, "threadId", "thread_id") ??
 		extractBackendSessionThreadId(input.sessionPayload, sessionMetadata, input.requestedThreadId) ??
@@ -4746,7 +4709,6 @@ function buildSessionMetadataFromBackendCheckpoint(input: {
 
 	return {
 		agentId,
-		agentUniqueId,
 		agentSessionId: input.agentSessionId,
 		providerCredentialUserId,
 		threadId,
@@ -4777,16 +4739,11 @@ function buildSessionMetadataFromRequestSessionPayload(input: {
 	existingMetadata?: SessionMetadata | null;
 }): SessionMetadata {
 	const sessionMetadata = extractObjectPropertyRecord(input.sessionPayload, "session_metadata", "sessionMetadata");
-	const agentRecord = extractObjectPropertyRecord(input.sessionPayload, "agent");
 	const agentType =
 		extractAgentTypeFromSessionPayload(input.sessionPayload, sessionMetadata) ??
 		input.existingMetadata?.agentType ??
 		input.fallbackAgentType;
 	const agentId = extractBackendSessionAgentId(input.sessionPayload) ?? input.existingMetadata?.agentId ?? null;
-	const agentUniqueId =
-		(agentRecord ? extractStringProperty(agentRecord, "agent_unique_id", "agentUniqueId") : null) ??
-		input.existingMetadata?.agentUniqueId ??
-		null;
 	const threadId =
 		extractBackendSessionThreadId(input.sessionPayload, sessionMetadata, input.requestedThreadId) ??
 		input.existingMetadata?.threadId ??
@@ -4811,7 +4768,6 @@ function buildSessionMetadataFromRequestSessionPayload(input: {
 
 	return {
 		agentId,
-		agentUniqueId,
 		agentSessionId: normalizedAgentSessionId,
 		providerCredentialUserId,
 		threadId,
@@ -4841,7 +4797,6 @@ function buildSessionMetadataFromBackendSessionPayload(input: {
 	existingMetadata?: SessionMetadata | null;
 }): SessionMetadata | null {
 	const sessionMetadata = extractObjectPropertyRecord(input.sessionPayload, "session_metadata", "sessionMetadata");
-	const agentRecord = extractObjectPropertyRecord(input.sessionPayload, "agent");
 	const agentType =
 		extractAgentTypeFromSessionPayload(input.sessionPayload, sessionMetadata) ??
 		input.existingMetadata?.agentType ??
@@ -4849,10 +4804,6 @@ function buildSessionMetadataFromBackendSessionPayload(input: {
 	if (!agentType) return null;
 
 	const agentId = extractBackendSessionAgentId(input.sessionPayload) ?? input.existingMetadata?.agentId ?? null;
-	const agentUniqueId =
-		(agentRecord ? extractStringProperty(agentRecord, "agent_unique_id", "agentUniqueId") : null) ??
-		input.existingMetadata?.agentUniqueId ??
-		null;
 	const threadId =
 		extractBackendSessionThreadId(input.sessionPayload, sessionMetadata, input.requestedThreadId) ??
 		input.existingMetadata?.threadId ??
@@ -4877,7 +4828,6 @@ function buildSessionMetadataFromBackendSessionPayload(input: {
 
 	return {
 		agentId,
-		agentUniqueId,
 		agentSessionId: normalizedAgentSessionId,
 		providerCredentialUserId,
 		threadId,
@@ -11303,15 +11253,11 @@ async function handleStreamRequest(
 
 	const threadId = existingSessionMetadata?.threadId ?? requestedThreadId ?? runtimeSessionId;
 	let agentId: string | null = null;
-	let agentUniqueId: string | null = null;
 	const explicitAgentId = extractRequestedAgentId(isPlainObject(body) ? body : {});
-	const explicitAgentUniqueId = extractRequestedAgentUniqueId(isPlainObject(body) ? body : {});
 	if (hydratedBackendSession) {
 		agentId = hydratedBackendSession.agentId;
-		agentUniqueId = hydratedBackendSession.agentUniqueId;
 	} else {
 		agentId = existingSessionMetadata?.agentId ?? explicitAgentId;
-		agentUniqueId = existingSessionMetadata?.agentUniqueId ?? explicitAgentUniqueId;
 	}
 
 	if (agentId == null) {
@@ -11399,17 +11345,6 @@ async function handleStreamRequest(
 	}
 	const persistedCwd = projectAttachment.attached ? agentCwd : null;
 	const frozenRepoRoot = projectAttachment.repoRoot;
-	if (
-		existingSessionMetadata?.agentUniqueId &&
-		agentUniqueId &&
-		existingSessionMetadata.agentUniqueId !== agentUniqueId
-	) {
-		json(res, 409, {
-			error: "session_mismatch",
-			message: "runtime_session_uid does not match the active agent.",
-		});
-		return;
-	}
 	agentSessionId =
 		existingSessionMetadata?.agentSessionId ?? runtimeSessionId;
 	startedAt = existingSessionMetadata?.startedAt ?? null;
@@ -11515,8 +11450,6 @@ async function handleStreamRequest(
 		"Cache-Control": "no-cache",
 		Connection: "keep-alive",
 		"X-Thread-Id": responseThreadId,
-		...(agentId != null ? { "X-Agent-Uid": String(agentId) } : {}),
-		...(agentUniqueId ? { "X-Agent-Unique-Id": agentUniqueId } : {}),
 		...(agentSessionId != null ? { "X-Agent-Session-Uid": String(agentSessionId) } : {}),
 		"X-Session-Key": sessionKey,
 		"X-Stream-Protocol": "ui-message-stream",
@@ -11532,7 +11465,6 @@ async function handleStreamRequest(
 		threadId: responseThreadId,
 		sessionKey,
 		agentId,
-		agentUniqueId,
 		agentSessionId,
 		agentType: responseAgentType,
 		userId,
@@ -11637,7 +11569,6 @@ async function handleStreamRequest(
 		try {
 			writeSessionMetadata(sessionKey, {
 				agentId,
-				agentUniqueId,
 				agentSessionId,
 				providerCredentialUserId: existingSessionMetadata?.providerCredentialUserId ?? null,
 				threadId,

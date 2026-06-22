@@ -106,9 +106,8 @@ The CLI returns search results like:
 [
   {
     "orm_class": "AgentSemanticSearchResult",
-    "id": 25,
+    "uid": "agent-25",
     "name": "project-executor",
-    "agent_unique_id": "project-executor_81",
     "description": "A testing-only project that exposes two CLI-backed capabilities: return the current time and return the authenticated user.",
     "semantic_score": 0.7781205009695902,
     "text_score": 0.04040404,
@@ -123,11 +122,10 @@ To preserve Astro's existing A2A discovery shape, each CLI result should be norm
 
 ```json
 {
-  "agent_id": 25,
+  "agent_uid": "agent-25",
   "agent_description": "A testing-only project that exposes two CLI-backed capabilities: return the current time and return the authenticated user.",
   "a2a_card": {
     "name": "project-executor",
-    "agent_unique_id": "project-executor_81",
     "semantic_score": 0.7781205009695902,
     "text_score": 0.04040404,
     "combined_score": 0.5199197397584775

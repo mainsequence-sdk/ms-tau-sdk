@@ -14,6 +14,9 @@ pre-UID API sketches have been removed from the active reference set.
     backend `agent_type` must not define separate local runtime architectures.
 - [`adr-31-backend-uid-identity.md`](./adr-31-backend-uid-identity.md)
   - Backend resource lookup is by `uid`, not deprecated `id`.
+- [`adr-41-remove-agent-unique-id.md`](./adr-41-remove-agent-unique-id.md)
+  - `agent_unique_id` is removed from runtime behavior, persistence, public responses, adapter
+    contracts, and docs. Astro stream responses must stop emitting Agent identity headers.
 - [`../components/deployment-identities.md`](../components/deployment-identities.md)
   - Project attachment is selected by fixed project cwd; backend identity is separate metadata.
 

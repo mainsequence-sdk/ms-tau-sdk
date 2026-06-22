@@ -1038,8 +1038,8 @@ The immediate rule for implementation is:
 
 - [x] Move `interface/stream/mainsequence-agent-registration.ts` behind
   `mainsequenceAdapter.sessions` and `mainsequenceAdapter.identity`.
-- [x] Move `buildAgentUniqueId(...)` into Main Sequence adapter identity policy while preserving the
-  existing `project-executor -> project-executor` unique-id override.
+- [x] Keep Main Sequence user/session authority behind adapter identity policy without exposing a
+  semantic Agent identity generator.
 - [x] Move `resolveMainsequenceUserId(...)` behind adapter identity/session policy.
 - [x] Move `fetchBackendAgentSession(...)` and `fetchBackendAgentSessionAgentCard(...)` behind
   `adapter.sessions`.

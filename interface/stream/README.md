@@ -178,8 +178,6 @@ To bind or override the session model on the same request, include:
 
 The response includes `X-Thread-Id`. When the backend session authority provides the fields, it also includes:
 
-- `X-Agent-Uid`
-- `X-Agent-Unique-Id`
 - `X-Agent-Session-Uid`
 - `X-Session-Key`
 
@@ -224,7 +222,8 @@ Response headers include:
 
 - `Content-Type: text/event-stream`
 - `X-Stream-Protocol: ui-message-stream`
-- `X-Agent-Uid` when the backend returned an Agent `uid` for the thread
+- `X-Agent-Session-Uid` when the stream is attached to a backend AgentSession
+- `X-Session-Key` for the local runtime session key
 
 The stream ends with a final `data: [DONE]` marker after the `finish` or `error` chunk.
 

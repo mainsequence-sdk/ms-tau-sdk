@@ -5,8 +5,6 @@ Responses are **SSE** with:
 - `Content-Type: text/event-stream`
 - `X-Stream-Protocol: ui-message-stream`
 - `X-Thread-Id`
-- `X-Agent-Uid` (backend Agent uid)
-- `X-Agent-Unique-Id` (deterministic identity)
 - `X-Agent-Session-Uid` (backend AgentSession uid for the attached session)
 - `X-Session-Key` (runtime session key)
 

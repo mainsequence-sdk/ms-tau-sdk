@@ -11,7 +11,6 @@ type AgentSessionResult = {
 	agentSessionUid: string | null;
 	agentUid: string | null;
 	agentType: string | null;
-	agentUniqueId: string | null;
 	threadId: string | null;
 	startedAt: string | null;
 };
@@ -39,28 +38,11 @@ export type BackendAgentSessionAgentCardFetchResult = {
 };
 
 const DEFAULT_BACKEND = "https://api.main-sequence.app";
-const MAINSEQUENCE_BACKEND_AGENT_UNIQUE_ID_OVERRIDES = new Map<string, string>([
-	["project-executor", "project-executor"],
-]);
 
 export type BackendAuthHeaders = Record<string, string>;
 
 export function shouldRegisterAgents(env: NodeJS.ProcessEnv = process.env): boolean {
 	return /^(1|true|yes|on)$/i.test(env.BUILD_AGENTS_IN_BACKEND ?? "");
-}
-
-function sanitizeId(value: string): string {
-	return value.trim().replace(/\s+/g, "_");
-}
-
-function normalizeIdPart(value: unknown): string | null {
-	if (typeof value === "number" && Number.isFinite(value)) {
-		return sanitizeId(String(value));
-	}
-	if (typeof value === "string" && value.trim()) {
-		return sanitizeId(value);
-	}
-	return null;
 }
 
 function normalizeUserUid(value: unknown): string | null {
@@ -99,18 +81,6 @@ export function resolveMainsequenceUserId(options: {
 		"Could not resolve Main Sequence user uid from runtime credential auth alone; pass user_uid in the request or set ASTRO_MAINSEQUENCE_USER_UID.",
 	);
 	return null;
-}
-
-export function buildAgentUniqueId(options: {
-	agentType: string;
-	userId: string;
-	projectId?: string | number | null;
-}): string {
-	const backendIdentityUniqueId = MAINSEQUENCE_BACKEND_AGENT_UNIQUE_ID_OVERRIDES.get(options.agentType);
-	if (backendIdentityUniqueId) return backendIdentityUniqueId;
-	const projectId = normalizeIdPart(options.projectId);
-	const safeAgentType = sanitizeId(options.agentType);
-	return projectId ? `${safeAgentType}_${options.userId}_${projectId}` : `${safeAgentType}_${options.userId}`;
 }
 
 function buildMainsequenceSdkEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
@@ -323,7 +293,6 @@ export async function startBackendAgentSession(options: {
 				agentSessionUid: null,
 				agentUid: null,
 				agentType: null,
-				agentUniqueId: null,
 				threadId: null,
 				startedAt: null,
 			};
@@ -375,7 +344,6 @@ export async function startBackendAgentSession(options: {
 			agentSessionUid: null,
 			agentUid: null,
 			agentType: null,
-			agentUniqueId: null,
 			threadId: null,
 			startedAt: null,
 		};
@@ -394,7 +362,6 @@ export async function startBackendAgentSession(options: {
 			agentSessionUid: null,
 			agentUid: null,
 			agentType: null,
-			agentUniqueId: null,
 			threadId: null,
 			startedAt: null,
 		};
@@ -411,7 +378,6 @@ export async function startBackendAgentSession(options: {
 		agentSessionUid,
 		agentUid: parseAgentUid(responseAgent),
 		agentType: parseAgentType(parsedBody) ?? parseBackendAgentType(responseAgent),
-		agentUniqueId: parseStringField(responseAgent, "agent_unique_id", "agentUniqueId"),
 		threadId: parseStringField(parsedBody, "thread_id", "threadId"),
 		startedAt: parseStringField(parsedBody, "started_at", "startedAt"),
 	};

@@ -56,7 +56,6 @@ export type BackendUserRef = {
 export type BackendAgentRef = {
 	uid: string | null;
 	type: string | null;
-	uniqueId: string | null;
 };
 
 export type BackendSessionRef = {
@@ -130,11 +129,6 @@ export type BackendIdentityCapability = {
 		env?: NodeJS.ProcessEnv;
 		log?: BackendLogFn;
 	}): string | null;
-	buildAgentUniqueId(options: {
-		agentType: string;
-		userId: string;
-		projectId?: string | number | null;
-	}): string;
 };
 
 export type BackendSessionsCapability = {

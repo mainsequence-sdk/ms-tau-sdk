@@ -27,7 +27,6 @@ This is a meaningful boundary change because Astro currently mixes several diffe
 concepts:
 
 - backend row/resource identity
-- deterministic semantic identity such as `agent_unique_id`
 - backend classification identity such as `agent_type`
 - frontend/runtime attach identity such as `runtime_session_id`
 
@@ -85,20 +84,15 @@ Backend serializers consumed by Astro should expose:
 
 - top-level session `uid`
 - related agent `uid`
-- existing identity fields such as `agent_type`, `agent_unique_id`, and `thread_id`
+- existing routing/context fields such as `agent_type` and `thread_id`
 
 Astro should parse backend resource identity only from `uid`.
 
-### Distinction from `agent_unique_id`
+### Superseded Semantic Agent Identity
 
-`uid` is backend resource identity.
-
-`agent_unique_id` remains a different concept:
-
-- deterministic semantic identity used for backend agent resolution
-- stable business/runtime identity such as `astro-orchestrator_<user>` or `project-executor`
-
-Astro must not collapse `uid` and `agent_unique_id` into one field.
+ADR 41 removes the older semantic Agent identity from active runtime behavior. Astro now treats
+backend Agent `uid`, backend AgentSession `uid`, `agent_type`, and `thread_id` as the relevant
+identity/routing fields.
 
 ### Local runtime metadata and persisted files
 
@@ -131,7 +125,6 @@ must not be used.
 This ADR does not:
 
 - replace `agent_type`
-- replace `agent_unique_id`
 - change project/runtime profile semantics
 - introduce a compatibility layer for old backend `id` serializers
 - preserve numeric-only validation of session identity
@@ -153,7 +146,7 @@ This ADR does not:
       session serializers containing `uid`.
 - [x] Rename local metadata fields from `agentId` / `agentSessionId` to `agentUid` /
       `agentSessionUid` where those fields mean backend resource identity.
-- [x] Keep `agent_unique_id` unchanged and documented as distinct from `uid`.
+- [x] Superseded by ADR 41: remove the older semantic Agent identity from active runtime behavior.
 - [x] Update request docs, session docs, A2A docs, ADR examples, and runtime logging docs to use
       `uid` consistently.
 - [ ] Add focused tests for backend session hydration from `uid`-based serializers.
@@ -169,8 +162,8 @@ This ADR does not:
 - Backend resource identity becomes explicit and opaque instead of accidentally numeric.
 - Request/session hydration code becomes less brittle because it no longer depends on integer id
   parsing.
-- The distinction between backend `uid`, backend `agent_type`, and deterministic
-  `agent_unique_id` becomes clearer.
+- The distinction between backend `uid`, backend `agent_type`, and thread/session routing becomes
+  clearer.
 
 ### Costs
 

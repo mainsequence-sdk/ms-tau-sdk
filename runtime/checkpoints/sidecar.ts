@@ -914,13 +914,6 @@ function normalizeCheckpointMetadataForBackendIdentity(input: {
 		normalized.agentUid = agentId;
 		normalized.agent_uid = agentId;
 	}
-	const agentUniqueId =
-		normalizeOptionalString(input.metadata.agentUniqueId) ??
-		normalizeOptionalString(input.metadata.agent_unique_id);
-	if (agentUniqueId) {
-		normalized.agentUniqueId = agentUniqueId;
-		normalized.agent_unique_id = agentUniqueId;
-	}
 	const threadId =
 		normalizeOptionalString(input.metadata.threadId) ??
 		normalizeOptionalString(input.metadata.thread_id);

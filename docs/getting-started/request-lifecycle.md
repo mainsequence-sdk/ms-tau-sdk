@@ -56,8 +56,8 @@ runtime state and `/session-state/sessions` for active session files.
 For the normal parent session, Pi also loads `.pi/APPEND_SYSTEM.md` through the writable runtime
 copy instead of locking `/app/.pi/settings.json`.
 
-When `BUILD_AGENTS_IN_BACKEND=1`, Astro uses deterministic `agent_unique_id` values to look up or
-create backend Agent records and then works with the backend Agent `id`.
+When `BUILD_AGENTS_IN_BACKEND=1`, the backend owns Agent and AgentSession creation. Astro attaches
+to the backend session by `uid` and does not create a second semantic Agent identity.
 
 For the HTTP stream path, the wrapper accepts the latest UI turn plus optional UI context, then
 builds the Pi prompt from:

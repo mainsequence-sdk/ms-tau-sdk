@@ -12,7 +12,6 @@ import {
 	DEFAULT_OPENAI_PROVIDER,
 } from "../../interface/stream/available-models.js";
 import {
-	buildAgentUniqueId,
 	fetchBackendAgentSession,
 	fetchBackendAgentSessionAgentCard,
 	resolveMainsequenceUserId,
@@ -56,7 +55,6 @@ export const mainsequenceBackendAdapter: BackendAdapter = {
 	identity: {
 		shouldRegisterAgents,
 		resolveUserId: resolveMainsequenceUserId,
-		buildAgentUniqueId,
 	},
 	sessions: {
 		fetchByUid: fetchBackendAgentSession,

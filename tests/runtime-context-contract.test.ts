@@ -2,8 +2,6 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
-import { resolveBackendAdapter } from "../adapters/backend.js";
-import { requireBackendCapability } from "../adapters/types.js";
 
 const repoRoot = new URL("..", import.meta.url).pathname;
 
@@ -35,26 +33,21 @@ test("project-attached worker image uses fixed cwd instead of legacy runtime mod
 	assert.match(remoteWorkerDockerfile, /ASTRO_PI_PACKAGE_PATHS=\/app\/adapters\/mainsequence\/pi-overlay/);
 });
 
-test("Main Sequence backend identity override preserves project-executor unique id", () => {
-	const adapter = resolveBackendAdapter({ ASTRO_BACKEND: "mainsequence" });
-	const identity = requireBackendCapability(adapter, "identity", adapter.identity);
+test("stream runtime no longer exposes semantic agent identity fields", () => {
+	const server = readRepoFile("interface/stream/server.ts");
+	const protocol = readRepoFile("interface/stream/protocol.ts");
+	const sidecar = readRepoFile("runtime/checkpoints/sidecar.ts");
+	const adapterTypes = readRepoFile("adapters/types.ts");
+	const mainsequenceAdapter = readRepoFile("adapters/mainsequence/adapter.ts");
+	const mainsequenceRegistration = readRepoFile("interface/stream/mainsequence-agent-registration.ts");
 
-	assert.equal(
-		identity.buildAgentUniqueId({
-			agentType: "project-executor",
-			userId: "user-1",
-			projectId: "project-1",
-		}),
-		"project-executor",
-	);
-	assert.equal(
-		identity.buildAgentUniqueId({
-			agentType: "astro-orchestrator",
-			userId: "user-1",
-			projectId: "project-1",
-		}),
-		"astro-orchestrator_user-1_project-1",
-	);
+	for (const source of [server, protocol, sidecar, adapterTypes, mainsequenceAdapter, mainsequenceRegistration]) {
+		assert.doesNotMatch(source, /agent_unique_id/);
+		assert.doesNotMatch(source, /agentUniqueId/);
+		assert.doesNotMatch(source, /X-Agent-Unique-Id/);
+		assert.doesNotMatch(source, /X-Agent-Uid/);
+		assert.doesNotMatch(source, /buildAgentUniqueId/);
+	}
 });
 
 test("stream runtime depends on backend adapter seam for Main Sequence auth and sessions", () => {

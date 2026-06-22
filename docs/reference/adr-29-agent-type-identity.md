@@ -95,7 +95,7 @@ or A2A envelope parsing:
 - [x] Rename fixed runtime server constant to `ASTRO_FIXED_AGENT_TYPE_ENV`.
 - [x] Rename runtime allow-list constants to `PROJECT_SESSION_AGENT_TYPES` and `ALLOWED_AGENT_TYPES`.
 - [x] Rename backend session helper output to `agentType`.
-- [x] Rename `buildAgentUniqueId(...)` input from name/runtime-name terminology to `agentType`.
+- [x] Remove the deprecated semantic Agent identity builder from the backend identity contract.
 - [x] Update runtime tool output from `runtime_name` to `agent_type`.
 - [x] Update runtime log labels from removed name/runtime-name terminology to `agent_type`.
 - [x] Update interface docs and ADR examples to use `agentType`, `agent_type`, `callerAgentType`, and `caller_agent_type`.

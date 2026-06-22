@@ -253,9 +253,8 @@ The migration should happen in small steps:
 - [x] Remove the `project-executor` exception around `ensureMainsequenceCliAuthReady()`. Main
   Sequence CLI auth preflight now runs for no-project and project-attached runtimes when the Main
   Sequence adapter/package is active.
-- [x] Move `buildAgentUniqueId(...)` special handling for `project-executor` into an explicit Main
-  Sequence backend identity override table. Existing `project-executor` unique-id behavior is
-  preserved.
+- [x] Remove the deprecated semantic Agent identity special handling from the unified runtime
+  context path.
 - [x] Reclassify A2A current-agent identity resolution so defaulting to `astro-orchestrator` or
   using `ASTRO_FIXED_AGENT_TYPE` is backend/session identity resolution, not local runtime-context
   selection.
