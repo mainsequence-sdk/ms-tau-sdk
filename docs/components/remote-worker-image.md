@@ -35,7 +35,7 @@ Astro bundle files live under `/app`, while Pi execution happens inside `${SKEL_
 
 The first stage pulls a published Astro bundle image from Artifact Registry:
 
-- `europe-west1-docker.pkg.dev/mainsequence-development/tsorm-images/astro/project-executor-bundle`
+- `europe-west1-docker.pkg.dev/mainsequence-development/workload-default-artifact-registry/astro/project-executor-bundle`
 - the Dockerfile only varies the bundle tag via `ASTRO_EXECUTOR_BUNDLE_REF`
 
 The image name is legacy. It is still the Astro runtime bundle consumed by project-attached

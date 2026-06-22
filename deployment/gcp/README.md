@@ -94,10 +94,10 @@ Reasoning:
 
 Current intended Artifact Registry path layout:
 
-- repository: `tsorm-images`
+- repository: `workload-default-artifact-registry`
 - image path inside the repository: `astro/astro-pi-stream`
 - resulting prefix:
-  `europe-west1-docker.pkg.dev/${PROJECT_ID}/tsorm-images/astro/astro-pi-stream`
+  `europe-west1-docker.pkg.dev/${PROJECT_ID}/workload-default-artifact-registry/astro/astro-pi-stream`
 
 ## Runtime Env For The Existing GKE Workload
 
@@ -232,7 +232,7 @@ This is the structure now used in `deployment/gcp/cloudbuild.yaml`:
 ```yaml
 substitutions:
   _AR_REGION: europe-west1
-  _AR_REPO: tsorm-images
+  _AR_REPO: workload-default-artifact-registry
   _IMAGE_NAME: astro/astro-pi-stream
   _DOCKER_TARGET: astro-mainsequence-pi-stream
   _IMAGE_PREFIX: ${_AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE_NAME}

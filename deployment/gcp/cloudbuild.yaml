@@ -7,7 +7,7 @@ steps:
       - "-c"
       - |
         sed "s|^ARG PROJECT_ID$|ARG PROJECT_ID=${PROJECT_ID}|" Dockerfile.remote-worker > /workspace/Dockerfile.remote-worker.rendered
-        gsutil cp /workspace/Dockerfile.remote-worker.rendered "gs://${PROJECT_ID}/pod-dockerfiles/project_executor/Dockerfile"
+        gsutil cp /workspace/Dockerfile.remote-worker.rendered "gs://workload-default-${PROJECT_ID}/pod-dockerfiles/project_executor/Dockerfile"
 
   - id: "build-image-and-detect-mainsequence-version"
     name: "gcr.io/cloud-builders/docker"
@@ -168,7 +168,7 @@ steps:
 
 substitutions:
   _AR_REGION: "europe-west1"
-  _AR_REPO: "tsorm-images"
+  _AR_REPO: "workload-default-artifact-registry"
   _IMAGE_NAME: "astro/astro-pi-stream"
   _BUNDLE_IMAGE_NAME: "astro/project-executor-bundle"
   _DOCKER_TARGET: "astro-mainsequence-pi-stream"
