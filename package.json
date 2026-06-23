@@ -1,6 +1,6 @@
 {
   "name": "astro",
-  "version": "3.0.1",
+  "version": "3.0.2",
   "private": true,
   "type": "module",
   "description": "Astro deployment runtime for Pi agents with HTTP streaming, runtime state, and standard Pi web access.",
