@@ -91,6 +91,12 @@ USER jovyan
 
 FROM scratch AS project-executor-bundle
 
+ARG ASTRO_RELEASE_VERSION=dev
+
+LABEL org.opencontainers.image.title="astro-${ASTRO_RELEASE_VERSION}" \
+    org.opencontainers.image.description="Astro ${ASTRO_RELEASE_VERSION} project executor runtime bundle." \
+    org.opencontainers.image.version="${ASTRO_RELEASE_VERSION}"
+
 COPY --from=astro-mainsequence-source /app /app
 
 FROM astro-mainsequence-runtime AS astro-mainsequence-pi-stream
