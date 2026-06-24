@@ -276,8 +276,9 @@ Rules:
 - `message` is required.
 - `message.messageId` is client-provided and idempotency-relevant.
 - `message.role` must use A2A role enum values such as `ROLE_USER`.
-- `message.parts` must use A2A part objects such as `{ "text": "..." }` or
-  `{ "data": {...}, "mediaType": "application/json" }`.
+- `message.parts` must use A2A part objects such as `{ "text": "..." }`,
+  `{ "data": {...}, "mediaType": "application/json" }`, or standard PDF file parts such as
+  `{ "raw": "BASE64", "filename": "report.pdf", "mediaType": "application/pdf" }`.
 - `configuration.acceptedOutputModes` replaces top-level `response_format` for normal media-type
   negotiation.
 - Strict output schemas, if needed, must live in a declared extension under `metadata`, not as a
@@ -624,6 +625,8 @@ For structured JSON responses:
 - use `configuration.acceptedOutputModes: ["application/json"]`
 - when a schema is required, put it in a declared extension under `metadata`
 - never leak model/tool/reasoning trace as response parts
+- standard inline PDF input uses A2A `Part.raw` with `filename` and
+  `mediaType: "application/pdf"`; non-standard file wrapper aliases are rejected
 
 Example request for a dictionary:
 

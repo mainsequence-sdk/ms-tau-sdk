@@ -166,6 +166,46 @@ For public A2A, Astro suppresses reasoning/tool traces from the returned respons
 Astro validates the final assistant text and attempts repair before returning a response. If validation
 and all repair attempts fail, Astro returns an A2A error instead of returning invalid JSON.
 
+## PDF Input
+
+Astro accepts standard A2A inline file parts for PDF input.
+
+Use `Part.raw`, `filename`, and `mediaType`; do not use a custom `kind: "file"` wrapper.
+
+```json
+{
+  "message": {
+    "messageId": "msg-pdf-1",
+    "role": "ROLE_USER",
+    "contextId": "0b2701a1-e777-4cfe-8437-b94025f00069",
+    "parts": [
+      {
+        "text": "Please summarize this PDF."
+      },
+      {
+        "raw": "JVBERi0xLjQK...",
+        "filename": "report.pdf",
+        "mediaType": "application/pdf"
+      }
+    ]
+  },
+  "configuration": {
+    "acceptedOutputModes": ["text/plain"],
+    "returnImmediately": false
+  }
+}
+```
+
+Astro decodes the PDF, validates the media type and PDF header, materializes the file under the
+session asset root, and passes a local file manifest to Pi. The raw base64 content is not forwarded
+to Pi and is not logged.
+
+Currently unsupported:
+
+- `Part.url` PDF references
+- non-PDF file media types
+- non-standard wrappers such as `{ "kind": "file", "file": { ... } }`
+
 ## `message:stream`
 
 Use this when the caller wants SSE task updates.
