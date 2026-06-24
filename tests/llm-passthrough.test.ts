@@ -54,7 +54,6 @@ test("stateless LLM passthrough rejects non-canonical request aliases", async ()
 	const result = await handleStatelessLlmChat({
 		...llmAdapterOptions,
 		body: {
-			provider: "openai",
 			model: "gpt-test",
 			message: "hello",
 			responseFormat: {
@@ -62,6 +61,11 @@ test("stateless LLM passthrough rejects non-canonical request aliases", async ()
 				strict: true,
 			},
 			timeoutSeconds: 30,
+			metadata: {
+				astro: {
+					provider: "openai",
+				},
+			},
 		},
 		env: {
 			OPENAI_API_KEY: "sk-test",
@@ -83,8 +87,8 @@ test("stateless LLM passthrough rejects non-canonical request aliases", async ()
 	assert.equal(fetchCalled, false);
 });
 
-test("stateless LLM passthrough returns application JSON with parsed strict JSON", async () => {
-	const calls: Array<{ url: string; payload: Record<string, unknown>; authorization: string | null }> = [];
+test("stateless LLM passthrough rejects top-level Astro controls", async () => {
+	let fetchCalled = false;
 	const result = await handleStatelessLlmChat({
 		...llmAdapterOptions,
 		body: {
@@ -93,12 +97,91 @@ test("stateless LLM passthrough returns application JSON with parsed strict JSON
 			messages: [
 				{
 					role: "user",
+					content: "hello",
+				},
+			],
+			json_repair: {
+				attempts: 1,
+			},
+			timeout_seconds: 30,
+		},
+		env: {
+			OPENAI_API_KEY: "sk-test",
+		},
+		fetchFn: (async () => {
+			fetchCalled = true;
+			return jsonResponse({});
+		}) as typeof fetch,
+	});
+
+	assert.equal(result.statusCode, 400);
+	assert.equal(result.body.ok, false);
+	if (result.body.ok === false) {
+		assert.equal(result.body.field_errors?.provider, "Use the canonical stateless LLM request shape.");
+		assert.equal(result.body.field_errors?.json_repair, "Use the canonical stateless LLM request shape.");
+		assert.equal(result.body.field_errors?.timeout_seconds, "Use the canonical stateless LLM request shape.");
+	}
+	assert.equal(fetchCalled, false);
+});
+
+test("stateless LLM passthrough rejects unsupported metadata.astro controls", async () => {
+	let fetchCalled = false;
+	const result = await handleStatelessLlmChat({
+		...llmAdapterOptions,
+		body: {
+			model: "gpt-test",
+			messages: [
+				{
+					role: "user",
+					content: "hello",
+				},
+			],
+			metadata: {
+				astro: {
+					provider: "openai",
+					base_url: "https://example.invalid/v1",
+				},
+			},
+		},
+		env: {
+			OPENAI_API_KEY: "sk-test",
+		},
+		fetchFn: (async () => {
+			fetchCalled = true;
+			return jsonResponse({});
+		}) as typeof fetch,
+	});
+
+	assert.equal(result.statusCode, 400);
+	assert.equal(result.body.ok, false);
+	if (result.body.ok === false) {
+		assert.equal(result.body.field_errors?.["metadata.astro.base_url"], "Unsupported Astro passthrough control.");
+	}
+	assert.equal(fetchCalled, false);
+});
+
+test("stateless LLM passthrough returns application JSON with parsed strict JSON", async () => {
+	const calls: Array<{ url: string; payload: Record<string, unknown>; authorization: string | null }> = [];
+	const result = await handleStatelessLlmChat({
+		...llmAdapterOptions,
+		body: {
+			model: "gpt-test",
+			messages: [
+				{
+					role: "user",
 					content: "Return JSON with two keys.",
 				},
 			],
+			max_tokens: 256,
 			response_format: {
 				type: "json_object",
 				strict: true,
+			},
+			metadata: {
+				request_id: "req-test",
+				astro: {
+					provider: "openai",
+				},
 			},
 		},
 		env: {
@@ -149,6 +232,8 @@ test("stateless LLM passthrough returns application JSON with parsed strict JSON
 		},
 	]);
 	assert.deepEqual(calls[0]?.payload.response_format, { type: "json_object" });
+	assert.equal(calls[0]?.payload.max_tokens, 256);
+	assert.deepEqual(calls[0]?.payload.metadata, { request_id: "req-test" });
 });
 
 test("stateless LLM passthrough repairs invalid strict JSON before returning", async () => {
@@ -156,7 +241,6 @@ test("stateless LLM passthrough repairs invalid strict JSON before returning", a
 	const result = await handleStatelessLlmChat({
 		...llmAdapterOptions,
 		body: {
-			provider: "openai",
 			model: "gpt-test",
 			messages: [
 				{
@@ -168,8 +252,13 @@ test("stateless LLM passthrough repairs invalid strict JSON before returning", a
 				type: "json_object",
 				strict: true,
 			},
-			json_repair: {
-				attempts: 1,
+			metadata: {
+				astro: {
+					provider: "openai",
+					json_repair: {
+						attempts: 1,
+					},
+				},
 			},
 		},
 		env: {

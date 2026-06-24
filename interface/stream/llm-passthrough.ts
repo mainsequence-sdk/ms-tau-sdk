@@ -90,9 +90,10 @@ type OpenAiCompatibleResponse = {
 };
 
 const DEFAULT_PROVIDER = "openai";
-const DEFAULT_MODEL = "gpt-5.4";
 const DEFAULT_TIMEOUT_SECONDS = 120;
 const MAX_TIMEOUT_SECONDS = 900;
+const ASTRO_METADATA_KEY = "astro";
+const ASTRO_METADATA_FIELDS = new Set(["provider", "json_repair", "omit_reasoning", "timeout_seconds"]);
 const SESSION_RUNTIME_FIELDS = [
 	"agent_session_uid",
 	"agentSessionUid",
@@ -104,17 +105,22 @@ const SESSION_RUNTIME_FIELDS = [
 	"runtimeTurnTimeoutSeconds",
 ];
 const NON_CANONICAL_REQUEST_FIELDS = [
+	"provider",
 	"message",
 	"prompt",
 	"input",
 	"responseFormat",
+	"json_repair",
 	"jsonRepair",
+	"omit_reasoning",
 	"omitReasoning",
+	"timeout_seconds",
 	"timeoutSeconds",
+	"base_url",
 	"baseUrl",
 	"topP",
-	"max_tokens",
 	"maxOutputTokens",
+	"max_output_tokens",
 	"maxTokens",
 ];
 
@@ -156,8 +162,72 @@ function numberOption(value: unknown): number | null {
 	return null;
 }
 
-function normalizeTimeoutSeconds(body: Record<string, unknown>): number {
-	const configured = numberOption(body.timeout_seconds);
+function extractAstroMetadata(body: Record<string, unknown>): {
+	ok: true;
+	metadata: Record<string, unknown>;
+} | {
+	ok: false;
+	result: StatelessLlmChatResult;
+} {
+	if (body.metadata === undefined) return { ok: true, metadata: {} };
+	if (!isPlainObject(body.metadata)) {
+		return {
+			ok: false,
+			result: {
+				statusCode: 400,
+				body: {
+					ok: false,
+					error: "invalid_llm_passthrough_request",
+					message: "metadata must be an object when provided.",
+					field_errors: {
+						metadata: "Provide an object. Astro-specific controls belong in metadata.astro.",
+					},
+				},
+			},
+		};
+	}
+	const astro = body.metadata[ASTRO_METADATA_KEY];
+	if (astro === undefined) return { ok: true, metadata: {} };
+	if (!isPlainObject(astro)) {
+		return {
+			ok: false,
+			result: {
+				statusCode: 400,
+				body: {
+					ok: false,
+					error: "invalid_llm_passthrough_request",
+					message: "metadata.astro must be an object when provided.",
+					field_errors: {
+						"metadata.astro": "Provide an object containing Astro passthrough controls.",
+					},
+				},
+			},
+		};
+	}
+	return { ok: true, metadata: astro };
+}
+
+function rejectUnsupportedAstroMetadataFields(astroMetadata: Record<string, unknown>): StatelessLlmChatResult | null {
+	const fieldErrors: Record<string, string> = {};
+	for (const field of Object.keys(astroMetadata)) {
+		if (!ASTRO_METADATA_FIELDS.has(field)) {
+			fieldErrors[`metadata.astro.${field}`] = "Unsupported Astro passthrough control.";
+		}
+	}
+	if (Object.keys(fieldErrors).length === 0) return null;
+	return {
+		statusCode: 400,
+		body: {
+			ok: false,
+			error: "invalid_llm_passthrough_request",
+			message: "metadata.astro contains unsupported Astro passthrough controls.",
+			field_errors: fieldErrors,
+		},
+	};
+}
+
+function normalizeTimeoutSeconds(astroMetadata: Record<string, unknown>): number {
+	const configured = numberOption(astroMetadata.timeout_seconds);
 	if (configured == null || configured <= 0) return DEFAULT_TIMEOUT_SECONDS;
 	return Math.min(Math.trunc(configured), MAX_TIMEOUT_SECONDS);
 }
@@ -227,15 +297,13 @@ function rejectNonCanonicalRequestFields(body: Record<string, unknown>): Statele
 			ok: false,
 			error: "invalid_llm_passthrough_request",
 			message:
-				"Stateless LLM passthrough requests use one canonical body shape: messages, response_format, json_repair, omit_reasoning, and timeout_seconds.",
+				"Stateless LLM passthrough requests use the OpenAI-compatible chat completions body shape. Astro-specific controls belong in metadata.astro.",
 			field_errors: fieldErrors,
 		},
 	};
 }
 
-function buildProviderBaseUrl(provider: string, body: Record<string, unknown>, env: NodeJS.ProcessEnv): string | null {
-	const explicit = nonEmptyString(body.base_url);
-	if (explicit) return explicit.replace(/\/+$/, "");
+function buildProviderBaseUrl(provider: string, env: NodeJS.ProcessEnv): string | null {
 	const envProviderKey = `ASTRO_LLM_PASSTHROUGH_${provider.toUpperCase().replace(/[^A-Z0-9]+/g, "_")}_BASE_URL`;
 	const configured = nonEmptyString(env[envProviderKey]) ?? nonEmptyString(env.ASTRO_LLM_PASSTHROUGH_BASE_URL);
 	if (configured) return configured.replace(/\/+$/, "");
@@ -424,10 +492,16 @@ function buildProviderPayload(input: {
 	if (temperature != null) payload.temperature = temperature;
 	const topP = numberOption(input.body.top_p);
 	if (topP != null) payload.top_p = topP;
-	const maxTokens = integerOption(input.body.max_output_tokens);
+	const maxTokens = integerOption(input.body.max_tokens);
 	if (maxTokens != null && maxTokens > 0) payload.max_tokens = maxTokens;
 	const responseFormat = providerResponseFormat(input.options);
 	if (responseFormat) payload.response_format = responseFormat;
+	if (isPlainObject(input.body.metadata)) {
+		const { [ASTRO_METADATA_KEY]: _astro, ...providerMetadata } = input.body.metadata;
+		if (Object.keys(providerMetadata).length > 0) {
+			payload.metadata = providerMetadata;
+		}
+	}
 	return payload;
 }
 
@@ -472,7 +546,7 @@ async function callOpenAiCompatibleProvider(input: {
 				ok: false,
 				error: aborted ? "llm_passthrough_timeout" : "llm_provider_request_failed",
 				message: aborted
-					? "The provider call exceeded timeout_seconds."
+					? "The provider call exceeded the configured timeout."
 					: error instanceof Error
 						? error.message
 						: String(error),
@@ -629,9 +703,27 @@ export async function handleStatelessLlmChat(input: {
 	if (invalidSessionFields) return invalidSessionFields;
 	const nonCanonicalFields = rejectNonCanonicalRequestFields(body);
 	if (nonCanonicalFields) return nonCanonicalFields;
+	const astroMetadataResult = extractAstroMetadata(body);
+	if (astroMetadataResult.ok === false) return astroMetadataResult.result;
+	const astroMetadata = astroMetadataResult.metadata;
+	const invalidAstroMetadataFields = rejectUnsupportedAstroMetadataFields(astroMetadata);
+	if (invalidAstroMetadataFields) return invalidAstroMetadataFields;
 
-	const provider = nonEmptyString(body.provider) ?? DEFAULT_PROVIDER;
-	const model = nonEmptyString(body.model) ?? DEFAULT_MODEL;
+	const provider = nonEmptyString(astroMetadata.provider) ?? DEFAULT_PROVIDER;
+	const model = nonEmptyString(body.model);
+	if (!model) {
+		return {
+			statusCode: 400,
+			body: {
+				ok: false,
+				error: "invalid_llm_passthrough_request",
+				message: "Stateless LLM passthrough requests require a model.",
+				field_errors: {
+					model: "Provide the standard chat completions model field.",
+				},
+			},
+		};
+	}
 	const messages = normalizeMessages(body);
 	if (!messages) {
 		return {
@@ -647,7 +739,7 @@ export async function handleStatelessLlmChat(input: {
 		};
 	}
 
-	const baseUrl = buildProviderBaseUrl(provider, body, env);
+	const baseUrl = buildProviderBaseUrl(provider, env);
 	if (!baseUrl) {
 		return {
 			statusCode: 404,
@@ -659,10 +751,14 @@ export async function handleStatelessLlmChat(input: {
 		};
 	}
 
-	const timeoutSeconds = normalizeTimeoutSeconds(body);
+	const timeoutSeconds = normalizeTimeoutSeconds(astroMetadata);
 	const options = normalizeA2AOutputOptions({
 		enabled: true,
-		body,
+		body: {
+			response_format: body.response_format,
+			json_repair: astroMetadata.json_repair,
+			omit_reasoning: astroMetadata.omit_reasoning,
+		},
 		a2aContext: {},
 		context: {},
 	});

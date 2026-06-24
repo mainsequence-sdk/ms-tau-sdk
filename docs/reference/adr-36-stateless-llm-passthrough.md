@@ -82,7 +82,6 @@ Request:
 
 ```json
 {
-  "provider": "openai-codex",
   "model": "gpt-5.3-codex-spark",
   "messages": [
     {
@@ -94,11 +93,17 @@ Request:
     "type": "json_object",
     "strict": true
   },
-  "json_repair": {
-    "attempts": 3
-  },
-  "omit_reasoning": true,
-  "timeout_seconds": 120
+  "max_tokens": 512,
+  "metadata": {
+    "astro": {
+      "provider": "openai-codex",
+      "json_repair": {
+        "attempts": 3
+      },
+      "omit_reasoning": true,
+      "timeout_seconds": 120
+    }
+  }
 }
 ```
 
@@ -128,12 +133,16 @@ Response:
 Rules:
 
 - `messages` is the complete context for the call.
-- The request body has one canonical shape. Do not accept `message`, `prompt`, `input`, camelCase
-  option aliases, or alternate token-limit field names.
+- The request body follows the OpenAI-compatible chat completions shape. Do not accept `message`,
+  `prompt`, `input`, camelCase option aliases, top-level Astro controls, or alternate token-limit
+  field names.
+- Astro-specific controls belong under `metadata.astro`.
+- Supported `metadata.astro` controls are `provider`, `json_repair`, `omit_reasoning`, and
+  `timeout_seconds`.
 - The endpoint must not load prior messages from Astro or the backend.
 - The endpoint must not persist the request or response as conversation history.
 - The HTTP response body must be JSON, not SSE and not raw model text.
-- `timeout_seconds` is a request timeout for the provider call only.
+- `metadata.astro.timeout_seconds` is a request timeout for the provider call only.
 - Strict JSON mode reuses the ADR 34 validation and repair semantics.
 - When strict JSON is enabled and validation succeeds, `json` contains the parsed JSON value.
 - When strict JSON is not enabled, `json` is omitted.
@@ -150,7 +159,6 @@ Request:
 
 ```json
 {
-  "provider": "openai-codex",
   "model": "gpt-5.3-codex-spark",
   "messages": [
     {
@@ -158,8 +166,13 @@ Request:
       "content": "Summarize this payload in one sentence."
     }
   ],
-  "omit_reasoning": true,
-  "timeout_seconds": 120
+  "metadata": {
+    "astro": {
+      "provider": "openai-codex",
+      "omit_reasoning": true,
+      "timeout_seconds": 120
+    }
+  }
 }
 ```
 
@@ -189,17 +202,22 @@ These session/runtime fields are invalid:
 
 These non-canonical request aliases are also invalid:
 
+- `provider`
 - `message`
 - `prompt`
 - `input`
 - `responseFormat`
+- `json_repair`
 - `jsonRepair`
+- `omit_reasoning`
 - `omitReasoning`
+- `timeout_seconds`
 - `timeoutSeconds`
+- `base_url`
 - `baseUrl`
 - `topP`
-- `max_tokens`
 - `maxOutputTokens`
+- `max_output_tokens`
 - `maxTokens`
 
 Invalid request response:
@@ -276,7 +294,7 @@ Examples:
 {
   "ok": false,
   "error": "llm_passthrough_timeout",
-  "message": "The provider call exceeded timeout_seconds."
+  "message": "The provider call exceeded the configured timeout."
 }
 ```
 

@@ -539,6 +539,7 @@ async function ensureBackendRuntimeAuthReady() {
 	}
 
 	if (!backendRuntimeAuthBootstrapPromise) {
+		const startedAt = Date.now();
 		backendRuntimeAuthBootstrapPromise = backendAuth.prepareRuntime({
 			env: process.env,
 			log: logExternalMessage("astro", "runtime_credential.bootstrap"),
@@ -549,6 +550,31 @@ async function ensureBackendRuntimeAuthReady() {
 			})
 			.catch((error) => {
 				backendRuntimeAuthReady = false;
+				const serialized = serializeRuntimeHealthError(error);
+				logStructuredEvent({
+					severity: "ERROR",
+					component: "astro",
+					event: "runtime_credential.bootstrap_failed",
+					message: "Main Sequence runtime credential bootstrap failed.",
+					data: {
+						phase: "prepare_runtime",
+						durationMs: Date.now() - startedAt,
+						errorType: serialized.name,
+						errorMessage: serialized.message,
+						backend: backendAdapter.name,
+						backendUrl:
+							process.env.MAINSEQUENCE_BACKEND ||
+							process.env.MAIN_SEQUENCE_BACKEND_URL ||
+							process.env.MAINSEQUENCE_ENDPOINT ||
+							process.env.TDAG_ENDPOINT ||
+							null,
+						authMode: process.env.MAINSEQUENCE_AUTH_MODE || "runtime_credential",
+						hasRuntimeCredentialId: Boolean(process.env.MAINSEQUENCE_RUNTIME_CREDENTIAL_ID?.trim()),
+						hasRuntimeCredentialSecret: Boolean(process.env.MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET?.trim()),
+						projectsBase: process.env.MAINSEQUENCE_PROJECTS_BASE || null,
+						stack: serialized.stack,
+					},
+				});
 				throw error;
 			})
 			.finally(() => {

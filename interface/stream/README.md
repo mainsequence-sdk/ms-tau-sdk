@@ -46,7 +46,6 @@ Request:
 
 ```json
 {
-  "provider": "openai",
   "model": "gpt-5.4",
   "messages": [
     {
@@ -58,11 +57,17 @@ Request:
     "type": "json_object",
     "strict": true
   },
-  "json_repair": {
-    "attempts": 3
-  },
-  "omit_reasoning": true,
-  "timeout_seconds": 120
+  "max_tokens": 512,
+  "metadata": {
+    "astro": {
+      "provider": "openai",
+      "json_repair": {
+        "attempts": 3
+      },
+      "omit_reasoning": true,
+      "timeout_seconds": 120
+    }
+  }
 }
 ```
 
@@ -90,9 +95,12 @@ Response:
 }
 ```
 
-The request body has one canonical shape. Use `messages`; `message`, `prompt`, `input`, camelCase
-option aliases, and session/runtime fields such as `agent_session_uid`, `thread_id`, `agent_type`,
-and `runtime_turn_timeout_seconds` are rejected.
+The request body follows the OpenAI-compatible chat completions shape. Use `messages`; `message`,
+`prompt`, `input`, camelCase option aliases, top-level Astro controls such as `provider`,
+`json_repair`, `omit_reasoning`, and `timeout_seconds`, and session/runtime fields such as
+`agent_session_uid`, `thread_id`, `agent_type`, and `runtime_turn_timeout_seconds` are rejected.
+Astro-specific controls belong under `metadata.astro`. Supported keys are `provider`,
+`json_repair`, `omit_reasoning`, and `timeout_seconds`.
 
 ### `POST /api/chat`
 
