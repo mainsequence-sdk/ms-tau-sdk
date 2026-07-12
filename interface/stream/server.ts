@@ -63,6 +63,7 @@ import {
 	canWriteHttpResponse,
 	createHttpClientAbortSignal,
 } from "./http-client-abort.js";
+import { classifyStreamErrorForLog } from "./stream-error-log-classification.js";
 import { resolveWarmRunnerTimeoutConfig } from "./warm-runner-config.js";
 import {
 	repairPiSessionJsonlCurrentBranch,
@@ -2559,8 +2560,9 @@ function registerHttpAccessLog(
 		const referer = normalizeLogString(req.headers.referer) ?? normalizeLogString(req.headers.referrer);
 		const userAgent = normalizeLogString(req.headers["user-agent"]);
 		const aborted = state === "close" && !res.writableEnded;
+		const outcome = aborted ? "canceled" : statusCode >= 400 ? "failure" : "success";
 		logStructuredEvent({
-			severity: statusCode >= 500 || aborted ? "ERROR" : statusCode >= 400 ? "WARNING" : "INFO",
+			severity: statusCode >= 500 ? "ERROR" : statusCode >= 400 ? "WARNING" : "INFO",
 			component: "astro-http",
 			event: "http.request.completed",
 			message: "HTTP request completed.",
@@ -2577,7 +2579,7 @@ function registerHttpAccessLog(
 				referer,
 				userAgent,
 				aborted,
-				outcome: aborted ? "canceled" : statusCode >= 400 ? "failure" : "success",
+				outcome,
 			},
 		});
 	};
@@ -4481,6 +4483,27 @@ function startCheckpointLeaseRenewal(ctx: RequestContext, client: BackendCheckpo
 				if (!ctx.checkpointLease || ctx.finished) return;
 				if (result.ok === false) {
 					const errorMessage = "error" in result ? result.error : "Checkpoint lease renewal failed.";
+					if (checkpointLeaseRenewFailureIsTerminalCleanup(ctx, activeLease, result)) {
+						logStructuredEvent({
+							severity: "WARNING",
+							component: "astro-stream",
+							event: "checkpoint_lease_renew_skipped_terminal_cleanup",
+							message: "Checkpoint lease renew failed after the stream entered terminal cleanup; suppressing duplicate runtime error.",
+							data: {
+								sessionKey: ctx.sessionKey,
+								agentSessionId: ctx.agentSessionId,
+								cancellationRequested: ctx.cancellation?.requested === true,
+								cancellationReason: ctx.cancellation?.reason ?? null,
+								lastAssistantFinishReason: ctx.lastAssistantFinishReason,
+								terminalErrorCode: ctx.terminalError?.errorCode ?? null,
+								lifecycleState: readCheckpointLifecycleState(ctx.sessionKey),
+								...checkpointFailureDiagnostics(result),
+								error: errorMessage,
+							},
+						});
+						stopCheckpointLeaseRenewal(ctx);
+						return;
+					}
 					logStructuredEvent({
 						severity: "ERROR",
 						component: "astro-stream",
@@ -4638,6 +4661,23 @@ function checkpointLeaseRenewCanFallbackToAcquire(
 		code === "checkpoint_lease_missing" ||
 		code === "checkpoint_lease_expired" ||
 		code === "checkpoint_lease_token_mismatch"
+	);
+}
+
+function checkpointLeaseRenewFailureIsTerminalCleanup(
+	ctx: RequestContext,
+	activeLease: CheckpointLeaseState,
+	result: Extract<SessionCheckpointClientResult<unknown>, { ok: false }>,
+): boolean {
+	if (!checkpointLeaseRenewCanFallbackToAcquire(result)) return false;
+	if (ctx.cancellation?.requested) return true;
+	if (ctx.terminalError?.errorCode) return true;
+	if (ctx.lastAssistantFinishReason != null) return true;
+
+	const lifecycle = readCheckpointLifecycleState(ctx.sessionKey);
+	return (
+		lifecycle?.state === "finalizing_checkpoint" &&
+		(!lifecycle.lease_token || lifecycle.lease_token === activeLease.leaseToken)
 	);
 }
 
@@ -6016,12 +6056,14 @@ function logPiChunk(
 	chunkType: string,
 	data: Record<string, unknown> = {},
 	severity: "DEBUG" | "INFO" | "WARNING" | "ERROR" = "DEBUG",
+	event = "pi.chunk",
+	message = "Pi stream chunk observed.",
 ) {
 	logStructuredEvent({
 		severity,
 		component: "astro-stream",
-		event: "pi.chunk",
-		message: "Pi stream chunk observed.",
+		event,
+		message,
 		data: {
 			...getRuntimeLogData(ctx),
 			chunkType,
@@ -6162,14 +6204,22 @@ function logReadableChunk(ctx: RequestContext, chunk: ReturnType<typeof attachAg
 		}
 		case "error":
 			flushPendingReadableLogs(ctx);
+			const classification = classifyStreamErrorForLog(chunk);
 			logPiChunk(
 				ctx,
-				"error",
+				classification.chunkType,
 				{
 					errorSource: chunk.error_source ?? "unknown",
+					errorCode: chunk.error_code ?? null,
+					status: chunk.status ?? null,
+					cancellationReason: classification.cancellationReason,
 					error: compactLogValue(chunk.error, 320),
 				},
-				"ERROR",
+				classification.severity,
+				classification.event,
+				classification.event === "pi.cancellation"
+					? "Pi stream cancellation observed."
+					: "Pi stream error observed.",
 			);
 			return;
 	}

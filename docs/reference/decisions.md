@@ -40,6 +40,9 @@ pre-UID API sketches have been removed from the active reference set.
 - [`adr-42-a2a-file-parts-and-pdf-intake.md`](./adr-42-a2a-file-parts-and-pdf-intake.md)
   - Public A2A should accept standard file parts for PDF input through `Part.raw` or `Part.url`,
     materialize them into session assets, and pass a safe file manifest to Pi.
+- [`adr-43-backend-backed-a2a-task-persistence.md`](./adr-43-backend-backed-a2a-task-persistence.md)
+  - Gap analysis for replacing Astro's process-local A2A task maps with backend-backed
+    `AgentTask`, `AgentTaskMessage`, `AgentTaskOutput`, and `AgentTaskEvent` persistence.
 
 ## Stateless LLM Passthrough
 
