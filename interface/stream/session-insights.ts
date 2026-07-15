@@ -23,9 +23,11 @@ import {
 
 type SessionMetadataLike = {
 	threadId: string | null;
-	agentName: string | null;
-	agentId: number | null;
-	agentSessionId: number | null;
+	agentType: string | null;
+	agentUid?: string | null;
+	agentSessionUid?: string | null;
+	agentId?: string | null;
+	agentSessionId?: string | null;
 	startedAt: string | null;
 	cwd: string | null;
 	sessionModelBinding: SessionModelBinding | null;
@@ -40,11 +42,11 @@ type SessionModelIdentity = {
 export type SessionUsageResponse = {
 	version: 1;
 	session: {
-		sessionId: string;
+		sessionUid: string;
 		threadId: string | null;
-		agentName: string | null;
-		agentId: number | null;
-		agentSessionId: number | null;
+		agentType: string | null;
+		agentUid: string | null;
+		agentSessionUid: string | null;
 		status: "running" | "completed" | "error";
 		startedAt: string | null;
 		updatedAt: string | null;
@@ -184,12 +186,14 @@ function buildSessionSummary(
 	metadata: SessionMetadataLike,
 	history: ConversationHistorySnapshot | null,
 ) {
+	const metadataAgentUid = metadata.agentUid ?? metadata.agentId ?? null;
+	const metadataAgentSessionUid = metadata.agentSessionUid ?? metadata.agentSessionId ?? null;
 	return {
-		sessionId: sessionKey,
+		sessionUid: sessionKey,
 		threadId: history?.session.threadId ?? metadata.threadId,
-		agentName: history?.session.agentName ?? metadata.agentName,
-		agentId: history?.session.agentId ?? metadata.agentId,
-		agentSessionId: history?.session.agentSessionId ?? metadata.agentSessionId,
+		agentType: metadata.agentType ?? history?.session.agentType ?? null,
+		agentUid: metadataAgentUid ?? history?.session.agentUid ?? null,
+		agentSessionUid: metadataAgentSessionUid ?? history?.session.agentSessionUid ?? null,
 		status: history?.session.status ?? "running",
 		startedAt: history?.session.startedAt ?? metadata.startedAt,
 		updatedAt: history?.session.updatedAt ?? metadata.startedAt,

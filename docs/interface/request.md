@@ -7,9 +7,10 @@ currently stored for that runtime session.
 
 ## Required fields
 
-- `agentName` (string)
-- `userId` (string | number)
-- `runtime_session_id` (string; accepted aliases: `runtimeSessionId`, `sessionId`) for every real
+- `agentType` (string; required for normal requests, optional only when a fixed runtime supplies
+  `ASTRO_FIXED_AGENT_TYPE`)
+- `user_uid` (string)
+- `runtime_session_uid` (string; accepted camel-case alias: `runtimeSessionUid`) for every real
   non-mock execution request
 - `messages` (array) — the last entry must be the current user message
 
@@ -22,8 +23,8 @@ currently stored for that runtime session.
 - `tools` (object)
 - `session` (object; preferred full backend `AgentSession` serializer for metadata/model refresh;
   expected on outbound A2A requests)
-- `projectId` (string | number; optional project identity for project-scoped executor requests)
-- `cwd` (string; project working directory when the executor runtime is not already pinned)
+- `projectId` (string | number; optional project identity for project-attached requests)
+- `cwd` (string; project working directory when the runtime is not already pinned)
 - `sessionMetadata` (object; optional non-reserved metadata only)
 
 ## Notes
@@ -32,7 +33,7 @@ currently stored for that runtime session.
 - The last entry must be a `user` role message.
 - If the latest user message contains the word `MOCK`, the server returns a synthetic response
   immediately for frontend testing and skips agent/session setup.
-- `runtime_session_id` is mandatory for real non-mock execution. Astro must attach to that existing
+- `runtime_session_uid` is mandatory for real non-mock execution. Astro must attach to that existing
   backend session and must not create a new one.
 - `newChat` is deprecated as routing input. Older clients may still send it, but Astro must ignore
   it for allocation decisions.
@@ -40,16 +41,22 @@ currently stored for that runtime session.
   treats that request-carried session object as the preferred authority for model/provider binding
   and local metadata refresh.
 - Outbound A2A requests should always include the full backend `AgentSession` serializer in
-  `session` together with `runtime_session_id` because the sender already has the backend session
+  `session` together with `runtime_session_uid` because the sender already has the backend session
   allocation response for the target session.
 - If `session` is absent or insufficient, Astro must fetch backend session authority from
-  `runtime_session_id` before Pi launch instead of proceeding with no model binding.
+  `runtime_session_uid` before Pi launch instead of proceeding with no model binding.
 - `threadId` is informational/client-bookkeeping only when backend registration is enabled; it does
   not control session continuity.
-- `agentName` must match the backend registry (unknown agents return `error: unknown_agent`).
-- When backend registration is enabled, `runtime_session_id` is the backend `AgentSession.id` string.
-- `mainsequence-project-executor` is the only project implementation runtime.
-- Project-scoped executor requests may rely on a deployment-pinned project cwd or supply `cwd`
+- `agentType` is the backend `Agent.agent_type` value, not the local runtime architecture
+  (unknown values return `error: unknown_agent_type`).
+- Current Main Sequence backend identity values are `astro-orchestrator` and `project-executor`.
+- Do not send `project_worker`; it is not a backend `agent_type`.
+- `ASTRO_FIXED_AGENT_TYPE`, when set, pins backend/session identity only. Local project attachment is
+  controlled by `ASTRO_FIXED_PROJECT_CWD`.
+- A mismatched request `agentType` on a fixed backend identity returns
+  `409 fixed_agent_type_mismatch` before Pi launch.
+- When backend registration is enabled, `runtime_session_uid` is the backend `AgentSession.uid` string.
+- Project-attached requests may rely on a deployment-pinned project cwd or supply `cwd`
   explicitly when the runtime is not already pinned.
 - `POST /api/chat` no longer uses a message-level `model` field as session authority.
 - Astro derives or refreshes its local `sessionModelBinding` from the request-carried `session`
@@ -60,16 +67,16 @@ currently stored for that runtime session.
 - `GET /api/chat/get_available_models` remains a control-plane discovery endpoint. It is not part
   of the normal message hot path.
 - `sessionMetadata` is stored only for non-reserved keys. Astro owns reserved metadata such as
-  `workflow_key`, `created_by_user`, `project_id`, `project_cwd`, `project_repo_root`,
+  `agent_type`, `created_by_user`, `project_id`, `project_cwd`, `project_repo_root`,
   and `session_model_binding`.
 ## Example request
 
 ```json
 {
   "threadId": "thread-001",
-  "runtime_session_id": "456",
-  "agentName": "astro-orchestrator",
-  "userId": "user_123",
+  "runtime_session_uid": "session_456_uid",
+  "agentType": "astro-orchestrator",
+  "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f",
   "system": "optional system prompt",
   "messages": [
     {
@@ -83,7 +90,7 @@ currently stored for that runtime session.
   "context": {
     "appId": "astro-ui",
     "surfaceId": "command-center",
-    "userId": "user_123"
+    "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f"
   }
 }
 ```
@@ -93,11 +100,11 @@ Example resume request with session authority:
 ```json
 {
   "threadId": "thread-001",
-  "agentName": "astro-orchestrator",
-  "userId": "user_123",
-  "runtime_session_id": "456",
+  "agentType": "astro-orchestrator",
+  "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f",
+  "runtime_session_uid": "session_456_uid",
   "session": {
-    "id": 456,
+    "uid": "session_456_uid",
     "thread_id": "thread-001",
     "llm_provider": "openai-codex",
     "llm_model": "gpt-5.3-codex-spark",
@@ -105,7 +112,7 @@ Example resume request with session authority:
       "reasoning_effort": "on"
     },
     "session_metadata": {
-      "workflow_key": "astro-orchestrator",
+      "agent_type": "astro-orchestrator",
       "session_model_binding": {
         "source": "pi-model-registry",
         "provider": "openai-codex",
@@ -127,8 +134,8 @@ Example resume request with session authority:
       }
     },
     "agent": {
-      "id": 123,
-      "name": "astro-orchestrator"
+      "uid": "agent_123_uid",
+      "agent_type": "astro-orchestrator"
     }
   },
   "messages": [
@@ -141,26 +148,27 @@ Example resume request with session authority:
   ],
   "tools": {},
   "context": {
-    "userId": "user_123"
+    "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f"
   }
 }
 ```
 
-Example project-executor request:
+Example project-attached request using the legacy Main Sequence `project-executor` backend
+identity:
 
 ```json
 {
   "threadId": "thread-hope30",
-  "runtime_session_id": "87",
-  "agentName": "mainsequence-project-executor",
-  "userId": "user_123",
+  "runtime_session_uid": "session_87_uid",
+  "agentType": "project-executor",
+  "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f",
   "session": {
-    "id": 87,
+    "uid": "session_87_uid",
     "thread_id": "87",
     "llm_provider": "openai-codex",
     "llm_model": "gpt-5.3-codex-spark",
     "session_metadata": {
-      "workflow_key": "mainsequence-project-executor"
+      "agent_type": "project-executor"
     }
   },
   "projectId": "42",
@@ -175,10 +183,13 @@ Example project-executor request:
   ],
   "tools": {},
   "context": {
-    "userId": "user_123"
+    "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f"
   }
 }
 ```
 
 For real A2A sends, the example session object above should be treated as abbreviated. The sender
 should forward the full backend session JSON serialization under `session`, not a trimmed subset.
+
+For the deployment-level rules behind these examples, see
+[`../components/deployment-identities.md`](../components/deployment-identities.md).

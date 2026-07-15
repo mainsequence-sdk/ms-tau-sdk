@@ -5,13 +5,12 @@ These pages document Astro's repo-owned Pi hook extensions under `pi/extensions/
 ## Hooks
 
 - [`agent-registration.md`](./agent-registration.md)
-- [`project-policy/README.md`](./project-policy/README.md)
 - [`telemetry.md`](./telemetry.md)
 
 ## Notes
 
-- Hooks are loaded by Pi at runtime; Astro uses them for lifecycle policy, backend registration, and telemetry.
-- Hook behavior is gated by environment where needed, especially for child-only and telemetry-only flows.
+- Hooks are loaded by Pi at runtime; Astro uses root hooks for Astro Core lifecycle and telemetry.
+- Main Sequence package hooks are delivered by `adapters/mainsequence/pi-overlay` and are not mirrored here.
 
 ## Related pages
 

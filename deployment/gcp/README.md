@@ -4,7 +4,7 @@
 
 The Astro stream container is stateless. Runtime files under:
 
-- `/home/appuser/.astro-container-data`
+- `/home/jovyan/.astro-container-data`
 - `/session-state`
 
 are rebuildable pod/container-local state. Session continuity is owned by backend `AgentSession`
@@ -32,7 +32,7 @@ deployment/
 
 The current `deployment/gcp/cloudbuild.yaml` has four responsibilities:
 
-1. Build the `astro-pi-stream` Docker target from the repo `Dockerfile`
+1. Build the `astro-mainsequence-pi-stream` Docker target from the repo `Dockerfile`
 2. Detect the Astro package version plus which `mainsequence`, Python, and Node versions were actually installed in the image
 3. Stamp OCI labels on the final image with the exact full detected versions
 4. Push five tags to Artifact Registry:
@@ -46,7 +46,7 @@ steps:
   - name: Build runtime image
     uses: docker build
     notes:
-      - target should be astro-pi-stream
+      - target should be astro-mainsequence-pi-stream
       - rely on the Dockerfile default so `mainsequence` resolves to latest
 
   - name: Detect Astro and installed mainsequence versions
@@ -94,10 +94,10 @@ Reasoning:
 
 Current intended Artifact Registry path layout:
 
-- repository: `tsorm-images`
+- repository: `workload-default-artifact-registry`
 - image path inside the repository: `astro/astro-pi-stream`
 - resulting prefix:
-  `europe-west1-docker.pkg.dev/${PROJECT_ID}/tsorm-images/astro/astro-pi-stream`
+  `europe-west1-docker.pkg.dev/${PROJECT_ID}/workload-default-artifact-registry/astro/astro-pi-stream`
 
 ## Runtime Env For The Existing GKE Workload
 
@@ -109,11 +109,11 @@ They belong to the already-deployed GKE workload outside this repo's image publi
 These are container contract values from the repo and should usually stay fixed in the running
 service instead of varying per environment:
 
-- `HOME=/home/appuser`
+- `HOME=/home/jovyan`
 - `ASTRO_STREAM_HOST=0.0.0.0`
-- `ASTRO_CONTAINER_DATA_DIR=/home/appuser/.astro-container-data`
-- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`
-- `PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`
+- `ASTRO_CONTAINER_DATA_DIR=/home/jovyan/.astro-container-data`
+- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/jovyan/.astro-container-data/.config/mainsequence`
+- `PI_CODING_AGENT_DIR=/home/jovyan/.astro-container-data/.pi/agent`
 - `ASTRO_STREAM_SESSION_DIR=/session-state/sessions`
 - `ASTRO_SESSION_OVERRIDES_DIR=/session-state/session-overrides`
 
@@ -196,10 +196,11 @@ The final published image is also labeled with exact full versions:
 - `org.opencontainers.image.python.version=<python-full-version>`
 - `org.opencontainers.image.node.version=<node-full-version>`
 
-Before publishing a deployable image, bump the Astro project patch version locally and commit it:
+Before publishing a deployable image, bump the Astro project version locally according to the
+release level and commit it. For a major runtime contract upgrade:
 
 ```bash
-npm run version:patch
+npm run version:major
 ```
 
 After the version change is reviewed and committed, publish the image:
@@ -231,9 +232,9 @@ This is the structure now used in `deployment/gcp/cloudbuild.yaml`:
 ```yaml
 substitutions:
   _AR_REGION: europe-west1
-  _AR_REPO: tsorm-images
+  _AR_REPO: workload-default-artifact-registry
   _IMAGE_NAME: astro/astro-pi-stream
-  _DOCKER_TARGET: astro-pi-stream
+  _DOCKER_TARGET: astro-mainsequence-pi-stream
   _IMAGE_PREFIX: ${_AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE_NAME}
   _LATEST_IMAGE: ${_AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE_NAME}:latest
 
@@ -358,8 +359,9 @@ options:
 ## Notes Before Implementation
 
 - `.env` is excluded by `.dockerignore`, which is good and should stay that way
-- the deploy target should use the `astro-pi-stream` Docker target, not `astro-pi`
-- the running service still needs writable container runtime state at `/home/appuser/.astro-container-data`
+- the deploy target should use the explicit `astro-mainsequence-pi-stream` Docker target, not
+  `astro-pi`; `astro-pi-stream` remains only a compatibility alias
+- the running service still needs writable container runtime state at `/home/jovyan/.astro-container-data`
 - rebuilding without bumping the Astro package version will repoint that `astro-<version>` tag to
   the newly built image
 - the extra `python-...`, `node-...`, and `ms-sdk-...` tags are still just more

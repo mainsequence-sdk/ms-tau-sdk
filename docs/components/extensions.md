@@ -1,6 +1,7 @@
 # Extensions
 
-Astro's runtime extensions live under `pi/extensions/`. The detailed docs now mirror that source tree under `docs/extensions/`, with one page per hook, tool, and shared helper.
+Astro Core runtime extensions live under `pi/extensions/`. Main Sequence package extensions live
+under `adapters/mainsequence/pi-overlay/pi/extensions/`. The package files are the source of truth.
 
 ## Read by area
 
@@ -12,24 +13,21 @@ Astro's runtime extensions live under `pi/extensions/`. The detailed docs now mi
 ## Hooks
 
 - [`agent-registration`](../extensions/hooks/agent-registration.md)
-- [`project-policy`](../extensions/hooks/project-policy/README.md)
 - [`telemetry`](../extensions/hooks/telemetry.md)
 
 ## Tools
 
-- [`ensure_mainsequence_cli_auth`](../extensions/tools/mainsequence-cli-auth.md)
-- [`list_recent_changes`](../extensions/tools/recent-changes.md)
+- `runtime-info` lives at `pi/extensions/tools/runtime-info`.
+- Main Sequence tools are exposed by `adapters/mainsequence/pi-overlay/package.json`.
 
 ## Shared helpers
 
 - [`agent-registration`](../extensions/shared/agent-registration.md)
-- [`repo`](../extensions/shared/repo.md)
 - [`telemetry`](../extensions/shared/telemetry.md)
 
 ## Runtime notes
 
-- launch scripts bootstrap deterministic Main Sequence CLI auth before agent work begins
-- project implementation belongs on the dedicated executor runtime, not on a child session switch
+- runtime entrypoints compose configured Pi packages through `ASTRO_PI_PACKAGE_PATHS`
 - Docker Compose keeps the same extension surface while mounting the editable repo files into `/app`
 
 ## Related pages

@@ -3,24 +3,28 @@
 Typical error responses:
 
 - `400` — invalid JSON, missing `messages`, or missing latest user message
-- `400` — missing `agentName` or user identity
+- `400` — missing `agentType` or `user_uid`
+- `400` — `unknown_agent_type` when `agentType` is not one of `astro-orchestrator` or
+  `project-executor`
 - `400` — missing `created_by_user_uid` for available-model discovery or provider
   status/sign-in/sign-off requests. Astro accepts `created_by_user_uid`, supported user-uid
   headers, or Bearer JWT user uid claims.
-- `400` — missing `runtime_session_id` (or accepted alias) for real non-mock `POST /api/chat` or
-  `POST /api/a2a/chat` requests
-- `400` — missing `sessionId` for `GET /api/chat/session-model`
-- `400` — missing `sessionId` for `PATCH /api/chat/session-config`
+- `400` — missing `runtime_session_uid` (or accepted camel-case alias) for real non-mock
+  `POST /api/chat` requests
+- `400` — missing `sessionUid` for `GET /api/chat/session-model`
+- `400` — missing `sessionUid` for `PATCH /api/chat/session-config`
 - `400` — `invalid_session_config` when the patch payload includes unsupported or invalid config fields
 - `404` — `provider_not_supported` for unsupported `GET/POST /api/model-providers/*` provider ids
 - `404` — `signin_attempt_not_found` for unknown `GET/POST /api/model-providers/:provider/signin/:attemptId*`
-- `400` — missing required project-scoped fields such as `cwd` when starting a project executor request
+- `400` — missing required project-scoped fields such as `cwd` when starting a project-attached request
 - `403` — `cors_origin_not_allowed` when the browser `Origin` is not listed in `ASTRO_STREAM_TRUSTED_ORIGINS`
-- `400` — `invalid_runtime_session_id` when a missing local resume session uses an id that cannot
-  be queried as a backend `AgentSession.id`
-- `409` — session mismatch for provided `runtime_session_id`
+- `400` — `invalid_runtime_session_uid` when a missing local resume session uses a uid that cannot
+  be queried as a backend `AgentSession.uid`
+- `409` — session mismatch for provided `runtime_session_uid`
+- `409` — `fixed_agent_type_mismatch` when a fixed backend identity receives a different request
+  `agentType`
 - `409` — `session_not_found` only when the backend authority reports that the requested
-  `AgentSession.id` does not exist
+  `AgentSession.uid` does not exist
 - `409` — `session_hydration_unavailable` when local session files are missing but backend session
   lookup is disabled
 - `409` — `session_hydration_failed` when a backend-owned `astro-orchestrator` session exists but
@@ -42,6 +46,8 @@ Typical error responses:
 - `500` — `model_catalog_unavailable` when `GET /api/models/catalog` fails unexpectedly
 - `500` — `available_models_unavailable` when `GET /api/chat/get_available_models` fails unexpectedly
 - `502` — backend session hydration/authority fetch failure before Pi launch
+- `503` — `invalid_runtime_context` when fixed runtime env is internally inconsistent, for example
+  `ASTRO_FIXED_PROJECT_CWD` points to a missing directory
 - `404` — unknown route
 
 ## CORS

@@ -14,6 +14,7 @@ This section defines the public interface of Astro, including the HTTP stream AP
 - [`request.md`](./request.md)
 - [`response.md`](./response.md)
 - [`sessions.md`](./sessions.md)
+- [`../a2a/README.md`](../a2a/README.md)
 - [`logging.md`](./logging.md) (structured operational logging contract)
 - [`errors.md`](./errors.md)
 - [`environment.md`](./environment.md)

@@ -14,6 +14,7 @@ import {
 	withScopedPiAgentDir,
 	withScopedPiAgentDirAsync,
 } from "./model-provider-runtime.js";
+import { logStructuredEvent } from "../../pi/extensions/shared/structured-logging.js";
 
 export type ModelProviderSignInAttemptStatus =
 	| "pending"
@@ -59,7 +60,7 @@ type ActiveSignInAttempt = {
 	attemptId: string;
 	provider: string;
 	createdByUser: string;
-	agentSessionId: number | null;
+	agentSessionId: string | null;
 	env: NodeJS.ProcessEnv;
 	scopedPiAgentDir: string;
 	abortController: AbortController;
@@ -69,6 +70,17 @@ type ActiveSignInAttempt = {
 	rejectManualInput: ((error: Error) => void) | null;
 	cancelled: boolean;
 };
+
+function logModelProviderSignInBackendMessage(message: string) {
+	logStructuredEvent({
+		component: "astro-stream",
+		event: "provider_signin.backend_log",
+		message,
+		data: {
+			detail: message,
+		},
+	});
+}
 
 type StartInteractiveSignInSuccess = {
 	ok: true;
@@ -475,11 +487,11 @@ async function runInteractiveSignIn(
 		const flush = await flushScopedProviderCredential({
 			scopedPiAgentDir: activeAttempt.scopedPiAgentDir,
 			createdByUser: activeAttempt.createdByUser,
-			agentSessionId: activeAttempt.agentSessionId,
+			agentSessionUid: activeAttempt.agentSessionId,
 			provider: attempt.provider,
 			reason: "signin_completed",
 			env,
-			log: (message) => console.log(`[astro-stream] ${message}`),
+			log: logModelProviderSignInBackendMessage,
 		});
 		removeScopedPiCredential(activeAttempt.scopedPiAgentDir, attempt.provider);
 		if (flush.ok === false) {
@@ -518,7 +530,7 @@ export async function startModelProviderSignIn(
 	provider: string,
 	options: {
 		createdByUser: string;
-		agentSessionId?: number | null;
+		agentSessionId?: string | null;
 		env?: NodeJS.ProcessEnv;
 	},
 ): Promise<StartImmediateSignInSuccess | StartInteractiveSignInSuccess | SignInFailure> {
@@ -592,11 +604,11 @@ export async function startModelProviderSignIn(
 		const flush = await flushScopedProviderCredential({
 			scopedPiAgentDir,
 			createdByUser: options.createdByUser,
-			agentSessionId,
+			agentSessionUid: agentSessionId,
 			provider,
 			reason: "api_key_synced",
 			env: scopedEnv,
-			log: (message) => console.log(`[astro-stream] ${message}`),
+			log: logModelProviderSignInBackendMessage,
 		});
 		cleanupScopedPiAgentDir(scopedPiAgentDir);
 		if (flush.ok === false) {

@@ -2,7 +2,7 @@ import {
 	resolveBackendAuthHeaders,
 	resolveBackendUrl,
 	type BackendAuthHeaders,
-} from "../../pi/extensions/shared/agent-registration.js";
+} from "./mainsequence-agent-registration.js";
 
 export type PiCredential =
 	| {
@@ -120,13 +120,13 @@ export class ModelProviderCredentialClient {
 
 	async hydrate(input: {
 		createdByUser: string;
-		agentSessionId: number | null;
+		agentSessionUid: string | null;
 		providers: string[];
 		holderId: string;
 	}): Promise<ProviderCredentialClientResult<ProviderCredentialHydrateResponse>> {
 		return this.postJson(endpoint(this.backendUrl, "hydrate/"), {
 			created_by_user_uid: input.createdByUser,
-			agent_session_id: input.agentSessionId,
+			agent_session_uid: input.agentSessionUid,
 			providers: input.providers,
 			holder_id: input.holderId,
 		});
@@ -134,7 +134,7 @@ export class ModelProviderCredentialClient {
 
 	async flush(input: {
 		createdByUser: string;
-		agentSessionId: number | null;
+		agentSessionUid: string | null;
 		provider: string;
 		baseVersion: number;
 		reason: string;
@@ -142,7 +142,7 @@ export class ModelProviderCredentialClient {
 	}): Promise<ProviderCredentialClientResult<ProviderCredentialFlushResponse>> {
 		return this.postJson(endpoint(this.backendUrl, "flush/"), {
 			created_by_user_uid: input.createdByUser,
-			agent_session_id: input.agentSessionId,
+			agent_session_uid: input.agentSessionUid,
 			provider: input.provider,
 			base_version: input.baseVersion,
 			reason: input.reason,

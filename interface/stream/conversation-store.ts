@@ -37,11 +37,11 @@ export type ConversationMessage = {
 export type ConversationHistorySnapshot = {
 	version: 1;
 	session: {
-		sessionId: string;
+		sessionUid: string;
 		threadId: string;
-		agentName: string;
-		agentId: number | null;
-		agentSessionId: number | null;
+		agentType: string;
+		agentUid: string | null;
+		agentSessionUid: string | null;
 		status: "running" | "completed" | "error";
 		startedAt: string | null;
 		updatedAt: string | null;
@@ -72,9 +72,9 @@ type ConversationStoreMetadata = {
 	sessionDir: string;
 	sessionKey: string;
 	threadId: string;
-	agentName: string;
-	agentId: number | null;
-	agentSessionId: number | null;
+	agentType: string;
+	agentUid: string | null;
+	agentSessionUid: string | null;
 	startedAt: string | null;
 	a2a?: A2AEnvelope | null;
 };
@@ -135,11 +135,11 @@ function createDefaultSnapshot(metadata: ConversationStoreMetadata): Conversatio
 	return {
 		version: 1,
 		session: {
-			sessionId: metadata.sessionKey,
+			sessionUid: metadata.sessionKey,
 			threadId: metadata.threadId,
-			agentName: metadata.agentName,
-			agentId: metadata.agentId,
-			agentSessionId: metadata.agentSessionId,
+			agentType: metadata.agentType,
+			agentUid: metadata.agentUid,
+			agentSessionUid: metadata.agentSessionUid,
 			status: "running",
 			startedAt: metadata.startedAt,
 			updatedAt: metadata.startedAt,
@@ -156,11 +156,11 @@ function syncSnapshotMetadata(
 	metadata: ConversationStoreMetadata,
 ): ConversationHistorySnapshot {
 	const next = cloneSnapshot(snapshot);
-	next.session.sessionId = metadata.sessionKey;
+	next.session.sessionUid = metadata.sessionKey;
 	next.session.threadId = metadata.threadId;
-	next.session.agentName = metadata.agentName;
-	next.session.agentId = metadata.agentId;
-	next.session.agentSessionId = metadata.agentSessionId;
+	next.session.agentType = metadata.agentType;
+	next.session.agentUid = metadata.agentUid;
+	next.session.agentSessionUid = metadata.agentSessionUid;
 	if (!next.session.startedAt) {
 		next.session.startedAt = metadata.startedAt;
 	}
@@ -247,8 +247,8 @@ function applyConversationEvent(
 			const chunk = event.chunk;
 			switch (chunk.type) {
 				case "new_session":
-					next.session.agentSessionId = chunk.new_session.agent_session_id;
-					next.session.agentId = chunk.agent_id;
+					next.session.agentSessionUid = chunk.new_session.agent_session_uid;
+					next.session.agentUid = chunk.agent_uid;
 					next.session.threadId = chunk.new_session.thread_id;
 					return next;
 				case "start":

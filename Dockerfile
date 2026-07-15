@@ -1,4 +1,4 @@
-FROM python:3.11-slim AS astro-base
+FROM python:3.11-slim AS astro-core
 
 ARG ASTRO_RELEASE_VERSION=dev
 
@@ -10,12 +10,10 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     ASTRO_RELEASE_VERSION=${ASTRO_RELEASE_VERSION}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
     ca-certificates \
     curl \
     git \
     gnupg \
-    libpq-dev \
     openssh-client \
  && rm -rf /var/lib/apt/lists/*
 
@@ -33,30 +31,47 @@ RUN npm install --include=dev --no-audit --no-fund \
 COPY .pi ./.pi
 COPY pi ./pi
 COPY interface ./interface
-COPY scripts ./scripts
+COPY runtime ./runtime
+COPY adapters/backend.ts adapters/types.ts ./adapters/
+COPY adapters/mainsequence/adapter.ts adapters/mainsequence/bootstrap.ts adapters/mainsequence/runtime-auth.ts ./adapters/mainsequence/
+COPY adapters/mainsequence/bin ./adapters/mainsequence/bin
+COPY bin ./bin
+COPY tools ./tools
 
-RUN npm run check
+RUN node tools/build/patch-pi-rpc-ready.mjs \
+ && npm run check
 
-FROM astro-base AS astro-mainsequence
+FROM astro-core AS astro-mainsequence-source
+
+COPY adapters/mainsequence/pi-overlay ./adapters/mainsequence/pi-overlay
+
+FROM astro-mainsequence-source AS astro-mainsequence
 
 ARG MAINSEQUENCE_PIP_SPEC=mainsequence
 ENV MAINSEQUENCE_PIP_SPEC=${MAINSEQUENCE_PIP_SPEC}
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+ && rm -rf /var/lib/apt/lists/*
+
 RUN pip install --no-cache-dir "${MAINSEQUENCE_PIP_SPEC}" uv playwright \
  && playwright install --with-deps chromium
 
-FROM astro-mainsequence AS astro-runtime
+FROM astro-mainsequence AS astro-mainsequence-runtime
 
-ENV APP_USER=appuser \
-    APP_GROUP=appuser \
+ENV ASTRO_BACKEND=mainsequence \
+    APP_USER=jovyan \
+    APP_GROUP=jovyan \
     APP_UID=10000 \
     APP_GID=10000 \
-    APP_HOME=/home/appuser \
-    HOME=/home/appuser \
-    ASTRO_CONTAINER_DATA_DIR=/home/appuser/.astro-container-data \
+    APP_HOME=/home/jovyan \
+    HOME=/home/jovyan \
+    ASTRO_CONTAINER_DATA_DIR=/home/jovyan/.astro-container-data \
     ASTRO_STREAM_SESSION_DIR=/session-state/sessions \
-    ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence \
-    PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent
+    ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/jovyan/.astro-container-data/.config/mainsequence \
+    ASTRO_PI_PACKAGE_PATHS=/app/adapters/mainsequence/pi-overlay \
+    PI_CODING_AGENT_DIR=/home/jovyan/.astro-container-data/.pi/agent
 
 RUN groupadd --gid "${APP_GID}" "${APP_GROUP}" \
  && useradd --uid "${APP_UID}" --gid "${APP_GID}" --create-home --home-dir "${APP_HOME}" --shell /bin/bash "${APP_USER}" \
@@ -72,25 +87,40 @@ RUN groupadd --gid "${APP_GID}" "${APP_GROUP}" \
     "${APP_HOME}/.astro" \
  && chown -R "${APP_USER}:${APP_GROUP}" "${APP_HOME}" /session-state /ms-playwright
 
-USER appuser
+USER jovyan
 
 FROM scratch AS project-executor-bundle
 
-COPY --from=astro-base /app /app
+ARG ASTRO_RELEASE_VERSION=dev
 
-FROM astro-runtime AS astro-pi-stream
+LABEL org.opencontainers.image.title="astro-${ASTRO_RELEASE_VERSION}" \
+    org.opencontainers.image.description="Astro ${ASTRO_RELEASE_VERSION} project executor runtime bundle." \
+    org.opencontainers.image.version="${ASTRO_RELEASE_VERSION}"
+
+COPY --from=astro-mainsequence-source /app /app
+
+FROM astro-mainsequence-runtime AS astro-mainsequence-pi-stream
 
 ENV ASTRO_STREAM_HOST=0.0.0.0 \
     ASTRO_STREAM_PORT=8787
 
 EXPOSE 8787
 
-CMD ["/app/node_modules/.bin/tsx", "scripts/start_pi_stream.ts"]
+CMD ["/app/node_modules/.bin/tsx", "bin/astro-stream.ts"]
 
-FROM astro-runtime AS astro-session-checkpoint-sidecar
+FROM astro-mainsequence-runtime AS astro-mainsequence-session-checkpoint-sidecar
 
-CMD ["/app/node_modules/.bin/tsx", "scripts/session_checkpoint_sidecar.ts"]
+CMD ["/app/node_modules/.bin/tsx", "runtime/checkpoints/sidecar.ts"]
 
-FROM astro-runtime AS astro-pi
+FROM astro-mainsequence-runtime AS astro-mainsequence-pi
 
-CMD ["node", "scripts/start_pi.mjs"]
+CMD ["/app/node_modules/.bin/tsx", "bin/astro-pi-local.ts"]
+
+# Compatibility aliases for existing local and deployment commands. These still
+# build the Main Sequence-composed runtime until a non-Main-Sequence backend is
+# implemented and explicitly selected.
+FROM astro-mainsequence-source AS astro-base
+FROM astro-mainsequence-runtime AS astro-runtime
+FROM astro-mainsequence-pi-stream AS astro-pi-stream
+FROM astro-mainsequence-session-checkpoint-sidecar AS astro-session-checkpoint-sidecar
+FROM astro-mainsequence-pi AS astro-pi

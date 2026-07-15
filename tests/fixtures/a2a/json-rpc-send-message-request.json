@@ -1,0 +1,21 @@
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "SendMessage",
+  "params": {
+    "message": {
+      "messageId": "msg-client-1",
+      "role": "ROLE_USER",
+      "contextId": "agent-session-uid-1",
+      "parts": [
+        {
+          "text": "Hello"
+        }
+      ]
+    },
+    "configuration": {
+      "acceptedOutputModes": ["text/plain"],
+      "returnImmediately": false
+    }
+  }
+}

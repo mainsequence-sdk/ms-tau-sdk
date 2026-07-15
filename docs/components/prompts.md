@@ -1,20 +1,18 @@
 # Prompts
 
-Astro's reusable workflow prompts live under `pi/prompts/`. The detailed prompt docs now live under `docs/prompts/`, one file per prompt.
+Main Sequence reusable workflow prompts are currently delivered by the
+`adapters/mainsequence/pi-overlay` adapter overlay. The overlay files are the Astro-side source of truth.
 
-## Prompt index
+## Package Sources
 
-- [`../prompts/README.md`](../prompts/README.md)
+- `adapters/mainsequence/pi-overlay/pi/prompts/review-main-sequence-project.md`
+- `adapters/mainsequence/pi-overlay/pi/prompts/verify-mainsequence-tutorial.md`
 
-## Prompt pages
+## Why prompts stay separate from the shared runtime contract
 
-- [`design-and-audit`](../prompts/design-and-audit.md)
-- [`verify-mainsequence-tutorial`](../prompts/verify-mainsequence-tutorial.md)
-
-## Why prompts stay separate from runtime agent prompts
-
-- prompts guide the parent through reusable workflows
-- runtime agent prompts define role-specific behavior for dedicated runtimes such as the executor
+- prompts guide the agent through reusable workflows
+- `.pi/APPEND_SYSTEM.md` defines only the Astro Core runtime contract.
+- `adapters/mainsequence/pi-overlay/pi/system/APPEND_SYSTEM.md` defines the Main Sequence package runtime contract.
 
 ## Related pages
 

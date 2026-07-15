@@ -6,15 +6,6 @@ function normalizeString(value: unknown): string | null {
 	return typeof value === "string" && value.trim() ? value.trim() : null;
 }
 
-function normalizeNumericId(value: unknown): number | null {
-	if (typeof value === "number" && Number.isFinite(value)) return Math.trunc(value);
-	if (typeof value === "string" && /^\d+$/.test(value.trim())) {
-		const parsed = Number.parseInt(value.trim(), 10);
-		return Number.isFinite(parsed) ? parsed : null;
-	}
-	return null;
-}
-
 function cloneRecord(value: Record<string, unknown> | null): Record<string, unknown> | null {
 	if (!value) return null;
 	return JSON.parse(JSON.stringify(value)) as Record<string, unknown>;
@@ -26,21 +17,23 @@ export type A2AEnvelope = {
 	version: 1;
 	enabled: true;
 	userOrigin: "agent";
-	callerAgentName: string | null;
+	callerAgentType: string | null;
 	callerMetadata: Record<string, unknown> | null;
 	responseFormat: A2AResponseFormat;
 	handleUniqueId: string | null;
-	callerAgentSessionId: number | null;
-	targetAgentId: number | null;
+	callerAgentSessionUid: string | null;
+	targetAgentSessionUid: string | null;
+	targetAgentUid: string | null;
 };
 
 export type UserMessageProvenance = {
 	origin: "agent";
 	channel: "a2a";
-	callerAgentName: string | null;
+	callerAgentType: string | null;
 	handleUniqueId: string | null;
-	callerAgentSessionId: number | null;
-	targetAgentId: number | null;
+	callerAgentSessionUid: string | null;
+	targetAgentSessionUid: string | null;
+	targetAgentUid: string | null;
 };
 
 export function normalizeA2AResponseFormat(value: unknown): A2AResponseFormat {
@@ -77,35 +70,38 @@ export function normalizeA2AEnvelope(value: unknown): A2AEnvelope | null {
 		isPlainObject(value.caller_metadata) ? cloneRecord(value.caller_metadata) :
 		isPlainObject(value.caller) ? cloneRecord(value.caller) :
 		null;
-	const callerAgentName =
-		normalizeString(value.callerAgentName) ??
-		normalizeString(value.caller_agent_name) ??
-		normalizeString(callerMetadata?.agentName) ??
-		normalizeString(callerMetadata?.agent_name) ??
-		normalizeString(callerMetadata?.name);
+	const callerAgentType =
+		normalizeString(value.callerAgentType) ??
+		normalizeString(value.caller_agent_type) ??
+		normalizeString(callerMetadata?.agentType) ??
+		normalizeString(callerMetadata?.agent_type);
 	const responseFormat = normalizeA2AResponseFormat(value.responseFormat ?? value.response_format);
 	const handleUniqueId =
 		normalizeString(value.handleUniqueId) ?? normalizeString(value.handle_unique_id);
-	const callerAgentSessionId =
-		normalizeNumericId(value.callerAgentSessionId) ??
-		normalizeNumericId(value.caller_agent_session_id) ??
-		normalizeNumericId(callerMetadata?.agentSessionId) ??
-		normalizeNumericId(callerMetadata?.agent_session_id) ??
-		normalizeNumericId(callerMetadata?.sessionId) ??
-		normalizeNumericId(callerMetadata?.session_id);
-	const targetAgentId =
-		normalizeNumericId(value.targetAgentId) ?? normalizeNumericId(value.target_agent_id);
+	const callerAgentSessionUid =
+		normalizeString(value.callerAgentSessionUid) ??
+		normalizeString(value.caller_agent_session_uid) ??
+		normalizeString(callerMetadata?.agentSessionUid) ??
+		normalizeString(callerMetadata?.agent_session_uid);
+	const targetAgentUid =
+		normalizeString(value.targetAgentUid) ?? normalizeString(value.target_agent_uid);
+	const targetAgentSessionUid =
+		normalizeString(value.targetAgentSessionUid) ??
+		normalizeString(value.target_agent_session_uid) ??
+		normalizeString(value.runtimeSessionUid) ??
+		normalizeString(value.runtime_session_uid);
 
 	return {
 		version: 1,
 		enabled: true,
 		userOrigin: "agent",
-		callerAgentName: callerAgentName ?? null,
+		callerAgentType: callerAgentType ?? null,
 		callerMetadata,
 		responseFormat,
 		handleUniqueId: handleUniqueId ?? null,
-		callerAgentSessionId,
-		targetAgentId,
+		callerAgentSessionUid,
+		targetAgentSessionUid,
+		targetAgentUid,
 	};
 }
 
@@ -119,12 +115,13 @@ export function mergeA2AEnvelopes(
 		version: 1,
 		enabled: true,
 		userOrigin: "agent",
-		callerAgentName: overlay.callerAgentName ?? base.callerAgentName,
+		callerAgentType: overlay.callerAgentType ?? base.callerAgentType,
 		callerMetadata: overlay.callerMetadata ?? base.callerMetadata,
 		responseFormat: overlay.responseFormat ?? base.responseFormat,
 		handleUniqueId: overlay.handleUniqueId ?? base.handleUniqueId,
-		callerAgentSessionId: overlay.callerAgentSessionId ?? base.callerAgentSessionId,
-		targetAgentId: overlay.targetAgentId ?? base.targetAgentId,
+		callerAgentSessionUid: overlay.callerAgentSessionUid ?? base.callerAgentSessionUid,
+		targetAgentSessionUid: overlay.targetAgentSessionUid ?? base.targetAgentSessionUid,
+		targetAgentUid: overlay.targetAgentUid ?? base.targetAgentUid,
 	};
 }
 
@@ -133,10 +130,11 @@ export function a2aEnvelopeToUserProvenance(value: A2AEnvelope | null): UserMess
 	return {
 		origin: "agent",
 		channel: "a2a",
-		callerAgentName: value.callerAgentName,
+		callerAgentType: value.callerAgentType,
 		handleUniqueId: value.handleUniqueId,
-		callerAgentSessionId: value.callerAgentSessionId,
-		targetAgentId: value.targetAgentId,
+		callerAgentSessionUid: value.callerAgentSessionUid,
+		targetAgentSessionUid: value.targetAgentSessionUid,
+		targetAgentUid: value.targetAgentUid,
 	};
 }
 

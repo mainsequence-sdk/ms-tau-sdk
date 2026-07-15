@@ -8,9 +8,7 @@ astro/
 │   └── stream-sessions/
 ├── .pi/
 │   ├── APPEND_SYSTEM.md
-│   ├── settings.json
-│   └── agents/
-│       └── mainsequence-project-executor.md
+│   └── settings.json
 ├── pi/
 │   ├── extensions/
 │   │   ├── hooks/
@@ -23,12 +21,19 @@ astro/
 │   ├── getting-started/
 │   ├── components/
 │   ├── extensions/
-│   ├── prompts/
 │   ├── reference/
 │   └── reserach_guide/
 ├── interface/
 │   └── stream/
-├── scripts/
+├── runtime/
+│   ├── bootstrap/
+│   └── checkpoints/
+├── adapters/
+│   └── mainsequence/
+├── bin/
+├── tools/
+│   ├── a2a/
+│   └── build/
 ├── Dockerfile
 ├── README.md
 ├── package.json
@@ -39,7 +44,7 @@ astro/
 
 ### `.pi/`
 
-Project-local Pi settings, parent prompt, and runtime agent prompts.
+Project-local Pi settings and the shared Astro prompt contract.
 
 ### `.astro/`
 
@@ -52,16 +57,28 @@ Pi package content registered in `package.json`, including extensions, prompts, 
 
 ### `docs/`
 
-Canonical human-readable documentation for Astro, including mirrored per-file docs for
-`pi/extensions/` and `pi/prompts/`.
+Human-readable documentation for Astro maintainers.
 
 ### `interface/`
 
 Optional runtime interfaces around Pi, including the HTTP stream wrapper.
 
-### `scripts/`
+### `runtime/`
 
-Command-line helpers for launching Astro and running dedicated workflows.
+Astro Core runtime services and bootstrap code.
+
+### `adapters/`
+
+Backend/platform-specific integration code. Main Sequence runtime credential auth currently lives
+under `adapters/mainsequence/`.
+
+### `bin/`
+
+Thin process entrypoints for local Pi, HTTP streaming, and other runnable targets.
+
+### `tools/`
+
+Build, debug, and live-test utilities that are not production runtime services.
 
 ### `Dockerfile`
 
@@ -73,18 +90,17 @@ When Astro runs in containers, rebuildable runtime state is not the repo-local `
 lives under the container runtime root, while active session files live under `/session-state`:
 
 ```text
-/home/appuser/.astro-container-data/
+/home/jovyan/.astro-container-data/
 ├── .pi/
 │   ├── agent/
 │   │   ├── settings.json
 │   │   └── bin/
 │   └── project/
 │       ├── APPEND_SYSTEM.md
-│       ├── agents/
 │       ├── settings.json
 │       └── skills/
 ├── astro-orchestrator-runtime/
-│   └── .pi -> /home/appuser/.astro-container-data/.pi/project
+│   └── .pi -> /home/jovyan/.astro-container-data/.pi/project
 ├── .config/
 │   └── mainsequence/
 │       ├── auth.json

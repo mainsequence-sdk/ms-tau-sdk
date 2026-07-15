@@ -24,11 +24,11 @@ Example `insights` payload:
 {
   "version": 1,
   "session": {
-    "sessionId": "39",
+    "sessionUid": "session_39_uid",
     "threadId": "__LOCALID_R0NXTWK",
-    "agentName": "astro-orchestrator",
-    "agentId": 1,
-    "agentSessionId": 39,
+    "agentType": "astro-orchestrator",
+    "agentUid": "agent_1_uid",
+    "agentSessionUid": "session_39_uid",
     "status": "completed",
     "startedAt": "2026-04-15T09:34:38.000Z",
     "updatedAt": "2026-04-15T09:34:46.000Z",

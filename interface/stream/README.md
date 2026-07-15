@@ -27,14 +27,80 @@ Environment overrides:
 configuration is `ASTRO_STREAM_TRUSTED_ORIGINS`.
 
 In `docker-compose.yml`, the stream service uses container-local runtime state under
-`/home/appuser/.astro-container-data` and mounts the shared tmpfs-backed `astro_session_emptydir`
+`/home/jovyan/.astro-container-data` and mounts the shared tmpfs-backed `astro_session_emptydir`
 volume at `/session-state`. It sets `ASTRO_STREAM_SESSION_DIR=/session-state/sessions` so local
 Docker follows the emptyDir checkpoint storage model instead of durable local session storage. The
 checkpoint sidecar shares the same `/session-state` mount, uses the same
 `ASTRO_CHECKPOINT_HOLDER_ID`, and flushes complete checkpoint bundles to the backend. The image runs
-as non-root `appuser`.
+as non-root `jovyan`.
 
 ## Endpoints
+
+### `POST /api/llm/chat`
+
+Fast stateless LLM passthrough. This endpoint returns a normal `application/json` response and does
+not attach to a session runtime, start Pi, acquire checkpoints, materialize capabilities, attach a
+project, queue behind a session, or persist conversation history.
+
+Request:
+
+```json
+{
+  "model": "gpt-5.4",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Return JSON with only 2 string keys."
+    }
+  ],
+  "response_format": {
+    "type": "json_object",
+    "strict": true
+  },
+  "max_tokens": 512,
+  "metadata": {
+    "astro": {
+      "provider": "openai",
+      "json_repair": {
+        "attempts": 3
+      },
+      "omit_reasoning": true,
+      "timeout_seconds": 120
+    }
+  }
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "provider": "openai",
+  "model": "gpt-5.4",
+  "message": {
+    "role": "assistant",
+    "content": "{\"key1\":\"value1\",\"key2\":\"value2\"}"
+  },
+  "json": {
+    "key1": "value1",
+    "key2": "value2"
+  },
+  "finish_reason": "stop",
+  "usage": {
+    "input_tokens": 42,
+    "output_tokens": 18,
+    "total_tokens": 60
+  }
+}
+```
+
+The request body follows the OpenAI-compatible chat completions shape. Use `messages`; `message`,
+`prompt`, `input`, camelCase option aliases, top-level Astro controls such as `provider`,
+`json_repair`, `omit_reasoning`, and `timeout_seconds`, and session/runtime fields such as
+`agent_session_uid`, `thread_id`, `agent_type`, and `runtime_turn_timeout_seconds` are rejected.
+Astro-specific controls belong under `metadata.astro`. Supported keys are `provider`,
+`json_repair`, `omit_reasoning`, and `timeout_seconds`.
 
 ### `POST /api/chat`
 
@@ -42,9 +108,9 @@ Send a request compatible with assistant-ui's `ui-message-stream` runtime:
 
 ```json
 {
-  "runtime_session_id": "456",
-  "agentName": "astro-orchestrator",
-  "userId": "user_123",
+  "runtime_session_uid": "session_456_uid",
+  "agentType": "astro-orchestrator",
+  "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f",
   "system": "optional system prompt",
   "messages": [
     {
@@ -69,7 +135,7 @@ Send a request compatible with assistant-ui's `ui-message-stream` runtime:
     "surfaceContextSource": "surface",
     "surfaceDetails": {},
     "surfaceSummary": "...",
-    "userId": "..."
+    "user_uid": "..."
   }
 }
 ```
@@ -78,9 +144,9 @@ To start a project-scoped executor session directly, use:
 
 ```json
 {
-  "runtime_session_id": "87",
-  "agentName": "mainsequence-project-executor",
-  "userId": "user_123",
+  "runtime_session_uid": "session_87_uid",
+  "agentType": "project-executor",
+  "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f",
   "projectId": "42",
   "cwd": "/absolute/path/to/checked-out-project",
   "messages": [
@@ -96,7 +162,7 @@ To start a project-scoped executor session directly, use:
   ],
   "tools": {},
   "context": {
-    "userId": "user_123"
+    "user_uid": "e2a4f38a-1b5f-40a3-974f-70bc8f065b3f"
   }
 }
 ```
@@ -120,9 +186,7 @@ To bind or override the session model on the same request, include:
 
 The response includes `X-Thread-Id`. When the backend session authority provides the fields, it also includes:
 
-- `X-Agent-Id`
-- `X-Agent-Unique-Id`
-- `X-Agent-Session-Id`
+- `X-Agent-Session-Uid`
 - `X-Session-Key`
 
 This endpoint expects `messages` to contain the current user turn only. The server reads only the
@@ -130,8 +194,8 @@ last message entry and treats it as the exact latest user message, plus optional
 `context`.
 
 Conversation continuity comes from the backend agent session key. For real non-mock execution, the
-client must send `runtime_session_id` to resume the existing session.
-If the request includes an explicit `runtime_session_id`, the server resumes that session even when
+client must send `runtime_session_uid` to resume the existing session.
+If the request includes an explicit `runtime_session_uid`, the server resumes that session even when
 the request still arrives with `newChat: true`.
 `threadId` is informational for the frontend when backend-backed sessions are enabled and does not
 control which session is resumed.
@@ -150,7 +214,7 @@ The stream wrapper injects:
 - `tools` as optional UI tool metadata
 - optional request-carried backend `session` serializer for session-first metadata/model refresh
 - only the last `messages` entry as the turn input
-- backend-owned `runtime_session_id` as the identity Astro must attach to
+- backend-owned `runtime_session_uid` as the identity Astro must attach to
 
 Normal chat execution is session-first:
 
@@ -158,7 +222,7 @@ Normal chat execution is session-first:
 - when the request includes `session`, Astro refreshes local session metadata and model binding from
   that backend session serializer before continuing the turn
 - when request-carried `session` JSON is absent or insufficient, Astro must fetch backend session
-  authority from `runtime_session_id` before Pi launch rather than proceeding with no model binding
+  authority from `runtime_session_uid` before Pi launch rather than proceeding with no model binding
 - `GET /api/chat/get_available_models` remains control-plane discovery and is not required on the
   normal message hot path
 
@@ -166,7 +230,8 @@ Response headers include:
 
 - `Content-Type: text/event-stream`
 - `X-Stream-Protocol: ui-message-stream`
-- `X-Agent-Id` when the backend returned an Agent `id` for the thread
+- `X-Agent-Session-Uid` when the stream is attached to a backend AgentSession
+- `X-Session-Key` for the local runtime session key
 
 The stream ends with a final `data: [DONE]` marker after the `finish` or `error` chunk.
 
@@ -176,68 +241,79 @@ Each stream chunk now has this envelope:
 {
   "type": "text-delta",
   "textDelta": "hello",
-  "agent_id": 123
+  "agent_uid": "agent_123_uid"
 }
 ```
 
-### `POST /api/a2a/chat`
+### Public A2A Endpoints
 
-Receives machine-facing A2A requests on the Astro streamer and returns the response on the same SSE
-connection.
+Public A2A callers use the standard adapter surface. In the first implementation pass,
+`message.contextId` must be the existing Main Sequence `AgentSession.uid`; Astro maps that standard
+A2A context to the backend-owned session runtime internally.
 
-This endpoint normalizes an A2A JSON request into the normal stream pipeline while deterministically
-injecting A2A execution context. At minimum, the injected contract tells the target runtime:
+See [`docs/a2a/README.md`](../../docs/a2a/README.md) for the current endpoint contract, phase-1 task
+limitations, JSON-RPC mapping, and examples.
 
-- this is agent-to-agent communication
-- this is not a human-facing chat request
-- the requested response format must be followed exactly
+Send a direct A2A request:
 
-Canonical request fields accepted by Astro include:
+```http
+POST /api/a2a/v1/message:send
+Content-Type: application/a2a+json
+```
 
 ```json
 {
-  "runtime_session_id": "123",
-  "userId": "user_123",
-  "agentName": "mainsequence-project-executor",
-  "session": {
-    "id": 123,
-    "thread_id": "123",
-    "llm_provider": "openai-codex",
-    "llm_model": "gpt-5.3-codex-spark",
-    "session_metadata": {
-      "workflow_key": "mainsequence-project-executor"
-    }
+  "message": {
+    "messageId": "msg-client-1",
+    "role": "ROLE_USER",
+    "contextId": "agent-session-uid",
+    "parts": [
+      {
+        "text": "Return a JSON dictionary describing what you can do."
+      }
+    ]
   },
-  "messages": [
-    {
-      "role": "user",
-      "content": "Inspect the prepared project and summarize the next implementation step."
-    }
-  ],
-  "response_format": "Return a concise machine-facing status summary with blockers and next actions.",
-  "caller": {
-    "agent_name": "astro-orchestrator"
+  "configuration": {
+    "acceptedOutputModes": ["application/json"],
+    "returnImmediately": false
   }
 }
 ```
 
-The example session object above is abbreviated for readability. In real non-debug A2A sends, the
-caller should forward the full backend session JSON serialization under `session`, not a trimmed
-subset.
+Other public A2A endpoints include:
 
-Astro also accepts legacy task-style aliases such as `task`, `message`, `input`, `prompt`, or
-`request`. When canonical `messages` are present, they win.
-For real A2A execution, that backend session identity is mandatory. Astro must not create the
-executor session on behalf of the caller. The caller should also include the full backend session
-serializer for that target session on every outbound A2A request so session/model/provider metadata
-does not have to be recovered through fallback.
+- `POST /api/a2a/v1/message:stream`
+- `GET /api/a2a/v1/tasks`
+- `GET /api/a2a/v1/tasks/{id}`
+- `POST /api/a2a/v1/tasks/{id}:cancel`
+- `GET|POST /api/a2a/v1/tasks/{id}:subscribe`
+- `GET|POST /api/a2a/v1/tasks/{id}/pushNotificationConfigs`
+- `GET|DELETE /api/a2a/v1/tasks/{id}/pushNotificationConfigs/{configId}`
+- `GET /api/a2a/v1/extendedAgentCard`
+- `POST /api/a2a/rpc`
+- `GET|POST /api/a2a/sessions/{agent_session_uid}/runtime` for backend/control-plane runtime attach/status
 
-### `POST /api/a2a/cancel`
+### A2A Runtime Execution
 
-Requests cancellation of an active A2A-backed runtime session. This is an out-of-band control path,
-not part of the streamed `POST /api/a2a/chat` response itself.
+The public A2A adapter dispatches turns through the same backend-owned session runtime pipeline as
+human chat, but it does so in-process. It does not HTTP-call `POST /api/chat`, `/api/a2a/chat`, or
+any session runtime chat route. Runtime bootstrap, warm-runner reuse, checkpointing, and provider
+credential hydration are implementation details for message callers. The backend/control-plane can
+still pre-attach an existing `AgentSession.uid` through
+`/api/a2a/sessions/{agent_session_uid}/runtime`.
 
-### `GET /api/chat/session-model?sessionId=<runtime_session_id>`
+Public callers should express output needs through the standard A2A request:
+
+- Use `configuration.acceptedOutputModes: ["application/json"]` for JSON-oriented responses.
+- Use the Main Sequence output-contract metadata extension for strict dictionary/JSON validation and
+  repair attempts.
+- Use the Main Sequence output-contract metadata extension to request answer-only responses that omit
+  reasoning, tool events, and raw text deltas from the public A2A response.
+
+Strict JSON guarantees the final A2A `Message` or `Task` artifact payload. If validation and all
+repair attempts fail, Astro returns an A2A error instead of returning invalid assistant text.
+
+### `GET /api/chat/session-model?sessionUid=<runtime_session_uid>`
 
 Returns the model binding stored for the runtime session.
 
@@ -281,8 +357,8 @@ Revokes the provider credential in the backend for the requested user.
 ### `GET /api/models/catalog`
 
 Returns Astro's global model catalog from the Pi registry without runtime availability filtering,
-but still filtered to the providers Astro currently supports in-product. Pass `created_by_user_uid`
-to annotate auth-backed entries with user-scoped backend credential status.
+but still filtered to the providers Astro currently supports in-product. Pass
+`created_by_user_uid` to annotate auth-backed entries with user-scoped backend credential status.
 
 ### `GET /api/chat/get_available_models`
 
@@ -309,8 +385,8 @@ When a new session is created, the stream emits a `new_session` chunk before `st
 
 Session files are stored at:
 
-`ASTRO_STREAM_SESSION_DIR/<agent_session_id>.jsonl`
-`ASTRO_STREAM_SESSION_DIR/<agent_session_id>.meta.json`
+`ASTRO_STREAM_SESSION_DIR/<agent_session_uid>.jsonl`
+`ASTRO_STREAM_SESSION_DIR/<agent_session_uid>.meta.json`
 
 ### `GET /health`
 
@@ -328,7 +404,7 @@ captured.
   "startedAt": "2026-04-20T12:00:00.000Z",
   "lastUpdatedAt": "2026-04-20T12:01:00.000Z",
   "uptimeSeconds": 60,
-  "healthStatePath": "/home/appuser/.astro-container-data/.astro/stream-health.json",
+  "healthStatePath": "/home/jovyan/.astro-container-data/.astro/stream-health.json",
   "issueCount": 0,
   "recentIssues": [],
   "previousRun": null

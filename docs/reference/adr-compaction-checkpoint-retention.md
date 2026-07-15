@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed.
+Accepted. Implemented across checkpoint normalization, sidecar flush behavior, and history
+projection.
 
 ## Context
 
@@ -43,7 +44,7 @@ When the backend accepts a checkpoint flush whose active branch contains a new c
 backend must normalize the checkpoint before storing it. Normalization means pruning the
 pre-compaction JSONL entries that are no longer required for Pi restore.
 
-The backend must store only the latest checkpoint bundle per `AgentSession.id`. It must not keep old
+The backend must store only the latest checkpoint bundle per `AgentSession.uid`. It must not keep old
 checkpoint bundle payloads, old `pi_session_jsonl` values, or frontend history snapshots for normal
 session continuity.
 
@@ -81,8 +82,8 @@ Checkpoint sidecar owns:
 
 ## Additive Backend Persistence
 
-The base `AgentSessionCheckpoint`, checkpoint lease, and checkpoint event persistence already exist
-from [`adr-emptydir-session-checkpoint-storage.md`](./adr-emptydir-session-checkpoint-storage.md).
+The base `AgentSessionCheckpoint`, checkpoint lease, and checkpoint event persistence are part of
+the stateless runtime storage contract documented in [`persistent-state.md`](./persistent-state.md).
 This ADR must not redefine those models.
 
 ### Database Migration
@@ -105,7 +106,7 @@ No other checkpoint model fields are added by this ADR.
 Do not add fields to the checkpoint event model for compaction.
 
 There is no separate compaction event producer. The existing
-`POST /orm/api/agents/v1/sessions/{agent_session_id}/checkpoint/flush/` handler writes the existing
+`POST /orm/api/agents/v1/sessions/{agent_session_uid}/checkpoint/flush/` handler writes the existing
 `agent_session_checkpoint_events` audit row.
 
 The backend knows a flush is compaction-related in exactly these cases:
@@ -119,7 +120,7 @@ columns:
 
 ```python
 checkpoint_event_on_compaction_flush = {
-    "agent_session_id": agent_session_id,
+    "agent_session_uid": agent_session_uid,
     "checkpoint_version": checkpoint_version,
     "event_type": "flush_completed",
     "actor_id": holder_id,
@@ -134,7 +135,7 @@ For a rejected compaction flush request, write the same existing event row shape
 
 ```python
 checkpoint_event_on_rejected_compaction_flush = {
-    "agent_session_id": agent_session_id,
+    "agent_session_uid": agent_session_uid,
     "checkpoint_version": checkpoint_version,
     "event_type": "flush_rejected",
     "actor_id": holder_id,
@@ -160,7 +161,7 @@ the previous section and uses only the existing event columns.
 ### Flush Request
 
 ```http
-POST /orm/api/agents/v1/sessions/{agent_session_id}/checkpoint/flush/
+POST /orm/api/agents/v1/sessions/{agent_session_uid}/checkpoint/flush/
 ```
 
 Request body:
@@ -211,7 +212,7 @@ If the final bundle that would be stored has the same hash as the current stored
 
 ```python
 checkpoint_flush_noop_response = {
-    "agent_session_id": int,
+    "agent_session_uid": str,
     "checkpoint_version": int,
     "bundle_hash": "sha256:<stored_bundle_hash>",
     "noop": True,
@@ -229,7 +230,7 @@ compaction-normalized response shape with `noop = True` and include the normaliz
 
 ```python
 checkpoint_flush_response = {
-    "agent_session_id": int,
+    "agent_session_uid": str,
     "checkpoint_version": int,
     "bundle_hash": "sha256:<stored_bundle_hash>",
     "noop": False,
@@ -246,7 +247,7 @@ When backend prunes the checkpoint, it must return the normalized bundle:
 
 ```python
 checkpoint_flush_compaction_response = {
-    "agent_session_id": int,
+    "agent_session_uid": str,
     "checkpoint_version": int,
     "bundle_hash": "sha256:<stored_bundle_hash>",
     "noop": bool,
@@ -278,7 +279,7 @@ compaction-normalized flush, that means they return the pruned bundle:
 
 ```python
 checkpoint_restore_response = {
-    "agent_session_id": int,
+    "agent_session_uid": str,
     "checkpoint_version": int,
     "bundle_hash": "sha256:<stored_bundle_hash>",
     "updated_at": str | None,
@@ -306,7 +307,7 @@ checkpoint_restore_response = {
 For every flush, backend must:
 
 1. Authenticate the runtime caller.
-2. Load `AgentSession` by `{agent_session_id}`.
+2. Load `AgentSession` by `{agent_session_uid}`.
 3. Validate the active lease using `holder_id` and `lease_token`.
 4. Reject stale `expected_checkpoint_version`.
 5. Validate mandatory bundle members:
@@ -443,11 +444,11 @@ row for the same session.
 ### Errors
 
 Error responses keep the existing checkpoint shape from
-[`adr-emptydir-session-checkpoint-storage.md`](./adr-emptydir-session-checkpoint-storage.md):
+[`persistent-state.md`](./persistent-state.md):
 
 ```python
 checkpoint_flush_error_response = {
-    "agent_session_id": int,
+    "agent_session_uid": str,
     "error_code": str,
     "error_detail": str,
     "checkpoint_version": int | None,
@@ -459,7 +460,7 @@ checkpoint_flush_error_response = {
 
 ```python
 checkpoint_flush_error_response_with_field_errors = {
-    "agent_session_id": int,
+    "agent_session_uid": str,
     "error_code": str,
     "error_detail": str,
     "checkpoint_version": int | None,

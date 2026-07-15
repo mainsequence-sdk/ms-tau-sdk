@@ -1,24 +1,13 @@
 # Astro docs
 
-Astro is a Pi package that acts as a parent orchestrator for Main Sequence project assistants.
+Astro is a Pi deployment runtime for Main Sequence assistant sessions.
 
 This documentation set is organized for readers who may not know Pi yet. It explains Astro from the outside in:
 
 1. what Pi components Astro uses
 2. how those components are wired together
 3. how the prompt and runtime-agent layers drive project behavior
-4. where the per-file extension and prompt docs live
-
-## Run the local executor runtime
-
-If you want to inspect the dedicated project runtime instead of the full Astro orchestrator, use
-the local executor container harness:
-
-```bash
-export A2A_DEV_PROJECT=/absolute/path/to/checked-out-project
-export ASTRO_EXECUTOR_PROJECT_ID=<project-id>
-docker compose up astro-project-executor
-```
+4. where package-provided resources enter the runtime
 
 ## Architecture
 
@@ -29,15 +18,11 @@ flowchart LR
     P --> SET[".pi/settings.json"]
     SET --> EXT["Extensions"]
 
-    EXT --> PP["project-policy"]
-    EXT --> RC["recent-changes"]
+    P --> PKG["Configured Pi packages"]
+    PKG --> MSPI["Main Sequence pi-overlay package"]
 
-    P --> PROMPTS["pi/prompts/"]
-    P --> AGENTS[".pi/agents/"]
-    P --> CLI["mainsequence CLI"]
-
-AGENTS --> EXEC["mainsequence-project-executor"]
-    EXEC --> TARGET["Project runtime"]
+    P --> CTX["Runtime context"]
+    CTX --> TARGET["Optional prepared project cwd"]
 
     P --> DOCKER["Dockerfile runtime for Python/Node tasks"]
 ```
@@ -49,57 +34,56 @@ AGENTS --> EXEC["mainsequence-project-executor"]
   - [`getting-started/request-lifecycle.md`](./getting-started/request-lifecycle.md)
 - Just want to run Astro:
   - [`getting-started/quickstart.md`](./getting-started/quickstart.md)
-- Want the reusable workflow definitions:
+- Want the reusable workflow package boundary:
   - [`components/prompts.md`](./components/prompts.md)
-- Want the mirrored per-file runtime docs:
+- Want the current public A2A contract:
+  - [`a2a/README.md`](./a2a/README.md)
+- Want the repo-owned runtime docs:
   - [`extensions/README.md`](./extensions/README.md)
-  - [`prompts/README.md`](./prompts/README.md)
 
 ## Pi components in Astro
 
 - [`components/settings-and-system-prompt.md`](./components/settings-and-system-prompt.md)
-  - `.pi/settings.json`, `.pi/APPEND_SYSTEM.md`, and child policy
+  - `.pi/settings.json`, `.pi/APPEND_SYSTEM.md`, and configured package prompt composition
 - [`components/extensions.md`](./components/extensions.md)
-  - custom hooks and tools in `pi/extensions/hooks/` and `pi/extensions/tools/`
+  - Astro Core hooks and tools in `pi/extensions/hooks/` and `pi/extensions/tools/`
 - [`extensions/README.md`](./extensions/README.md)
   - per-file docs for hooks, tools, and shared helpers in `pi/extensions/`
 - [`components/agents.md`](./components/agents.md)
-  - runtime agent prompt files in `.pi/agents/`
+  - optional project-local specialist prompts and why the core executor prompt is unified
 - [`components/prompts.md`](./components/prompts.md)
-  - reusable workflow prompts in `pi/prompts/`
-- [`prompts/README.md`](./prompts/README.md)
-  - per-file docs for workflow prompts in `pi/prompts/`
+  - reusable workflow prompts delivered by configured Pi packages
 - [`components/skills.md`](./components/skills.md)
-  - repo-local skills in `pi/skills/`
-- [`components/knowledge.md`](./components/knowledge.md)
-  - why `knowledge/` was removed and what replaces it
-- [`components/scripts-and-runtime.md`](./components/scripts-and-runtime.md)
-  - scripts, TypeScript runtime, and Docker-backed Python path
+  - skills delivered by configured Pi packages
+- [`components/runtime-entrypoints-and-tools.md`](./components/runtime-entrypoints-and-tools.md)
+  - entrypoints, runtime services, tools, and Docker-backed Python path
+- [`components/deployment-identities.md`](./components/deployment-identities.md)
+  - backend identity, project attachment, fixed runtime env, and sidecar path contract
 - [`components/remote-worker-image.md`](./components/remote-worker-image.md)
-  - `Dockerfile.remote-worker`, image-backed executor pods, and required runtime env
+  - `Dockerfile.remote-worker`, image-backed project-attached pods, and required runtime env
 
 ## Interface
 
 - [`interface/README.md`](./interface/README.md)
+- [`a2a/README.md`](./a2a/README.md)
 
 ## Reference
 
-- [`reference/adr-custom-model-integration.md`](./reference/adr-custom-model-integration.md)
-- [`reference/adr-backend-owned-agent-session-allocation.md`](./reference/adr-backend-owned-agent-session-allocation.md)
-- [`reference/adr-backend-owned-provider-credentials.md`](./reference/adr-backend-owned-provider-credentials.md)
+- [`reference/decisions.md`](./reference/decisions.md)
+- [`reference/adr-25-production-a2a-discovery-and-runtime-access.md`](./reference/adr-25-production-a2a-discovery-and-runtime-access.md)
+- [`reference/adr-27-backend-only-session-initiation.md`](./reference/adr-27-backend-only-session-initiation.md)
+- [`reference/adr-28-durable-a2a-session-envelope.md`](./reference/adr-28-durable-a2a-session-envelope.md)
+- [`reference/adr-29-agent-type-identity.md`](./reference/adr-29-agent-type-identity.md)
+- [`reference/adr-30-runtime-profiles-vs-agent-type.md`](./reference/adr-30-runtime-profiles-vs-agent-type.md)
+- [`reference/adr-31-backend-uid-identity.md`](./reference/adr-31-backend-uid-identity.md)
+- [`reference/adr-32-agent-session-capability-bindings.md`](./reference/adr-32-agent-session-capability-bindings.md)
+- [`reference/adr-checkpoint-reasoning-annotations.md`](./reference/adr-checkpoint-reasoning-annotations.md)
 - [`reference/adr-compaction-checkpoint-retention.md`](./reference/adr-compaction-checkpoint-retention.md)
-- [`reference/adr-emptydir-session-checkpoint-storage.md`](./reference/adr-emptydir-session-checkpoint-storage.md)
 - [`reference/adr-editable-session-config.md`](./reference/adr-editable-session-config.md)
 - [`reference/adr-interactive-provider-signin.md`](./reference/adr-interactive-provider-signin.md)
-- [`reference/adr-remote-model-providers.md`](./reference/adr-remote-model-providers.md)
 - [`reference/adr-runtime-credential-auth.md`](./reference/adr-runtime-credential-auth.md)
-- [`reference/adr-session-usage-and-context.md`](./reference/adr-session-usage-and-context.md)
+- [`reference/adr-workspace-analysis-from-orchestrator.md`](./reference/adr-workspace-analysis-from-orchestrator.md)
 - [`reference/folder-structure.md`](./reference/folder-structure.md)
-- [`reference/decisions.md`](./reference/decisions.md)
 - [`reference/persistent-state.md`](./reference/persistent-state.md)
 - [`reference/scope.md`](./reference/scope.md)
 - [`reserach_guide/research_guide.md`](./reserach_guide/research_guide.md)
-
-## Generated context
-
-Astro no longer uses a generated `knowledge/` cache. All canonical documentation lives under `docs/`.

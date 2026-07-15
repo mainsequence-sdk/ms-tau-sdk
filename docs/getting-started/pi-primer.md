@@ -9,7 +9,6 @@ Astro does not modify Pi core. It shapes Pi from the outside using:
 - project-local settings
 - system prompts
 - extensions
-- runtime agent prompt files
 - reusable prompt templates
 - skills
 - repo-installed Pi packages
@@ -28,9 +27,11 @@ This tells Pi what to load from the repository:
 
 ### `.pi/APPEND_SYSTEM.md`
 
-This is Astro's always-on parent prompt.
+This is Astro's shared always-on prompt.
 
-It tells the default Pi session to behave as the Main Sequence orchestrator.
+It contains only the generic Astro-hosted Pi runtime contract. Platform-specific behavior,
+including Main Sequence behavior during the current adapter overlay, is composed through configured
+Pi packages such as `adapters/mainsequence/pi-overlay`.
 
 ### Extensions
 
@@ -39,23 +40,17 @@ Extensions live under `pi/extensions/hooks/` and `pi/extensions/tools/` and do t
 - register custom tools
 - hook into agent lifecycle events such as `before_agent_start`
 
-### Runtime agent prompts
-
-Runtime agent prompts live in `.pi/agents/` as markdown files with frontmatter and a prompt body.
-
-Astro currently uses:
-
-- `mainsequence-project-executor`
-
 ### Prompt templates
 
-Prompt templates in `pi/prompts/` are reusable workflows the parent can follow.
+Prompt templates are reusable workflows the parent can follow.
 
-They are useful when a task is repeatable but does not need a new extension.
+Main Sequence prompt templates are currently delivered by `adapters/mainsequence/pi-overlay`, not root `pi/`.
 
 ### Skills
 
-Skills in `pi/skills/` are deeper instruction bundles the agent can load when relevant.
+Skills are deeper instruction bundles the agent can load when relevant.
+
+Main Sequence skills are currently delivered by `adapters/mainsequence/pi-overlay` or SDK materialization, not root `pi/`.
 
 ### External packages
 
@@ -63,22 +58,19 @@ This repository keeps `pi-web-access` in normal `node_modules` and loads it from
 
 ## The key mental model
 
-Astro has an orchestrator-runtime structure:
+The current Main Sequence deployment composes backend identities and runtime context around Astro:
 
-- the parent session orchestrates
-- the dedicated executor runtime implements when that phase is used
+- no-project sessions can handle platform, project creation, and workspace flows
+- project-attached sessions work inside the prepared project cwd
+- backend `agent_type` values such as `astro-orchestrator` and `project-executor` remain session
+  metadata
 
-The parent handles:
+The composed Main Sequence package/backend behavior handles:
 
 - intent translation
-- existing-project selection or new-project creation
 - loading deeper skills when a branch needs more detailed guidance, such as new-project intake
-- Main Sequence local setup and project preparation
-- deciding when to continue orchestration versus when a later A2A executor call is needed
-
-The dedicated executor runtime handles:
-
-- implementation inside the dedicated project runtime
+- Main Sequence platform and project workflows
+- current-project implementation when the runtime is already project-attached
 
 ## Read next
 

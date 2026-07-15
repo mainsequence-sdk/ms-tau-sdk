@@ -1,17 +1,19 @@
 # Shared backend session helpers
 
-Source: [`pi/extensions/shared/agent-registration.ts`](../../../pi/extensions/shared/agent-registration.ts)
+Source: [`interface/stream/mainsequence-agent-registration.ts`](../../../interface/stream/mainsequence-agent-registration.ts)
 
 ## Purpose
 
-Provide the Main Sequence backend session-fetch, auth-header, and user-id helpers used by Astro and
-the stream runtime. The file still contains a legacy session-start helper, but chat/A2A runtime
-paths should no longer depend on Astro-initiated session creation.
+Provide the Main Sequence backend session-fetch, auth-header, and user-uid helpers used by the
+stream runtime. This is backend integration code, not an Astro Core Pi extension resource.
+
+The file still contains a legacy session-start helper, but chat/A2A runtime paths should no longer
+depend on Astro-initiated session creation.
 
 ## Main responsibilities
 
 - decide whether backend-backed session features are enabled
-- resolve the Main Sequence user id
+- resolve the Main Sequence user uid
 - resolve backend auth headers from runtime credentials
 - fetch backend `AgentSession` records for hydration
 
@@ -23,8 +25,8 @@ Legacy helper still present in code:
 
 The helper can read credentials from:
 
-- explicit user id passed by the caller
-- `ASTRO_MAINSEQUENCE_USER_ID`
+- explicit user uid passed by the caller
+- `ASTRO_MAINSEQUENCE_USER_UID`
 
 Backend API authentication is resolved through Main Sequence runtime credentials. Astro does
 not use user token env vars for backend session start or backend session hydration.

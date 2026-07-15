@@ -9,33 +9,74 @@
 - `ASTRO_SESSION_OVERRIDES_DIR` (pod-local scoped Pi settings overlays; in containers use `/session-state/session-overrides`)
 - `ASTRO_PROVIDER_CREDENTIAL_DIR` (pod-local scoped Pi auth dirs hydrated from backend-owned
   provider credentials; in containers use `/session-state/pi-agent-auth`)
+- `ASTRO_PROVIDER_CREDENTIAL_CACHE` (`0` disables same-session scoped provider credential reuse)
+- `ASTRO_PROVIDER_CREDENTIAL_CACHE_TTL_MS` (default `600000`; maximum age for reusing a scoped
+  provider credential manifest before rehydrating from the backend)
+- `ASTRO_PROVIDER_CREDENTIAL_REMOTE_CHECK` (`1` enables backend status validation before reusing a
+  scoped provider credential manifest; by default Astro trusts a fresh local manifest and
+  invalidates it on local hash changes, TTL expiry, or provider auth failures)
 - `ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS` (default `10000`; periodic safety flush interval
   for scoped provider credentials while Pi is running)
+- `ASTRO_SESSION_CAPABILITY_CACHE` (`0` disables same-session capability materialization reuse)
+- `ASTRO_SESSION_CAPABILITY_CACHE_TTL_MS` (default `3600000`; maximum age for reusing a known
+  zero-capability session materialization result before checking the backend again; non-zero
+  capability sets are reused only after the backend binding signature is confirmed unchanged)
+- `ASTRO_A2A_WARM_RUNNERS` (`0` disables warm Pi RPC runners for A2A session-runtime chat turns; enabled by
+  default)
+- `ASTRO_A2A_WARM_RUNNER_IDLE_TTL_MS` (default `3600000`; idle time before an unused warm A2A runner
+  is stopped)
+- `ASTRO_A2A_WARM_RUNNER_STARTUP_TIMEOUT_MS` (default `120000`; failure guard while waiting for a
+  new warm Pi RPC runner to emit its `runtime_ready` sentinel)
+- `ASTRO_A2A_WARM_RUNNER_RPC_TIMEOUT_MS` (default `10000`; timeout for warm runner RPC command
+  acknowledgements)
+- `ASTRO_A2A_WARM_RUNNER_TURN_TIMEOUT_MS` (default `120000`; server-side guard for a warm runner
+  that accepts a prompt but never emits assistant completion events)
+- `ASTRO_A2A_JSON_REPAIR_TIMEOUT_MS` (default `60000`; timeout for each strict JSON repair attempt
+  when an A2A response fails runtime JSON validation)
 - `ASTRO_RELEASE_VERSION` (the Astro release/build version baked into the image and exposed for
   runtime debugging)
+- `ASTRO_LOG_MACHINE_SINK` (`json` or `off`; defaults to `json` in Kubernetes/GKE-like
+  environments and `off` locally)
+- `ASTRO_LOG_HUMAN_SINK` (`pretty` or `off`; defaults to `off` in Kubernetes/GKE-like environments
+  and `pretty` locally)
+- `ASTRO_LOG_LEVEL` (`debug`, `info`, `warning`, or `error`; default `info`)
+- `ASTRO_LOG_PAYLOADS` (`1` preserves large payload fields in logs; default `0`, which summarizes
+  large values with byte counts, previews, and hashes)
+- `ASTRO_LOG_STREAM_CHUNKS` (`1` reserved for enabling additional stream chunk diagnostics; normal
+  stream/tool logs are summarized as structured events)
+- `ASTRO_LOG_STACK_MODE` (`summary` or `full`; default `summary`)
+- `ASTRO_LOG_MAX_FIELD_BYTES` (default `2048`; maximum string field size before summarization)
+- `ASTRO_LOG_MAX_ARRAY_ITEMS` (default `20`; maximum array preview length before summarization)
+- `ASTRO_LOG_MAX_DEPTH` (default `6`; maximum nested log object depth before summarization)
+- `ASTRO_LOG_FORMAT` (`json` or `pretty`; compatibility shorthand for the explicit sink settings)
 - `ASTRO_STREAM_LOG_TRAFFIC` (`0` disables logging)
 - `ASTRO_STREAM_LOG_HEALTH_TRAFFIC` (`1` enables `GET /health` access logs; health probe access
   lines are suppressed by default)
 - `ASTRO_STREAM_LOG_REQUEST_BODIES` (`1` enables request payload debug logging)
-- `ASTRO_MAINSEQUENCE_CONFIG_DIR` (container-local Main Sequence CLI config; in containers use `/home/appuser/.astro-container-data/.config/mainsequence`)
-- `PI_CODING_AGENT_DIR` (container-local Pi runtime state directory; in containers use `/home/appuser/.astro-container-data/.pi/agent`)
-- `ASTRO_CONTAINER_DATA_DIR` (container-local rebuildable runtime root; in containers use `/home/appuser/.astro-container-data`)
-- `ASTRO_ORCHESTRATOR_CWD` (optional writable cwd override for `astro-orchestrator`; defaults to `<ASTRO_CONTAINER_DATA_DIR>/astro-orchestrator-runtime`)
-- `ASTRO_ORCHESTRATOR_PROJECT_PI_DIR` (optional writable project `.pi` override for `astro-orchestrator`; defaults to `<ASTRO_CONTAINER_DATA_DIR>/.pi/project`)
+- `ASTRO_MAINSEQUENCE_CONFIG_DIR` (container-local Main Sequence CLI config; in containers use `/home/jovyan/.astro-container-data/.config/mainsequence`)
+- `PI_CODING_AGENT_DIR` (container-local Pi runtime state directory; in containers use `/home/jovyan/.astro-container-data/.pi/agent`)
+- `ASTRO_CONTAINER_DATA_DIR` (container-local rebuildable runtime root; in containers use `/home/jovyan/.astro-container-data`)
+- `ASTRO_RUNTIME_CWD` (optional writable cwd override for the default no-project runtime)
+- `ASTRO_ORCHESTRATOR_CWD` (legacy alias for `ASTRO_RUNTIME_CWD`; defaults to `<ASTRO_CONTAINER_DATA_DIR>/astro-orchestrator-runtime` when the legacy path already exists)
+- `ASTRO_RUNTIME_PROJECT_PI_DIR` (optional writable runtime `.pi` override)
+- `ASTRO_ORCHESTRATOR_PROJECT_PI_DIR` (legacy alias for `ASTRO_RUNTIME_PROJECT_PI_DIR`)
 - `BUILD_AGENTS_IN_BACKEND` (enable backend-backed session start, hydration, and checkpoint coordination)
 - `OLLAMA_HOST` (optional Ollama host used by `GET /api/chat/get_available_models`, for example `http://localhost:11434`)
 
-## Remote project worker mode
+## Project-attached fixed runtime
 
-These env vars are used by image-backed `mainsequence-project-executor` pods:
+These env vars are used by image-backed project-attached pods:
 
 - `ASTRO_EXECUTION_MODE`
-  - set this to `remote_project_worker` for image-backed executor pods
-- `ASTRO_FIXED_AGENT_NAME`
-  - recommended value: `mainsequence-project-executor`
+  - existing image-backed worker pods may still set `remote_project_worker`
+  - this is topology metadata, not a second runtime identity
+- `ASTRO_FIXED_AGENT_TYPE`
+  - optional backend/session identity pin, commonly `project-executor` for existing Main Sequence
+    worker sessions
+  - if set, it must match request/session `agentType`
 - `ASTRO_FIXED_PROJECT_CWD`
   - fixed project path inside the image, for example `/usr/local/share/user-skel/app`
-  - this tells Astro where the mounted or baked project lives for executor-mode work
+  - this tells Astro where the mounted or baked project lives for project-attached work
 - `ASTRO_PROJECT_IMAGE_REF`
   - optional image reference or digest persisted into project-session metadata
 
@@ -52,26 +93,18 @@ with Docker `WORKDIR /app`, and the startup command then changes into
 `/usr/local/share/user-skel/app` before Astro starts so the live process cwd matches the real
 project workspace.
 
-For `mainsequence-project-executor`, incoming `/api/chat` and `/api/a2a/chat` requests do not need
-to provide `projectId`. The streamer no longer tries to resolve `projectId` from the request path
-for executor-mode requests and continues using the fixed project runtime even when request-side
+For `project-executor`, incoming `/api/chat` and A2A session-runtime chat requests do not need to
+provide `projectId`. The streamer no longer tries to resolve `projectId` from the request path for
+executor-mode requests and continues using the fixed project runtime even when request-side
 `projectId` is absent.
+
+Requests to a fixed `project-executor` runtime must either omit `agentType` or send
+`agentType="project-executor"`. A mismatched `agentType` is rejected before launch.
 
 For the full worker-image layout and pod contract, see
 [`../components/remote-worker-image.md`](../components/remote-worker-image.md).
-
-## Local mounted-project executor harness
-
-These env vars are used by the `astro-project-executor` service in
-[`docker-compose.yml`](../../docker-compose.yml):
-
-- `A2A_DEV_PROJECT`
-  - required for the local executor harness and local A2A debug mode
-  - host path to mount into `/workspace/project` for the executor
-  - Astro also uses the mounted project to read `.agents/agent_card.json` during local A2A discovery
-- `ASTRO_EXECUTOR_STREAM_PORT`
-  - optional host port for the local executor HTTP stream
-  - defaults to `8790`
+For the two Astro deployment identities and sidecar expectations, see
+[`../components/deployment-identities.md`](../components/deployment-identities.md).
 
 ## Local A2A debug mode
 

@@ -65,8 +65,8 @@ already persisted that text somewhere else in the checkpoint, such as a native `
 
 ## Metadata Shape
 
-The checkpoint bundle shape from
-[`adr-emptydir-session-checkpoint-storage.md`](./adr-emptydir-session-checkpoint-storage.md) remains:
+The checkpoint bundle shape from the stateless runtime storage contract in
+[`persistent-state.md`](./persistent-state.md) remains:
 
 ```python
 checkpoint_bundle = {
@@ -179,9 +179,9 @@ Backend must:
   JSON parsing
 - include `astro_metadata_json` in the existing checkpoint bundle hash calculation
 - return `history_annotations` unchanged in:
-  - `GET /orm/api/agents/v1/sessions/{agent_session_id}/checkpoint/latest/`
-  - `POST /orm/api/agents/v1/sessions/{agent_session_id}/checkpoint/restore/`
-  - `POST /orm/api/agents/v1/sessions/{agent_session_id}/checkpoint/flush/` when the response
+  - `GET /orm/api/agents/v1/sessions/{agent_session_uid}/checkpoint/latest/`
+  - `POST /orm/api/agents/v1/sessions/{agent_session_uid}/checkpoint/restore/`
+  - `POST /orm/api/agents/v1/sessions/{agent_session_uid}/checkpoint/flush/` when the response
     includes a normalized bundle
 - keep validation shallow: `astro_metadata_json` must be a JSON object, and
   `history_annotations`, when present, must also be a JSON object
@@ -250,7 +250,7 @@ The existing response shape remains:
 
 ```python
 checkpoint_latest_or_restore_response = {
-    "agent_session_id": agent_session_id,
+    "agent_session_uid": agent_session_uid,
     "checkpoint_version": checkpoint_version,
     "bundle_hash": bundle_hash,
     "updated_at": updated_at,

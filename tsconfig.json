@@ -8,10 +8,13 @@
     "allowJs": false,
     "noEmit": true
   },
-  "include": [
-    "pi/extensions/**/*.ts",
-    "pi/types/**/*.d.ts",
-    "interface/**/*.ts",
-    "scripts/**/*.ts",
-  ]
+	"include": [
+		"pi/extensions/**/*.ts",
+		"pi/types/**/*.d.ts",
+		"interface/**/*.ts",
+		"adapters/**/*.ts",
+		"bin/**/*.ts",
+		"runtime/**/*.ts",
+		"tests/**/*.ts",
+	]
 }

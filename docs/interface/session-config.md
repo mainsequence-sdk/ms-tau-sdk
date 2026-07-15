@@ -17,7 +17,7 @@ Content-Type: application/json
 
 ```json
 {
-  "sessionId": "39",
+  "sessionUid": "session_39_uid",
   "config": {
     "compaction": {
       "enabled": true,
@@ -27,11 +27,11 @@ Content-Type: application/json
 }
 ```
 
-Accepted session id fields:
+Accepted session uid fields:
 
-- `sessionId`
-- `runtime_session_id`
-- `runtimeSessionId`
+- `sessionUid`
+- `runtime_session_uid`
+- `runtimeSessionUid`
 
 ## Initial writable fields
 
@@ -47,7 +47,7 @@ Example success response:
 ```json
 {
   "ok": true,
-  "sessionId": "39",
+  "sessionUid": "session_39_uid",
   "updatedAt": "2026-04-16T11:24:00.000Z",
   "updatedFields": [
     "config.compaction.enabled",

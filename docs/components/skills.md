@@ -4,50 +4,36 @@ Skills are local instruction bundles the agent can load when a task clearly matc
 
 In this repo, skills are not the main runtime mechanism. They are optional deeper guidance.
 
-## Repo-local skills
+## Main Sequence SDK Skills
 
-### `pi/skills/mainsequence-project-creation/SKILL.md`
+Main Sequence product skills are no longer delivered from Astro root `pi/`, and they are not copied
+into `adapters/mainsequence/pi-overlay/pi/skills`.
 
-Use when:
+The local adapter overlay owns the discovery extension:
 
-- creating a brand new Main Sequence project
-- turning a vague project idea into a structured creation intake
-- collecting the questionnaire details needed before `project validate-name` or `project create`
+- `adapters/mainsequence/pi-overlay/pi/extensions/hooks/scaffold-skill-discovery/index.ts`
 
-### `pi/skills/mainsequence-sdk/SKILL.md`
+That extension delegates skill seeding to the installed Main Sequence SDK/CLI when Pi loads it:
 
-Use when:
+```text
+mainsequence skills path
+```
 
-- answering questions about `mainsequence-sdk`
-
-### `pi/skills/extension-builder/SKILL.md`
-
-Use when:
-
-- adding a new extension
-- adding a new specialist
-- adding a new reusable prompt
-
-### `pi/skills/repo-docs/SKILL.md`
-
-Use when:
-
-- updating the documentation system
-- changing the documentation layout or navigation
-- keeping docs and runtime wiring in sync
+The SDK remains the source of truth. At runtime, the copied skills live under the Pi working
+directory's `.agents/skills/mainsequence` folder and are discovered by Pi through its normal skill
+loader.
 
 ## How skills fit into Astro
 
-Astro primarily depends on:
+Astro Core primarily depends on:
 
 - system prompts
 - extensions
-- specialists
 - prompt templates
 
-Skills are there for deeper task-specific guidance, not for the always-on architecture.
+Main Sequence skills are composed by loading the Main Sequence Pi package through
+`ASTRO_PI_PACKAGE_PATHS`; the package extension then asks the SDK to populate `.agents/skills`.
 
 ## Related pages
 
-- [`knowledge.md`](./knowledge.md)
 - [`prompts.md`](./prompts.md)

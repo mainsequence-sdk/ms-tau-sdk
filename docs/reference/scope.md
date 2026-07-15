@@ -5,7 +5,7 @@
 - Main Sequence project orchestration
 - project-local specialist delegation
 - generated repo context
-- static parent prompt plus child-only policy
+- static shared prompt plus child-only policy
 - reusable workflow prompts
 - tutorial regression verification
 - Playwright-backed GUI validation for the tutorial workflow

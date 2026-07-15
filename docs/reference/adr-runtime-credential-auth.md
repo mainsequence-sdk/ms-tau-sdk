@@ -34,7 +34,7 @@ When `MAINSEQUENCE_AUTH_MODE=runtime_credential`:
 
 ## Implementation Impact
 
-### `scripts/mainsequence_runtime_auth.ts`
+### `adapters/mainsequence/runtime-auth.ts`
 
 This module is the single runtime-credential auth entry point.
 
@@ -69,7 +69,7 @@ Required changes:
 - make startup failure messages auth-mode specific
 - ensure runtime credential failures do not mention missing token auth
 
-### `pi/extensions/shared/agent-registration.ts`
+### `interface/stream/mainsequence-agent-registration.ts`
 
 Backend agent registration previously assumed a direct backend `fetch(...)` auth path.
 
@@ -88,8 +88,6 @@ Required changes:
 Runtime credentials must be passed through unchanged to:
 
 - stream-spawned `pi` child processes
-- `scripts/run_specialist.ts`
-- `scripts/mainsequence_project_set_up_locally.ts`
 - delegated specialist runtimes
 - project runtime bootstrap helpers
 
@@ -143,7 +141,7 @@ Docs should present runtime credentials as the production auth contract.
 
 ## Tasks
 
-- [x] Add auth mode detection and validation to `scripts/mainsequence_runtime_auth.ts`
+- [x] Add auth mode detection and validation to `adapters/mainsequence/runtime-auth.ts`
 - [x] Implement runtime credential bootstrap behavior
 - [x] Make the credential exchange loop re-exchange runtime credentials in runtime credential mode
 - [x] Update stream startup/request auth flow

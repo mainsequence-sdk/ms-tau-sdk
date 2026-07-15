@@ -5,12 +5,11 @@ These pages document Astro's reusable extension helpers under `pi/extensions/sha
 ## Modules
 
 - [`agent-registration.md`](./agent-registration.md)
-- [`repo.md`](./repo.md)
 - [`telemetry.md`](./telemetry.md)
 
 ## Notes
 
-These helpers are imported by hooks, tools, scripts, and the HTTP stream runtime. They are not Pi core modules.
+These helpers are imported by hooks, tools, entrypoints, and the HTTP stream runtime. They are not Pi core modules.
 Retired helpers are documented only from the removal note that explains why they no longer exist.
 
 ## Related pages

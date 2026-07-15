@@ -443,12 +443,15 @@ export function ensureSessionScopedPiAgentDir(options: {
 	sessionConfigOverrides: SessionConfigOverrides | null;
 	providerCredentials?: Record<string, PiCredential> | null;
 	forceProviderAuthDir?: boolean;
+	sessionSkillPaths?: string[];
 	env?: NodeJS.ProcessEnv;
 }): string | null {
 	const hasConfigOverrides = hasOverrides(options.sessionConfigOverrides);
 	const hasCredentials = hasProviderCredentials(options.providerCredentials);
+	const sessionSkillPaths = dedupeStrings(options.sessionSkillPaths ?? []);
+	const hasSessionSkillPaths = sessionSkillPaths.length > 0;
 	const forceProviderAuthDir = options.forceProviderAuthDir === true;
-	if (!hasConfigOverrides && !hasCredentials && !forceProviderAuthDir) return null;
+	if (!hasConfigOverrides && !hasCredentials && !hasSessionSkillPaths && !forceProviderAuthDir) return null;
 
 	const env = options.env ?? process.env;
 	const baseAgentDir = resolvePiAgentDir(env);
@@ -467,6 +470,12 @@ export function ensureSessionScopedPiAgentDir(options: {
 		overrideSettings.compaction = {
 			...options.sessionConfigOverrides.compaction,
 		};
+	}
+	if (hasSessionSkillPaths) {
+		const baseSkillPaths = Array.isArray(baseSettings.skills)
+			? baseSettings.skills.filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+			: [];
+		overrideSettings.skills = dedupeStrings([...baseSkillPaths, ...sessionSkillPaths]);
 	}
 	const mergedSettings = deepMergeSettings(baseSettings, overrideSettings);
 	writeFileSync(overlaySettingsPath, `${JSON.stringify(mergedSettings, null, 2)}\n`, { mode: 0o600 });

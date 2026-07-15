@@ -4,7 +4,7 @@ ARG PROJECT_ID
 ARG BASE_IMAGE
 ARG ASTRO_EXECUTOR_BUNDLE_REF=latest
 
-FROM europe-west1-docker.pkg.dev/${PROJECT_ID}/tsorm-images/astro/project-executor-bundle:${ASTRO_EXECUTOR_BUNDLE_REF} AS astro-executor-bundle
+FROM europe-west1-docker.pkg.dev/${PROJECT_ID}/workload-default-artifact-registry/astro/project-executor-bundle:${ASTRO_EXECUTOR_BUNDLE_REF} AS astro-executor-bundle
 
 
 # =============================================================================
@@ -55,8 +55,7 @@ ENV PATH="/app/node_modules/.bin:${PATH}" \
     ASTRO_SESSION_OVERRIDES_DIR=/session-state/session-overrides \
     ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/${NB_USER}/.astro-container-data/.config/mainsequence \
     PI_CODING_AGENT_DIR=/home/${NB_USER}/.astro-container-data/.pi/agent \
-    ASTRO_EXECUTION_MODE=remote_project_worker \
-    ASTRO_FIXED_AGENT_NAME=mainsequence-project-executor \
+    ASTRO_PI_PACKAGE_PATHS=/app/adapters/mainsequence/pi-overlay \
     ASTRO_FIXED_PROJECT_CWD=${SKEL_APP_DIR} \
     ASTRO_PROJECT_IMAGE_REF=${BASE_IMAGE}
 
@@ -86,4 +85,4 @@ WORKDIR /app
 
 EXPOSE 8787
 
-CMD ["/bin/bash", "-lc", "cd \"${ASTRO_FIXED_PROJECT_CWD:?missing ASTRO_FIXED_PROJECT_CWD}\" && exec /app/node_modules/.bin/tsx /app/scripts/start_pi_stream.ts"]
+CMD ["/bin/bash", "-lc", "cd \"${ASTRO_FIXED_PROJECT_CWD:?missing ASTRO_FIXED_PROJECT_CWD}\" && exec /app/node_modules/.bin/tsx /app/bin/astro-stream.ts"]

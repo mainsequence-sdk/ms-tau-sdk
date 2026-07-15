@@ -108,8 +108,8 @@ The minimum useful backend-facing data is:
 
 - whether the backend session was allocated for delegated A2A communication
 - the stable delegated `handle_unique_id`
-- the caller backend `AgentSession.id`
-- the target backend `Agent.id`
+- the caller backend `AgentSession.uid`
+- the target backend `Agent.uid`
 
 Preferred additional backend-facing data:
 
@@ -148,7 +148,7 @@ changing the conversation role itself.
 
 ### 2. Materialize the A2A envelope before Pi launch
 
-When Astro accepts a real `POST /api/a2a/chat` request, it should materialize the normalized A2A
+When Astro accepts a real A2A `message:send` request, it should materialize the normalized A2A
 envelope into durable local session state before Pi launch instead of keeping it only in transient
 request context or prompt text.
 
