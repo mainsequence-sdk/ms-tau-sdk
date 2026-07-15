@@ -10,10 +10,12 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     ASTRO_RELEASE_VERSION=${ASTRO_RELEASE_VERSION}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
     ca-certificates \
     curl \
     git \
     gnupg \
+    libpq-dev \
     openssh-client \
  && rm -rf /var/lib/apt/lists/*
 

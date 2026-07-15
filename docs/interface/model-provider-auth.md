@@ -6,23 +6,21 @@ These endpoints are for providers such as `openai`, `anthropic`, `openai-codex`,
 depend on backend-owned user provider credential state.
 
 They do not accept raw secrets from the client. Provider status, sign-in, and sign-off are
-user-scoped, so callers must pass `userId` or one of the accepted aliases:
-`created_by_user`, `createdByUser`, or `user_id`.
+user-scoped, so callers must pass the public user uid as `created_by_user_uid`.
+Astro sends `created_by_user_uid` to the backend credential API.
 
 Astro resolves that user identity from, in order:
 
-- JSON body or query string: `userId`, `user_id`, `created_by_user`, or `createdByUser`
-- request headers: `x-mainsequence-user-id`, `x-ms-user-id`, `x-user-id`, or
-  `x-created-by-user`
-- Bearer JWT claims: `userId`, `user_id`, `created_by_user`, `createdByUser`,
-  `mainsequence_user_id`, or `sub`
-- `ASTRO_MAINSEQUENCE_USER_ID` when set in the runtime environment
+- JSON body or query string: `created_by_user_uid` or `createdByUserUid`
+- request headers: `x-mainsequence-user-uid`, `x-ms-user-uid`, `x-user-uid`, or
+  `x-created-by-user-uid`
+- Bearer JWT claims: `created_by_user_uid`, `createdByUserUid`, or `mainsequence_user_uid`
 
 If no user identity can be resolved, provider status and provider auth actions return `400`.
 
 ## Endpoints
 
-### `GET /api/model-providers?userId=<user_id>`
+### `GET /api/model-providers?created_by_user_uid=<user_uid>`
 
 Returns provider-level auth state for managed auth-backed model providers Astro currently exposes in
 the UI.
@@ -102,7 +100,7 @@ Immediate example:
 ```bash
 curl -X POST http://localhost:8787/api/model-providers/openai/signin \\
   -H 'Content-Type: application/json' \\
-  -d '{"userId":"123"}'
+  -d '{"created_by_user_uid":"00000000-0000-4000-8000-000000000123"}'
 ```
 
 ```json
@@ -120,7 +118,7 @@ Interactive example:
 ```bash
 curl -X POST http://localhost:8787/api/model-providers/openai-codex/signin \\
   -H 'Content-Type: application/json' \\
-  -d '{"userId":"123"}'
+  -d '{"created_by_user_uid":"00000000-0000-4000-8000-000000000123"}'
 ```
 
 ```json
@@ -292,7 +290,7 @@ Example:
 ```bash
 curl -X POST http://localhost:8787/api/model-providers/openai-codex/signoff \\
   -H 'Content-Type: application/json' \\
-  -d '{"userId":"123"}'
+  -d '{"created_by_user_uid":"00000000-0000-4000-8000-000000000123"}'
 ```
 
 ```json
@@ -343,10 +341,10 @@ When `nextAction.type = "prompt_input"`:
 
 ## Frontend Sequence
 
-1. Call `GET /api/model-providers?userId=<user_id>`.
+1. Call `GET /api/model-providers?created_by_user_uid=<user_uid>`.
 2. Call `GET /api/models/catalog`.
 3. If a provider shows `signInAvailable: true`, allow `Sign in`.
-4. `POST /api/model-providers/:provider/signin` with `userId` in the JSON body.
+4. `POST /api/model-providers/:provider/signin` with `created_by_user_uid` in the JSON body.
 5. If response is `200`, refetch provider auth and model catalog.
 6. If response is `202`, open or render the returned `attempt.nextAction` and keep `attempt.authUrl`
    available as the primary "Open sign-in page" action.

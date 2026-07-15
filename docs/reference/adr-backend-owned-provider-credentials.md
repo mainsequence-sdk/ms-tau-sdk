@@ -116,7 +116,7 @@ or:
 ### Status
 
 ```http
-GET /orm/api/agents/v1/model_provider_credentials/status/?created_by_user=<user_id>
+GET /orm/api/agents/v1/model_provider_credentials/status/?created_by_user_uid=<user_uid>
 ```
 
 Response:
@@ -137,7 +137,7 @@ Response:
 
 Backend action:
 
-- require `created_by_user`; return `400` if it is missing or invalid
+- require `created_by_user_uid`; return `400` if it is missing or invalid
 - authorize the runtime credential for the requested user
 - query the durable provider credential store for that user only
 - return one entry per stored provider, keyed by provider name
@@ -180,7 +180,7 @@ Request:
 
 ```json
 {
-  "created_by_user": "123",
+  "created_by_user_uid": "00000000-0000-4000-8000-000000000123",
   "agent_session_id": 52,
   "providers": ["openai-codex"],
   "holder_id": "pod/astro-pi-stream-abc"
@@ -229,7 +229,7 @@ Request:
 
 ```json
 {
-  "created_by_user": "123",
+  "created_by_user_uid": "00000000-0000-4000-8000-000000000123",
   "agent_session_id": 52,
   "provider": "openai-codex",
   "base_version": 7,
@@ -288,7 +288,7 @@ Request:
 
 ```json
 {
-  "created_by_user": "123",
+  "created_by_user_uid": "00000000-0000-4000-8000-000000000123",
   "provider": "openai-codex",
   "reason": "user_signoff"
 }
@@ -315,7 +315,7 @@ Backend action:
 
 ### Before Provider-Backed Model Use
 
-1. Resolve `created_by_user`, `agent_session_id`, and selected provider.
+1. Resolve `created_by_user_uid`, `agent_session_id`, and selected provider.
 2. Create `/session-state/pi-agent-auth/<runtime_session_id>`.
 3. Call backend `hydrate` for the selected provider.
 4. Write `auth.json` with only the requested provider credential.
@@ -357,7 +357,7 @@ On signoff:
 Provider status:
 
 ```http
-GET /api/model-providers?userId=<user_id>
+GET /api/model-providers?created_by_user_uid=<user_uid>
 ```
 
 Sign-in:
@@ -368,7 +368,7 @@ POST /api/model-providers/{provider}/signin
 
 ```json
 {
-  "userId": "123",
+  "created_by_user_uid": "00000000-0000-4000-8000-000000000123",
   "agent_session_id": null
 }
 ```
@@ -381,12 +381,12 @@ POST /api/model-providers/{provider}/signoff
 
 ```json
 {
-  "userId": "123"
+  "created_by_user_uid": "00000000-0000-4000-8000-000000000123"
 }
 ```
 
-`created_by_user`, `createdByUser`, and `user_id` are accepted aliases for `userId` at the Astro
-boundary. Astro sends `created_by_user` to the backend.
+Provider credential routes require the public user uid as `created_by_user_uid`. Astro sends that
+same field to the backend credential API.
 
 ## Security Rules
 

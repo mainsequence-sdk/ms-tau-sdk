@@ -1,7 +1,7 @@
 # Model Catalog
 
 `GET /api/models/catalog` returns Astro's global model catalog. Auth metadata is user-scoped when
-`userId=<user_id>` is passed.
+`created_by_user_uid=<user_uid>` is passed.
 
 This is a control-plane endpoint.
 It is not the same as `GET /api/chat/get_available_models`.

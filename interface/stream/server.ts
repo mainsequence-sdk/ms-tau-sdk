@@ -1146,10 +1146,13 @@ function resolveUserIdFromAuthorizationHeader(req: import("node:http").IncomingM
 	const payload = parseJwtPayload(matched[1].trim());
 	if (!payload) return null;
 	return resolveUserId(
-		payload.userId ??
+		payload.created_by_user_uid ??
+			payload.createdByUserUid ??
+			payload.userId ??
 			payload.user_id ??
 			payload.created_by_user ??
 			payload.createdByUser ??
+			payload.mainsequence_user_uid ??
 			payload.mainsequence_user_id ??
 			payload.sub,
 	);
@@ -1158,11 +1161,66 @@ function resolveUserIdFromAuthorizationHeader(req: import("node:http").IncomingM
 function resolveUserIdFromHeaders(req: import("node:http").IncomingMessage): string | null {
 	return resolveUserId(
 		resolveHeaderString(req, [
+			"x-mainsequence-user-uid",
+			"x-ms-user-uid",
+			"x-user-uid",
+			"x-created-by-user-uid",
 			"x-mainsequence-user-id",
 			"x-ms-user-id",
 			"x-user-id",
 			"x-created-by-user",
 		]),
+	);
+}
+
+const USER_UID_ACCEPTED_SOURCES = [
+	"created_by_user_uid",
+	"createdByUserUid",
+	"x-mainsequence-user-uid",
+	"x-ms-user-uid",
+	"x-user-uid",
+	"x-created-by-user-uid",
+	"authorization bearer jwt with created_by_user_uid, createdByUserUid, or mainsequence_user_uid",
+];
+
+function resolveUserUidFromAuthorizationHeader(
+	req: import("node:http").IncomingMessage,
+): string | null {
+	const authorization = resolveHeaderString(req, ["authorization"]);
+	const matched = authorization?.match(/^Bearer\s+(.+)$/i);
+	if (!matched) return null;
+	const payload = parseJwtPayload(matched[1].trim());
+	if (!payload) return null;
+	return resolveUserId(
+		payload.created_by_user_uid ?? payload.createdByUserUid ?? payload.mainsequence_user_uid,
+	);
+}
+
+function resolveUserUidFromHeaders(req: import("node:http").IncomingMessage): string | null {
+	return resolveUserId(
+		resolveHeaderString(req, [
+			"x-mainsequence-user-uid",
+			"x-ms-user-uid",
+			"x-user-uid",
+			"x-created-by-user-uid",
+		]),
+	);
+}
+
+function resolveUserUidFromRequest(
+	req: import("node:http").IncomingMessage,
+	url: URL,
+	body?: Record<string, unknown>,
+): string | null {
+	return (
+		resolveUserId(
+			body?.created_by_user_uid ??
+				body?.createdByUserUid ??
+				url.searchParams.get("created_by_user_uid") ??
+				url.searchParams.get("createdByUserUid"),
+		) ??
+		resolveUserUidFromHeaders(req) ??
+		resolveUserUidFromAuthorizationHeader(req)
 	);
 }
 
@@ -1173,10 +1231,14 @@ function resolveUserIdFromRequest(
 ): string | null {
 	return (
 		resolveUserId(
-			body?.userId ??
+			body?.created_by_user_uid ??
+				body?.createdByUserUid ??
+				body?.userId ??
 				body?.user_id ??
 				body?.created_by_user ??
 				body?.createdByUser ??
+				url.searchParams.get("created_by_user_uid") ??
+				url.searchParams.get("createdByUserUid") ??
 				url.searchParams.get("userId") ??
 				url.searchParams.get("user_id") ??
 				url.searchParams.get("created_by_user") ??
@@ -1337,8 +1399,16 @@ function normalizeA2AChatRequestBody(
 	const responseFormat = normalizeA2AResponseFormat(body.response_format ?? body.responseFormat);
 	const context = extractObjectPropertyRecord(body, "context") ?? {};
 	const userId =
-		extractStringProperty(body, "userId", "user_id", "created_by_user", "createdByUser") ??
-		extractStringProperty(context, "userId");
+		extractStringProperty(
+			body,
+			"created_by_user_uid",
+			"createdByUserUid",
+			"userId",
+			"user_id",
+			"created_by_user",
+			"createdByUser",
+		) ??
+		extractStringProperty(context, "created_by_user_uid", "createdByUserUid", "userId");
 	const mergedContext: Record<string, unknown> = {
 		...context,
 		surfaceId: "a2a",
@@ -1661,12 +1731,24 @@ async function attachHydratedBackendSession(options: {
 	}
 
 	const createdByUser =
-		extractStringProperty(sessionPayload, "created_by_user", "createdByUser") ??
+		extractStringProperty(
+			sessionPayload,
+			"created_by_user_uid",
+			"createdByUserUid",
+			"created_by_user",
+			"createdByUser",
+		) ??
 		(() => {
 			const userId = extractNumericProperty(sessionPayload, "created_by_user", "createdByUser");
 			return userId != null ? String(userId) : null;
 		})() ??
-		extractStringProperty(sessionMetadata ?? {}, "created_by_user", "createdByUser") ??
+		extractStringProperty(
+			sessionMetadata ?? {},
+			"created_by_user_uid",
+			"createdByUserUid",
+			"created_by_user",
+			"createdByUser",
+		) ??
 		(() => {
 			const userId = extractNumericProperty(sessionMetadata ?? {}, "created_by_user", "createdByUser");
 			return userId != null ? String(userId) : null;
@@ -4440,6 +4522,7 @@ function isPlainObject(value: any): value is Record<string, unknown> {
 const ASTRO_SESSION_METADATA_RESERVED_KEYS = new Set([
 	"source",
 	"workflow_key",
+	"created_by_user_uid",
 	"created_by_user",
 	"project_id",
 	"project_cwd",
@@ -5258,7 +5341,7 @@ async function handleStreamRequest(
 	}
 
 	if (req.method === "GET" && url.pathname === "/api/chat/get_available_models") {
-		const userId = resolveUserIdFromRequest(req, url);
+		const userId = resolveUserUidFromRequest(req, url);
 		logStructuredEvent({
 			component: "astro-stream",
 			event: "available_models_request_started",
@@ -5275,22 +5358,17 @@ async function handleStreamRequest(
 				severity: "WARNING",
 				component: "astro-stream",
 				event: "available_models_user_id_missing",
-				message:
-					"Available-model discovery request is missing user identity; auth-backed providers may be filtered out.",
+				message: "Available-model discovery request is missing user uid.",
 				data: {
 					path: url.pathname,
-					acceptedSources: [
-						"userId",
-						"user_id",
-						"created_by_user",
-						"createdByUser",
-						"x-mainsequence-user-id",
-						"x-ms-user-id",
-						"x-user-id",
-						"authorization bearer jwt",
-					],
+					acceptedSources: USER_UID_ACCEPTED_SOURCES,
 				},
 			});
+			badRequest(
+				res,
+				"Missing or invalid created_by_user_uid for available-model discovery. Pass created_by_user_uid, a supported user-uid header, or a Bearer JWT with a user uid claim.",
+			);
+			return;
 		}
 		try {
 			const availableModels = await collectAvailableModels({
@@ -5356,7 +5434,7 @@ async function handleStreamRequest(
 		try {
 			const modelCatalog = await collectModelCatalog({
 				env: process.env,
-				userId: resolveUserIdFromRequest(req, url),
+				userId: resolveUserUidFromRequest(req, url),
 			});
 			json(res, 200, modelCatalog);
 		} catch (error) {
@@ -5370,7 +5448,7 @@ async function handleStreamRequest(
 	}
 
 	if (req.method === "GET" && url.pathname === "/api/model-providers") {
-		const createdByUser = resolveUserIdFromRequest(req, url);
+		const createdByUser = resolveUserUidFromRequest(req, url);
 		if (!createdByUser) {
 			logStructuredEvent({
 				component: "astro-stream",
@@ -5378,21 +5456,12 @@ async function handleStreamRequest(
 				message: "Model-provider status request is missing user identity.",
 				data: {
 					path: url.pathname,
-					acceptedSources: [
-						"userId",
-						"user_id",
-						"created_by_user",
-						"createdByUser",
-						"x-mainsequence-user-id",
-						"x-ms-user-id",
-						"x-user-id",
-						"authorization bearer jwt",
-					],
+					acceptedSources: USER_UID_ACCEPTED_SOURCES,
 				},
 			});
 			badRequest(
 				res,
-				"Missing or invalid userId for model-provider status. Pass userId, created_by_user, a supported user-id header, or a Bearer JWT with a user id claim.",
+				"Missing or invalid created_by_user_uid for model-provider status. Pass created_by_user_uid, a supported user-uid header, or a Bearer JWT with a user uid claim.",
 			);
 			return;
 		}
@@ -5512,7 +5581,7 @@ async function handleStreamRequest(
 			badRequest(res, "Invalid JSON body.");
 			return;
 		}
-		const createdByUser = resolveUserIdFromRequest(req, url, body);
+		const createdByUser = resolveUserUidFromRequest(req, url, body);
 		if (!createdByUser) {
 			logStructuredEvent({
 				component: "astro-stream",
@@ -5522,21 +5591,12 @@ async function handleStreamRequest(
 					provider: modelProviderAuthAction.provider,
 					action: modelProviderAuthAction.action,
 					path: url.pathname,
-					acceptedSources: [
-						"userId",
-						"user_id",
-						"created_by_user",
-						"createdByUser",
-						"x-mainsequence-user-id",
-						"x-ms-user-id",
-						"x-user-id",
-						"authorization bearer jwt",
-					],
+					acceptedSources: USER_UID_ACCEPTED_SOURCES,
 				},
 			});
 			badRequest(
 				res,
-				"Missing or invalid userId for model-provider auth action. Pass userId, created_by_user, a supported user-id header, or a Bearer JWT with a user id claim.",
+				"Missing or invalid created_by_user_uid for model-provider auth action. Pass created_by_user_uid, a supported user-uid header, or a Bearer JWT with a user uid claim.",
 			);
 			return;
 		}

@@ -252,7 +252,7 @@ Initial writable fields:
 - `config.compaction.enabled`
 - `config.compaction.reserveTokens`
 
-### `GET /api/model-providers?userId=<user_id>`
+### `GET /api/model-providers?created_by_user_uid=<user_uid>`
 
 Returns backend-owned auth state for managed auth-backed model providers Astro currently exposes in
 the UI, such as `openai`, `anthropic`, `openai-codex`, and `github-copilot`.
@@ -260,7 +260,7 @@ the UI, such as `openai`, `anthropic`, `openai-codex`, and `github-copilot`.
 ### `POST /api/model-providers/:provider/signin`
 
 Starts provider signin. Immediate providers return `200`; interactive providers return `202` with
-an attempt object. The JSON body must include `userId` or one of Astro's accepted user-id aliases.
+an attempt object. The JSON body must include `created_by_user_uid`.
 
 ### `GET /api/model-providers/:provider/signin/:attemptId`
 
@@ -281,13 +281,13 @@ Revokes the provider credential in the backend for the requested user.
 ### `GET /api/models/catalog`
 
 Returns Astro's global model catalog from the Pi registry without runtime availability filtering,
-but still filtered to the providers Astro currently supports in-product. Pass `userId` to annotate
-auth-backed entries with user-scoped backend credential status.
+but still filtered to the providers Astro currently supports in-product. Pass `created_by_user_uid`
+to annotate auth-backed entries with user-scoped backend credential status.
 
 ### `GET /api/chat/get_available_models`
 
 Returns the models Astro can currently offer through its model collectors without sending a message
-to Pi. Pass `userId` to evaluate auth-backed provider availability for that user.
+to Pi. Requires `created_by_user_uid` to evaluate auth-backed provider availability for that user.
 
 The response is grouped by `provider`, with each provider carrying its own `models` array.
 
