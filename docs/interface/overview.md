@@ -1,8 +1,9 @@
 # Interface Overview
 
 This interface exposes Astro over HTTP using assistant-ui's `ui-message-stream` protocol over SSE.
-Clients must identify the backend `Agent.agent_type` (`agentType`) and user
-(`user_uid`) on each request.
+Clients must identify the backend `Agent.agent_type` (`agentType`) on chat requests.
+Chat and stateless LLM requests use `user_uid`; model/provider control-plane endpoints use
+`created_by_user_uid`.
 The normal entry point is `astro-orchestrator`. Project implementation runs through
 `project-executor`; image-backed remote worker pods can pin that runtime with
 `ASTRO_FIXED_AGENT_TYPE` plus fixed project env vars when the project image already contains the

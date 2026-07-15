@@ -6,8 +6,9 @@ Typical error responses:
 - `400` — missing `agentType` or `user_uid`
 - `400` — `unknown_agent_type` when `agentType` is not one of `astro-orchestrator` or
   `project-executor`
-- `400` — missing user identity for provider status/sign-in/sign-off requests. Astro accepts
-  `user_uid`, supported user-uid headers, Bearer JWT user claims, or `ASTRO_MAINSEQUENCE_USER_UID`.
+- `400` — missing `created_by_user_uid` for available-model discovery or provider
+  status/sign-in/sign-off requests. Astro accepts `created_by_user_uid`, supported user-uid
+  headers, or Bearer JWT user uid claims.
 - `400` — missing `runtime_session_uid` (or accepted camel-case alias) for real non-mock
   `POST /api/chat` requests
 - `400` — missing `sessionUid` for `GET /api/chat/session-model`

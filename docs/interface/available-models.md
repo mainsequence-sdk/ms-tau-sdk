@@ -1,8 +1,9 @@
 # Available Models
 
 `GET /api/chat/get_available_models` returns the models Astro can currently offer without sending a
-chat message to Pi. Auth-backed provider availability is user-scoped; callers should pass
-`user_uid=<user_uid>` so Astro reads backend-owned provider credential status for that user.
+chat message to Pi. Auth-backed provider availability is user-scoped; callers must pass
+`created_by_user_uid=<user_uid>` so Astro reads backend-owned provider credential status for that
+user.
 
 This is a control-plane endpoint.
 It is separate from `POST /api/chat`, which remains the hot path for user text.
@@ -152,4 +153,5 @@ the Ollama failure appears in the `sources` list.
 - Ollama models without those features are exposed as reasoning `mode: "unsupported"`
 - `sources[*].error` is present when a source fails
 - the endpoint returns `200` when discovery completes normally, even if one source failed
+- missing `created_by_user_uid` returns `400`
 - unexpected server failures return `500`

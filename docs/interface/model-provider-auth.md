@@ -6,20 +6,20 @@ These endpoints are for providers such as `openai`, `anthropic`, `openai-codex`,
 depend on backend-owned user provider credential state.
 
 They do not accept raw secrets from the client. Provider status, sign-in, and sign-off are
-user-scoped, so callers should pass `user_uid`.
+user-scoped, so callers must pass the public user uid as `created_by_user_uid`.
 
 Astro resolves that user identity from, in order:
 
-- JSON body or query string: `user_uid`
-- request headers: `x-mainsequence-user-uid`, `x-ms-user-uid`, or `x-user-uid`
-- Bearer JWT claims: `user_uid` or `mainsequence_user_uid`
-- `ASTRO_MAINSEQUENCE_USER_UID` when set in the runtime environment
+- JSON body or query string: `created_by_user_uid` or `createdByUserUid`
+- request headers: `x-mainsequence-user-uid`, `x-ms-user-uid`, `x-user-uid`, or
+  `x-created-by-user-uid`
+- Bearer JWT claims: `created_by_user_uid`, `createdByUserUid`, or `mainsequence_user_uid`
 
 If no user identity can be resolved, provider status and provider auth actions return `400`.
 
 ## Endpoints
 
-### `GET /api/model-providers?user_uid=<user_uid>`
+### `GET /api/model-providers?created_by_user_uid=<user_uid>`
 
 Returns provider-level auth state for managed auth-backed model providers Astro currently exposes in
 the UI.
@@ -99,7 +99,7 @@ Immediate example:
 ```bash
 curl -X POST http://localhost:8787/api/model-providers/openai/signin \\
   -H 'Content-Type: application/json' \\
-  -d '{"user_uid":"e2a4f38a-1b5f-40a3-974f-70bc8f065b3f"}'
+  -d '{"created_by_user_uid":"e2a4f38a-1b5f-40a3-974f-70bc8f065b3f"}'
 ```
 
 ```json
@@ -117,7 +117,7 @@ Interactive example:
 ```bash
 curl -X POST http://localhost:8787/api/model-providers/openai-codex/signin \\
   -H 'Content-Type: application/json' \\
-  -d '{"user_uid":"e2a4f38a-1b5f-40a3-974f-70bc8f065b3f"}'
+  -d '{"created_by_user_uid":"e2a4f38a-1b5f-40a3-974f-70bc8f065b3f"}'
 ```
 
 ```json
@@ -289,7 +289,7 @@ Example:
 ```bash
 curl -X POST http://localhost:8787/api/model-providers/openai-codex/signoff \\
   -H 'Content-Type: application/json' \\
-  -d '{"user_uid":"e2a4f38a-1b5f-40a3-974f-70bc8f065b3f"}'
+  -d '{"created_by_user_uid":"e2a4f38a-1b5f-40a3-974f-70bc8f065b3f"}'
 ```
 
 ```json
@@ -340,10 +340,10 @@ When `nextAction.type = "prompt_input"`:
 
 ## Frontend Sequence
 
-1. Call `GET /api/model-providers?user_uid=<user_uid>`.
+1. Call `GET /api/model-providers?created_by_user_uid=<user_uid>`.
 2. Call `GET /api/models/catalog`.
 3. If a provider shows `signInAvailable: true`, allow `Sign in`.
-4. `POST /api/model-providers/:provider/signin` with `user_uid` in the JSON body.
+4. `POST /api/model-providers/:provider/signin` with `created_by_user_uid` in the JSON body.
 5. If response is `200`, refetch provider auth and model catalog.
 6. If response is `202`, open or render the returned `attempt.nextAction` and keep `attempt.authUrl`
    available as the primary "Open sign-in page" action.
