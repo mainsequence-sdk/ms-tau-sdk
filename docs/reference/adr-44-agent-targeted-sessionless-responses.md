@@ -38,11 +38,11 @@ The non-streaming endpoint returns one JSON response. The streaming endpoint ret
 
 Both endpoints:
 
-- require a public backend `Agent.uid` in the path
+- require the deployed agent's public `Agent.uid` in the path
 - accept and return the canonical A2A `Message`, `Part`, configuration, metadata extension, and
   error shapes
-- authenticate the caller and authorize access to that agent
-- resolve an immutable execution snapshot for that agent
+- authenticate the caller locally from verified ingress/runtime identity
+- resolve an immutable, deployment-provided local execution snapshot for that agent
 - allow request-level provider, model, and thinking overrides
 - fall back to the agent's defaults when overrides are absent
 - use only capabilities that explicitly support sessionless execution
@@ -100,22 +100,25 @@ display name, or request metadata.
 The request body must not contain a second `agent_uid`. Keeping the identity only in the path avoids
 conflicting identities.
 
-The verified caller must be authorized to use the requested agent. For an Astro deployment bound to
-one backend agent, the requested UID must match the runtime credential's bound agent. A central
-gateway may route to multiple agents, but it must authorize each requested UID before resolving
-configuration or credentials.
+The verified caller must be authorized to use the requested agent without a backend lookup. For the
+per-agent Astro deployment, the requested UID must match the UID in the locally mounted execution
+snapshot and the runtime credential's locally available binding claims.
 
 A caller-supplied `X-MainSequence-User-Uid` is not sufficient authority. User identity must come
 from a verified bearer/runtime credential or from a trusted gateway that strips and replaces
 identity headers.
 
-Unknown agents return `404`. Known but unauthorized agents return `403` without exposing agent
-configuration.
+The endpoint must verify signed token claims locally or trust an authenticated ingress. It must not
+call a backend user, agent, session, or authorization endpoint during request handling.
 
-## Agent Execution Snapshot
+An authenticated request for an agent UID other than the locally bound UID returns `404` without
+revealing which other agents exist.
 
-The backend remains the source of truth for the agent. Before inference, Astro resolves a bounded,
-immutable snapshot containing at least:
+## Local Agent Execution Snapshot
+
+The deployment control plane produces a bounded, immutable agent execution snapshot before the
+Astro process starts. The snapshot is packaged in the runtime image or mounted as deployment
+configuration and contains at least:
 
 - `agent_uid`
 - agent name and description
@@ -128,12 +131,20 @@ immutable snapshot containing at least:
 - capability content versions or hashes
 - allowed input media types
 
+Agent prompt and capability content needed at execution time must also be packaged or mounted
+locally. A manifest entry that points only to a backend capability is not usable by this endpoint.
+
+Request handling reads and validates this local snapshot. It must not fetch the agent, Agent Card,
+capability bindings, capability content, runtime configuration, model defaults, or project metadata
+from the backend.
+
+The deployment snapshot uses the same control-plane default-resolution code that initializes a
+session, but the resolved values are delivered before request handling instead of being fetched by
+the endpoint. Changes to agent defaults or capabilities require an explicit snapshot update and
+runtime reload/redeployment. A request must not observe a partially updated snapshot.
+
 The snapshot must be resolved without creating an `AgentSession`. Astro must not synthesize a
 temporary session row as an implementation shortcut.
-
-The backend may expose the snapshot through one dedicated endpoint or through agent and capability
-reads. A dedicated snapshot endpoint is preferred because it keeps the default-resolution and
-authorization rules aligned with session creation.
 
 If the agent is not compatible with the deployed harness, Astro returns
 `agent_harness_not_supported`.
@@ -154,8 +165,8 @@ The request may specify overrides through the declared Main Sequence A2A inferen
 }
 ```
 
-All three fields are optional. Resolution follows the same backend-owned agent defaults used when a
-session is initialized, without creating a session:
+All three fields are optional. Resolution follows the same agent-default semantics used when a
+session is initialized, using the local deployment snapshot and without creating a session:
 
 1. Resolve the agent's default provider, model, and thinking configuration.
 2. Overlay request fields that are explicitly present.
@@ -388,7 +399,7 @@ messages.
 
 ## Persistence Boundary
 
-"Sessionless" means Astro and the backend do not persist:
+"Sessionless" means Astro does not ask the backend to persist:
 
 - an `AgentSession`
 - Tau entries or checkpoints
@@ -397,8 +408,8 @@ messages.
 - raw attachment bytes
 - extracted document text
 
-The platform may retain bounded operational records needed for authentication, billing, abuse
-prevention, and reliability:
+Astro may emit bounded operational logs needed for authentication, billing, abuse prevention, and
+reliability:
 
 - request/correlation ID
 - authenticated user and agent UID
@@ -411,21 +422,40 @@ Prompt, response, raw file, and extracted file contents are excluded from operat
 default. Any diagnostic content logging must be separately controlled, redacted, and retention
 bounded.
 
-## Credential Resolution
+Emitting normal logs or metrics to the deployment's configured sinks is not an ORM/backend API
+dependency. The endpoint must not write an operational request record to the Main Sequence backend.
 
-Credential hydration must support an authenticated user and authorized `agent_uid` without requiring
-`agent_session_uid`.
+## Only Allowed Backend Dependency: Provider Credentials
 
-The backend contract should either:
+The only Main Sequence backend operation allowed while handling a sessionless response is provider
+credential hydration or refresh. Environment-provided credentials may avoid even that call.
+
+Credential hydration must support the locally authenticated user, bound `agent_uid`, and requested
+provider without requiring `agent_session_uid`. The backend contract should either:
 
 - allow `agent_session_uid: null` while requiring `agent_uid`, or
 - expose a dedicated sessionless agent credential-hydration operation.
 
-The backend must verify that the runtime and user may execute the selected provider/model for the
-requested agent. Astro must not create a session only to satisfy the credential API.
+The credential operation may verify that the runtime and user may obtain credentials for the
+requested agent/provider. It must not return agent defaults, capabilities, session state, or other
+execution configuration as a side channel.
 
 Credential refresh, when supported by a provider, must preserve the same authenticated user,
 agent UID, provider, and request authorization.
+
+During the request, Astro must not call backend operations for:
+
+- agent or Agent Card retrieval
+- capability listing or capability content
+- session creation or retrieval
+- entries, checkpoints, leases, or runtime state
+- A2A task, message, output, or event persistence
+- project or workspace metadata
+- request/response audit persistence
+
+If the local snapshot is missing or invalid, Astro fails locally. If credentials cannot be resolved,
+Astro returns `provider_credentials_unavailable`. Neither failure may trigger a session creation or
+a fallback backend configuration lookup.
 
 ## Errors
 
@@ -462,7 +492,7 @@ strings and provider-native errors must not leak as an alternate public contract
 Recommended events:
 
 - `agent_response_request_started`
-- `agent_response_snapshot_resolved`
+- `agent_response_local_snapshot_loaded`
 - `agent_response_model_resolved`
 - `agent_response_attachment_validated`
 - `agent_response_capabilities_resolved`
@@ -471,10 +501,11 @@ Recommended events:
 - `agent_response_request_failed`
 - `agent_response_cleanup_completed`
 
-Timing should separate authentication, agent snapshot resolution, credential resolution, attachment
-processing, capability execution, provider first output, and provider completion.
+Timing should separate local authentication, local snapshot loading, credential resolution,
+attachment processing, capability execution, provider first output, and provider completion.
 
-Logs must make it explicit that no session or task was created.
+Logs must make it explicit that no backend call other than credential hydration/refresh was made and
+that no session or task was created.
 
 ## Relationship To Existing Endpoints
 
@@ -504,7 +535,8 @@ Positive:
 Costs:
 
 - the current A2A parsing and materialization code must be separated from session/task side effects
-- the backend needs sessionless agent snapshot and credential support
+- deployment must package and refresh a complete local agent execution snapshot
+- the backend needs sessionless, agent-scoped credential support only
 - capabilities need sessionless and mutation metadata
 - provider adapters need real multimodal serialization before image support can be advertised
 - request-scoped attachment extraction and cleanup require dedicated tests
@@ -513,6 +545,8 @@ Costs:
 ## Non-Goals
 
 - Do not create an ephemeral or hidden backend session.
+- Do not fetch agent configuration, capabilities, cards, projects, or authorization from the backend
+  during request handling.
 - Do not preserve conversation memory between response requests.
 - Do not make all agent capabilities available outside a session.
 - Do not permit silent fallback to another agent, provider, model, or media-processing strategy.
@@ -521,14 +555,17 @@ Costs:
 
 ## Implementation Plan
 
-### Phase 1: Backend And Contract
+### Phase 1: Shared Contract And Deployment Snapshot
 
 - [ ] Extract canonical A2A `Message`, `Part`, configuration, metadata-extension, prepared-input,
       direct-message response, SSE, and error components from the durable A2A handler.
 - [ ] Make durable A2A and sessionless agent responses consume those shared components.
 - [ ] Add policy inputs for context requirements, task support, materialization root, and
       persistence instead of branching inside duplicate parsers.
-- [ ] Add a backend agent execution snapshot contract keyed by `agent_uid`.
+- [ ] Define a versioned local agent execution snapshot schema keyed by `agent_uid`.
+- [ ] Package or mount the resolved snapshot and all required prompt/capability content before
+      Astro startup.
+- [ ] Validate the requested `agent_uid` and caller claims locally.
 - [ ] Add sessionless, agent-authorized provider credential hydration.
 - [ ] Define capability metadata for sessionless eligibility, mutations, and media types.
 - [ ] Add the declared
@@ -567,6 +604,10 @@ Costs:
 - [ ] Add endpoint tests for authentication, agent authorization, defaults, and every override
       combination.
 - [ ] Add provider-credential integration tests with no session UID.
+- [ ] Add tests that fail if the endpoint calls any backend operation other than provider
+      credential hydration or refresh.
+- [ ] Add tests proving requests still resolve agent defaults and capabilities when every
+      non-credential backend operation is unavailable.
 - [ ] Add attachment tests for supported, unsupported, malformed, oversized, encrypted, and
       cleanup cases.
 - [ ] Add parity tests proving identical parts normalize and serialize identically on durable A2A
