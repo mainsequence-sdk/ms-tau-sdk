@@ -44,11 +44,15 @@ pre-UID API sketches have been removed from the active reference set.
   - Gap analysis for replacing Astro's process-local A2A task maps with backend-backed
     `AgentTask`, `AgentTaskMessage`, `AgentTaskOutput`, and `AgentTaskEvent` persistence.
 
-## Stateless LLM Passthrough
+## Sessionless Inference
 
 - [`adr-36-stateless-llm-passthrough.md`](./adr-36-stateless-llm-passthrough.md)
   - Simple LLM calls should use a separate stateless JSON endpoint that skips sessions, checkpoints,
     Pi runners, capabilities, project attachment, queues, and persistence.
+- [`adr-44-agent-targeted-sessionless-responses.md`](./adr-44-agent-targeted-sessionless-responses.md)
+  - One-shot agent responses require `agent_uid`, resolve optional provider/model/thinking overrides
+    over agent defaults, use only sessionless-safe capabilities, and create no session, task,
+    transcript, checkpoint, or durable attachment.
 
 ## Checkpoints And Session State
 
