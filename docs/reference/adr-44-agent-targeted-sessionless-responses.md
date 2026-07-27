@@ -39,6 +39,8 @@ The non-streaming endpoint returns one JSON response. The streaming endpoint ret
 Both endpoints:
 
 - require a public backend `Agent.uid` in the path
+- accept and return the canonical A2A `Message`, `Part`, configuration, metadata extension, and
+  error shapes
 - authenticate the caller and authorize access to that agent
 - resolve an immutable execution snapshot for that agent
 - allow request-level provider, model, and thinking overrides
@@ -50,6 +52,45 @@ Both endpoints:
 - do not persist a conversation transcript, checkpoint, or raw attachment
 
 This is an agent execution path, not an extension of ADR 36's model passthrough.
+
+## A2A Normalization Is The Source Of Truth
+
+Astro must have one protocol-normalization core for agent messages. The A2A and sessionless
+endpoints must share:
+
+- typed `Message`, `Part`, and request-configuration models
+- message role, message ID, text, data, raw file, filename, and media-type validation
+- file signature, size, digest, and safe-name validation
+- normalized text/data/file manifests
+- `acceptedOutputModes` and the ADR 37 structured-output extension
+- agent `Message` and `Part` response serialization
+- A2A HTTP error envelopes and field-violation details
+- SSE encoding for supported A2A message events
+
+The sessionless endpoint must not define parallel top-level `parts`, `prompt`, `response_format`,
+file-wrapper, output-message, or error models.
+
+Shared normalization must be separated from execution side effects. The two adapters supply
+different policies to the same core:
+
+| Policy | Durable A2A | Agent-targeted sessionless response |
+| --- | --- | --- |
+| target agent | resolved by the A2A receiving endpoint | required URL `agent_uid` |
+| `message.contextId` | required by the current durable implementation | forbidden |
+| `message.taskId` | allowed for task continuation | forbidden |
+| `message.messageId` | durable idempotency identity | required request identity |
+| materialization root | session/message asset directory | request-scoped temporary directory |
+| persistence | session, task, message, and bounded manifest | operational metadata only |
+| successful result | direct `Message` or `Task` | direct `Message` only |
+
+The sessionless handler must not call the durable A2A HTTP handler and then disable writes. It must
+call the shared normalization, output-contract, serialization, and error components directly, then
+dispatch through a sessionless execution adapter. This prevents session lookup and task persistence
+from becoming accidental dependencies while preserving one source of truth for protocol data.
+
+The endpoint is A2A-normalized but is not advertised as the standard A2A `message:send` operation.
+The agent-scoped URL and the absence of `contextId` define a Main Sequence sessionless profile of
+the A2A data model.
 
 ## Endpoint Identity And Authorization
 
@@ -99,13 +140,17 @@ If the agent is not compatible with the deployed harness, Astro returns
 
 ## Provider, Model, And Thinking Resolution
 
-The request may specify:
+The request may specify overrides through the declared Main Sequence A2A inference extension:
 
 ```json
 {
-  "provider": "anthropic",
-  "model": "claude-sonnet-4-5",
-  "thinking": "high"
+  "metadata": {
+    "https://mainsequence.ai/a2a/extensions/agent-inference/v1": {
+      "provider": "anthropic",
+      "model": "claude-sonnet-4-5",
+      "thinking": "high"
+    }
+  }
 }
 ```
 
@@ -151,90 +196,131 @@ session.
 
 ## Request Contract
 
-The request contains `parts` plus optional execution and output controls:
+The request uses the same A2A `SendMessageRequest` envelope and `Part` objects as ADR 37, with
+`contextId` omitted:
+
+```http
+POST /api/agents/{agent_uid}/responses
+Content-Type: application/a2a+json
+Accept: application/a2a+json
+```
 
 ```json
 {
-  "parts": [
-    {
-      "text": "Summarize the risks in this report."
-    },
-    {
-      "raw": "JVBERi0xLjQK...",
-      "filename": "report.pdf",
-      "mediaType": "application/pdf"
-    }
-  ],
-  "provider": "openai",
-  "model": "gpt-5.4",
-  "thinking": "medium",
-  "response_format": {
-    "type": "text"
+  "message": {
+    "messageId": "msg-8f6c3b38-8c13-4c7b-9b7a-98370c1889db",
+    "role": "ROLE_USER",
+    "parts": [
+      {
+        "text": "Summarize the risks in this report."
+      },
+      {
+        "raw": "JVBERi0xLjQK...",
+        "filename": "report.pdf",
+        "mediaType": "application/pdf"
+      }
+    ]
   },
-  "max_output_tokens": 1200,
-  "timeout_seconds": 120,
+  "configuration": {
+    "acceptedOutputModes": ["text/plain"],
+    "returnImmediately": false
+  },
   "metadata": {
-    "request_id": "client-generated-id"
+    "https://mainsequence.ai/a2a/extensions/agent-inference/v1": {
+      "provider": "openai",
+      "model": "gpt-5.4",
+      "thinking": "medium",
+      "maxOutputTokens": 1200,
+      "timeoutSeconds": 120
+    }
   }
 }
 ```
 
-The part shapes reuse standard A2A text and file-part fields so Astro can share one normalization
-and validation implementation. Reusing the part shape does not make this an A2A request and does
-not introduce `contextId`, `messageId`, or `taskId`.
+Provider, model, thinking, output-token, and timeout controls live in one declared metadata
+extension instead of becoming endpoint-specific top-level fields. The same extension parser may be
+used by durable A2A when that surface elects to allow per-turn inference overrides.
 
 Rules:
 
-- At least one non-empty text or supported file part is required.
-- `contextId`, `agent_session_uid`, `session_uid`, `taskId`, and `thread_id` are rejected.
+- `message`, `message.messageId`, `message.role`, and `message.parts` follow ADR 37.
+- `message.role` must be `ROLE_USER`.
+- At least one non-empty text, data, or supported file part is required.
+- `message.contextId` and `message.taskId` are rejected because their presence requests durable
+  continuity.
+- `agent_session_uid`, `session_uid`, and `thread_id` are rejected at every nesting level.
 - File parts initially use inline `raw` bytes. URL fetching remains disabled until its SSRF and
   download controls are implemented.
 - The request is complete context for this response. Prior session or one-shot requests are never
   loaded.
-- `response_format` may request plain text or the existing strict JSON behavior.
-- Request metadata must not change identity, provider credentials, capability eligibility, or
+- Normal output negotiation uses `configuration.acceptedOutputModes`.
+- Strict JSON uses the ADR 37
+  `https://mainsequence.ai/a2a/extensions/output-contract/v1` metadata extension.
+- `configuration.historyLength`, push notification configuration, and durable task controls are
+  rejected.
+- `message.messageId` is the request/correlation identity. Because no durable request record is
+  created, it does not promise replay of a prior response after process termination.
+- Undeclared metadata must not change identity, provider credentials, capability eligibility, or
   persistence behavior.
 
 ## Response Contract
 
-The JSON endpoint returns:
+The JSON endpoint returns the direct `Message` branch of the A2A `SendMessageResponse`. It never
+returns a `Task`:
 
 ```json
 {
-  "ok": true,
-  "request_id": "client-generated-id",
-  "agent_uid": "b73bed96-86fa-4c65-8df5-c96eca314a06",
-  "resolved_model": {
-    "provider": "openai",
-    "model": "gpt-5.4",
-    "thinking": "medium",
-    "sources": {
-      "provider": "request",
-      "model": "request",
-      "thinking": "request"
-    }
-  },
   "message": {
-    "role": "assistant",
-    "content": "The primary risks are..."
-  },
-  "finish_reason": "stop",
-  "usage": {
-    "input_tokens": 1250,
-    "output_tokens": 280
-  },
-  "capabilities_used": [
-    "pdf-text-extraction"
-  ]
+    "messageId": "msg-agent-33841969-c7a4-48be-94c1-5a18d2bbef84",
+    "role": "ROLE_AGENT",
+    "parts": [
+      {
+        "text": "The primary risks are..."
+      }
+    ],
+    "metadata": {
+      "https://mainsequence.ai/a2a/extensions/agent-inference/v1": {
+        "agentUid": "b73bed96-86fa-4c65-8df5-c96eca314a06",
+        "resolved": {
+          "provider": "openai",
+          "model": "gpt-5.4",
+          "thinking": "medium",
+          "sources": {
+            "provider": "request",
+            "model": "request",
+            "thinking": "request"
+          }
+        },
+        "finishReason": "stop",
+        "usage": {
+          "inputTokens": 1250,
+          "outputTokens": 280
+        },
+        "capabilitiesUsed": [
+          "pdf-text-extraction"
+        ]
+      }
+    }
+  }
 }
 ```
 
-The response must not include a session UID, task ID, checkpoint version, or continuation token.
+Text output uses `Part.text`. Structured JSON output uses `Part.data` with
+`mediaType: "application/json"`, exactly as ADR 37. Model resolution, usage, and capability
+telemetry live in the declared inference extension rather than a second custom response envelope.
+
+The response omits `contextId` and must not include a session UID, task ID, checkpoint version, or
+continuation token.
 The caller starts another independent response request for subsequent work and resends any required
 context.
 
 The SSE endpoint follows the same resolution, authorization, capability, attachment, and
-non-persistence rules. It must cancel provider/tool work and clean up request files when the client
+non-persistence rules and uses the shared A2A SSE encoder. It must not emit Astro/Tau-native model,
+tool, or reasoning chunks. Until an A2A-compatible message-only incremental event is supported, it
+buffers the answer and emits one final direct `Message` event. A future incremental-delta extension
+must be declared and shared by both A2A adapters rather than invented only for this endpoint.
+
+The streaming endpoint must cancel provider/tool work and clean up request files when the client
 disconnects.
 
 ## Sessionless Capability Policy
@@ -343,7 +429,11 @@ agent UID, provider, and request authorization.
 
 ## Errors
 
-Errors use stable JSON codes for both JSON responses and terminal SSE events:
+Errors use the ADR 37 A2A HTTP error envelope and field-violation detail shape. Sessionless-specific
+codes are carried as structured error details rather than through a second endpoint-specific error
+schema.
+
+Stable detail codes include:
 
 - `agent_not_found`
 - `agent_forbidden`
@@ -363,6 +453,9 @@ Errors use stable JSON codes for both JSON responses and terminal SSE events:
 Validation failures are `400` or `422`, authorization failures are `401` or `403`, unsupported
 media is `415`, and unavailable sessionless capabilities may use `409` when Chat or A2A is the
 required alternative.
+
+The JSON and terminal SSE paths must call the same shared A2A error serializer. FastAPI `detail`
+strings and provider-native errors must not leak as an alternate public contract.
 
 ## Observability
 
@@ -402,6 +495,7 @@ response without a recorded session.
 
 Positive:
 
+- A2A `Message`, `Part`, file, output, error, and SSE behavior has one source of truth
 - callers can use agent defaults and safe capabilities without manufacturing a session
 - model and thinking overrides remain available per request
 - one-shot document and image questions gain explicit capability and modality validation
@@ -409,6 +503,7 @@ Positive:
 
 Costs:
 
+- the current A2A parsing and materialization code must be separated from session/task side effects
 - the backend needs sessionless agent snapshot and credential support
 - capabilities need sessionless and mutation metadata
 - provider adapters need real multimodal serialization before image support can be advertised
@@ -428,18 +523,27 @@ Costs:
 
 ### Phase 1: Backend And Contract
 
+- [ ] Extract canonical A2A `Message`, `Part`, configuration, metadata-extension, prepared-input,
+      direct-message response, SSE, and error components from the durable A2A handler.
+- [ ] Make durable A2A and sessionless agent responses consume those shared components.
+- [ ] Add policy inputs for context requirements, task support, materialization root, and
+      persistence instead of branching inside duplicate parsers.
 - [ ] Add a backend agent execution snapshot contract keyed by `agent_uid`.
 - [ ] Add sessionless, agent-authorized provider credential hydration.
 - [ ] Define capability metadata for sessionless eligibility, mutations, and media types.
-- [ ] Add typed Astro request, response, and error models.
+- [ ] Add the declared
+      `https://mainsequence.ai/a2a/extensions/agent-inference/v1` request/response model.
 
 ### Phase 2: Text-Only Agent Responses
 
 - [ ] Implement `POST /api/agents/{agent_uid}/responses`.
+- [ ] Require the A2A request content type and return the direct A2A `Message` response branch.
 - [ ] Implement agent default and request override resolution.
 - [ ] Compose the agent instructions and prompt capabilities from the immutable snapshot.
 - [ ] Execute a text-only response without session, checkpoint, task, or transcript writes.
 - [ ] Assert the non-persistence boundary in integration tests.
+- [ ] Run the same message/part/output/error conformance fixtures against durable A2A and the
+      sessionless endpoint.
 
 ### Phase 3: Safe Capabilities And Attachments
 
@@ -452,6 +556,8 @@ Costs:
 ### Phase 4: Streaming And Clients
 
 - [ ] Implement `POST /api/agents/{agent_uid}/responses/stream`.
+- [ ] Use the shared A2A SSE encoder and final direct `Message` event.
+- [ ] Do not add endpoint-specific token, model, tool, or reasoning delta events.
 - [ ] Cancel work and clean attachments on disconnect.
 - [ ] Add client helpers and an "Ask once" UI with file validation.
 - [ ] Document retry, timeout, and idempotency behavior.
@@ -463,5 +569,7 @@ Costs:
 - [ ] Add provider-credential integration tests with no session UID.
 - [ ] Add attachment tests for supported, unsupported, malformed, oversized, encrypted, and
       cleanup cases.
+- [ ] Add parity tests proving identical parts normalize and serialize identically on durable A2A
+      and sessionless paths.
 - [ ] Add tests proving unsupported parts are never ignored.
 - [ ] Add tests proving no session, checkpoint, task, transcript, or raw file is persisted.
