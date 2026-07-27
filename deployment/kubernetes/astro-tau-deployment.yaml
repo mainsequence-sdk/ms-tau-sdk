@@ -1,0 +1,73 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: astro-tau
+  labels:
+    app.kubernetes.io/name: astro-tau
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: astro-tau
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: astro-tau
+    spec:
+      terminationGracePeriodSeconds: 45
+      containers:
+        - name: astro
+          image: europe-west1-docker.pkg.dev/PROJECT_ID/workload-default-artifact-registry/astro/astro-tau:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8787
+          envFrom:
+            - configMapRef:
+                name: astro-tau-config
+            - secretRef:
+                name: astro-mainsequence-runtime-credentials
+          env:
+            - name: ASTRO_HOST
+              value: 0.0.0.0
+            - name: ASTRO_PORT
+              value: "8787"
+            - name: ASTRO_PROJECT_CWD
+              value: /workspace
+            - name: ASTRO_HOME
+              value: /home/jovyan
+            - name: ASTRO_A2A_ASSET_ROOT
+              value: /tmp/astro-a2a-assets
+            - name: ASTRO_SESSION_ASSET_ROOT
+              value: /tmp/astro-session-assets
+          startupProbe:
+            httpGet:
+              path: /health
+              port: http
+            failureThreshold: 30
+            periodSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 4Gi
+          volumeMounts:
+            - name: project
+              mountPath: /workspace
+      volumes:
+        - name: project
+          emptyDir: {}

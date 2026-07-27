@@ -1,0 +1,393 @@
+import asyncio
+import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
+
+from astro.backend.models import AgentSession, RuntimeLease
+from astro.errors import ConfigurationError
+from astro.logging import configure_logging
+from astro.runtime.manager import SessionRuntimeManager
+from astro.settings import Settings
+
+
+class _FakeCodingSession:
+    def __init__(self, *, delay: float = 0.02) -> None:
+        self.delay = delay
+        self.is_running = False
+        self.active = 0
+        self.max_active = 0
+        self.cancelled = False
+
+    async def prompt(self, content: str):
+        self.is_running = True
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            await asyncio.sleep(self.delay)
+            yield {"type": "text_delta", "delta": content}
+        finally:
+            self.active -= 1
+            self.is_running = False
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+
+def _loaded_manager(tmp_path, coding_session, *, timeout: float = 1):
+    from astro.runtime.session import ActiveSessionRuntime
+
+    backend = AsyncMock()
+    settings = Settings(
+        _env_file=None,
+        runtime_credential_id="credential-id",
+        runtime_credential_secret="credential-secret",
+        project_root=tmp_path,
+    )
+    settings.turn_timeout_seconds = timeout
+    manager = SessionRuntimeManager(
+        settings=settings,
+        backend=backend,
+        providers=Mock(),
+    )
+    manager._runtimes["session-1"] = ActiveSessionRuntime(
+        session_uid="session-1",
+        holder_id="test",
+        coding_session=coding_session,
+        storage=SimpleNamespace(lease_token="lease"),
+        provider=object(),
+    )
+    return manager, backend
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_rejects_pi_sessions(tmp_path):
+    backend = AsyncMock()
+    backend.get_session.return_value = AgentSession(
+        uid="pi-session",
+        harness="pi",
+        harness_protocol="pi-checkpoint-v1",
+        harness_version="0.52.12",
+    )
+    manager = SessionRuntimeManager(
+        settings=Settings(
+            _env_file=None,
+            runtime_credential_id="credential-id",
+            runtime_credential_secret="credential-secret",
+            project_root=tmp_path,
+        ),
+        backend=backend,
+        providers=Mock(),
+    )
+
+    with pytest.raises(ConfigurationError, match="uses harness 'pi'"):
+        await manager.get("pi-session")
+
+    backend.acquire_runtime_lease.assert_not_awaited()
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_serializes_same_session_prompts(tmp_path):
+    coding_session = _FakeCodingSession()
+    manager, _backend = _loaded_manager(tmp_path, coding_session)
+
+    async def consume(prompt):
+        return [event async for event in manager.prompt("session-1", prompt)]
+
+    first, second = await asyncio.gather(consume("first"), consume("second"))
+
+    assert first[0].data["delta"] == "first"
+    assert second[0].data["delta"] == "second"
+    assert coding_session.max_active == 1
+    manager._runtimes.clear()
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_logs_prompt_excerpt_when_enabled(tmp_path, capsys):
+    configure_logging("INFO", machine_sink=True, human_sink=False)
+    manager, _backend = _loaded_manager(tmp_path, _FakeCodingSession())
+    manager.settings.log_payloads = True
+
+    _ = [
+        event
+        async for event in manager.prompt(
+            "session-1",
+            "  Analyze this\nportfolio allocation.  ",
+        )
+    ]
+    manager._runtimes.clear()
+    await manager.aclose()
+
+    events = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("{")
+    ]
+    received = next(
+        event for event in events if event["event"] == "runtime.turn.received"
+    )
+    assert received["prompt_excerpt"] == "Analyze this portfolio allocation."
+    assert received["prompt_chars"] == 38
+    assert len(received["prompt_sha256"]) == 64
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_logs_prompt_before_session_load_failure(
+    tmp_path,
+    capsys,
+):
+    configure_logging("INFO", machine_sink=True, human_sink=False)
+    backend = AsyncMock()
+    backend.get_session.return_value = AgentSession(
+        uid="session-1",
+        harness="tau",
+        harness_protocol="tau-session-v1",
+        harness_version="0.3.1",
+    )
+    backend.acquire_runtime_lease.side_effect = RuntimeError("lease unavailable")
+    manager = SessionRuntimeManager(
+        settings=Settings(
+            _env_file=None,
+            runtime_credential_id="credential-id",
+            runtime_credential_secret="credential-secret",
+            project_root=tmp_path,
+            log_payloads=True,
+        ),
+        backend=backend,
+        providers=Mock(),
+    )
+
+    with pytest.raises(RuntimeError, match="lease unavailable"):
+        _ = [
+            event
+            async for event in manager.prompt(
+                "session-1",
+                "Explain this failed request.",
+            )
+        ]
+    await manager.aclose()
+
+    events = [
+        json.loads(line)
+        for line in capsys.readouterr().out.splitlines()
+        if line.startswith("{")
+    ]
+    received = next(
+        event for event in events if event["event"] == "runtime.turn.received"
+    )
+    assert received["prompt_excerpt"] == "Explain this failed request."
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_cancels_timed_out_turn(tmp_path):
+    coding_session = _FakeCodingSession(delay=1)
+    manager, _backend = _loaded_manager(tmp_path, coding_session, timeout=0.01)
+
+    with pytest.raises(TimeoutError):
+        _ = [event async for event in manager.prompt("session-1", "slow")]
+
+    assert coding_session.cancelled is True
+    manager._runtimes.clear()
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_drains_tracked_background_tasks(tmp_path):
+    manager, _backend = _loaded_manager(tmp_path, _FakeCodingSession())
+    completed = asyncio.Event()
+
+    async def worker():
+        await asyncio.sleep(0.01)
+        completed.set()
+
+    task = manager.create_background_task(worker(), name="a2a-test")
+    manager._runtimes.clear()
+    await manager.aclose()
+
+    assert task.done()
+    assert not task.cancelled()
+    assert completed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_closes_mcp_client_on_eviction(tmp_path):
+    manager, backend = _loaded_manager(tmp_path, _FakeCodingSession())
+    runtime = manager._runtimes["session-1"]
+    runtime.mcp_client = AsyncMock()
+
+    await manager.evict("session-1")
+
+    runtime.mcp_client.aclose.assert_awaited_once_with()
+    backend.release_runtime_lease.assert_awaited_once()
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_closes_mcp_client_when_lease_is_lost(tmp_path):
+    manager, backend = _loaded_manager(tmp_path, _FakeCodingSession())
+    runtime = manager._runtimes["session-1"]
+    runtime.mcp_client = AsyncMock()
+    runtime.storage.invalidate_lease = Mock()
+    manager.settings.runtime_lease_renew_interval_seconds = 0
+    backend.renew_runtime_lease.side_effect = RuntimeError("lease lost")
+
+    await manager._renew_lease(runtime)
+
+    assert runtime.lease_lost is True
+    runtime.mcp_client.aclose.assert_awaited_once_with()
+    manager._runtimes.clear()
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_runtime_load_keeps_capability_root_and_reuses_backend_auth(tmp_path):
+    backend = AsyncMock()
+    backend.auth = Mock()
+    backend.get_session.return_value = AgentSession(
+        uid="session-1",
+        harness="tau",
+        harness_protocol="tau-session-v1",
+        harness_version="0.3.1",
+    )
+    backend.acquire_runtime_lease.return_value = RuntimeLease(
+        lease_token="lease-token",
+        holder_id="test-holder",
+        lease_expires_at="2026-07-25T00:00:00Z",
+        checkpoint_version=1,
+    )
+    provider = object()
+    providers = Mock()
+    providers.for_session = AsyncMock(
+        return_value=SimpleNamespace(
+            provider=provider,
+            name="openai",
+            model="gpt-5.4",
+            thinking_level=None,
+        )
+    )
+    mcp_client = SimpleNamespace(
+        tools=(),
+        resources=(),
+        aclose=AsyncMock(),
+    )
+    coding_session = _FakeCodingSession()
+    capability_root = tmp_path / "session-capabilities" / ".agents"
+    manager = SessionRuntimeManager(
+        settings=Settings(
+            _env_file=None,
+            runtime_credential_id="credential-id",
+            runtime_credential_secret="credential-secret",
+            project_root=tmp_path,
+        ),
+        backend=backend,
+        providers=providers,
+    )
+
+    with (
+        patch(
+            "astro.runtime.manager.materialize_session_capabilities",
+            AsyncMock(return_value=capability_root),
+        ) as materialize,
+        patch(
+            "astro.runtime.manager.MainSequenceMCPClient.connect",
+            AsyncMock(return_value=mcp_client),
+        ) as connect,
+        patch("astro.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
+        patch("astro.runtime.manager.create_coding_tools", return_value=[]),
+        patch("astro.runtime.manager.create_file_tools", return_value=[]),
+        patch("astro.runtime.manager.build_web_tools", return_value=[]),
+        patch(
+            "astro.runtime.manager.CodingSession.load",
+            AsyncMock(return_value=coding_session),
+        ) as load_coding_session,
+    ):
+        runtime = await manager.get("session-1")
+
+    materialize.assert_awaited_once()
+    connect.assert_awaited_once_with(
+        settings=manager.settings,
+        auth=backend.auth,
+    )
+    config = load_coding_session.await_args.args[0]
+    assert config.resource_paths.agents_root == capability_root
+    assert config.resource_paths.cwd == tmp_path
+    assert "ensure_mainsequence_cli_auth" not in {
+        tool.name for tool in config.tools
+    }
+    assert "Main Sequence MCP" in config.append_system_prompt
+    assert "Main Sequence CLI" not in config.append_system_prompt
+    assert "mainsequence-sdk" not in config.append_system_prompt
+    assert runtime.mcp_client is mcp_client
+
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_coding_session_load_failure_closes_mcp_before_registration(tmp_path):
+    backend = AsyncMock()
+    backend.auth = Mock()
+    backend.get_session.return_value = AgentSession(
+        uid="session-1",
+        harness="tau",
+        harness_protocol="tau-session-v1",
+        harness_version="0.3.1",
+    )
+    backend.acquire_runtime_lease.return_value = RuntimeLease(
+        lease_token="lease-token",
+        holder_id="test-holder",
+        lease_expires_at="2026-07-25T00:00:00Z",
+        checkpoint_version=1,
+    )
+    providers = Mock()
+    providers.for_session = AsyncMock(
+        return_value=SimpleNamespace(
+            provider=object(),
+            name="openai",
+            model="gpt-5.4",
+            thinking_level=None,
+        )
+    )
+    mcp_client = SimpleNamespace(
+        tools=(),
+        resources=(),
+        aclose=AsyncMock(),
+    )
+    manager = SessionRuntimeManager(
+        settings=Settings(
+            _env_file=None,
+            runtime_credential_id="credential-id",
+            runtime_credential_secret="credential-secret",
+            project_root=tmp_path,
+        ),
+        backend=backend,
+        providers=providers,
+    )
+
+    with (
+        patch(
+            "astro.runtime.manager.materialize_session_capabilities",
+            AsyncMock(return_value=tmp_path / ".agents"),
+        ),
+        patch(
+            "astro.runtime.manager.MainSequenceMCPClient.connect",
+            AsyncMock(return_value=mcp_client),
+        ),
+        patch("astro.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
+        patch("astro.runtime.manager.create_coding_tools", return_value=[]),
+        patch("astro.runtime.manager.create_file_tools", return_value=[]),
+        patch("astro.runtime.manager.build_web_tools", return_value=[]),
+        patch(
+            "astro.runtime.manager.CodingSession.load",
+            AsyncMock(side_effect=RuntimeError("coding session load failed")),
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="coding session load failed"):
+            await manager.get("session-1")
+
+    assert "session-1" not in manager._runtimes
+    mcp_client.aclose.assert_awaited_once_with()
+    backend.release_runtime_lease.assert_awaited_once()
+    await manager.aclose()

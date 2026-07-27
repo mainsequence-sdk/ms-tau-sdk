@@ -1,126 +1,101 @@
-FROM python:3.11-slim AS astro-core
+# syntax=docker/dockerfile:1.7
+
+FROM python:3.13-slim AS astro-build
+
+ARG ASTRO_RELEASE_VERSION=dev
+
+ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_DEFAULT_TIMEOUT=300 \
+    PIP_RETRIES=10 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    git \
+ && rm -rf /var/lib/apt/lists/*
+
+# Cache the hash-locked third-party wheelhouse independently from source edits.
+COPY requirements-runtime.lock /tmp/requirements-runtime.lock
+RUN --mount=type=cache,id=astro-pip-v2,target=/root/.cache/pip \
+    python -m pip wheel \
+    --require-hashes \
+    --wheel-dir /opt/wheels \
+    --requirement /tmp/requirements-runtime.lock
+
+# Astro is a monorepo; both independently packageable tool distributions live
+# under packages/ and are built from this repository's Docker context.
+COPY packages/tau-file-tools /opt/src/tau-file-tools
+COPY packages/tau-web-access /opt/src/tau-web-access
+COPY . /app
+
+RUN --mount=type=cache,id=astro-pip-v2,target=/root/.cache/pip \
+    python -m pip wheel \
+    --no-deps \
+    --wheel-dir /opt/wheels \
+    /opt/src/tau-file-tools \
+    /opt/src/tau-web-access \
+    /app \
+ && python -m pip install \
+    --no-index \
+    --find-links /opt/wheels \
+    mainsequence-astro==4.0.0
+
+FROM python:3.13-slim AS astro-runtime
 
 ARG ASTRO_RELEASE_VERSION=dev
 
 ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PATH="/app/node_modules/.bin:${PATH}" \
-    PLAYWRIGHT_BROWSERS_PATH=/ms-playwright \
     ASTRO_RELEASE_VERSION=${ASTRO_RELEASE_VERSION}
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    curl \
+    ffmpeg \
     git \
-    gnupg \
     openssh-client \
+    ripgrep \
  && rm -rf /var/lib/apt/lists/*
 
-RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
- && apt-get update \
- && apt-get install -y --no-install-recommends nodejs \
- && rm -rf /var/lib/apt/lists/*
+# Keep one system Python environment while excluding build-only OS packages.
+COPY --from=astro-build /usr/local /usr/local
 
-WORKDIR /app
-
-COPY package.json package-lock.json tsconfig.json ./
-RUN npm install --include=dev --no-audit --no-fund \
- && npm cache clean --force
-
-COPY .pi ./.pi
-COPY pi ./pi
-COPY interface ./interface
-COPY runtime ./runtime
-COPY adapters/backend.ts adapters/types.ts ./adapters/
-COPY adapters/mainsequence/adapter.ts adapters/mainsequence/bootstrap.ts adapters/mainsequence/runtime-auth.ts ./adapters/mainsequence/
-COPY adapters/mainsequence/bin ./adapters/mainsequence/bin
-COPY bin ./bin
-COPY tools ./tools
-
-RUN node tools/build/patch-pi-rpc-ready.mjs \
- && npm run check
-
-FROM astro-core AS astro-mainsequence-source
-
-COPY adapters/mainsequence/pi-overlay ./adapters/mainsequence/pi-overlay
-
-FROM astro-mainsequence-source AS astro-mainsequence
-
-ARG MAINSEQUENCE_PIP_SPEC=mainsequence
-ENV MAINSEQUENCE_PIP_SPEC=${MAINSEQUENCE_PIP_SPEC}
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    libpq-dev \
- && rm -rf /var/lib/apt/lists/*
-
-RUN pip install --no-cache-dir "${MAINSEQUENCE_PIP_SPEC}" uv playwright \
- && playwright install --with-deps chromium
-
-FROM astro-mainsequence AS astro-mainsequence-runtime
-
-ENV ASTRO_BACKEND=mainsequence \
-    APP_USER=jovyan \
+ENV APP_USER=jovyan \
     APP_GROUP=jovyan \
     APP_UID=10000 \
     APP_GID=10000 \
-    APP_HOME=/home/jovyan \
     HOME=/home/jovyan \
-    ASTRO_CONTAINER_DATA_DIR=/home/jovyan/.astro-container-data \
-    ASTRO_STREAM_SESSION_DIR=/session-state/sessions \
-    ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/jovyan/.astro-container-data/.config/mainsequence \
-    ASTRO_PI_PACKAGE_PATHS=/app/adapters/mainsequence/pi-overlay \
-    PI_CODING_AGENT_DIR=/home/jovyan/.astro-container-data/.pi/agent
+    ASTRO_HOME=/home/jovyan \
+    ASTRO_HOST=0.0.0.0 \
+    ASTRO_PORT=8787 \
+    ASTRO_PROJECT_CWD=/workspace \
+    ASTRO_A2A_ASSET_ROOT=/tmp/astro-a2a-assets \
+    ASTRO_SESSION_ASSET_ROOT=/tmp/astro-session-assets
 
 RUN groupadd --gid "${APP_GID}" "${APP_GROUP}" \
- && useradd --uid "${APP_UID}" --gid "${APP_GID}" --create-home --home-dir "${APP_HOME}" --shell /bin/bash "${APP_USER}" \
- && mkdir -p \
-    "${APP_HOME}/.astro-container-data/.pi/agent/bin" \
-    "${APP_HOME}/.astro-container-data/.config/mainsequence" \
-    "/session-state/sessions" \
-    "/session-state/session-overrides" \
-    "/ms-playwright" \
-    "${APP_HOME}/.local/share" \
-    "${APP_HOME}/.pi" \
-    "${APP_HOME}/.config" \
-    "${APP_HOME}/.astro" \
- && chown -R "${APP_USER}:${APP_GROUP}" "${APP_HOME}" /session-state /ms-playwright
+ && useradd --uid "${APP_UID}" --gid "${APP_GID}" --create-home \
+    --home-dir "${HOME}" --shell /bin/bash "${APP_USER}" \
+ && mkdir -p /workspace "${ASTRO_A2A_ASSET_ROOT}" "${ASTRO_SESSION_ASSET_ROOT}" \
+ && chown -R "${APP_UID}:${APP_GID}" "${HOME}" /workspace \
+    "${ASTRO_A2A_ASSET_ROOT}" "${ASTRO_SESSION_ASSET_ROOT}"
 
-USER jovyan
+USER 10000:10000
+WORKDIR /workspace
+
+EXPOSE 8787
+
+CMD ["astro-stream"]
 
 FROM scratch AS project-executor-bundle
 
 ARG ASTRO_RELEASE_VERSION=dev
 
 LABEL org.opencontainers.image.title="astro-${ASTRO_RELEASE_VERSION}" \
-    org.opencontainers.image.description="Astro ${ASTRO_RELEASE_VERSION} project executor runtime bundle." \
+    org.opencontainers.image.description="Python 3.13 Tau project executor source bundle." \
     org.opencontainers.image.version="${ASTRO_RELEASE_VERSION}"
 
-COPY --from=astro-mainsequence-source /app /app
+COPY . /app
+COPY --from=astro-build /opt/wheels /opt/wheels
 
-FROM astro-mainsequence-runtime AS astro-mainsequence-pi-stream
-
-ENV ASTRO_STREAM_HOST=0.0.0.0 \
-    ASTRO_STREAM_PORT=8787
-
-EXPOSE 8787
-
-CMD ["/app/node_modules/.bin/tsx", "bin/astro-stream.ts"]
-
-FROM astro-mainsequence-runtime AS astro-mainsequence-session-checkpoint-sidecar
-
-CMD ["/app/node_modules/.bin/tsx", "runtime/checkpoints/sidecar.ts"]
-
-FROM astro-mainsequence-runtime AS astro-mainsequence-pi
-
-CMD ["/app/node_modules/.bin/tsx", "bin/astro-pi-local.ts"]
-
-# Compatibility aliases for existing local and deployment commands. These still
-# build the Main Sequence-composed runtime until a non-Main-Sequence backend is
-# implemented and explicitly selected.
-FROM astro-mainsequence-source AS astro-base
-FROM astro-mainsequence-runtime AS astro-runtime
-FROM astro-mainsequence-pi-stream AS astro-pi-stream
-FROM astro-mainsequence-session-checkpoint-sidecar AS astro-session-checkpoint-sidecar
-FROM astro-mainsequence-pi AS astro-pi
+FROM astro-runtime AS astro

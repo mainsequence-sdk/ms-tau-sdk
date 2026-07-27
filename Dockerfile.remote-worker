@@ -1,4 +1,4 @@
-# syntax=docker/dockerfile:1.4
+# syntax=docker/dockerfile:1.7
 
 ARG PROJECT_ID
 ARG BASE_IMAGE
@@ -6,83 +6,50 @@ ARG ASTRO_EXECUTOR_BUNDLE_REF=latest
 
 FROM europe-west1-docker.pkg.dev/${PROJECT_ID}/workload-default-artifact-registry/astro/project-executor-bundle:${ASTRO_EXECUTOR_BUNDLE_REF} AS astro-executor-bundle
 
-
-# =============================================================================
-# [EXISTING] Stage 1: Start from the already-built project image
-# Purpose:
-#   - Reuse the project runtime exactly as prepared by BASE_IMAGE
-#   - Preserve the existing NB_* and user-skel contract from that image
-# =============================================================================
 FROM ${BASE_IMAGE}
 
 ARG BASE_IMAGE
+ARG ASTRO_EXECUTOR_BUNDLE_REF
 
-
-# =============================================================================
-# [ASTRO] Stage 2: Overlay Astro onto the built project runtime
-# Purpose:
-#   - Keep the project image's runtime exactly as-is
-#   - Add the published project-executor Astro bundle under /app
-# Key path split:
-#   - ${SKEL_APP_DIR} = canonical cloned project tree from BASE_IMAGE
-#   - /app            = Astro runtime
-# Deployment contract:
-#   - the executor pod runs as uid/gid 10000
-#   - startup must not rely on the inherited jovyan uid from BASE_IMAGE
-# =============================================================================
 USER root
 
-# BASE_IMAGE already provides the Git/SSH toolchain used to build the project image.
-# The only thing we still add here is Node for the Astro runtime.
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    gnupg \
- && curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
- && apt-get update \
- && apt-get install -y --no-install-recommends nodejs \
- && rm -rf /var/lib/apt/lists/*
-
 COPY --from=astro-executor-bundle /app /app
+COPY --from=astro-executor-bundle /opt/wheels /opt/wheels
 
-ENV PATH="/app/node_modules/.bin:${PATH}" \
-    ASTRO_RELEASE_VERSION=${ASTRO_EXECUTOR_BUNDLE_REF} \
+# Astro and project dependencies intentionally share the base image's Python
+# environment. Images older than Python 3.13 are rejected rather than receiving
+# a second interpreter or a private /opt/astro environment.
+RUN python -c "import sys; assert sys.version_info >= (3, 13), 'BASE_IMAGE must provide Python >=3.13'" \
+ && command -v ffmpeg \
+ && command -v ffprobe \
+ && command -v git \
+ && python -m pip install \
+    --no-index \
+    --find-links /opt/wheels \
+    mainsequence-astro==4.0.0
+
+ENV ASTRO_RELEASE_VERSION=${ASTRO_EXECUTOR_BUNDLE_REF} \
     HOME=/home/${NB_USER} \
-    ASTRO_CONTAINER_DATA_DIR=/home/${NB_USER}/.astro-container-data \
-    ASTRO_STREAM_HOST=0.0.0.0 \
-    ASTRO_STREAM_PORT=8787 \
-    ASTRO_STREAM_SESSION_DIR=/session-state/sessions \
-    ASTRO_SESSION_OVERRIDES_DIR=/session-state/session-overrides \
-    ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/${NB_USER}/.astro-container-data/.config/mainsequence \
-    PI_CODING_AGENT_DIR=/home/${NB_USER}/.astro-container-data/.pi/agent \
-    ASTRO_PI_PACKAGE_PATHS=/app/adapters/mainsequence/pi-overlay \
+    ASTRO_HOME=/home/${NB_USER} \
+    ASTRO_HOST=0.0.0.0 \
+    ASTRO_PORT=8787 \
+    ASTRO_PROJECT_CWD=${SKEL_APP_DIR} \
     ASTRO_FIXED_PROJECT_CWD=${SKEL_APP_DIR} \
-    ASTRO_PROJECT_IMAGE_REF=${BASE_IMAGE}
+    ASTRO_PROJECT_IMAGE_REF=${BASE_IMAGE} \
+    ASTRO_A2A_ASSET_ROOT=/tmp/astro-a2a-assets \
+    ASTRO_SESSION_ASSET_ROOT=/tmp/astro-session-assets
 
-RUN mkdir -p \
-    /home/${NB_USER}/.astro-container-data/.pi/agent/bin \
-    /home/${NB_USER}/.astro-container-data/.config/mainsequence \
-    /home/${NB_USER}/.local/share \
-    /home/${NB_USER}/.pi \
-    /home/${NB_USER}/.config \
-    /home/${NB_USER}/.astro \
-    /session-state/sessions \
-    /session-state/session-overrides \
- && chown 10000:10000 /home/${NB_USER} \
- && chmod 755 /home/${NB_USER} \
+RUN mkdir -p /tmp/astro-a2a-assets /tmp/astro-session-assets \
  && chown -R 10000:10000 \
     ${APP_DIR} \
     ${SKEL_APP_DIR} \
-    /home/${NB_USER}/.astro-container-data \
-    /home/${NB_USER}/.local \
-    /home/${NB_USER}/.pi \
-    /home/${NB_USER}/.config \
-    /home/${NB_USER}/.astro \
-    /session-state
+    /home/${NB_USER} \
+    /tmp/astro-a2a-assets \
+    /tmp/astro-session-assets
 
 USER 10000:10000
-WORKDIR /app
+WORKDIR ${SKEL_APP_DIR}
 
 EXPOSE 8787
 
-CMD ["/bin/bash", "-lc", "cd \"${ASTRO_FIXED_PROJECT_CWD:?missing ASTRO_FIXED_PROJECT_CWD}\" && exec /app/node_modules/.bin/tsx /app/bin/astro-stream.ts"]
+CMD ["astro-stream"]

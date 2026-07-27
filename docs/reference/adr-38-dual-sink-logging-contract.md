@@ -2,12 +2,12 @@
 
 Status: Accepted
 Date: 2026-06-18
-Implementation Status: Partially implemented
+Implementation Status: Implemented in the active Python runtime
 
-Initial implementation is complete for the TypeScript stream runtime, A2A runtime path, HTTP access
-logs, checkpoint sidecar, provider signin helper, and session-model extension hook. Standalone
-developer/bootstrap entrypoints and tools that intentionally print interactive progress are still outside the
-central logger unless noted below.
+The active Python 3.13 runtime implements this contract with Structlog using
+the same processor and context conventions as `tdag-django`. References below
+to the TypeScript, Pi, and checkpoint-sidecar implementation describe the
+removed v3 runtime and are retained as design history.
 
 ## Context
 

@@ -1,20 +1,15 @@
-# Interface Documentation
+# HTTP Interface
 
-This section defines the public interface of Astro, including the HTTP stream API used by assistant-ui.
+Astro exposes:
 
-## Contents
+- assistant-ui streaming at `POST /api/chat`
+- stateless model execution at `POST /api/llm/chat`
+- model catalog and provider credential control under `/api/models` and
+  `/api/model-providers`
+- session model, config, and cancellation under `/api/chat`
+- standard A2A REST, SSE, and JSON-RPC under `/api/a2a`
+- health, OpenAPI, and Swagger UI at `/health`, `/openapi.json`, and `/docs`
 
-- [`overview.md`](./overview.md)
-- [`available-models.md`](./available-models.md)
-- [`model-catalog.md`](./model-catalog.md)
-- [`model-provider-auth.md`](./model-provider-auth.md)
-- [`session-insights.md`](./session-insights.md)
-- [`session-config.md`](./session-config.md)
-- [`session-model.md`](./session-model.md)
-- [`request.md`](./request.md)
-- [`response.md`](./response.md)
-- [`sessions.md`](./sessions.md)
-- [`../a2a/README.md`](../a2a/README.md)
-- [`logging.md`](./logging.md) (structured operational logging contract)
-- [`errors.md`](./errors.md)
-- [`environment.md`](./environment.md)
+See [request](./request.md), [response](./response.md),
+[environment](./environment.md), [provider authentication](./model-provider-auth.md),
+[logging](./logging.md), and [A2A](../a2a/README.md).

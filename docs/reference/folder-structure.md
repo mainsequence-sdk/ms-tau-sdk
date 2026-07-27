@@ -1,132 +1,72 @@
-# Folder structure
+# Folder Structure
 
 ```text
 astro/
-├── .astro/
-│   ├── mainsequence-config/
-│   ├── pi-agent-runtime/
-│   └── stream-sessions/
-├── .pi/
-│   ├── APPEND_SYSTEM.md
-│   └── settings.json
-├── pi/
-│   ├── extensions/
-│   │   ├── hooks/
-│   │   ├── tools/
-│   │   └── shared/
-│   ├── prompts/
-│   ├── skills/
-│   └── types/
-├── docs/
-│   ├── getting-started/
-│   ├── components/
-│   ├── extensions/
-│   ├── reference/
-│   └── reserach_guide/
-├── interface/
-│   └── stream/
-├── runtime/
-│   ├── bootstrap/
-│   └── checkpoints/
-├── adapters/
-│   └── mainsequence/
-├── bin/
-├── tools/
-│   ├── a2a/
-│   └── build/
+├── src/astro/
+│   ├── api/
+│   │   ├── a2a.py
+│   │   ├── chat.py
+│   │   ├── health.py
+│   │   ├── llm.py
+│   │   ├── providers.py
+│   │   └── sessions.py
+│   ├── backend/
+│   │   ├── auth.py
+│   │   ├── client.py
+│   │   ├── mcp.py
+│   │   └── models.py
+│   ├── protocols/
+│   │   └── assistant_ui.py
+│   ├── providers/
+│   │   ├── catalog.py
+│   │   ├── definitions.py
+│   │   └── factory.py
+│   ├── resources/
+│   │   ├── APPEND_SYSTEM.md
+│   │   ├── CHILD_POLICY.md
+│   │   ├── loader.py
+│   │   └── prompts/
+│   ├── runtime/
+│   │   ├── events.py
+│   │   ├── manager.py
+│   │   └── session.py
+│   ├── sessions/
+│   │   └── storage.py
+│   ├── tools/
+│   │   ├── mainsequence_mcp.py
+│   │   ├── runtime_info.py
+│   │   └── web_access.py
+│   ├── app.py
+│   └── settings.py
+├── packages/
+│   ├── tau-file-tools/
+│   │   ├── src/tau_file_tools/
+│   │   │   ├── grep.py
+│   │   │   ├── find.py
+│   │   │   └── ls.py
+│   │   ├── tests/
+│   │   └── pyproject.toml
+│   └── tau-web-access/
+│       ├── src/tau_web_access/
+│       │   ├── extractors.py
+│       │   ├── providers.py
+│       │   ├── security.py
+│       │   ├── storage.py
+│       │   └── tools.py
+│       ├── tests/
+│       └── pyproject.toml
+├── tests/
+├── deployment/
 ├── Dockerfile
-├── README.md
-├── package.json
-└── tsconfig.json
+├── Dockerfile.remote-worker
+├── docker-compose.yml
+└── pyproject.toml
 ```
 
-## What each top-level area is for
+`tau-file-tools` and `tau-web-access` are independent Python distributions
+inside the Astro monorepo, not modules under the `astro` distribution. The root
+`uv` workspace resolves them as normal Python dependencies, and the container
+build installs all three distributions into the same Python 3.13 environment.
 
-### `.pi/`
-
-Project-local Pi settings and the shared Astro prompt contract.
-
-### `.astro/`
-
-Ignored repo-local scratch. It is not mounted into containers and is not an active session or
-provider-auth source.
-
-### `pi/`
-
-Pi package content registered in `package.json`, including extensions, prompts, and skills. Shared helpers live under `pi/extensions/shared/`.
-
-### `docs/`
-
-Human-readable documentation for Astro maintainers.
-
-### `interface/`
-
-Optional runtime interfaces around Pi, including the HTTP stream wrapper.
-
-### `runtime/`
-
-Astro Core runtime services and bootstrap code.
-
-### `adapters/`
-
-Backend/platform-specific integration code. Main Sequence runtime credential auth currently lives
-under `adapters/mainsequence/`.
-
-### `bin/`
-
-Thin process entrypoints for local Pi, HTTP streaming, and other runnable targets.
-
-### `tools/`
-
-Build, debug, and live-test utilities that are not production runtime services.
-
-### `Dockerfile`
-
-Optional app container base with Python 3.11 and Node 20 for running Pi and related tasks.
-
-## Deployed container layout
-
-When Astro runs in containers, rebuildable runtime state is not the repo-local `.astro/` tree. It
-lives under the container runtime root, while active session files live under `/session-state`:
-
-```text
-/home/jovyan/.astro-container-data/
-├── .pi/
-│   ├── agent/
-│   │   ├── settings.json
-│   │   └── bin/
-│   └── project/
-│       ├── APPEND_SYSTEM.md
-│       ├── settings.json
-│       └── skills/
-├── astro-orchestrator-runtime/
-│   └── .pi -> /home/jovyan/.astro-container-data/.pi/project
-├── .config/
-│   └── mainsequence/
-│       ├── auth.json
-│       ├── config.json
-│       └── session_overrides/
-├── mainsequence/
-├── mainsequence-dev/
-└── uv/
-```
-
-```text
-/session-state/
-├── sessions/
-├── session-overrides/
-├── pi-agent-auth/
-├── manifests/
-└── checkpoints/
-```
-
-So in deployment terms:
-
-- local Docker uses a shared tmpfs-backed `/session-state` volume for active session files
-- GKE should mount one shared `emptyDir` at `/session-state` into Astro and the checkpoint sidecar
-- backend checkpoints are the durable source of truth for session continuity
-- provider auth files live only in scoped `/session-state/pi-agent-auth` directories and are
-  hydrated from backend-owned credential storage
-- provider auth/signin files in `.pi/agent` are pruned during container startup
-- `astro-orchestrator` runs from the writable `astro-orchestrator-runtime` cwd so Pi lock files
-  are never written into `/app/.pi`
+Tau session history is backend-owned. There is no local session-state folder,
+Pi JSONL, shared checkpoint volume, or sidecar.

@@ -1,90 +1,26 @@
 services:
-  astro-pi-stream:
+  astro:
     build:
       context: .
       dockerfile: Dockerfile
-      target: astro-mainsequence-pi-stream
-      args:
-        MAINSEQUENCE_PIP_SPEC: ${MAINSEQUENCE_PIP_SPEC:-mainsequence}
-    image: astro:pi-stream
+      target: astro
+    image: astro:tau
     env_file:
       - .env
     environment:
-      HOME: /home/jovyan
-      ASTRO_CONTAINER_DATA_DIR: /home/jovyan/.astro-container-data
-      ASTRO_MAINSEQUENCE_CONFIG_DIR: /home/jovyan/.astro-container-data/.config/mainsequence
-      PI_CODING_AGENT_DIR: /home/jovyan/.astro-container-data/.pi/agent
-      ASTRO_STREAM_HOST: 0.0.0.0
-      ASTRO_STREAM_PORT: ${ASTRO_STREAM_PORT:-8787}
-      ASTRO_SESSION_STATE_DIR: /session-state
-      ASTRO_STREAM_SESSION_DIR: /session-state/sessions
-      ASTRO_SESSION_OVERRIDES_DIR: /session-state/session-overrides
-      ASTRO_PROVIDER_CREDENTIAL_DIR: /session-state/pi-agent-auth
-      ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS: ${ASTRO_PROVIDER_CREDENTIAL_FLUSH_INTERVAL_MS:-10000}
-      ASTRO_CHECKPOINT_HOLDER_ID: pod/local-compose-astro-pi-stream
-      ASTRO_BACKEND: mainsequence
-      ASTRO_PI_PACKAGE_PATHS: ${ASTRO_PI_PACKAGE_PATHS:-/app/adapters/mainsequence/pi-overlay}
-      BUILD_AGENTS_IN_BACKEND: "1"
-      A2A_DEV_PROJECT_MOUNTED_PATH: /workspace/a2a-dev-project
+      MAINSEQUENCE_BACKEND: ${MAINSEQUENCE_BACKEND:-http://api.main-sequence.app:8000}
+      ASTRO_HOST: 0.0.0.0
+      ASTRO_PORT: 8787
+      ASTRO_PROJECT_CWD: /workspace
+      ASTRO_HOME: /home/jovyan
+      ASTRO_A2A_ASSET_ROOT: /tmp/astro-a2a-assets
+      ASTRO_SESSION_ASSET_ROOT: /tmp/astro-session-assets
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+      - "api.main-sequence.app:host-gateway"
     volumes:
-      - ./.pi:/app/.pi
-      - ./pi:/app/pi
-      - ./interface:/app/interface
-      - ./runtime:/app/runtime
-      - ./adapters:/app/adapters
-      - ./bin:/app/bin
-      - ./tools:/app/tools
-      - ./docs:/app/docs
-      - ./README.md:/app/README.md
-      - ./package.json:/app/package.json
-      - ./package-lock.json:/app/package-lock.json
-      - ./tsconfig.json:/app/tsconfig.json
-      - ${A2A_DEV_PROJECT:-.}:/workspace/a2a-dev-project:ro
-      - astro_session_emptydir:/session-state
+      - ${ASTRO_PROJECT_PATH:-.}:/workspace:rw
     ports:
-      - "${ASTRO_STREAM_PORT:-8787}:8787"
-
-  astro-session-checkpoint-sidecar:
-    build:
-      context: .
-      dockerfile: Dockerfile
-      target: astro-mainsequence-session-checkpoint-sidecar
-      args:
-        MAINSEQUENCE_PIP_SPEC: ${MAINSEQUENCE_PIP_SPEC:-mainsequence}
-    image: astro:session-checkpoint-sidecar
-    env_file:
-      - .env
-    environment:
-      HOME: /home/jovyan
-      ASTRO_CONTAINER_DATA_DIR: /home/jovyan/.astro-container-data
-      ASTRO_MAINSEQUENCE_CONFIG_DIR: /home/jovyan/.astro-container-data/.config/mainsequence
-      PI_CODING_AGENT_DIR: /home/jovyan/.astro-container-data/.pi/agent
-      ASTRO_SESSION_STATE_DIR: /session-state
-      ASTRO_STREAM_SESSION_DIR: /session-state/sessions
-      ASTRO_SESSION_OVERRIDES_DIR: /session-state/session-overrides
-      ASTRO_PROVIDER_CREDENTIAL_DIR: /session-state/pi-agent-auth
-      ASTRO_CHECKPOINT_HOLDER_ID: pod/local-compose-astro-pi-stream
-      ASTRO_BACKEND: mainsequence
-      ASTRO_CHECKPOINT_SIDECAR_DEBOUNCE_MS: ${ASTRO_CHECKPOINT_SIDECAR_DEBOUNCE_MS:-1000}
-      ASTRO_CHECKPOINT_SIDECAR_SCAN_INTERVAL_MS: ${ASTRO_CHECKPOINT_SIDECAR_SCAN_INTERVAL_MS:-10000}
-      ASTRO_CHECKPOINT_SIDECAR_PERIODIC_FLUSH_MS: ${ASTRO_CHECKPOINT_SIDECAR_PERIODIC_FLUSH_MS:-30000}
-      ASTRO_CHECKPOINT_SIDECAR_METRICS_INTERVAL_MS: ${ASTRO_CHECKPOINT_SIDECAR_METRICS_INTERVAL_MS:-60000}
-    volumes:
-      - ./pi:/app/pi
-      - ./interface:/app/interface
-      - ./runtime:/app/runtime
-      - ./adapters:/app/adapters
-      - ./package.json:/app/package.json
-      - ./package-lock.json:/app/package-lock.json
-      - ./tsconfig.json:/app/tsconfig.json
-      - astro_session_emptydir:/session-state
-    depends_on:
-      - astro-pi-stream
-
-volumes:
-  astro_session_emptydir:
-    driver: local
-    driver_opts:
-      type: tmpfs
-      device: tmpfs
-      o: uid=10000,gid=10000,mode=1770,size=512m
+      - "${ASTRO_PORT:-8787}:8787"
+    init: true
+    stop_grace_period: 30s

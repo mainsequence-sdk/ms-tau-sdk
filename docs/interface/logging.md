@@ -1,461 +1,73 @@
-# Logging Contract
+# Logging
 
-This page defines Astro's dual-sink logging contract.
+Astro uses the same Structlog pipeline as `tdag-django`. Application code emits
+native Structlog events, while logs from Uvicorn, HTTPX, Tau, and other standard
+Python loggers pass through the same `ProcessorFormatter`.
 
-Astro emits one internal structured log event and renders it through configured sinks:
+Every machine event includes the common backend fields:
 
-- machine JSON logs for Kubernetes/GKE scraping
-- compact human terminal logs for local/dev inspection
-- optional payload logs for raw large data when explicitly enabled
-
-The machine JSON sink is the stable machine-readable contract. The human sink is a readable
-projection of the same event, not a separate ad hoc logging path.
-
-## Scope
-
-This contract currently covers these structured-log services:
-
-- `astro`
-- `astro-cors`
-- `astro-http`
-- `astro-stream`
-- `astro-checkpoint-sidecar`
-- `agent-registration`
-- `astro-session-model`
-
-## Configuration
-
-Recommended local/dev defaults:
-
-```bash
-ASTRO_LOG_MACHINE_SINK=off
-ASTRO_LOG_HUMAN_SINK=pretty
-ASTRO_LOG_LEVEL=info
-ASTRO_LOG_PAYLOADS=0
-ASTRO_LOG_STREAM_CHUNKS=0
-ASTRO_LOG_STACK_MODE=summary
-```
-
-Recommended Kubernetes/GKE defaults:
-
-```bash
-ASTRO_LOG_MACHINE_SINK=json
-ASTRO_LOG_HUMAN_SINK=off
-ASTRO_LOG_LEVEL=info
-ASTRO_LOG_PAYLOADS=0
-ASTRO_LOG_STREAM_CHUNKS=0
-ASTRO_LOG_STACK_MODE=summary
-```
-
-`ASTRO_LOG_FORMAT=json|pretty` remains accepted as a coarse compatibility switch, but new
-configuration should use the explicit machine/human sink variables.
-
-## Shared JSON Shape
-
-Every structured log entry is a single JSON object written on one line.
-
-Canonical top-level shape:
-
-```json
-{
-  "severity": "INFO",
-  "time": "2026-05-07T12:34:56.789Z",
-  "component": "astro-stream",
-  "event": "checkpoint_marker_written",
-  "message": "Checkpoint marker written for sidecar flush.",
-  "request_id": "req_01",
-  "session_id": "52",
-  "duration_ms": 42,
-  "data": {
-    "session_id": "52",
-    "threadId": "52",
-    "agentSessionUid": "session_52_uid",
-    "reason": "finish"
-  }
-}
-```
-
-Field contract:
-
-- `severity`
-  - one of `DEBUG`, `INFO`, `WARNING`, `ERROR`
-- `time`
-  - ISO-8601 UTC timestamp
-- `component`
-  - stable service name
 - `event`
-  - stable machine-facing event key
-- `message`
-  - short human-readable summary
-- `session_id`
-  - canonical runtime session id when the event is session-scoped
+- `logger`
+- `level`
+- `severity`
+- `timestamp`
 - `request_id`
-  - request correlation id when the event belongs to an HTTP request
-- `duration_ms`
-  - duration for completed work units
-- `data`
-  - event-specific payload
+- `pathname`, `filename`, `module`, `lineno`, and `func_name`
+- `source`, formatted as a clickable `path:line`
+- `component`
 
-Large values are summarized by default. Raw prompts, tool results, backend bodies, full stack
-traces, and SSE streams must not appear in normal logs unless payload logging is explicitly enabled.
+When OpenTelemetry logging fields and `GOOGLE_CLOUD_PROJECT` are available, the
+processor adds the Google Cloud trace, span, and sampled fields used by the
+Django service.
 
-## Human Terminal Shape
+## Request context
 
-The human sink renders the same event as one compact line:
+The ASGI request middleware creates a 32-character request ID, binds it through
+Structlog contextvars, exposes it as `request.state.request_id`, and returns it
+as `X-Request-ID`. Runtime, backend, MCP, and provider logs emitted in that
+request inherit the same ID.
+
+Each HTTP request emits:
 
 ```text
-12:17:52.018 INFO  a2a.message.completed req=req_01 session=0b270... status=200 842ms runner=warm
-12:17:54.000 ERROR backend.session.fetch.failed req=req_01 session=0b270... phase=auth_headers error=timeout 120000ms
+http.request.started
+http.request.completed
 ```
 
-Rules:
+Completion events include the method, route, path, status, duration, response
+size, remote address, and user agent. Cancelled and failed requests use
+`http.request.cancelled` and `http.request.failed`.
 
-- one line per event
-- no raw JSON blobs
-- no full tool results
-- no raw SSE chunks
-- no full prompt/system/skill files
-- no escaped multiline stack traces
-- IDs may be shortened for readability
+## Rendering
 
-## Session id normalization
+Production uses single-line JSON on stdout:
 
-For session-scoped logs, Astro must emit top-level:
-
-```json
-"session_id": "<runtime_session_uid>"
+```dotenv
+ASTRO_LOG_MACHINE_SINK=true
+ASTRO_LOG_HUMAN_SINK=false
+ASTRO_LOG_LEVEL=INFO
 ```
 
-The shared logger normalizes `session_id` automatically from any of these payload keys:
+Local development can use Django-style console rendering on stderr:
 
-- `session_id`
-- `sessionUid`
-- `sessionKey`
-- `runtime_session_uid`
-- `runtimeSessionUid`
-- `agent_session_uid`
-- `agentSessionUid`
-
-Rules:
-
-- callers should still pass a session-like identifier in the payload when the event is about a
-  session
-- the logger copies that into canonical top-level `session_id`
-- the normalized `session_id` is also preserved inside `data`
-- startup and process-global logs may omit `session_id`
-
-## Emission rules
-
-Warnings and errors always emit.
-
-`INFO` emission rules:
-
-- normal non-checkpoint `INFO` logs emit by default
-- checkpoint `INFO` logs are suppressed by default to reduce noise
-- checkpoint `INFO` logs emit when:
-
-```bash
-ASTRO_LOG_CHECKPOINT_INFO=1
+```dotenv
+ASTRO_LOG_MACHINE_SINK=false
+ASTRO_LOG_HUMAN_SINK=true
+ASTRO_LOG_LEVEL=DEBUG
 ```
 
-This suppression applies to both:
-
-- `astro-stream` checkpoint info logs
-- `astro-checkpoint-sidecar` routine checkpoint info logs
-
-## Service: `astro-stream`
-
-### Purpose
-
-`astro-stream` is the HTTP stream server and runtime wrapper.
-
-It emits structured logs for:
-
-- stream request lifecycle
-- session hydration and resume
-- model discovery and model binding
-- provider credential hydration/flush
-- checkpoint lease and restore
-- Pi launch and runtime write failures
-- A2A request normalization and session attachment
-
-### Component value
-
-Every structured log from this service uses:
-
-```json
-"component": "astro-stream"
-```
-
-### Common payload fields
-
-Session-scoped `astro-stream` events commonly include:
-
-- `session_id`
-- `threadId`
-- `agentSessionUid`
-- `agentType`
-- `userUid`
-- `projectId`
-- `cwd`
-- `checkpointVersion`
-- `bundleHash`
-
-Request-scoped events may also include:
-
-- `path`
-- `executionMode`
-- `fixedAgentType`
-- `status`
-- `error`
-
-### Event catalog
-
-Current emitted `astro-stream` event keys:
-
-- `available_models_pi_registry_filtered_out`
-- `available_models_request_failed`
-- `available_models_request_started`
-- `available_models_request_succeeded`
-- `available_models_user_id_missing`
-- `backend_checkpoint_hydration_attached`
-- `backend_checkpoint_hydration_local_session_incomplete`
-- `backend_session_hydration_attached`
-- `backend_session_hydration_attempt`
-- `backend_session_hydration_fetch_failed`
-- `backend_session_hydration_invalid_uid`
-- `backend_session_hydration_invalid_payload`
-- `backend_session_hydration_missing_agent_uid`
-- `backend_session_hydration_not_found`
-- `backend_session_hydration_succeeded`
-- `backend_session_hydration_unavailable`
-- `backend_session_hydration_missing_agent_type`
-- `chat_history_blocked_during_active_stream`
-- `chat_history_checkpoint_bundle_invalid`
-- `chat_history_checkpoint_fetch_failed`
-- `chat_history_checkpoint_invalid_session_history`
-- `chat_history_checkpoint_response_invalid`
-- `chat_history_ignored_transient_checkpoint_error_cache`
-- `chat_history_rebuilt_from_checkpoint`
-- `chat_history_sanitized_prompt_wrapper`
-- `checkpoint_finalization_recovered`
-- `checkpoint_history_restore_release_error`
-- `checkpoint_history_restore_release_failed`
-- `checkpoint_latest_missing_restore_fallback`
-- `checkpoint_launch_ignored_local_finalizing_state`
-- `checkpoint_lease_failed`
-- `checkpoint_lease_renew_error`
-- `checkpoint_lease_renew_failed`
-- `checkpoint_lease_renew_stale_manifest`
-- `checkpoint_lease_reused`
-- `checkpoint_marker_skipped_no_lease`
-- `checkpoint_marker_write_failed`
-- `checkpoint_marker_written`
-- `checkpoint_prelaunch_invalid_history_release_failed`
-- `checkpoint_restore_completed`
-- `checkpoint_restore_failed`
-- `checkpoint_restore_failed_release_failed`
-- `checkpoint_restore_invalid_history_release_failed`
-- `checkpoint_restore_skipped_current`
-- `checkpoint_restore_started`
-- `history_reasoning_annotation_write_failed`
-- `model_provider_user_id_missing`
-- `pi_child_stderr`
-- `pi_launch_model_ready`
-- `pi_launch_without_model`
-- `pi_session_history_repaired`
-- `pi_session_validation_failed`
-- `provider_credentials_flush_failed`
-- `provider_credentials_flushed`
-- `provider_credentials_hydrate_failed`
-- `provider_credentials_hydrated`
-- `provider_credentials_shutdown_flush_failed`
-- `provider_credentials_shutdown_flush_started`
-- `provider_credentials_shutdown_flushed`
-- `read_endpoint_checkpoint_hydration_failed`
-- `read_endpoint_history_projection_failed`
-- `read_endpoint_session_hydrated_from_checkpoint`
-- `request_model_ignored_session_first`
-- `request_session_metadata_attached`
-- `session_cancel_request_failed`
-- `session_cancellation_force_kill`
-- `session_cancellation_started`
-- `session_model_binding_missing`
-- `session_model_binding_refreshed_from_runtime`
-- `session_model_binding_repaired_from_session_history`
-- `session_model_binding_resolved`
-- `session_run_already_active`
-- `stream_client_detached`
-- `stream_client_write_failed`
-- `stream_done_write_failed`
-
-### Contract notes
-
-- `event` is the primary machine-facing key. Consumers should key off `component + event`, not the
-  free-form `message`.
-- `message` may be reworded without changing the contract.
-- session-scoped events should carry enough identifiers to correlate with the active runtime
-  session, especially `session_id`, `threadId`, and `agentSessionUid` when available.
-
-## Service: `astro-checkpoint-sidecar`
-
-### Purpose
-
-`astro-checkpoint-sidecar` watches session files, builds checkpoint bundles, flushes them to the
-backend, uploads session insights, and releases checkpoint leases after terminal flushes.
-
-### Component value
-
-Every structured log from this service uses:
-
-```json
-"component": "astro-checkpoint-sidecar"
-```
-
-### Common payload fields
-
-Session-scoped sidecar events commonly include:
-
-- `session_id`
-- `agent_session_uid`
-- `reason`
-- `checkpoint_version`
-- `bundle_hash`
-- `lease_expires_at`
-- `latency_ms`
-- `dirty_age_ms`
-
-Watcher and process-global events may also include:
-
-- `label`
-- `dir`
-- `signal`
-- `shutdown_timeout_ms`
-
-### Event catalog
-
-Current emitted `astro-checkpoint-sidecar` event keys:
-
-- `checkpoint_flush_error`
-- `checkpoint_flush_local_validation_failed`
-- `checkpoint_flush_rejected`
-- `checkpoint_flush_skipped_expired_lease`
-- `checkpoint_flush_skipped_marker_missing_lease`
-- `checkpoint_flush_skipped_stale_marker`
-- `checkpoint_flush_skipped_unmanaged_session`
-- `checkpoint_flush_started`
-- `checkpoint_lease_release_failed`
-- `checkpoint_lease_released`
-- `checkpoint_marker_invalid`
-- `checkpoint_marker_read_failed`
-- `checkpoint_restore_observed`
-- `checkpoint_sidecar_metrics`
-- `checkpoint_sidecar_started`
-- `checkpoint_sidecar_stopped`
-- `checkpoint_sidecar_watch_started`
-- `session_insights_upload_failed`
-- `session_insights_upload_skipped`
-- `session_insights_uploaded`
-
-### Severity contract
-
-Current sidecar severity policy:
-
-- `ERROR`
-  - `checkpoint_flush_error`
-- `WARNING`
-  - `checkpoint_flush_rejected`
-  - `checkpoint_flush_skipped_expired_lease`
-  - `checkpoint_flush_skipped_marker_missing_lease`
-  - `checkpoint_flush_skipped_stale_marker`
-  - `checkpoint_flush_skipped_unmanaged_session`
-  - `checkpoint_lease_release_failed`
-  - `checkpoint_marker_invalid`
-  - `checkpoint_marker_read_failed`
-  - `session_insights_upload_failed`
-  - `session_insights_upload_skipped`
-- `INFO`
-  - all other current sidecar events
-
-Routine sidecar `INFO` logs are suppressed by default unless `ASTRO_LOG_CHECKPOINT_INFO=1`.
-
-## Service: `agent-registration`
-
-### Purpose
-
-`agent-registration` emits structured logs for backend agent-session lookup and hydration helpers.
-
-### Component value
-
-Every structured log from this service uses:
-
-```json
-"component": "agent-registration"
-```
-
-### Common payload fields
-
-Common payload fields include:
-
-- `session_id` when the event is session-scoped
-- `agentSessionUid`
-- `endpoint`
-- `status`
-- `error`
-- `candidateEndpoints`
-
-### Event catalog
-
-Current emitted `agent-registration` event keys:
-
-- `backend_session_fetch_attempt`
-- `backend_session_fetch_endpoint_not_found`
-- `backend_session_fetch_invalid_uid`
-- `backend_session_fetch_missing_auth_headers`
-- `backend_session_fetch_not_found`
-- `backend_session_fetch_rejected`
-- `backend_session_fetch_succeeded`
-
-### Contract notes
-
-- events in this component are mostly backend-fetch lifecycle events
-- when an event is about a specific backend AgentSession, the normalized top-level `session_id`
-  comes from the passed `agentSessionUid`
-
-## Startup-only structured logs
-
-The stream startup wrapper also emits `astro-stream` structured logs before any session exists:
-
-- `orchestrator_runtime_ready`
-
-These are valid structured logs and intentionally may omit `session_id`.
-
-## Legacy Mixed Logs
-
-Astro runtime code should not emit legacy mixed-format operational logs such as:
-
-- `[astro-stream] OUT ...`
-- `[astro-stream] STDERR ...`
-- `[astro-http] ...`
-
-Those are replaced by structured events such as:
-
-- `pi.chunk`
-- `pi.stderr`
-- `warm_runner.stderr`
-- `http.request.completed`
-
-## Non-goals
-
-This contract does not guarantee:
-
-- a closed global enum of every future `event` value forever
-- that every process-global startup log has a session id
-- that payload logging is safe to enable in production by default
-
-## Related files
-
-- [structured-logging.ts](/Users/jose/code/MainSequenceServerSide/astro/pi/extensions/shared/structured-logging.ts)
-- [server.ts](/Users/jose/code/MainSequenceServerSide/astro/interface/stream/server.ts)
-- [sidecar.ts](/Users/jose/code/MainSequenceServerSide/astro/runtime/checkpoints/sidecar.ts)
-- [mainsequence-agent-registration.ts](/Users/jose/code/MainSequenceServerSide/astro/interface/stream/mainsequence-agent-registration.ts)
+If both sinks are enabled, JSON remains on stdout and console output remains on
+stderr.
+
+## Sensitive data
+
+Fields whose names contain `authorization`, `credential`, `password`,
+`secret`, or `token` are redacted recursively. Bearer values embedded in event
+or exception text are also redacted. Tool results, provider headers, MCP
+payloads, system prompts, and complete conversation histories are not logged.
+
+`runtime.turn.started` and `llm.turn.started` always include the latest user
+prompt's character count and SHA-256 fingerprint. When
+`ASTRO_LOG_PAYLOADS=true`, they also include `prompt_excerpt`: a
+whitespace-normalized preview limited to 200 characters. The default remains
+`false`.

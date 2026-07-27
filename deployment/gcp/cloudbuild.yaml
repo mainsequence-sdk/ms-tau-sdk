@@ -1,15 +1,18 @@
 steps:
-  # Upload the Dockerfile (OVerwrite the object on each build)
-  - id: "upload-fixed-repo-dockerfile"
+  - id: "upload-project-executor-dockerfile"
     name: "gcr.io/cloud-builders/gcloud"
     entrypoint: "bash"
     args:
       - "-c"
       - |
-        sed "s|^ARG PROJECT_ID$|ARG PROJECT_ID=${PROJECT_ID}|" Dockerfile.remote-worker > /workspace/Dockerfile.remote-worker.rendered
-        gsutil cp /workspace/Dockerfile.remote-worker.rendered "gs://workload-default-${PROJECT_ID}/pod-dockerfiles/project_executor/Dockerfile"
+        set -euo pipefail
+        sed "s|^ARG PROJECT_ID$|ARG PROJECT_ID=${PROJECT_ID}|" \
+          Dockerfile.remote-worker \
+          > /workspace/Dockerfile.remote-worker.rendered
+        gsutil cp /workspace/Dockerfile.remote-worker.rendered \
+          "gs://workload-default-${PROJECT_ID}/pod-dockerfiles/project_executor/Dockerfile"
 
-  - id: "build-image-and-detect-mainsequence-version"
+  - id: "build-and-tag"
     name: "gcr.io/cloud-builders/docker"
     entrypoint: "bash"
     args:
@@ -17,161 +20,79 @@ steps:
       - |
         set -euo pipefail
 
-        ASTRO_RELEASE_VERSION="$$(awk -F'\"' '/\"version\"[[:space:]]*:/ { print $$4; exit }' package.json)"
-        if [ -z "$${ASTRO_RELEASE_VERSION}" ]; then
-          echo "Could not resolve ASTRO_RELEASE_VERSION from package.json" >&2
-          exit 1
-        fi
+        ASTRO_VERSION="$$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n1)"
+        test -n "$${ASTRO_VERSION}"
 
-        LOCAL_IMAGE="astro-pi-stream:build-${BUILD_ID}"
-        LABELED_IMAGE="astro-pi-stream:labeled-${BUILD_ID}"
+        LOCAL_IMAGE="astro-tau:build-${BUILD_ID}"
         LOCAL_BUNDLE_IMAGE="project-executor-bundle:build-${BUILD_ID}"
+        VERSION_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}"
+        BUNDLE_VERSION_IMAGE="${_BUNDLE_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}"
 
         docker build \
           -f Dockerfile \
-          --target "${_DOCKER_TARGET}" \
-          --build-arg "ASTRO_RELEASE_VERSION=$${ASTRO_RELEASE_VERSION}" \
+          --target astro \
+          --build-arg "ASTRO_RELEASE_VERSION=$${ASTRO_VERSION}" \
           -t "$${LOCAL_IMAGE}" \
           .
-
         docker build \
           -f Dockerfile \
-          --target "project-executor-bundle" \
-          --build-arg "ASTRO_RELEASE_VERSION=$${ASTRO_RELEASE_VERSION}" \
+          --target project-executor-bundle \
+          --build-arg "ASTRO_RELEASE_VERSION=$${ASTRO_VERSION}" \
           -t "$${LOCAL_BUNDLE_IMAGE}" \
           .
 
-        ASTRO_VERSION="$$(docker run --rm --entrypoint node "$${LOCAL_IMAGE}" \
-          -p "require('/app/package.json').version")"
-        MAINSEQUENCE_VERSION="$$(docker run --rm --entrypoint python "$${LOCAL_IMAGE}" \
-          -c "import importlib.metadata as metadata; print(metadata.version('mainsequence'))")"
         PYTHON_VERSION_FULL="$$(docker run --rm --entrypoint python "$${LOCAL_IMAGE}" \
           -c "import platform; print(platform.python_version())")"
         PYTHON_VERSION_TAG="$$(docker run --rm --entrypoint python "$${LOCAL_IMAGE}" \
           -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")"
-        NODE_VERSION_FULL="$$(docker run --rm --entrypoint node "$${LOCAL_IMAGE}" \
-          -p "process.versions.node")"
-        NODE_VERSION_TAG="$$(docker run --rm --entrypoint node "$${LOCAL_IMAGE}" \
-          -p "process.versions.node.split('.').slice(0, 2).join('.')" )"
 
-        VERSION_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}"
-        PYTHON_RUNTIME_IMAGE="${_IMAGE_PREFIX}:python-$${PYTHON_VERSION_TAG}"
-        NODE_RUNTIME_IMAGE="${_IMAGE_PREFIX}:node-$${NODE_VERSION_TAG}"
-        MAINSEQUENCE_RUNTIME_IMAGE="${_IMAGE_PREFIX}:ms-sdk-$${MAINSEQUENCE_VERSION}"
-        BUNDLE_VERSION_IMAGE="${_BUNDLE_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}"
+        PYTHON_IMAGE="${_IMAGE_PREFIX}:python-$${PYTHON_VERSION_TAG}"
 
         printf '%s' "$${VERSION_IMAGE}" > /workspace/version_image.txt
-        printf '%s' "$${PYTHON_RUNTIME_IMAGE}" > /workspace/python_runtime_image.txt
-        printf '%s' "$${NODE_RUNTIME_IMAGE}" > /workspace/node_runtime_image.txt
-        printf '%s' "$${MAINSEQUENCE_RUNTIME_IMAGE}" > /workspace/mainsequence_runtime_image.txt
+        printf '%s' "$${PYTHON_IMAGE}" > /workspace/python_image.txt
         printf '%s' "$${BUNDLE_VERSION_IMAGE}" > /workspace/bundle_version_image.txt
 
-        CONTAINER_ID="$$(docker create "$${LOCAL_IMAGE}")"
-        trap 'docker rm -f "$${CONTAINER_ID}" >/dev/null 2>&1 || true' EXIT
-
-        docker commit \
-          --change "LABEL org.opencontainers.image.title=\"astro-$${ASTRO_VERSION}\"" \
-          --change "LABEL org.opencontainers.image.description=\"Astro $${ASTRO_VERSION} stream image for Main Sequence orchestration with Python $${PYTHON_VERSION_FULL}, Node $${NODE_VERSION_FULL}, and mainsequence $${MAINSEQUENCE_VERSION}.\"" \
-          --change "LABEL org.opencontainers.image.version=$${ASTRO_VERSION}" \
-          --change "LABEL org.opencontainers.image.mainsequence.version=$${MAINSEQUENCE_VERSION}" \
-          --change "LABEL org.opencontainers.image.python.version=$${PYTHON_VERSION_FULL}" \
-          --change "LABEL org.opencontainers.image.node.version=$${NODE_VERSION_FULL}" \
-          "$${CONTAINER_ID}" \
-          "$${LABELED_IMAGE}" >/dev/null
-
-        docker tag "$${LABELED_IMAGE}" "$${VERSION_IMAGE}"
-        docker tag "$${LABELED_IMAGE}" "$${PYTHON_RUNTIME_IMAGE}"
-        docker tag "$${LABELED_IMAGE}" "$${NODE_RUNTIME_IMAGE}"
-        docker tag "$${LABELED_IMAGE}" "$${MAINSEQUENCE_RUNTIME_IMAGE}"
-        docker tag "$${LABELED_IMAGE}" "${_LATEST_IMAGE}"
+        docker tag "$${LOCAL_IMAGE}" "$${VERSION_IMAGE}"
+        docker tag "$${LOCAL_IMAGE}" "$${PYTHON_IMAGE}"
+        docker tag "$${LOCAL_IMAGE}" "${_LATEST_IMAGE}"
         docker tag "$${LOCAL_BUNDLE_IMAGE}" "$${BUNDLE_VERSION_IMAGE}"
         docker tag "$${LOCAL_BUNDLE_IMAGE}" "${_BUNDLE_LATEST_IMAGE}"
 
-        docker rm -f "$${CONTAINER_ID}" >/dev/null 2>&1 || true
-        trap - EXIT
+        echo "Astro $${ASTRO_VERSION}; Python $${PYTHON_VERSION_FULL}"
 
-  - id: "push-version-image"
-    waitFor:
-      - "build-image-and-detect-mainsequence-version"
+  - id: "push-version"
+    waitFor: ["build-and-tag"]
     name: "gcr.io/cloud-builders/docker"
     entrypoint: "bash"
-    args:
-      - "-c"
-      - |
-        set -euo pipefail
-        VERSION_IMAGE="$$(cat /workspace/version_image.txt)"
-        docker push "$${VERSION_IMAGE}"
+    args: ["-c", "docker push \"$$(cat /workspace/version_image.txt)\""]
 
-  - id: "push-latest-image"
-    waitFor:
-      - "build-image-and-detect-mainsequence-version"
+  - id: "push-latest"
+    waitFor: ["build-and-tag"]
     name: "gcr.io/cloud-builders/docker"
-    args:
-      - "push"
-      - "${_LATEST_IMAGE}"
+    args: ["push", "${_LATEST_IMAGE}"]
 
-  - id: "push-python-runtime-image"
-    waitFor:
-      - "build-image-and-detect-mainsequence-version"
+  - id: "push-python-runtime"
+    waitFor: ["build-and-tag"]
     name: "gcr.io/cloud-builders/docker"
     entrypoint: "bash"
-    args:
-      - "-c"
-      - |
-        set -euo pipefail
-        PYTHON_RUNTIME_IMAGE="$$(cat /workspace/python_runtime_image.txt)"
-        docker push "$${PYTHON_RUNTIME_IMAGE}"
+    args: ["-c", "docker push \"$$(cat /workspace/python_image.txt)\""]
 
-  - id: "push-node-runtime-image"
-    waitFor:
-      - "build-image-and-detect-mainsequence-version"
+  - id: "push-bundle-version"
+    waitFor: ["build-and-tag"]
     name: "gcr.io/cloud-builders/docker"
     entrypoint: "bash"
-    args:
-      - "-c"
-      - |
-        set -euo pipefail
-        NODE_RUNTIME_IMAGE="$$(cat /workspace/node_runtime_image.txt)"
-        docker push "$${NODE_RUNTIME_IMAGE}"
+    args: ["-c", "docker push \"$$(cat /workspace/bundle_version_image.txt)\""]
 
-  - id: "push-mainsequence-runtime-image"
-    waitFor:
-      - "build-image-and-detect-mainsequence-version"
+  - id: "push-bundle-latest"
+    waitFor: ["build-and-tag"]
     name: "gcr.io/cloud-builders/docker"
-    entrypoint: "bash"
-    args:
-      - "-c"
-      - |
-        set -euo pipefail
-        MAINSEQUENCE_RUNTIME_IMAGE="$$(cat /workspace/mainsequence_runtime_image.txt)"
-        docker push "$${MAINSEQUENCE_RUNTIME_IMAGE}"
-
-  - id: "push-astro-runtime-bundle-version-image"
-    waitFor:
-      - "build-image-and-detect-mainsequence-version"
-    name: "gcr.io/cloud-builders/docker"
-    entrypoint: "bash"
-    args:
-      - "-c"
-      - |
-        set -euo pipefail
-        BUNDLE_VERSION_IMAGE="$$(cat /workspace/bundle_version_image.txt)"
-        docker push "$${BUNDLE_VERSION_IMAGE}"
-
-  - id: "push-astro-runtime-bundle-latest-image"
-    waitFor:
-      - "build-image-and-detect-mainsequence-version"
-    name: "gcr.io/cloud-builders/docker"
-    args:
-      - "push"
-      - "${_BUNDLE_LATEST_IMAGE}"
+    args: ["push", "${_BUNDLE_LATEST_IMAGE}"]
 
 substitutions:
   _AR_REGION: "europe-west1"
   _AR_REPO: "workload-default-artifact-registry"
-  _IMAGE_NAME: "astro/astro-pi-stream"
+  _IMAGE_NAME: "astro/astro-tau"
   _BUNDLE_IMAGE_NAME: "astro/project-executor-bundle"
-  _DOCKER_TARGET: "astro-mainsequence-pi-stream"
   _IMAGE_PREFIX: "${_AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE_NAME}"
   _BUNDLE_IMAGE_PREFIX: "${_AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_BUNDLE_IMAGE_NAME}"
   _LATEST_IMAGE: "${_IMAGE_PREFIX}:latest"

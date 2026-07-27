@@ -1,121 +1,99 @@
-![Main Sequence logo](https://api.main-sequence.app/static/media/logos/MS_logo_long_black.png)
-
 # Astro
 
-Astro is a Pi deployment runtime that exposes Main Sequence assistant sessions over HTTP.
+Astro is Main Sequence's Python 3.13 agent service built on
+[Hugging Face Tau](https://github.com/huggingface/tau). It exposes durable
+Assistant UI chat, stateless model chat, and standard A2A transports.
 
-Astro now uses one internal Pi runtime shape. Backend identities such as `astro-orchestrator` and
-`project-executor` remain valid Main Sequence session metadata, but local behavior is selected by
-runtime context: primarily whether `ASTRO_FIXED_PROJECT_CWD` attaches the runtime to a prepared
-project workspace. Both no-project and project-attached deployments use the shared package/system
-prompt contract.
+Astro is container-only. Do not run a second host Python or Node runtime.
 
-## Quick start
+## Runtime
 
-```bash
-npm run pi
+- Python `>=3.13`
+- Tau `0.3.1`
+- FastAPI/Uvicorn on port `8787`
+- Django backend on `MAINSEQUENCE_BACKEND`
+- Main Sequence MCP automatically loaded from `{MAINSEQUENCE_BACKEND}/mcp`
+- Native Tau session entries persisted by Django
+- One process and one Python environment
+- Hash-locked runtime wheelhouse generated from `uv.lock`
+- No Node.js, Pi runtime, JSONL checkpoint, or checkpoint sidecar
+
+## Required Environment
+
+```dotenv
+MAINSEQUENCE_BACKEND=http://api.main-sequence.app:8000
+MAINSEQUENCE_AUTH_MODE=runtime_credential
+MAINSEQUENCE_RUNTIME_CREDENTIAL_ID=replace-with-coding-agent-service-credential-id
+MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET=replace-with-coding-agent-service-credential-secret
 ```
 
-To run Astro over HTTP stream:
+The runtime credential pair is required because Astro authenticates every
+session, task, provider credential, lease request, and MCP call to Django.
+It must belong to the deployed coding-agent service; organization-test and
+project runtime credentials are not valid for MCP.
+Provider API keys remain backend-owned and are hydrated per user/session.
+
+See [`.env.example`](./.env.example) for optional web-provider settings.
+
+## Container Startup
+
+The Compose build context is the Astro repository. The independently
+packageable `tau-file-tools` and `tau-web-access` distributions are workspace
+members under `packages/`.
+
+`uv.lock` is the source dependency lock. `requirements-runtime.lock` is its
+hash-locked export used to build an offline wheelhouse for the runtime and
+project-executor images.
 
 ```bash
-npm run pi:stream
+docker compose up --build astro
 ```
 
-To build the deployable container targets:
+Compose always runs Astro in the container and points it at Django on host port
+`8000` by default:
+
+```text
+http://api.main-sequence.app:8000
+```
+
+Override `ASTRO_PROJECT_PATH` when the mounted project is not the Astro checkout.
+
+Verify a built image's Python environment, runtime tools, Node absence, and
+health endpoints with:
 
 ```bash
-docker build --target astro-pi -t astro:pi .
-docker build --target astro-pi-stream -t astro:pi-stream .
+./scripts/verify-runtime-image.sh astro:tau
 ```
 
-To bump the Astro project version before publishing a deployable image, use the release level that
-matches the change. For a major runtime contract upgrade:
+## Public APIs
 
-```bash
-npm run version:major
+- `GET /health`
+- `GET /ready`
+- `GET /version`
+- `POST /api/chat`
+- `POST /api/llm/chat`
+- `GET /api/models/catalog`
+- `GET /api/model-providers`
+- `POST /api/model-providers/{provider}/signin`
+- `POST /api/model-providers/{provider}/signoff`
+- `POST /api/a2a/v1/message:send`
+- `POST /api/a2a/v1/message:stream`
+- `GET /api/a2a/v1/tasks`
+- `POST /api/a2a/rpc`
+
+FastAPI publishes the full schema at `/docs` and `/openapi.json`.
+
+## Monorepo Packages
+
+```text
+astro/
+├── packages/
+│   ├── tau-file-tools/
+│   └── tau-web-access/
+├── src/astro/
+└── pyproject.toml
 ```
 
-Review and commit the version change, then publish the image:
-
-```bash
-npm run build:gcp
-```
-
-Set `MAINSEQUENCE_PIP_SPEC` in `.env` to control which `mainsequence` package spec the image installs in
-its final Docker layer, for example `mainsequence==0.1.2`.
-
-To use Docker Compose in live-mounted dev mode:
-
-- `./.pi` -> `/app/.pi`
-- `./pi` -> `/app/pi`
-- `./interface` -> `/app/interface`
-- `./runtime` -> `/app/runtime`
-- `./adapters` -> `/app/adapters`
-- `./bin` -> `/app/bin`
-- `./tools` -> `/app/tools`
-- `./docs` -> `/app/docs`
-- `./README.md` -> `/app/README.md`
-- `./package.json` -> `/app/package.json`
-- `./package-lock.json` -> `/app/package-lock.json`
-- `./tsconfig.json` -> `/app/tsconfig.json`
-- tmpfs-backed `astro_session_emptydir` volume -> `/session-state` for local session files
-
-```bash
-docker compose run --rm astro-pi
-docker compose up astro-pi-stream
-```
-
-`astro-pi` is behind the optional `pi-shell` profile, so a plain `docker compose up` starts the HTTP
-stream service and the local checkpoint sidecar simulation. The standalone Pi container still works
-when you target it explicitly with `docker compose run --rm astro-pi`.
-
-The compose file now bind-mounts the editable Astro source files into `/app`, so normal code
-changes do not require an image rebuild. It intentionally does not bind-mount the whole repo root,
-which avoids clobbering the container's Linux `node_modules`. Restart the service to pick up code
-edits:
-
-```bash
-docker compose restart astro-pi-stream
-```
-
-The compose file now keeps active session files in a shared tmpfs-backed `/session-state` volume and
-leaves container runtime state rebuildable:
-
-- `HOME=/home/jovyan`
-- `ASTRO_CONTAINER_DATA_DIR=/home/jovyan/.astro-container-data`
-- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/jovyan/.astro-container-data/.config/mainsequence`
-- `PI_CODING_AGENT_DIR=/home/jovyan/.astro-container-data/.pi/agent`
-- `ASTRO_SESSION_STATE_DIR=/session-state`
-- `ASTRO_STREAM_SESSION_DIR=/session-state/sessions`
-- `ASTRO_SESSION_OVERRIDES_DIR=/session-state/session-overrides`
-- `ASTRO_PROVIDER_CREDENTIAL_DIR=/session-state/pi-agent-auth`
-
-At startup, Astro prepares only container-local runtime state. Provider auth, provider signin state,
-and stream session files have no host or repo-local source path in the container. Backend
-checkpoints are the durable source for session continuity. The image runs as non-root `jovyan`;
-rebuildable runtime state lives under `/home/jovyan/.astro-container-data`.
-
-That keeps Linux virtualenvs isolated from macOS host paths and makes Docker behave closer to the
-pod-local `emptyDir` session model.
-
-## Start reading here
-
-- [`docs/README.md`](./docs/README.md)
-  - project overview with the architecture diagram and ordered reading paths
-- [`docs/getting-started/quickstart.md`](./docs/getting-started/quickstart.md)
-  - shortest path to running Astro
-- [`docs/getting-started/pi-primer.md`](./docs/getting-started/pi-primer.md)
-  - Pi concepts used by Astro, explained for readers who are new to Pi
-
-## Pi components in this repo
-
-- [`docs/components/settings-and-system-prompt.md`](./docs/components/settings-and-system-prompt.md)
-- [`docs/components/extensions.md`](./docs/components/extensions.md)
-- [`docs/extensions/README.md`](./docs/extensions/README.md)
-- [`docs/components/agents.md`](./docs/components/agents.md)
-- [`docs/components/prompts.md`](./docs/components/prompts.md)
-- [`docs/components/skills.md`](./docs/components/skills.md)
-- [`docs/components/runtime-entrypoints-and-tools.md`](./docs/components/runtime-entrypoints-and-tools.md)
-- [`docs/components/deployment-identities.md`](./docs/components/deployment-identities.md)
-- [`docs/components/remote-worker-image.md`](./docs/components/remote-worker-image.md)
+The tool packages use only Tau's public tool contracts. They remain separately
+buildable and can later be released or upstreamed without being separate
+repositories today.

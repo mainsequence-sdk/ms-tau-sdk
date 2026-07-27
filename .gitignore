@@ -1,6 +1,3 @@
-# Dependencies
-node_modules/
-
 # Python cache and virtualenvs
 __pycache__/
 *.py[cod]
@@ -15,9 +12,3 @@ venv/
 
 # OS files
 .DS_Store
-
-# Package manager debug logs
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
