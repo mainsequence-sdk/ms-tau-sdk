@@ -6,10 +6,7 @@ steps:
       - "-c"
       - |
         set -euo pipefail
-        sed "s|^ARG PROJECT_ID$|ARG PROJECT_ID=${PROJECT_ID}|" \
-          Dockerfile.remote-worker \
-          > /workspace/Dockerfile.remote-worker.rendered
-        gsutil cp /workspace/Dockerfile.remote-worker.rendered \
+        gsutil cp Dockerfile.remote-worker \
           "gs://workload-default-${PROJECT_ID}/pod-dockerfiles/project_executor/Dockerfile"
 
   - id: "build-and-tag"
