@@ -144,20 +144,46 @@ class SessionRuntimeManager:
         )
         mcp_client: MainSequenceMCPClient | None = None
         try:
-            provider_runtime = await self.providers.for_session(
-                session,
-                holder_id=self.holder_id,
-            )
             cwd = self._resolve_cwd()
-            session_agents_root = await materialize_session_capabilities(
-                backend=self.backend,
-                session_uid=session_uid,
-                asset_root=self.settings.session_asset_root,
-            )
-            mcp_client = await MainSequenceMCPClient.connect(
-                settings=self.settings,
-                auth=self.backend.auth,
-            )
+            try:
+                async with asyncio.TaskGroup() as startup_tasks:
+                    provider_runtime_task = startup_tasks.create_task(
+                        self.providers.for_session(
+                            session,
+                            holder_id=self.holder_id,
+                        ),
+                        name=f"astro-provider-load-{session_uid}",
+                    )
+                    capability_task = startup_tasks.create_task(
+                        materialize_session_capabilities(
+                            backend=self.backend,
+                            session_uid=session_uid,
+                            asset_root=self.settings.session_asset_root,
+                        ),
+                        name=f"astro-capabilities-load-{session_uid}",
+                    )
+
+                    async def connect_mcp() -> MainSequenceMCPClient:
+                        nonlocal mcp_client
+                        mcp_client = await MainSequenceMCPClient.connect(
+                            settings=self.settings,
+                            auth=self.backend.auth,
+                        )
+                        return mcp_client
+
+                    mcp_task = startup_tasks.create_task(
+                        connect_mcp(),
+                        name=f"astro-mcp-load-{session_uid}",
+                    )
+                    startup_tasks.create_task(
+                        storage.read_all(),
+                        name=f"astro-history-load-{session_uid}",
+                    )
+            except ExceptionGroup as errors:
+                raise errors.exceptions[0] from errors
+            provider_runtime = provider_runtime_task.result()
+            session_agents_root = capability_task.result()
+            mcp_client = mcp_task.result()
             mcp_tools = create_mainsequence_mcp_tools(mcp_client)
             mcp_resource_prompt = mainsequence_mcp_resource_prompt(mcp_client)
             web_store = MemorySearchResultStore()
@@ -481,25 +507,39 @@ class SessionRuntimeManager:
                 async with asyncio.timeout(self.settings.shutdown_grace_seconds):
                     async with runtime.lock:
                         pass
+        persistence_flushed = False
+        try:
+            async with asyncio.timeout(self.settings.shutdown_grace_seconds):
+                await runtime.storage.flush()
+            persistence_flushed = True
+        except Exception as error:
+            logger.exception(
+                "runtime.session.persistence_flush_failed",
+                message="Could not flush Tau entries before runtime eviction",
+                session_uid=session_uid,
+                error_type=type(error).__name__,
+                error_message=str(error),
+            )
         if runtime.lease_renew_task:
             runtime.lease_renew_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await runtime.lease_renew_task
-        with contextlib.suppress(Exception):
-            await self.backend.release_runtime_lease(
-                session_uid,
-                RuntimeLeaseReleaseRequest(
-                    lease_token=runtime.storage.lease_token,
+        if persistence_flushed:
+            with contextlib.suppress(Exception):
+                await self.backend.release_runtime_lease(
+                    session_uid,
+                    RuntimeLeaseReleaseRequest(
+                        lease_token=runtime.storage.lease_token,
+                        holder_id=self.holder_id,
+                        reason="runtime_eviction",
+                    ),
+                )
+                logger.info(
+                    "runtime.lease.released",
+                    message="Released backend runtime lease",
+                    session_uid=session_uid,
                     holder_id=self.holder_id,
-                    reason="runtime_eviction",
-                ),
-            )
-            logger.info(
-                "runtime.lease.released",
-                message="Released backend runtime lease",
-                session_uid=session_uid,
-                holder_id=self.holder_id,
-            )
+                )
         if runtime.mcp_client is not None:
             with contextlib.suppress(Exception):
                 await runtime.mcp_client.aclose()

@@ -216,6 +216,7 @@ class ProviderCredential(BackendModel):
     api: str | None = None
     api_key: SecretStr | None = None
     access_token: SecretStr | None = None
+    expires_at: datetime | None = None
     account_id: str | None = None
     base_url: str | None = None
     headers: dict[str, str] = Field(default_factory=dict)

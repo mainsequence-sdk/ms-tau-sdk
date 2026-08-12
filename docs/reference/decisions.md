@@ -56,6 +56,9 @@ pre-UID API sketches have been removed from the active reference set.
 
 ## Checkpoints And Session State
 
+- [`adr-45-nonblocking-tau-runtime-io.md`](./adr-45-nonblocking-tau-runtime-io.md)
+  - Lease-owned Tau runtimes use cached reads and ordered write-behind persistence, flush before
+    settlement and lease release, and reuse warm provider credentials until expiration.
 - [`persistent-state.md`](./persistent-state.md)
   - Containers are disposable; durable continuity comes from backend checkpoints and
     backend-owned session identity.

@@ -40,6 +40,12 @@ spec:
               value: /tmp/astro-a2a-assets
             - name: ASTRO_SESSION_ASSET_ROOT
               value: /tmp/astro-session-assets
+            - name: ASTRO_LOG_MACHINE_SINK
+              value: "true"
+            - name: ASTRO_LOG_HUMAN_SINK
+              value: "false"
+            - name: ASTRO_LOG_PAYLOADS
+              value: "true"
           startupProbe:
             httpGet:
               path: /health

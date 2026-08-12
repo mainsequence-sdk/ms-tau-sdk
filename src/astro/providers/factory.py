@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 
 from tau_agent.provider import ModelProvider
 from tau_ai.anthropic import AnthropicProvider
@@ -32,6 +34,7 @@ from .definitions import PROVIDER_DEFINITIONS
 CustomProviderBuilder = Callable[[ProviderCredential], ModelProvider]
 CredentialResolver = Callable[[], Awaitable[ProviderCredential]]
 CATALOG_BY_NAME = {provider.name: provider for provider in BUILTIN_PROVIDER_CATALOG}
+PROVIDER_CREDENTIAL_REFRESH_SKEW = timedelta(seconds=60)
 
 
 @dataclass(frozen=True, slots=True)
@@ -126,14 +129,22 @@ class ProviderFactory:
             session_uid=session.uid,
             holder_id=holder_id,
         )
+        cached_credential = credential
+        credential_refresh_lock = asyncio.Lock()
 
-        async def refresh_credential() -> ProviderCredential:
-            return await self.backend.hydrate_provider_credential(
-                provider_name,
-                created_by_user_uid=session.created_by_user_uid,
-                session_uid=session.uid,
-                holder_id=holder_id,
-            )
+        async def resolve_credential() -> ProviderCredential:
+            nonlocal cached_credential
+            if not self._credential_expires_soon(cached_credential):
+                return cached_credential
+            async with credential_refresh_lock:
+                if self._credential_expires_soon(cached_credential):
+                    cached_credential = await self.backend.hydrate_provider_credential(
+                        provider_name,
+                        created_by_user_uid=session.created_by_user_uid,
+                        session_uid=session.uid,
+                        holder_id=holder_id,
+                    )
+                return cached_credential
 
         return ProviderRuntime(
             name=provider_name,
@@ -142,10 +153,19 @@ class ProviderFactory:
             provider=self.build(
                 credential,
                 model=model,
-                credential_resolver=refresh_credential,
+                credential_resolver=resolve_credential,
             ),
             credential=credential,
         )
+
+    @staticmethod
+    def _credential_expires_soon(credential: ProviderCredential) -> bool:
+        expires_at = credential.expires_at
+        if expires_at is None:
+            return False
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=UTC)
+        return expires_at <= datetime.now(UTC) + PROVIDER_CREDENTIAL_REFRESH_SKEW
 
     def build(
         self,

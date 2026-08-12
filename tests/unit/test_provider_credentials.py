@@ -1,5 +1,8 @@
+import asyncio
 import base64
 import json
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
@@ -15,7 +18,7 @@ from tau_coding.provider_catalog import BUILTIN_PROVIDER_CATALOG
 
 from astro.backend.auth import RuntimeCredentialAuth
 from astro.backend.client import MainSequenceClient
-from astro.backend.models import ProviderCredential
+from astro.backend.models import AgentSession, ProviderCredential
 from astro.errors import ConfigurationError
 from astro.providers.definitions import PROVIDER_DEFINITIONS
 from astro.providers.factory import ProviderFactory
@@ -131,6 +134,7 @@ async def test_hydration_derives_openai_codex_account_id_from_access_token():
 
     assert credential.secret() == access_token
     assert credential.account_id == "account-id"
+    assert credential.expires_at == datetime.fromtimestamp(1_770_000_000, UTC)
 
 
 @pytest.mark.asyncio
@@ -214,6 +218,75 @@ def test_factory_builds_openai_codex_provider():
     )
 
     assert isinstance(provider, OpenAICodexProvider)
+
+
+@pytest.mark.asyncio
+async def test_factory_reuses_warm_runtime_credential():
+    backend = AsyncMock()
+    backend.hydrate_provider_credential.return_value = ProviderCredential(
+        provider="openai-codex",
+        credential_kind="oauth",
+        access_token="access-token",
+        account_id="account-id",
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    factory = ProviderFactory(backend)
+    session = AgentSession(
+        uid="session-1",
+        harness="tau",
+        harness_protocol="tau-session-v1",
+        harness_version="0.3.1",
+        active_provider="openai-codex",
+        active_model="gpt-5.5",
+        created_by_user_uid="user-1",
+    )
+
+    runtime = await factory.for_session(session, holder_id="holder-1")
+    resolver = runtime.provider._config.credential_resolver
+    first, second = await resolver(), await resolver()
+
+    assert first.access_token == "access-token"
+    assert second.access_token == "access-token"
+    backend.hydrate_provider_credential.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_factory_refreshes_expiring_credential_once():
+    backend = AsyncMock()
+    backend.hydrate_provider_credential.side_effect = [
+        ProviderCredential(
+            provider="openai-codex",
+            credential_kind="oauth",
+            access_token="expired-token",
+            account_id="account-id",
+            expires_at=datetime.now(UTC) - timedelta(seconds=1),
+        ),
+        ProviderCredential(
+            provider="openai-codex",
+            credential_kind="oauth",
+            access_token="fresh-token",
+            account_id="account-id",
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        ),
+    ]
+    factory = ProviderFactory(backend)
+    session = AgentSession(
+        uid="session-1",
+        harness="tau",
+        harness_protocol="tau-session-v1",
+        harness_version="0.3.1",
+        active_provider="openai-codex",
+        active_model="gpt-5.5",
+        created_by_user_uid="user-1",
+    )
+
+    runtime = await factory.for_session(session, holder_id="holder-1")
+    resolver = runtime.provider._config.credential_resolver
+    first, second = await asyncio.gather(resolver(), resolver())
+
+    assert first.access_token == "fresh-token"
+    assert second.access_token == "fresh-token"
+    assert backend.hydrate_provider_credential.await_count == 2
 
 
 def test_factory_validates_model_and_thinking_level():

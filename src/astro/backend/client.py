@@ -389,6 +389,7 @@ class MainSequenceClient:
                 "credential_kind": credential_kind,
                 "api_key": raw.get("api_key") or raw.get("key"),
                 "access_token": access_token,
+                "expires_at": raw.get("expires_at") or raw.get("expires"),
                 "account_id": account_id,
                 "base_url": raw.get("base_url"),
                 "headers": raw.get("headers", {}),

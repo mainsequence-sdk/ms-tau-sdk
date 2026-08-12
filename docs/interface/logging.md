@@ -34,9 +34,11 @@ http.request.started
 http.request.completed
 ```
 
-Completion events include the method, route, path, status, duration, response
-size, remote address, and user agent. Cancelled and failed requests use
-`http.request.cancelled` and `http.request.failed`.
+Completion events include `http_method`, `http_path`, route, status, duration,
+response size, remote address, and user agent. Chat completion events also
+include the session identifier and safe conversation metadata described below.
+Cancelled and failed requests use `http.request.cancelled` and
+`http.request.failed`.
 
 ## Rendering
 
@@ -48,12 +50,12 @@ ASTRO_LOG_HUMAN_SINK=false
 ASTRO_LOG_LEVEL=INFO
 ```
 
-Local development can use Django-style console rendering on stderr:
+Local development uses Django-style, one-line console rendering:
 
 ```dotenv
 ASTRO_LOG_MACHINE_SINK=false
 ASTRO_LOG_HUMAN_SINK=true
-ASTRO_LOG_LEVEL=DEBUG
+ASTRO_LOG_LEVEL=INFO
 ```
 
 If both sinks are enabled, JSON remains on stdout and console output remains on
@@ -66,8 +68,9 @@ Fields whose names contain `authorization`, `credential`, `password`,
 or exception text are also redacted. Tool results, provider headers, MCP
 payloads, system prompts, and complete conversation histories are not logged.
 
-`runtime.turn.started` and `llm.turn.started` always include the latest user
-prompt's character count and SHA-256 fingerprint. When
+`runtime.turn.received`, `llm.turn.started`, and completed `/api/chat` access
+events always include the latest user prompt's character count and SHA-256
+fingerprint. When
 `ASTRO_LOG_PAYLOADS=true`, they also include `prompt_excerpt`: a
 whitespace-normalized preview limited to 200 characters. The default remains
 `false`.

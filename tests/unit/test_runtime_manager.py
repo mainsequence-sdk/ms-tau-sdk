@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from astro.backend.models import AgentSession, RuntimeLease
+from astro.backend.models import AgentSession, RuntimeLease, SessionEntryList
 from astro.errors import ConfigurationError
 from astro.logging import configure_logging
 from astro.runtime.manager import SessionRuntimeManager
@@ -55,7 +55,11 @@ def _loaded_manager(tmp_path, coding_session, *, timeout: float = 1):
         session_uid="session-1",
         holder_id="test",
         coding_session=coding_session,
-        storage=SimpleNamespace(lease_token="lease"),
+        storage=SimpleNamespace(
+            lease_token="lease",
+            flush=AsyncMock(),
+            invalidate_lease=Mock(),
+        ),
         provider=object(),
     )
     return manager, backend
@@ -101,6 +105,44 @@ async def test_runtime_manager_serializes_same_session_prompts(tmp_path):
     assert first[0].data["delta"] == "first"
     assert second[0].data["delta"] == "second"
     assert coding_session.max_active == 1
+    manager._runtimes.clear()
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_runtime_manager_flushes_persistence_before_agent_settled(tmp_path):
+    class SettlingCodingSession(_FakeCodingSession):
+        async def prompt(self, content: str):
+            yield {"type": "text_delta", "delta": content}
+            yield {"type": "agent_settled"}
+
+    manager, _backend = _loaded_manager(tmp_path, SettlingCodingSession())
+    runtime = manager._runtimes["session-1"]
+    flush_started = asyncio.Event()
+    release_flush = asyncio.Event()
+    first_event_received = asyncio.Event()
+    received = []
+
+    async def flush():
+        flush_started.set()
+        await release_flush.wait()
+
+    async def consume():
+        async for event in manager.prompt("session-1", "hello"):
+            received.append(event)
+            first_event_received.set()
+
+    runtime.storage.flush = AsyncMock(side_effect=flush)
+    consume_task = asyncio.create_task(consume())
+    await first_event_received.wait()
+    await flush_started.wait()
+
+    assert [event.type for event in received] == ["text_delta"]
+
+    release_flush.set()
+    await consume_task
+    assert [event.type for event in received] == ["text_delta", "agent_settled"]
+
     manager._runtimes.clear()
     await manager.aclose()
 
@@ -258,6 +300,7 @@ async def test_runtime_load_keeps_capability_root_and_reuses_backend_auth(tmp_pa
         lease_expires_at="2026-07-25T00:00:00Z",
         checkpoint_version=1,
     )
+    backend.get_entries.return_value = SessionEntryList(entries=[], next_sequence=0)
     provider = object()
     providers = Mock()
     providers.for_session = AsyncMock(
@@ -326,6 +369,97 @@ async def test_runtime_load_keeps_capability_root_and_reuses_backend_auth(tmp_pa
 
 
 @pytest.mark.asyncio
+async def test_runtime_load_runs_independent_startup_io_concurrently(tmp_path):
+    backend = AsyncMock()
+    backend.auth = Mock()
+    backend.get_session.return_value = AgentSession(
+        uid="session-1",
+        harness="tau",
+        harness_protocol="tau-session-v1",
+        harness_version="0.3.1",
+    )
+    backend.acquire_runtime_lease.return_value = RuntimeLease(
+        lease_token="lease-token",
+        holder_id="test-holder",
+        lease_expires_at="2026-07-25T00:00:00Z",
+        checkpoint_version=1,
+    )
+    provider_runtime = SimpleNamespace(
+        provider=object(),
+        name="openai",
+        model="gpt-5.4",
+        thinking_level=None,
+    )
+    mcp_client = SimpleNamespace(tools=(), resources=(), aclose=AsyncMock())
+    coding_session = _FakeCodingSession()
+    started: set[str] = set()
+    all_started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def block(name, result):
+        started.add(name)
+        if len(started) == 4:
+            all_started.set()
+        await release.wait()
+        return result
+
+    async def load_provider(*_args, **_kwargs):
+        return await block("provider", provider_runtime)
+
+    async def load_history(*_args, **_kwargs):
+        return await block(
+            "history",
+            SessionEntryList(entries=[], next_sequence=0),
+        )
+
+    async def load_capabilities(*_args, **_kwargs):
+        return await block("capabilities", tmp_path / ".agents")
+
+    async def load_mcp(*_args, **_kwargs):
+        return await block("mcp", mcp_client)
+
+    providers = Mock()
+    providers.for_session = AsyncMock(side_effect=load_provider)
+    backend.get_entries.side_effect = load_history
+    manager = SessionRuntimeManager(
+        settings=Settings(
+            _env_file=None,
+            runtime_credential_id="credential-id",
+            runtime_credential_secret="credential-secret",
+            project_root=tmp_path,
+        ),
+        backend=backend,
+        providers=providers,
+    )
+
+    with (
+        patch(
+            "astro.runtime.manager.materialize_session_capabilities",
+            AsyncMock(side_effect=load_capabilities),
+        ),
+        patch(
+            "astro.runtime.manager.MainSequenceMCPClient.connect",
+            AsyncMock(side_effect=load_mcp),
+        ),
+        patch("astro.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
+        patch("astro.runtime.manager.create_coding_tools", return_value=[]),
+        patch("astro.runtime.manager.create_file_tools", return_value=[]),
+        patch("astro.runtime.manager.build_web_tools", return_value=[]),
+        patch(
+            "astro.runtime.manager.CodingSession.load",
+            AsyncMock(return_value=coding_session),
+        ),
+    ):
+        load_task = asyncio.create_task(manager.get("session-1"))
+        await asyncio.wait_for(all_started.wait(), timeout=1)
+        assert started == {"provider", "history", "capabilities", "mcp"}
+        release.set()
+        await load_task
+
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
 async def test_coding_session_load_failure_closes_mcp_before_registration(tmp_path):
     backend = AsyncMock()
     backend.auth = Mock()
@@ -341,6 +475,7 @@ async def test_coding_session_load_failure_closes_mcp_before_registration(tmp_pa
         lease_expires_at="2026-07-25T00:00:00Z",
         checkpoint_version=1,
     )
+    backend.get_entries.return_value = SessionEntryList(entries=[], next_sequence=0)
     providers = Mock()
     providers.for_session = AsyncMock(
         return_value=SimpleNamespace(

@@ -7,9 +7,10 @@ from collections.abc import AsyncIterator
 from typing import Annotated
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from astro.logging import conversation_log_fields
 from astro.protocols.assistant_ui import AssistantUiEncoder
 from astro.runtime.manager import SessionRuntimeManager
 
@@ -33,12 +34,22 @@ async def chat_info() -> dict[str, object]:
 @router.post("/chat")
 async def chat(
     body: ChatRequest,
+    request: Request,
     manager: RuntimeManagerDep,
 ) -> StreamingResponse:
     try:
         prompt = body.prompt_text()
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+
+    request.state.request_log_fields = {
+        "session_uid": body.session_uid,
+        **conversation_log_fields(
+            prompt,
+            include_excerpt=manager.settings.log_payloads,
+            message_count=len(body.messages) if body.messages else None,
+        ),
+    }
 
     async def stream() -> AsyncIterator[bytes]:
         encoder = AssistantUiEncoder()

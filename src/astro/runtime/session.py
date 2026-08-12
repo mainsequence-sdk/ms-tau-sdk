@@ -38,8 +38,16 @@ class ActiveSessionRuntime:
             raise RuntimeError("Session runtime cancellation has been requested")
         async with self.lock:
             self.last_used_at = time.monotonic()
+            settled_event: AstroRuntimeEvent | None = None
             async for event in self.coding_session.prompt(content):
-                yield translate_tau_event(event)
+                translated = translate_tau_event(event)
+                if translated.type == "agent_settled":
+                    settled_event = translated
+                else:
+                    yield translated
+            await self.storage.flush()
+            if settled_event is not None:
+                yield settled_event
             self.last_used_at = time.monotonic()
 
     def cancel(self, *, force: bool = False) -> bool:

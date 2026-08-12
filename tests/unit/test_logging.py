@@ -4,10 +4,18 @@ import logging
 
 import structlog
 from fastapi.testclient import TestClient
+from starlette.applications import Starlette
+from starlette.requests import Request
+from starlette.responses import PlainTextResponse
+from starlette.routing import Route
 from structlog.contextvars import bind_contextvars, clear_contextvars
 
 from astro.app import create_app
-from astro.logging import configure_logging, conversation_log_fields
+from astro.logging import (
+    RequestContextMiddleware,
+    configure_logging,
+    conversation_log_fields,
+)
 from astro.settings import Settings
 
 
@@ -130,15 +138,20 @@ def test_structlog_human_sink_uses_console_renderer_and_source(capsys):
 
     structlog.get_logger("astro.test").error(
         "test.human",
+        message="Readable human event",
         password="private-password",
     )
 
     captured = capsys.readouterr()
     assert captured.out == ""
-    assert "test.human" in captured.err
+    assert "Readable human event" in captured.err
+    assert "test.human" not in captured.err
+    assert "message=" not in captured.err
     assert "[REDACTED]" in captured.err
     assert "private-password" not in captured.err
-    assert "tests/unit/test_logging.py:" in captured.err
+    assert "pathname=" in captured.err
+    assert "source=" not in captured.err
+    assert len(captured.err.splitlines()) == 1
 
 
 def test_request_context_emits_correlated_access_events(tmp_path, capsys):
@@ -167,9 +180,62 @@ def test_request_context_emits_correlated_access_events(tmp_path, capsys):
 
     assert response.headers["x-request-id"] == started["request_id"]
     assert completed["request_id"] == started["request_id"]
-    assert completed["method"] == "GET"
+    assert completed["http_method"] == "GET"
     assert completed["route"] == "/health"
-    assert completed["path"] == "/health"
+    assert completed["http_path"] == "/health"
     assert completed["status_code"] == 200
     assert isinstance(completed["duration_ms"], float)
     assert completed["response_size_bytes"] > 0
+
+
+def test_request_context_adds_endpoint_fields_to_completion_event(capsys):
+    configure_logging("INFO", machine_sink=True, human_sink=False)
+
+    async def endpoint(request: Request) -> PlainTextResponse:
+        request.state.request_log_fields = {
+            "session_uid": "session-1",
+            "prompt_excerpt": "Analyze this portfolio.",
+        }
+        return PlainTextResponse("ok")
+
+    app = RequestContextMiddleware(
+        Starlette(routes=[Route("/chat", endpoint, methods=["POST"])])
+    )
+    with TestClient(app) as client:
+        response = client.post("/chat")
+
+    events = _json_events(capsys.readouterr().out)
+    completed = next(
+        event for event in events if event["event"] == "http.request.completed"
+    )
+
+    assert response.status_code == 200
+    assert completed["session_uid"] == "session-1"
+    assert completed["prompt_excerpt"] == "Analyze this portfolio."
+
+
+def test_human_request_completion_is_one_line_with_prompt_excerpt(capsys):
+    configure_logging("INFO", machine_sink=False, human_sink=True)
+
+    async def endpoint(request: Request) -> PlainTextResponse:
+        request.state.request_log_fields = {
+            "session_uid": "session-1",
+            "prompt_excerpt": "Analyze this portfolio.",
+        }
+        return PlainTextResponse("ok")
+
+    app = RequestContextMiddleware(
+        Starlette(routes=[Route("/chat", endpoint, methods=["POST"])])
+    )
+    with TestClient(app) as client:
+        response = client.post("/chat")
+
+    lines = capsys.readouterr().err.splitlines()
+    completed = next(line for line in lines if "HTTP request completed" in line)
+
+    assert response.status_code == 200
+    assert "http_method=POST" in completed
+    assert "http_path=/chat" in completed
+    assert "session_uid=session-1" in completed
+    assert "prompt_excerpt='Analyze this portfolio.'" in completed
+    assert "source=" not in completed

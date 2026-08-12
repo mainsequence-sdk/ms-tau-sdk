@@ -158,7 +158,7 @@ def _sanitize_event(
 
 
 class ClickableConsoleRenderer(structlog.dev.ConsoleRenderer):
-    """Django-compatible console rendering with a clickable source line."""
+    """Render readable one-line logs without dropping structured fields."""
 
     def __call__(
         self,
@@ -166,9 +166,16 @@ class ClickableConsoleRenderer(structlog.dev.ConsoleRenderer):
         method_name: str,
         event_dict: EventDict,
     ) -> str:
-        source = event_dict.pop("source", None)
-        rendered = super().__call__(logger, method_name, event_dict)
-        return f"{rendered}\n{source}" if source else rendered
+        console_event = dict(event_dict)
+        message = console_event.pop("message", None)
+        if isinstance(message, str) and message:
+            console_event["event"] = message
+
+        # ConsoleRenderer already renders logger and level prominently.
+        console_event.pop("severity", None)
+        console_event.pop("component", None)
+        console_event.pop("source", None)
+        return super().__call__(logger, method_name, console_event)
 
 
 def _common_processors() -> list[Processor]:
@@ -309,8 +316,9 @@ class RequestContextMiddleware:
 
         self.logger.info(
             "http.request.started",
-            method=method,
-            path=path,
+            message="HTTP request started",
+            http_method=method,
+            http_path=path,
             remote_address=remote_address,
         )
 
@@ -332,19 +340,28 @@ class RequestContextMiddleware:
                 and not message.get("more_body", False)
             ):
                 completed = True
-                fields = {
-                    "method": method,
-                    "route": _route_path(scope),
-                    "path": path,
-                    "status_code": status_code,
-                    "duration_ms": round(
-                        (time.monotonic() - started_at) * 1000,
-                        3,
-                    ),
-                    "response_size_bytes": response_size_bytes,
-                    "remote_address": remote_address,
-                    "user_agent": user_agent,
-                }
+                request_log_fields = state.get("request_log_fields")
+                fields = (
+                    {str(key): value for key, value in request_log_fields.items()}
+                    if isinstance(request_log_fields, Mapping)
+                    else {}
+                )
+                fields.update(
+                    {
+                        "message": "HTTP request completed",
+                        "http_method": method,
+                        "route": _route_path(scope),
+                        "http_path": path,
+                        "status_code": status_code,
+                        "duration_ms": round(
+                            (time.monotonic() - started_at) * 1000,
+                            3,
+                        ),
+                        "response_size_bytes": response_size_bytes,
+                        "remote_address": remote_address,
+                        "user_agent": user_agent,
+                    }
+                )
                 if status_code >= 500:
                     self.logger.error("http.request.completed", **fields)
                 elif status_code >= 400:
@@ -358,9 +375,10 @@ class RequestContextMiddleware:
             if not completed:
                 self.logger.warning(
                     "http.request.cancelled",
-                    method=method,
+                    message="HTTP request cancelled",
+                    http_method=method,
                     route=_route_path(scope),
-                    path=path,
+                    http_path=path,
                     duration_ms=round(
                         (time.monotonic() - started_at) * 1000,
                         3,
@@ -371,9 +389,10 @@ class RequestContextMiddleware:
             if not completed:
                 self.logger.exception(
                     "http.request.failed",
-                    method=method,
+                    message="HTTP request failed",
+                    http_method=method,
                     route=_route_path(scope),
-                    path=path,
+                    http_path=path,
                     status_code=status_code,
                     duration_ms=round(
                         (time.monotonic() - started_at) * 1000,

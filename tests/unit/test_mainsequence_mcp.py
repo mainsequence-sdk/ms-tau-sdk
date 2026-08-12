@@ -1,9 +1,15 @@
 import asyncio
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
+import anyio
 import httpx
 import pytest
 from mcp import types
+from starlette.applications import Starlette
+from starlette.responses import StreamingResponse
+from starlette.routing import Route
 
 from astro.backend.mcp import (
     MainSequenceMCPClient,
@@ -59,6 +65,78 @@ def test_mcp_url_is_derived_from_backend_url():
     )
 
     assert client.url == "http://backend.test/mcp"
+
+
+@pytest.mark.asyncio
+async def test_mcp_transport_does_not_leak_cancel_scope_into_streaming_response():
+    transport_tasks: list[asyncio.Task[object] | None] = []
+    transport_exit_tasks: list[asyncio.Task[object] | None] = []
+    operation_tasks: list[asyncio.Task[object] | None] = []
+
+    @asynccontextmanager
+    async def fake_transport(*_args, **_kwargs):
+        async with anyio.create_task_group() as task_group:
+            transport_tasks.append(asyncio.current_task())
+            try:
+                yield object(), object(), lambda: None
+            finally:
+                transport_exit_tasks.append(asyncio.current_task())
+                task_group.cancel_scope.cancel()
+
+    class FakeClientSession:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def initialize(self):
+            return None
+
+        async def list_tools(self):
+            return types.ListToolsResult(tools=[])
+
+        async def list_resources(self):
+            return types.ListResourcesResult(resources=[])
+
+        async def call_tool(self, name, arguments):
+            operation_tasks.append(asyncio.current_task())
+            return types.CallToolResult(content=[])
+
+    clients: list[MainSequenceMCPClient] = []
+
+    async def stream() -> AsyncIterator[bytes]:
+        client = await MainSequenceMCPClient.connect(
+            settings=_settings(),
+            auth=AsyncMock(),
+        )
+        clients.append(client)
+        await client.call_tool("project.list", {})
+        yield b"ok"
+
+    async def endpoint(_request):
+        return StreamingResponse(stream())
+
+    app = Starlette(routes=[Route("/", endpoint)])
+    with (
+        patch("astro.backend.mcp.streamable_http_client", fake_transport),
+        patch("astro.backend.mcp.ClientSession", FakeClientSession),
+    ):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="http://astro.test",
+        ) as http:
+            response = await http.get("/")
+
+        assert response.text == "ok"
+        assert len(clients) == 1
+        await clients[0].aclose()
+
+    assert transport_tasks == transport_exit_tasks
+    assert operation_tasks == transport_tasks
 
 
 @pytest.mark.asyncio
