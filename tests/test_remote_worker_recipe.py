@@ -1,6 +1,5 @@
 from pathlib import Path
 
-
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
 
@@ -17,6 +16,7 @@ def test_remote_worker_recipe_uses_backend_supplied_executor_bundle_image() -> N
 def test_cloud_build_publishes_unrendered_provider_neutral_recipe() -> None:
     cloud_build = (REPOSITORY_ROOT / "deployment/gcp/cloudbuild.yaml").read_text()
 
+    assert "export DOCKER_BUILDKIT=1" in cloud_build
     assert "gsutil cp Dockerfile.remote-worker" in cloud_build
     assert "Dockerfile.remote-worker.rendered" not in cloud_build
     assert 'sed "s|^ARG PROJECT_ID$' not in cloud_build

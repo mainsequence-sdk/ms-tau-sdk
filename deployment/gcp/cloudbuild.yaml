@@ -17,6 +17,8 @@ steps:
       - |
         set -euo pipefail
 
+        export DOCKER_BUILDKIT=1
+
         ASTRO_VERSION="$$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n1)"
         test -n "$${ASTRO_VERSION}"
 

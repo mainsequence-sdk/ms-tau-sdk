@@ -25,6 +25,9 @@ The pipeline builds and publishes:
 - `astro/project-executor-bundle:astro-<version>`
 - `astro/project-executor-bundle:latest`
 
+The Docker build step enables BuildKit because the trusted runtime Dockerfile
+uses cache mounts while materializing its locked Python dependencies.
+
 The remote-worker Dockerfile rejects any project base image whose active
 `python` is older than 3.13. Astro and project dependencies are installed into
 that same environment. It does not install Node.js or a second interpreter.
