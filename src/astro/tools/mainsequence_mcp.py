@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Mapping
+from copy import deepcopy
 from typing import cast
 
 from mcp import types
@@ -17,7 +18,11 @@ from tau_agent.tools import (
 )
 from tau_agent.types import JSONValue
 
-from astro.backend.mcp import MainSequenceMCPClient
+from astro.backend.mcp import (
+    ENVIRONMENT_SCOPED_AGENT_TOOLS,
+    ENVIRONMENT_UID_ARGUMENT,
+    MainSequenceMCPClient,
+)
 
 _INVALID_TOOL_NAME = re.compile(r"[^A-Za-z0-9_-]")
 _RESOURCE_TOOL_NAME = "mainsequence__read_resource"
@@ -75,6 +80,24 @@ def _tool_result(
     return AgentToolResult(content=content, details=details)
 
 
+def _tau_tool_input_schema(tool: types.Tool) -> Mapping[str, JSONValue]:
+    schema = deepcopy(tool.inputSchema)
+    if tool.name not in ENVIRONMENT_SCOPED_AGENT_TOOLS:
+        return cast(Mapping[str, JSONValue], schema)
+
+    properties = schema.get("properties")
+    if isinstance(properties, dict):
+        properties.pop(ENVIRONMENT_UID_ARGUMENT, None)
+    required = schema.get("required")
+    if isinstance(required, list):
+        schema["required"] = [
+            field_name
+            for field_name in required
+            if field_name != ENVIRONMENT_UID_ARGUMENT
+        ]
+    return cast(Mapping[str, JSONValue], schema)
+
+
 def _create_mcp_tool(
     *,
     client: MainSequenceMCPClient,
@@ -102,7 +125,7 @@ def _create_mcp_tool(
         name=tau_name,
         label=_tool_label(tool),
         description=tool.description or f"Call Main Sequence MCP tool {canonical_name}.",
-        parameters=cast(Mapping[str, JSONValue], tool.inputSchema),
+        parameters=_tau_tool_input_schema(tool),
         execute_fn=execute,
         execution_mode="sequential",
     )

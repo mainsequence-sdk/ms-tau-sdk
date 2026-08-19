@@ -1,10 +1,10 @@
 # syntax=docker/dockerfile:1.7
 
-ARG PROJECT_ID
 ARG BASE_IMAGE
+ARG EXECUTOR_BUNDLE_IMAGE
 ARG ASTRO_EXECUTOR_BUNDLE_REF=latest
 
-FROM europe-west1-docker.pkg.dev/${PROJECT_ID}/workload-default-artifact-registry/astro/project-executor-bundle:${ASTRO_EXECUTOR_BUNDLE_REF} AS astro-executor-bundle
+FROM ${EXECUTOR_BUNDLE_IMAGE} AS astro-executor-bundle
 
 FROM ${BASE_IMAGE}
 

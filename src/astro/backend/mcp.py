@@ -15,6 +15,7 @@ from mcp.client.streamable_http import streamable_http_client
 from pydantic import AnyUrl
 from structlog.contextvars import bound_contextvars, get_contextvars
 
+from astro.errors import ConfigurationError
 from astro.settings import Settings
 
 from .auth import RuntimeCredentialAuth
@@ -68,6 +69,9 @@ class _CloseCommand:
 
 
 type _MCPCommand = _CallToolCommand | _ReadResourceCommand | _CloseCommand
+
+ENVIRONMENT_SCOPED_AGENT_TOOLS = frozenset({"agent.list", "agent.search"})
+ENVIRONMENT_UID_ARGUMENT = "organization_project_environment_uid"
 
 
 class MainSequenceMCPClient:
@@ -230,6 +234,10 @@ class MainSequenceMCPClient:
         name: str,
         arguments: dict[str, object],
     ) -> types.CallToolResult:
+        arguments = self._environment_scoped_tool_arguments(
+            name=name,
+            arguments=arguments,
+        )
         commands = self._require_commands()
         result: asyncio.Future[types.CallToolResult] = (
             asyncio.get_running_loop().create_future()
@@ -243,6 +251,24 @@ class MainSequenceMCPClient:
             )
         )
         return await result
+
+    def _environment_scoped_tool_arguments(
+        self,
+        *,
+        name: str,
+        arguments: dict[str, object],
+    ) -> dict[str, object]:
+        scoped_arguments = dict(arguments)
+        if name not in ENVIRONMENT_SCOPED_AGENT_TOOLS:
+            return scoped_arguments
+        environment_uid = self._settings.organization_project_environment_uid
+        if environment_uid is None:
+            raise ConfigurationError(
+                "MAIN_SEQUENCE_ORGANIZATION_PROJECT_ENVIRONMENT_UID is required "
+                f"before calling {name}."
+            )
+        scoped_arguments[ENVIRONMENT_UID_ARGUMENT] = str(environment_uid)
+        return scoped_arguments
 
     async def read_resource(self, uri: str) -> types.ReadResourceResult:
         commands = self._require_commands()

@@ -25,11 +25,19 @@ The pipeline builds and publishes:
 - `astro/project-executor-bundle:astro-<version>`
 - `astro/project-executor-bundle:latest`
 
+The Docker build step enables BuildKit because the trusted runtime Dockerfile
+uses cache mounts while materializing its locked Python dependencies.
+
 The remote-worker Dockerfile rejects any project base image whose active
 `python` is older than 3.13. Astro and project dependencies are installed into
 that same environment. It does not install Node.js or a second interpreter.
 Project base images must also provide `ffmpeg`, `ffprobe`, and `git`; the remote
 worker build rejects images missing those web/tool runtime dependencies.
+
+The published remote-worker recipe is provider-neutral. Its
+`EXECUTOR_BUNDLE_IMAGE` is supplied by the backend as the exact digest-pinned
+bundle mirror in the ProjectBranch's target tenancy registry; the recipe does
+not construct or pull a central GCP image from `PROJECT_ID`.
 
 The Kubernetes workload has one `astro` container. Session durability is
 provided by Django's native Tau entry and runtime-lease APIs; there is no

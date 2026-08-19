@@ -1,4 +1,5 @@
 from pathlib import Path
+from uuid import UUID
 
 import pytest
 
@@ -16,6 +17,18 @@ def test_settings_normalize_backend_and_origins():
 
     assert settings.backend_url == "http://backend:8000"
     assert settings.trusted_origins == ("http://one.test", "http://two.test")
+
+
+def test_settings_reads_project_environment_uid_from_runtime_environment(monkeypatch):
+    environment_uid = UUID("00000000-0000-4000-8000-000000000042")
+    monkeypatch.setenv(
+        "MAIN_SEQUENCE_ORGANIZATION_PROJECT_ENVIRONMENT_UID",
+        str(environment_uid),
+    )
+
+    settings = Settings(_env_file=None)
+
+    assert settings.organization_project_environment_uid == environment_uid
 
 
 def test_runtime_auth_requires_both_credential_parts():
