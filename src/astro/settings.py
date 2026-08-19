@@ -5,6 +5,7 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
+from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -36,6 +37,10 @@ class Settings(BaseSettings):
     runtime_credential_secret: str | None = Field(
         default=None,
         validation_alias="MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET",
+    )
+    organization_project_environment_uid: UUID | None = Field(
+        default=None,
+        validation_alias="MAIN_SEQUENCE_ORGANIZATION_PROJECT_ENVIRONMENT_UID",
     )
     host: str = Field(default="0.0.0.0", validation_alias="ASTRO_HOST")
     port: int = Field(default=8787, validation_alias="ASTRO_PORT")

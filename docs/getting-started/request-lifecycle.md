@@ -9,7 +9,9 @@
 5. Astro hydrates the user-scoped provider credential from Django.
 6. Enabled backend session skills are materialized into a private Tau resource root.
 7. Astro connects to Django `/mcp` with the same runtime bearer token.
-8. Main Sequence MCP tools and resources are exposed to Tau.
+8. Main Sequence MCP tools and resources are exposed to Tau. For Agent
+   list/search, Astro removes the environment selector from the Tau schema and
+   injects the backend-provided ProjectBranch environment at transport time.
 9. Astro builds the Tau provider and `CodingSession` in memory.
 10. Tau entries are read from and appended directly to Django.
 11. Tau events are translated to assistant-ui SSE chunks.
