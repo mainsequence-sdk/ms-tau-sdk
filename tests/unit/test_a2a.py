@@ -1,4 +1,5 @@
 import base64
+import json
 from unittest.mock import AsyncMock
 
 import pytest
@@ -130,48 +131,67 @@ def test_output_contract_reads_schema_and_bounds_repair_attempts():
 
 
 @pytest.mark.asyncio
-async def test_push_notification_configs_use_backend_task_storage():
-    client = AsyncMock()
-    client.get_task_by_protocol_id.return_value = AgentTask(
-        uid="backend-task-uid",
-        task_id="task-1",
-        context_id="session-1",
-        agent_uid="agent-1",
-        status="working",
-    )
-    client.set_task_push_config.return_value = {
-        "id": "push-1",
-        "url": "https://callback.example.test/a2a",
-    }
-    client.list_task_push_configs.return_value = [
-        {
-            "id": "push-1",
-            "url": "https://callback.example.test/a2a",
-        }
+async def test_push_notification_rest_operations_are_explicitly_unsupported():
+    responses = [
+        await set_push_config("task-1"),
+        await list_push_configs("task-1"),
+        await get_push_config("task-1", "push-1"),
+        await delete_push_config("task-1", "push-1"),
     ]
-    client.delete_task_push_config.return_value = True
 
-    created = await set_push_config(
-        "task-1",
-        {
-            "id": "push-1",
-            "url": "https://callback.example.test/a2a",
-        },
+    for response in responses:
+        payload = json.loads(response.body)
+        assert response.status_code == 400
+        assert response.media_type == "application/a2a+json"
+        assert payload["error"]["status"] == "FAILED_PRECONDITION"
+        assert payload["error"]["details"] == [
+            {
+                "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                "reason": "PUSH_NOTIFICATION_NOT_SUPPORTED",
+                "domain": "a2a-protocol.org",
+            }
+        ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "method",
+    [
+        "CreateTaskPushNotificationConfig",
+        "GetTaskPushNotificationConfig",
+        "ListTaskPushNotificationConfigs",
+        "DeleteTaskPushNotificationConfig",
+        "tasks/pushNotificationConfig/set",
+        "tasks/pushNotificationConfig/get",
+        "tasks/pushNotificationConfig/list",
+        "tasks/pushNotificationConfig/delete",
+    ],
+)
+async def test_push_notification_json_rpc_operations_are_explicitly_unsupported(method):
+    client = AsyncMock()
+    result = await json_rpc(
+        {"jsonrpc": "2.0", "id": "rpc-1", "method": method, "params": {}},
         client,
+        AsyncMock(),
+        Settings(_env_file=None),
     )
-    listed = await list_push_configs("task-1", client)
-    fetched = await get_push_config("task-1", "push-1", client)
-    deleted = await delete_push_config("task-1", "push-1", client)
 
-    assert created["pushNotificationConfig"]["id"] == "push-1"
-    assert listed["pushNotificationConfigs"][0]["id"] == "push-1"
-    assert fetched["pushNotificationConfig"]["id"] == "push-1"
-    assert deleted == {"deleted": True}
-    client.set_task_push_config.assert_awaited_once()
-    client.delete_task_push_config.assert_awaited_once_with(
-        "backend-task-uid",
-        "push-1",
-    )
+    assert result == {
+        "jsonrpc": "2.0",
+        "id": "rpc-1",
+        "error": {
+            "code": -32003,
+            "message": "Push notifications are not supported",
+            "data": [
+                {
+                    "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                    "reason": "PUSH_NOTIFICATION_NOT_SUPPORTED",
+                    "domain": "a2a-protocol.org",
+                }
+            ],
+        },
+    }
+    assert client.mock_calls == []
 
 
 @pytest.mark.asyncio
@@ -180,7 +200,14 @@ async def test_extended_agent_card_is_loaded_from_backend():
     client.get_agent_card.return_value = AgentCardEnvelope(
         agent_session_uid="session-1",
         agent_uid="agent-1",
-        agent_card={"name": "Portfolio Reviewer"},
+        agent_card={
+            "name": "Portfolio Reviewer",
+            "capabilities": {
+                "streaming": True,
+                "pushNotifications": True,
+                "push_notifications": True,
+            },
+        },
     )
 
     result = await extended_agent_card(
@@ -190,7 +217,13 @@ async def test_extended_agent_card_is_loaded_from_backend():
         context_id=None,
     )
 
-    assert result["agent_card"] == {"name": "Portfolio Reviewer"}
+    assert result["agent_card"] == {
+        "name": "Portfolio Reviewer",
+        "capabilities": {
+            "streaming": True,
+            "pushNotifications": False,
+        },
+    }
     client.get_agent_card.assert_awaited_once_with("session-1")
 
 

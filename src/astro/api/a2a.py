@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from astro.backend.client import MainSequenceClient
 from astro.backend.models import AgentTask
@@ -49,6 +49,68 @@ STATE_MAP = {
     "canceled": "TASK_STATE_CANCELED",
     "rejected": "TASK_STATE_REJECTED",
 }
+PUSH_NOTIFICATION_NOT_SUPPORTED_MESSAGE = "Push notifications are not supported"
+PUSH_NOTIFICATION_RPC_METHODS = frozenset(
+    {
+        "CreateTaskPushNotificationConfig",
+        "GetTaskPushNotificationConfig",
+        "ListTaskPushNotificationConfigs",
+        "DeleteTaskPushNotificationConfig",
+        "tasks/pushNotificationConfig/set",
+        "tasks/pushNotificationConfig/get",
+        "tasks/pushNotificationConfig/list",
+        "tasks/pushNotificationConfig/delete",
+    }
+)
+
+
+def _push_notification_error_info() -> dict[str, str]:
+    return {
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "reason": "PUSH_NOTIFICATION_NOT_SUPPORTED",
+        "domain": "a2a-protocol.org",
+    }
+
+
+def _push_notification_rest_error() -> JSONResponse:
+    return JSONResponse(
+        status_code=400,
+        media_type="application/a2a+json",
+        content={
+            "error": {
+                "code": 400,
+                "status": "FAILED_PRECONDITION",
+                "message": PUSH_NOTIFICATION_NOT_SUPPORTED_MESSAGE,
+                "details": [_push_notification_error_info()],
+            }
+        },
+    )
+
+
+def _push_notification_json_rpc_error(request_id: object) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": {
+            "code": -32003,
+            "message": PUSH_NOTIFICATION_NOT_SUPPORTED_MESSAGE,
+            "data": [_push_notification_error_info()],
+        },
+    }
+
+
+def _without_push_notification_capability(
+    agent_card: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if agent_card is None:
+        return None
+    normalized = dict(agent_card)
+    advertised = normalized.get("capabilities")
+    capabilities = dict(advertised) if isinstance(advertised, dict) else {}
+    capabilities.pop("push_notifications", None)
+    capabilities["pushNotifications"] = False
+    normalized["capabilities"] = capabilities
+    return normalized
 
 
 def _sse(payload: dict[str, Any]) -> bytes:
@@ -719,57 +781,29 @@ async def subscribe_task(task_id: str, client: BackendDep) -> StreamingResponse:
 
 
 @router.get(f"{REST_BASE}/tasks/{{task_id}}/pushNotificationConfigs")
-async def list_push_configs(task_id: str, client: BackendDep) -> dict[str, Any]:
-    task = await client.get_task_by_protocol_id(task_id)
-    return {
-        "pushNotificationConfigs": await client.list_task_push_configs(task.uid),
-    }
+async def list_push_configs(task_id: str) -> JSONResponse:
+    return _push_notification_rest_error()
 
 
 @router.post(f"{REST_BASE}/tasks/{{task_id}}/pushNotificationConfigs")
-async def set_push_config(
-    task_id: str,
-    body: dict[str, Any],
-    client: BackendDep,
-) -> dict[str, Any]:
-    task = await client.get_task_by_protocol_id(task_id)
-    payload = await client.set_task_push_config(
-        task.uid,
-        {**body, "id": str(body.get("id") or uuid.uuid4())},
-    )
-    return {"pushNotificationConfig": payload}
+async def set_push_config(task_id: str) -> JSONResponse:
+    return _push_notification_rest_error()
 
 
 @router.get(f"{REST_BASE}/tasks/{{task_id}}/pushNotificationConfigs/{{config_id}}")
 async def get_push_config(
     task_id: str,
     config_id: str,
-    client: BackendDep,
-) -> dict[str, Any]:
-    task = await client.get_task_by_protocol_id(task_id)
-    payload = next(
-        (
-            config
-            for config in await client.list_task_push_configs(task.uid)
-            if str(config.get("id")) == config_id
-        ),
-        None,
-    )
-    if payload is None:
-        raise HTTPException(status_code=404, detail="Push notification config not found")
-    return {"pushNotificationConfig": payload}
+) -> JSONResponse:
+    return _push_notification_rest_error()
 
 
 @router.delete(f"{REST_BASE}/tasks/{{task_id}}/pushNotificationConfigs/{{config_id}}")
 async def delete_push_config(
     task_id: str,
     config_id: str,
-    client: BackendDep,
-) -> dict[str, bool]:
-    task = await client.get_task_by_protocol_id(task_id)
-    return {
-        "deleted": await client.delete_task_push_config(task.uid, config_id),
-    }
+) -> JSONResponse:
+    return _push_notification_rest_error()
 
 
 @router.get(f"{REST_BASE}/extendedAgentCard")
@@ -783,7 +817,9 @@ async def extended_agent_card(
     if not resolved_uid:
         raise HTTPException(status_code=400, detail="agent_session_uid is required")
     envelope = await client.get_agent_card(resolved_uid)
-    return envelope.model_dump(mode="json")
+    payload = envelope.model_dump(mode="json")
+    payload["agent_card"] = _without_push_notification_capability(envelope.agent_card)
+    return payload
 
 
 @router.post("/api/a2a/rpc", response_model=None)
@@ -801,6 +837,8 @@ async def json_rpc(
             "error": {"code": -32600, "message": "Invalid Request"},
         }
     method = str(body.get("method") or "")
+    if method in PUSH_NOTIFICATION_RPC_METHODS:
+        return _push_notification_json_rpc_error(request_id)
     params = body.get("params", {})
     if not isinstance(params, dict):
         return {

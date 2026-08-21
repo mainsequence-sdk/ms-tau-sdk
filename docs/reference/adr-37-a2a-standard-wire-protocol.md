@@ -175,7 +175,7 @@ Example:
   "version": "2.1.0",
   "capabilities": {
     "streaming": true,
-    "pushNotifications": true,
+    "pushNotifications": false,
     "extendedAgentCard": true,
     "extensions": [
       {
@@ -790,7 +790,8 @@ JSON-RPC errors should use:
 - [x] Add `GET /api/a2a/v1/tasks`.
 - [x] Add `POST /api/a2a/v1/tasks/{id}:cancel`.
 - [x] Add `POST /api/a2a/v1/tasks/{id}:subscribe`.
-- [x] Add push notification config endpoints.
+- [x] Add push notification config endpoints. Per ADR 46, they return the standard explicit
+      unsupported response until canonical backend persistence and delivery exist.
 - [x] Add `GET /api/a2a/v1/extendedAgentCard`.
 - [x] Add JSON-RPC endpoint `/api/a2a/rpc`.
 - [x] Map JSON-RPC `SendMessage` to the same core operation as REST `message:send`.

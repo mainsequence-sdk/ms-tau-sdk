@@ -43,6 +43,9 @@ pre-UID API sketches have been removed from the active reference set.
 - [`adr-43-backend-backed-a2a-task-persistence.md`](./adr-43-backend-backed-a2a-task-persistence.md)
   - Gap analysis for replacing Astro's process-local A2A task maps with backend-backed
     `AgentTask`, `AgentTaskMessage`, `AgentTaskOutput`, and `AgentTaskEvent` persistence.
+- [`adr-46-disable-a2a-push-notifications.md`](./adr-46-disable-a2a-push-notifications.md)
+  - Astro advertises `pushNotifications: false` and returns the standard explicit unsupported
+    response until canonical backend persistence and webhook delivery exist.
 
 ## Sessionless Inference
 

@@ -8,7 +8,8 @@ Astro implements the standard A2A surface directly in FastAPI:
 - `GET /api/a2a/v1/tasks/{task_id}`
 - `POST /api/a2a/v1/tasks/{task_id}:cancel`
 - `GET /api/a2a/v1/tasks/{task_id}:subscribe`
-- task push-notification configuration routes
+- task push-notification configuration routes, which currently return the standard unsupported
+  response
 - `GET /api/a2a/v1/extendedAgentCard`
 - `POST /api/a2a/rpc`
 
@@ -29,6 +30,12 @@ JSON-RPC accepts both the named methods and standard slash forms, including
 `GetTask`/`tasks/get`, `ListTasks`/`tasks/list`, and
 `CancelTask`/`tasks/cancel`. Streaming JSON-RPC responses are SSE frames whose
 payloads retain the original JSON-RPC request id.
+
+Push notifications are deliberately disabled until the backend provides canonical durable
+configuration storage and webhook delivery. Agent Cards report `pushNotifications: false`.
+REST push-configuration routes return HTTP `400` with
+`PUSH_NOTIFICATION_NOT_SUPPORTED`; current and legacy JSON-RPC push methods return code `-32003`.
+Astro does not contact the backend for these unsupported operations.
 
 Input supports text parts and standard inline PDF `Part.raw` payloads. URL file
 parts and non-PDF raw parts are rejected. Inline files are size-limited,
