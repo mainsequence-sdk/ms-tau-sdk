@@ -11,10 +11,12 @@ import os
 import re
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -36,6 +38,7 @@ router = APIRouter()
 BackendDep = Annotated[MainSequenceClient, Depends(backend)]
 RuntimeManagerDep = Annotated[SessionRuntimeManager, Depends(runtime_manager)]
 SettingsDep = Annotated[Settings, Depends(settings)]
+logger = structlog.get_logger(__name__)
 
 REST_BASE = "/api/a2a/v1"
 TERMINAL = {"completed", "failed", "canceled", "rejected"}
@@ -348,6 +351,140 @@ def _event_text(event_type: str, data: dict[str, Any], *, has_chunks: bool) -> s
     return ""
 
 
+def _assistant_message_text(message: dict[str, Any]) -> str:
+    content = message.get("content", [])
+    if not isinstance(content, list):
+        return ""
+    return "".join(
+        part["text"]
+        for part in content
+        if isinstance(part, dict)
+        and part.get("type") == "text"
+        and isinstance(part.get("text"), str)
+    )
+
+
+def _assistant_message(value: object) -> dict[str, Any] | None:
+    if isinstance(value, dict) and value.get("role") == "assistant":
+        return value
+    return None
+
+
+def _last_assistant_message(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, list):
+        return None
+    for message in reversed(value):
+        assistant = _assistant_message(message)
+        if assistant is not None:
+            return assistant
+    return None
+
+
+def _turn_failure_detail(message: dict[str, Any], stop_reason: str) -> str:
+    value = message.get("errorMessage", message.get("error_message"))
+    if value:
+        normalized = " ".join(str(value).split())
+        if len(normalized) > 500:
+            normalized = normalized[:497].rstrip() + "..."
+        return f"Agent turn failed: {normalized}"
+    if stop_reason == "aborted":
+        return "Agent turn was aborted"
+    return "Agent turn failed without a provider diagnostic"
+
+
+@dataclass(slots=True)
+class _TurnAccumulator:
+    max_output_bytes: int
+    delta_chunks: list[str] = field(default_factory=list)
+    delta_bytes: int = 0
+    latest_message_end: dict[str, Any] | None = None
+    latest_agent_end: dict[str, Any] | None = None
+    event_types: set[str] = field(default_factory=set)
+    assistant_content_types: set[str] = field(default_factory=set)
+
+    def consume(self, event: object) -> None:
+        event_type = str(getattr(event, "type", ""))
+        data = getattr(event, "data", {})
+        if not isinstance(data, dict):
+            return
+        self.event_types.add(event_type)
+        if event_type in {"text_delta", "text-delta"}:
+            value = str(data.get("delta", data.get("textDelta", "")))
+            if value:
+                self.delta_bytes = _append_bounded(
+                    self.delta_chunks,
+                    value,
+                    current_bytes=self.delta_bytes,
+                    max_output_bytes=self.max_output_bytes,
+                )
+            return
+        if event_type == "message_end":
+            assistant = _assistant_message(data.get("message"))
+            if assistant is not None:
+                self.latest_message_end = assistant
+                self._record_content_types(assistant)
+            return
+        if event_type == "agent_end":
+            assistant = _last_assistant_message(data.get("messages"))
+            if assistant is not None:
+                self.latest_agent_end = assistant
+                self._record_content_types(assistant)
+
+    def result(self) -> str:
+        final_message = self.latest_agent_end or self.latest_message_end
+        if final_message is not None:
+            stop_reason = str(
+                final_message.get(
+                    "stopReason",
+                    final_message.get("stop_reason", ""),
+                )
+            )
+            if stop_reason in {"error", "aborted"}:
+                raise HTTPException(
+                    status_code=502,
+                    detail=_turn_failure_detail(final_message, stop_reason),
+                )
+            final_text = _assistant_message_text(final_message).strip()
+            if final_text:
+                self._check_final_size(final_text)
+                return final_text
+
+        delta_text = "".join(self.delta_chunks).strip()
+        if delta_text:
+            return delta_text
+        raise HTTPException(
+            status_code=502,
+            detail="Agent turn produced no textual answer",
+        )
+
+    def diagnostics(self) -> dict[str, object]:
+        final_message = self.latest_agent_end or self.latest_message_end or {}
+        return {
+            "event_types": sorted(self.event_types),
+            "assistant_content_types": sorted(self.assistant_content_types),
+            "terminal_reason": final_message.get(
+                "stopReason",
+                final_message.get("stop_reason"),
+            ),
+            "delta_bytes": self.delta_bytes,
+        }
+
+    def _record_content_types(self, message: dict[str, Any]) -> None:
+        content = message.get("content", [])
+        if not isinstance(content, list):
+            return
+        self.assistant_content_types.update(
+            str(part.get("type")) for part in content if isinstance(part, dict) and part.get("type")
+        )
+
+    def _check_final_size(self, value: str) -> None:
+        if len(value.encode()) > self.max_output_bytes:
+            raise HTTPException(
+                status_code=502,
+                detail="Agent output exceeded ASTRO_MAX_TURN_OUTPUT_BYTES",
+            )
+
+
 async def _collect_turn(
     manager: SessionRuntimeManager,
     context_id: str,
@@ -355,18 +492,20 @@ async def _collect_turn(
     *,
     max_output_bytes: int,
 ) -> str:
-    chunks: list[str] = []
-    output_bytes = 0
+    accumulator = _TurnAccumulator(max_output_bytes=max_output_bytes)
     async for event in manager.prompt(context_id, prompt):
-        value = _event_text(event.type, event.data, has_chunks=bool(chunks))
-        if value:
-            output_bytes = _append_bounded(
-                chunks,
-                value,
-                current_bytes=output_bytes,
-                max_output_bytes=max_output_bytes,
-            )
-    return "".join(chunks).strip()
+        accumulator.consume(event)
+    try:
+        return accumulator.result()
+    except HTTPException as error:
+        logger.warning(
+            "a2a.turn.invalid_output",
+            message="Tau turn did not produce a valid textual A2A answer",
+            context_id=context_id,
+            status_code=error.status_code,
+            **accumulator.diagnostics(),
+        )
+        raise
 
 
 async def _collect_validated_turn(
@@ -693,9 +832,7 @@ async def message_send(
     task = await _create_backend_task(client, message=message, task_id=_task_id(body))
     configuration = body.get("configuration", {})
     return_immediately = (
-        bool(configuration.get("returnImmediately"))
-        if isinstance(configuration, dict)
-        else False
+        bool(configuration.get("returnImmediately")) if isinstance(configuration, dict) else False
     )
     if return_immediately:
         manager.create_background_task(
