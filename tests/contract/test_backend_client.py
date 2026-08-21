@@ -440,20 +440,20 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
         )
         credential = await client.hydrate_provider_credential(
             "openai",
-            created_by_user_uid="user-1",
             session_uid="session-1",
             holder_id="astro-1",
         )
-        statuses = await client.list_provider_statuses(created_by_user_uid="user-1")
+        statuses = await client.list_provider_statuses(
+            session_uid="session-1",
+        )
         flushed = await client.flush_provider_credential(
             provider="openai",
-            created_by_user_uid="user-1",
             session_uid="session-1",
             credential={"type": "api_key", "api_key": "provider-secret"},
         )
         revoked = await client.revoke_provider_credential(
             provider="openai",
-            created_by_user_uid="user-1",
+            session_uid="session-1",
         )
         created = await client.create_task({"task_id": "task-1"})
         found = await client.get_task_by_protocol_id("task-1")
@@ -471,6 +471,7 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
     assert statuses[0].status == "active"
     assert flushed == {"accepted": True}
     assert revoked == {"revoked": True}
+    assert requests[2][2] == "agent_session_uid=session-1"
     assert created.uid == found.uid == "task-uid-1"
     assert updated.status == "working"
     assert message == {"stored": True}
@@ -481,7 +482,7 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
         (
             "GET",
             "/api/v1/model-provider-credentials/status/",
-            "created_by_user_uid=user-1",
+            "agent_session_uid=session-1",
         ),
         ("POST", "/api/v1/model-provider-credentials/flush/", ""),
         ("POST", "/api/v1/model-provider-credentials/revoke/", ""),

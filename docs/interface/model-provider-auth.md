@@ -7,8 +7,7 @@ about to run.
 ## Status
 
 ```http
-GET /api/model-providers
-X-MainSequence-User-Uid: <user-uid>
+GET /api/model-providers?agent_session_uid=<session-uid>
 ```
 
 ## Sign In
@@ -19,11 +18,10 @@ endpoint.
 
 ```http
 POST /api/model-providers/openai/signin
-X-MainSequence-User-Uid: <user-uid>
 Content-Type: application/json
 
 {
-  "agent_session_uid": null,
+  "agent_session_uid": "11111111-1111-4111-8111-111111111111",
   "base_version": 0,
   "credential": {
     "type": "api_key",
@@ -39,11 +37,27 @@ and `expires`. Astro never writes provider secrets to local files.
 
 ```http
 POST /api/model-providers/openai/signoff
-X-MainSequence-User-Uid: <user-uid>
 Content-Type: application/json
 
-{}
+{
+  "agent_session_uid": "11111111-1111-4111-8111-111111111111"
+}
 ```
 
 The backend revokes the credential and increments its version so stale writes
 cannot reactivate it.
+
+Runtime-authenticated provider status, hydrate, flush, and revoke operations
+must carry the exact backend AgentSession UID. Astro never sends a User UID as
+credential-owner input; Django derives the credential owner exclusively from
+that authorized session. The deployed service's responsible User remains the
+acting principal and is never a credential fallback.
+
+Pre-session sign-in, API-key sync, status, and sign-off are ordinary User-JWT
+self-service operations against Django. A service runtime credential cannot
+select a User before an authoritative AgentSession exists.
+
+In A2A, the child session already inherits the immediate parent session's User.
+Each target runtime hydrates independently for its child session. Astro never
+places provider credentials in A2A message content, session metadata, or handle
+metadata.

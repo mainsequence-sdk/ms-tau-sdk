@@ -359,17 +359,15 @@ class MainSequenceClient:
         self,
         provider: str,
         *,
-        created_by_user_uid: str | None,
-        session_uid: str | None,
+        session_uid: str,
         holder_id: str,
     ) -> ProviderCredential:
-        if not created_by_user_uid:
-            raise BackendError("Provider hydration requires created-by user identity")
+        if not session_uid:
+            raise BackendError("Provider hydration requires an AgentSession UID")
         data = await self._request(
             "POST",
             model_provider_credentials("hydrate"),
             json={
-                "created_by_user_uid": created_by_user_uid,
                 "agent_session_uid": session_uid,
                 "providers": [provider],
                 "holder_id": holder_id,
@@ -415,14 +413,12 @@ class MainSequenceClient:
     async def list_provider_statuses(
         self,
         *,
-        created_by_user_uid: str | None,
+        session_uid: str,
     ) -> list[ProviderStatus]:
+        query = urlencode({"agent_session_uid": session_uid})
         data = await self._request(
             "GET",
-            (
-                model_provider_credentials("status")
-                + f"?created_by_user_uid={created_by_user_uid or ''}"
-            ),
+            model_provider_credentials("status") + f"?{query}",
             idempotent=True,
         )
         values = data.get("providers", {}) if isinstance(data, dict) else {}
@@ -438,8 +434,7 @@ class MainSequenceClient:
         self,
         *,
         provider: str,
-        created_by_user_uid: str,
-        session_uid: str | None,
+        session_uid: str,
         credential: Mapping[str, Any],
         base_version: int = 0,
         reason: str = "signin_completed",
@@ -448,7 +443,6 @@ class MainSequenceClient:
             "POST",
             model_provider_credentials("flush"),
             json={
-                "created_by_user_uid": created_by_user_uid,
                 "agent_session_uid": session_uid,
                 "provider": provider,
                 "base_version": base_version,
@@ -465,14 +459,14 @@ class MainSequenceClient:
         self,
         *,
         provider: str,
-        created_by_user_uid: str,
+        session_uid: str,
         reason: str = "user_signoff",
     ) -> dict[str, Any]:
         data = await self._request(
             "POST",
             model_provider_credentials("revoke"),
             json={
-                "created_by_user_uid": created_by_user_uid,
+                "agent_session_uid": session_uid,
                 "provider": provider,
                 "reason": reason,
             },

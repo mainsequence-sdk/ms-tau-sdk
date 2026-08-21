@@ -13,13 +13,13 @@ from astro.backend.client import MainSequenceClient
 async def collect_model_catalog(
     backend: MainSequenceClient,
     *,
-    created_by_user_uid: str | None,
+    session_uid: str | None,
 ) -> dict[str, Any]:
     statuses = (
         await backend.list_provider_statuses(
-            created_by_user_uid=created_by_user_uid,
+            session_uid=session_uid,
         )
-        if created_by_user_uid
+        if session_uid
         else []
     )
     status_by_provider = {status.provider: status for status in statuses}

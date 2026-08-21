@@ -65,8 +65,7 @@ async def test_hydration_uses_django_tau_credential_contract():
         client = MainSequenceClient(settings, auth, client=http)
         credential = await client.hydrate_provider_credential(
             "openai",
-            created_by_user_uid="user-1",
-            session_uid=None,
+            session_uid="session-1",
             holder_id="test",
         )
 
@@ -127,7 +126,6 @@ async def test_hydration_derives_openai_codex_account_id_from_access_token():
         client = MainSequenceClient(settings, auth, client=http)
         credential = await client.hydrate_provider_credential(
             "openai-codex",
-            created_by_user_uid="user-1",
             session_uid="session-1",
             holder_id="test",
         )
@@ -171,14 +169,12 @@ async def test_flush_uses_django_tau_credential_contract():
         client = MainSequenceClient(settings, auth, client=http)
         await client.flush_provider_credential(
             provider="openai-codex",
-            created_by_user_uid="user-1",
             session_uid="session-1",
             credential={"type": "oauth", "access": "access-token"},
         )
 
     assert requests == [
         {
-            "created_by_user_uid": "user-1",
             "agent_session_uid": "session-1",
             "provider": "openai-codex",
             "base_version": 0,

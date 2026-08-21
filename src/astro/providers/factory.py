@@ -125,7 +125,6 @@ class ProviderFactory:
         )
         credential = await self.backend.hydrate_provider_credential(
             provider_name,
-            created_by_user_uid=session.created_by_user_uid,
             session_uid=session.uid,
             holder_id=holder_id,
         )
@@ -140,7 +139,6 @@ class ProviderFactory:
                 if self._credential_expires_soon(cached_credential):
                     cached_credential = await self.backend.hydrate_provider_credential(
                         provider_name,
-                        created_by_user_uid=session.created_by_user_uid,
                         session_uid=session.uid,
                         holder_id=holder_id,
                     )

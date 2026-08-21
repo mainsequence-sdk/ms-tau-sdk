@@ -7,7 +7,7 @@ import uuid
 from typing import Annotated, Any, Literal
 
 import structlog
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from tau_agent.harness import AgentHarness, AgentHarnessConfig
 from tau_agent.messages import AssistantMessage, TextContent, UserMessage
@@ -54,6 +54,7 @@ class StatelessChatRequest(BaseModel):
     max_tokens: int | None = Field(default=None, gt=0)
     response_format: ResponseFormat | str | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    agent_session_uid: str
 
 
 def _astro_metadata(body: StatelessChatRequest) -> dict[str, Any]:
@@ -135,20 +136,13 @@ async def stateless_chat(
     client: BackendDep,
     providers: ProviderFactoryDep,
     runtime_settings: SettingsDep,
-    x_mainsequence_user_uid: str | None = Header(default=None),
 ) -> dict[str, Any]:
     metadata = _astro_metadata(body)
     provider_name = str(metadata.get("provider") or "openai").strip()
-    if not x_mainsequence_user_uid:
-        raise HTTPException(
-            status_code=400,
-            detail="x-mainsequence-user-uid is required for provider credentials",
-        )
     timeout_seconds = min(max(float(metadata.get("timeout_seconds") or 120), 1), 900)
     credential = await client.hydrate_provider_credential(
         provider_name,
-        created_by_user_uid=x_mainsequence_user_uid,
-        session_uid=None,
+        session_uid=body.agent_session_uid,
         holder_id=f"llm-passthrough/{uuid.uuid4()}",
     )
     providers.validate_selection(provider_name, body.model)

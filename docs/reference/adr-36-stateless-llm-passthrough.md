@@ -1,5 +1,11 @@
 # ADR 36: Stateless LLM Passthrough Endpoint
 
+> Credential-ownership correction: the one-turn response remains stateless,
+> but runtime credential hydration now requires an exact `agent_session_uid`.
+> The former `agent_session_uid: null` credential path is superseded by backend
+> ADR-022 because a service runtime credential cannot safely select a User
+> without an authoritative session.
+
 Status: Accepted
 Date: 2026-06-16
 Implementation Status: Partially implemented
