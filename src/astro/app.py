@@ -18,6 +18,7 @@ from astro.backend.client import MainSequenceClient
 from astro.errors import AstroError
 from astro.logging import RequestContextMiddleware, configure_logging
 from astro.providers.factory import ProviderFactory
+from astro.providers.signin import ProviderSignInManager
 from astro.runtime.manager import SessionRuntimeManager
 from astro.settings import Settings, get_settings
 
@@ -38,6 +39,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         auth = RuntimeCredentialAuth(resolved)
         backend_client = MainSequenceClient(resolved, auth)
         provider_factory = ProviderFactory(backend_client)
+        provider_signin_manager = ProviderSignInManager(backend_client)
         manager = SessionRuntimeManager(
             settings=resolved,
             backend=backend_client,
@@ -46,6 +48,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.settings = resolved
         app.state.backend = backend_client
         app.state.provider_factory = provider_factory
+        app.state.provider_signin_manager = provider_signin_manager
         app.state.runtime_manager = manager
         await manager.start()
         logger.info(
@@ -58,6 +61,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         finally:
             logger.info("astro.service.stopping", runtime="tau")
             await manager.aclose()
+            await provider_signin_manager.aclose()
             await backend_client.aclose()
             logger.info("astro.service.stopped", runtime="tau")
 

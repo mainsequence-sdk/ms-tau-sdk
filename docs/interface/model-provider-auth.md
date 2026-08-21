@@ -10,11 +10,50 @@ about to run.
 GET /api/model-providers?agent_session_uid=<session-uid>
 ```
 
-## Sign In
+## Interactive Sign In
 
-The clean Tau API accepts a complete provider credential. Browser/device OAuth
-flows belong in the Python API client or frontend and finish by calling this
-endpoint.
+Tau owns provider-specific OAuth and device-code execution. Callers start a
+non-secret attempt for an exact AgentSession; Tau returns the provider URL and
+next action, exchanges the eventual provider response, and writes the complete
+credential directly to the canonical backend credential service.
+
+```http
+POST /api/model-providers/openai-codex/signin
+Content-Type: application/json
+
+{
+  "agent_session_uid": "11111111-1111-4111-8111-111111111111"
+}
+```
+
+The interactive response is HTTP 202 and contains an `attempt`. Follow-up
+operations remain bound to the same exact AgentSession:
+
+```http
+GET  /api/model-providers/{provider}/signin/{attempt_id}?agent_session_uid={uid}
+POST /api/model-providers/{provider}/signin/{attempt_id}/manual?agent_session_uid={uid}
+POST /api/model-providers/{provider}/signin/{attempt_id}/cancel?agent_session_uid={uid}
+```
+
+The manual body is accepted only while the provider explicitly requests input:
+
+```json
+{
+  "input": "<short-lived callback URL, code, or provider prompt response>"
+}
+```
+
+API keys, access tokens, refresh tokens, complete credentials, and passwords
+must not be routed through the interactive attempt input.
+
+Attempts are runtime-process state. A runtime restart interrupts a non-terminal
+attempt; callers start a new attempt after reconciliation.
+
+## Trusted Complete-Credential Compatibility
+
+The existing trusted-runtime operation remains backward compatible. A client
+that already possesses a complete credential may include it with
+`base_version`; this path is not exposed through the general MCP surface.
 
 ```http
 POST /api/model-providers/openai/signin

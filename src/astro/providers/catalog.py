@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import asdict
 from typing import Any
 
+from tau_coding.oauth_registry import get_oauth_provider
 from tau_coding.provider_catalog import BUILTIN_PROVIDER_CATALOG
 
 from astro.backend.client import MainSequenceClient
@@ -33,6 +34,7 @@ async def collect_model_catalog(
                 "display_name": provider.display_name,
                 "api": provider.api,
                 "auth_methods": list(provider.auth_methods),
+                "sign_in_available": get_oauth_provider(provider.name) is not None,
                 "available": available,
                 "credential_status": status.status if status else "missing",
                 "default_model": provider.default_model,

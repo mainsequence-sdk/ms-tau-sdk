@@ -82,6 +82,9 @@ health endpoints with:
 - `GET /api/models/catalog`
 - `GET /api/model-providers`
 - `POST /api/model-providers/{provider}/signin`
+- `GET /api/model-providers/{provider}/signin/{attempt_id}`
+- `POST /api/model-providers/{provider}/signin/{attempt_id}/manual`
+- `POST /api/model-providers/{provider}/signin/{attempt_id}/cancel`
 - `POST /api/model-providers/{provider}/signoff`
 - `POST /api/a2a/v1/message:send`
 - `POST /api/a2a/v1/message:stream`

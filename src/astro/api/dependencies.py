@@ -8,6 +8,7 @@ from fastapi import Request
 
 from astro.backend.client import MainSequenceClient
 from astro.providers.factory import ProviderFactory
+from astro.providers.signin import ProviderSignInManager
 from astro.runtime.manager import SessionRuntimeManager
 from astro.settings import Settings
 
@@ -26,3 +27,7 @@ def runtime_manager(request: Request) -> SessionRuntimeManager:
 
 def provider_factory(request: Request) -> ProviderFactory:
     return cast(ProviderFactory, request.app.state.provider_factory)
+
+
+def provider_signin_manager(request: Request) -> ProviderSignInManager:
+    return cast(ProviderSignInManager, request.app.state.provider_signin_manager)
