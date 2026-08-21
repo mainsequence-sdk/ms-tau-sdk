@@ -26,9 +26,9 @@ async def test_python_client_matches_existing_django_session_contract():
         path = request.url.path
         payload = json.loads(request.content) if request.content else None
         requests.append((request.method, path, payload))
-        if path.endswith("/runtime-credentials/token/"):
+        if path == "/api/v1/runtime-credentials/token/":
             return httpx.Response(200, json={"access": "runtime-token"})
-        if path.endswith(f"/sessions/{session_uid}/") and request.method == "GET":
+        if path == f"/api/v1/agent-sessions/{session_uid}/" and request.method == "GET":
             return httpx.Response(
                 200,
                 json={
@@ -43,7 +43,7 @@ async def test_python_client_matches_existing_django_session_contract():
                     "created_by_user_uid": "user-1",
                 },
             )
-        if path.endswith(f"/sessions/{session_uid}/") and request.method == "PATCH":
+        if path == f"/api/v1/agent-sessions/{session_uid}/" and request.method == "PATCH":
             assert payload == {
                 "llm_provider": "anthropic",
                 "llm_model": "claude-sonnet-4-20250514",
@@ -61,7 +61,7 @@ async def test_python_client_matches_existing_django_session_contract():
                     "created_by_user_uid": "user-1",
                 },
             )
-        if path.endswith(f"/sessions/{session_uid}/agent-card/"):
+        if path == f"/api/v1/agent-sessions/{session_uid}/agent-card/":
             return httpx.Response(
                 200,
                 json={
@@ -70,7 +70,7 @@ async def test_python_client_matches_existing_django_session_contract():
                     "agent_card": {"name": "Astro"},
                 },
             )
-        if path.endswith(f"/sessions/{session_uid}/capabilities/"):
+        if path == f"/api/v1/agent-sessions/{session_uid}/capabilities/":
             return httpx.Response(
                 200,
                 json=[
@@ -86,7 +86,7 @@ async def test_python_client_matches_existing_django_session_contract():
                     }
                 ],
             )
-        if path.endswith("/capabilities/capability-1/content/"):
+        if path == "/api/v1/agent-capabilities/capability-1/content/":
             return httpx.Response(
                 200,
                 json={
@@ -97,7 +97,7 @@ async def test_python_client_matches_existing_django_session_contract():
                 },
             )
         if (
-            path.endswith(f"/sessions/{session_uid}/entries/")
+            path == f"/api/v1/agent-sessions/{session_uid}/entries/"
             and request.method == "GET"
         ):
             return httpx.Response(
@@ -122,7 +122,7 @@ async def test_python_client_matches_existing_django_session_contract():
                     "next_after_sequence": None,
                 },
             )
-        if path.endswith(f"/sessions/{session_uid}/entries/append/"):
+        if path == f"/api/v1/agent-sessions/{session_uid}/entries/append/":
             assert payload == {
                 "lease_token": "lease-token",
                 "expected_sequence": 1,
@@ -144,7 +144,7 @@ async def test_python_client_matches_existing_django_session_contract():
                     "idempotency_key": "entry-2",
                 },
             )
-        if path.endswith(f"/sessions/{session_uid}/checkpoint_lease/acquire/"):
+        if path == f"/api/v1/agent-sessions/{session_uid}/checkpoint-lease/acquire/":
             assert payload == {
                 "holder_id": "astro-1",
                 "ttl_seconds": 90,
@@ -166,7 +166,7 @@ async def test_python_client_matches_existing_django_session_contract():
                     "cancellation": None,
                 },
             )
-        if path.endswith(f"/sessions/{session_uid}/checkpoint_lease/renew/"):
+        if path == f"/api/v1/agent-sessions/{session_uid}/checkpoint-lease/renew/":
             assert payload == {
                 "lease_token": "lease-token",
                 "holder_id": "astro-1",
@@ -189,7 +189,7 @@ async def test_python_client_matches_existing_django_session_contract():
                     "cancellation": None,
                 },
             )
-        if path.endswith(f"/sessions/{session_uid}/checkpoint_lease/release/"):
+        if path == f"/api/v1/agent-sessions/{session_uid}/checkpoint-lease/release/":
             assert payload == {
                 "lease_token": "lease-token",
                 "holder_id": "astro-1",
@@ -205,7 +205,7 @@ async def test_python_client_matches_existing_django_session_contract():
                 },
             )
         if (
-            path.endswith(f"/sessions/{session_uid}/runtime_state/")
+            path == f"/api/v1/agent-sessions/{session_uid}/runtime-state/"
             and request.method == "PATCH"
         ):
             assert payload == {
@@ -224,7 +224,7 @@ async def test_python_client_matches_existing_django_session_contract():
                     "working": True,
                 },
             )
-        if path.endswith(f"/sessions/{session_uid}/runtime_state/"):
+        if path == f"/api/v1/agent-sessions/{session_uid}/runtime-state/":
             return httpx.Response(
                 200,
                 json={
@@ -237,7 +237,7 @@ async def test_python_client_matches_existing_django_session_contract():
                     "working": True,
                 },
             )
-        if path.endswith(f"/sessions/{session_uid}/runtime_cancel_request/"):
+        if path == f"/api/v1/agent-sessions/{session_uid}/runtime-cancel-request/":
             assert payload == {
                 "reason": "user_requested",
                 "message": "stop",
@@ -348,7 +348,149 @@ async def test_python_client_matches_existing_django_session_contract():
     assert renewed.checkpoint_version == 0
     assert state.runtime_state == "working"
     assert patched_state.active_provider == "openai"
-    assert requests[0][1].endswith("/runtime-credentials/token/")
+    assert [path for _, path, _ in requests] == [
+        "/api/v1/runtime-credentials/token/",
+        f"/api/v1/agent-sessions/{session_uid}/",
+        f"/api/v1/agent-sessions/{session_uid}/agent-card/",
+        f"/api/v1/agent-sessions/{session_uid}/capabilities/",
+        "/api/v1/agent-capabilities/capability-1/content/",
+        f"/api/v1/agent-sessions/{session_uid}/entries/",
+        f"/api/v1/agent-sessions/{session_uid}/",
+        f"/api/v1/agent-sessions/{session_uid}/checkpoint-lease/acquire/",
+        f"/api/v1/agent-sessions/{session_uid}/entries/append/",
+        f"/api/v1/agent-sessions/{session_uid}/runtime-cancel-request/",
+        f"/api/v1/agent-sessions/{session_uid}/checkpoint-lease/renew/",
+        f"/api/v1/agent-sessions/{session_uid}/runtime-state/",
+        f"/api/v1/agent-sessions/{session_uid}/runtime-state/",
+        f"/api/v1/agent-sessions/{session_uid}/checkpoint-lease/release/",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_python_client_matches_canonical_provider_and_task_contract():
+    requests: list[tuple[str, str, str]] = []
+    task = {
+        "uid": "task-uid-1",
+        "task_id": "task-1",
+        "context_id": "context-1",
+        "agent_uid": "agent-1",
+        "agent_session_uid": "session-1",
+        "status": "submitted",
+    }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        requests.append((request.method, path, request.url.query.decode()))
+        if path == "/api/v1/runtime-credentials/token/":
+            return httpx.Response(200, json={"access": "runtime-token"})
+        if path == "/api/v1/model-provider-credentials/hydrate/":
+            return httpx.Response(
+                200,
+                json={
+                    "credentials": {
+                        "openai": {
+                            "credential_kind": "api_key",
+                            "credential": {"api_key": "provider-secret"},
+                        }
+                    }
+                },
+            )
+        if path == "/api/v1/model-provider-credentials/status/":
+            return httpx.Response(
+                200,
+                json={
+                    "providers": {
+                        "openai": {
+                            "status": "active",
+                            "credential_kind": "api_key",
+                        }
+                    }
+                },
+            )
+        if path == "/api/v1/model-provider-credentials/flush/":
+            return httpx.Response(200, json={"accepted": True})
+        if path == "/api/v1/model-provider-credentials/revoke/":
+            return httpx.Response(200, json={"revoked": True})
+        if path == "/api/v1/agent-tasks/" and request.method == "POST":
+            return httpx.Response(201, json=task)
+        if path == "/api/v1/agent-tasks/" and request.method == "GET":
+            return httpx.Response(200, json={"results": [task]})
+        if path == "/api/v1/agent-tasks/task-uid-1/status/":
+            return httpx.Response(200, json={**task, "status": "working"})
+        if path == "/api/v1/agent-tasks/task-uid-1/messages/":
+            return httpx.Response(201, json={"stored": True})
+        if path == "/api/v1/agent-tasks/task-uid-1/cancel/":
+            return httpx.Response(200, json={**task, "status": "canceled"})
+        return httpx.Response(404)
+
+    settings = Settings(
+        _env_file=None,
+        backend_url="http://backend.test",
+        runtime_credential_id="credential-id",
+        runtime_credential_secret="credential-secret",
+    )
+    async with httpx.AsyncClient(
+        base_url=settings.backend_url,
+        transport=httpx.MockTransport(handler),
+    ) as http:
+        client = MainSequenceClient(
+            settings,
+            RuntimeCredentialAuth(settings, exchange_client=http),
+            client=http,
+        )
+        credential = await client.hydrate_provider_credential(
+            "openai",
+            created_by_user_uid="user-1",
+            session_uid="session-1",
+            holder_id="astro-1",
+        )
+        statuses = await client.list_provider_statuses(created_by_user_uid="user-1")
+        flushed = await client.flush_provider_credential(
+            provider="openai",
+            created_by_user_uid="user-1",
+            session_uid="session-1",
+            credential={"type": "api_key", "api_key": "provider-secret"},
+        )
+        revoked = await client.revoke_provider_credential(
+            provider="openai",
+            created_by_user_uid="user-1",
+        )
+        created = await client.create_task({"task_id": "task-1"})
+        found = await client.get_task_by_protocol_id("task-1")
+        updated = await client.update_task_status(
+            "task-uid-1",
+            status="working",
+        )
+        message = await client.add_task_message(
+            "task-uid-1",
+            {"message_id": "message-1"},
+        )
+        cancelled = await client.cancel_task("task-uid-1")
+
+    assert credential.secret() == "provider-secret"
+    assert statuses[0].status == "active"
+    assert flushed == {"accepted": True}
+    assert revoked == {"revoked": True}
+    assert created.uid == found.uid == "task-uid-1"
+    assert updated.status == "working"
+    assert message == {"stored": True}
+    assert cancelled.status == "canceled"
+    assert requests == [
+        ("POST", "/api/v1/runtime-credentials/token/", ""),
+        ("POST", "/api/v1/model-provider-credentials/hydrate/", ""),
+        (
+            "GET",
+            "/api/v1/model-provider-credentials/status/",
+            "created_by_user_uid=user-1",
+        ),
+        ("POST", "/api/v1/model-provider-credentials/flush/", ""),
+        ("POST", "/api/v1/model-provider-credentials/revoke/", ""),
+        ("POST", "/api/v1/agent-tasks/", ""),
+        ("GET", "/api/v1/agent-tasks/", "task_id=task-1"),
+        ("POST", "/api/v1/agent-tasks/task-uid-1/status/", ""),
+        ("POST", "/api/v1/agent-tasks/task-uid-1/messages/", ""),
+        ("POST", "/api/v1/agent-tasks/task-uid-1/cancel/", ""),
+    ]
 
 
 @pytest.mark.asyncio
@@ -358,9 +500,9 @@ async def test_idempotent_session_get_retries_transient_backend_failure():
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal session_attempts
-        if request.url.path.endswith("/runtime-credentials/token/"):
+        if request.url.path == "/api/v1/runtime-credentials/token/":
             return httpx.Response(200, json={"access": "runtime-token"})
-        if request.url.path.endswith(f"/sessions/{session_uid}/"):
+        if request.url.path == f"/api/v1/agent-sessions/{session_uid}/":
             session_attempts += 1
             if session_attempts == 1:
                 return httpx.Response(500, json={"detail": "database unavailable"})
@@ -400,7 +542,7 @@ async def test_idempotent_session_get_retries_transient_backend_failure():
 @pytest.mark.asyncio
 async def test_session_get_rejects_missing_harness_contract():
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/runtime-credentials/token/"):
+        if request.url.path == "/api/v1/runtime-credentials/token/":
             return httpx.Response(200, json={"access": "runtime-token"})
         return httpx.Response(200, json={"uid": "session-1"})
 
@@ -429,7 +571,7 @@ async def test_session_get_rejects_missing_harness_contract():
 @pytest.mark.asyncio
 async def test_session_get_rejects_contradictory_harness_protocol():
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/runtime-credentials/token/"):
+        if request.url.path == "/api/v1/runtime-credentials/token/":
             return httpx.Response(200, json={"access": "runtime-token"})
         return httpx.Response(
             200,

@@ -34,6 +34,20 @@ from .models import (
     SessionEntryList,
     SessionEntryRecord,
 )
+from .routes import (
+    AGENT_TASKS,
+    agent_capability_content,
+    agent_session,
+    agent_session_agent_card,
+    agent_session_capabilities,
+    agent_session_checkpoint_lease,
+    agent_session_entries,
+    agent_session_entries_append,
+    agent_session_runtime_cancel_request,
+    agent_session_runtime_state,
+    agent_task_operation,
+    model_provider_credentials,
+)
 
 T = TypeVar("T")
 RETRYABLE_BACKEND_STATUS_CODES = frozenset({500, 502, 503, 504})
@@ -150,7 +164,7 @@ class MainSequenceClient:
     async def get_session(self, session_uid: str) -> AgentSession:
         data = await self._request(
             "GET",
-            f"/orm/api/agents/v1/sessions/{session_uid}/",
+            agent_session(session_uid),
             idempotent=True,
         )
         try:
@@ -184,7 +198,7 @@ class MainSequenceClient:
             payload["llm_thinking"] = thinking_level
         data = await self._request(
             "PATCH",
-            f"/orm/api/agents/v1/sessions/{session_uid}/",
+            agent_session(session_uid),
             json=payload,
             idempotent=True,
         )
@@ -193,7 +207,7 @@ class MainSequenceClient:
     async def get_agent_card(self, session_uid: str) -> AgentCardEnvelope:
         data = await self._request(
             "GET",
-            f"/orm/api/agents/v1/sessions/{session_uid}/agent-card/",
+            agent_session_agent_card(session_uid),
             idempotent=True,
         )
         return AgentCardEnvelope.model_validate(data)
@@ -204,7 +218,7 @@ class MainSequenceClient:
     ) -> list[SessionCapabilityBinding]:
         data = await self._request(
             "GET",
-            f"/orm/api/agents/v1/sessions/{session_uid}/capabilities/",
+            agent_session_capabilities(session_uid),
             idempotent=True,
         )
         values = data.get("results", []) if isinstance(data, dict) else data
@@ -213,7 +227,7 @@ class MainSequenceClient:
     async def get_capability_content(self, capability_uid: str) -> CapabilityContent:
         data = await self._request(
             "GET",
-            f"/orm/api/agents/v1/capabilities/{capability_uid}/content/",
+            agent_capability_content(capability_uid),
             idempotent=True,
         )
         return CapabilityContent.model_validate(data)
@@ -228,10 +242,7 @@ class MainSequenceClient:
                 query["after_sequence"] = after_sequence
             data = await self._request(
                 "GET",
-                (
-                    f"/orm/api/agents/v1/sessions/{session_uid}/entries/"
-                    f"?{urlencode(query)}"
-                ),
+                f"{agent_session_entries(session_uid)}?{urlencode(query)}",
                 idempotent=True,
             )
             if isinstance(data, list):
@@ -260,7 +271,7 @@ class MainSequenceClient:
     ) -> SessionEntryRecord:
         data = await self._request(
             "POST",
-            f"/orm/api/agents/v1/sessions/{session_uid}/entries/append/",
+            agent_session_entries_append(session_uid),
             json=self._dump(request),
             idempotent=True,
         )
@@ -273,7 +284,7 @@ class MainSequenceClient:
     ) -> RuntimeLease:
         data = await self._request(
             "POST",
-            f"/orm/api/agents/v1/sessions/{session_uid}/checkpoint_lease/acquire/",
+            agent_session_checkpoint_lease(session_uid, "acquire"),
             json=self._dump(request),
         )
         return RuntimeLease.model_validate(data)
@@ -285,7 +296,7 @@ class MainSequenceClient:
     ) -> RuntimeLease:
         data = await self._request(
             "POST",
-            f"/orm/api/agents/v1/sessions/{session_uid}/checkpoint_lease/renew/",
+            agent_session_checkpoint_lease(session_uid, "renew"),
             json=self._dump(request),
             idempotent=True,
         )
@@ -298,7 +309,7 @@ class MainSequenceClient:
     ) -> None:
         await self._request(
             "POST",
-            f"/orm/api/agents/v1/sessions/{session_uid}/checkpoint_lease/release/",
+            agent_session_checkpoint_lease(session_uid, "release"),
             json=self._dump(request),
             idempotent=True,
         )
@@ -306,7 +317,7 @@ class MainSequenceClient:
     async def get_runtime_state(self, session_uid: str) -> RuntimeState:
         data = await self._request(
             "GET",
-            f"/orm/api/agents/v1/sessions/{session_uid}/runtime_state/",
+            agent_session_runtime_state(session_uid),
             idempotent=True,
         )
         return RuntimeState.model_validate(data)
@@ -318,7 +329,7 @@ class MainSequenceClient:
     ) -> RuntimeState:
         data = await self._request(
             "PATCH",
-            f"/orm/api/agents/v1/sessions/{session_uid}/runtime_state/",
+            agent_session_runtime_state(session_uid),
             json=self._dump(request),
             idempotent=True,
         )
@@ -334,7 +345,7 @@ class MainSequenceClient:
     ) -> RuntimeState:
         data = await self._request(
             "POST",
-            f"/orm/api/agents/v1/sessions/{session_uid}/runtime_cancel_request/",
+            agent_session_runtime_cancel_request(session_uid),
             json={
                 "reason": reason,
                 "message": message,
@@ -356,7 +367,7 @@ class MainSequenceClient:
             raise BackendError("Provider hydration requires created-by user identity")
         data = await self._request(
             "POST",
-            "/orm/api/agents/v1/model_provider_credentials/hydrate/",
+            model_provider_credentials("hydrate"),
             json={
                 "created_by_user_uid": created_by_user_uid,
                 "agent_session_uid": session_uid,
@@ -409,8 +420,8 @@ class MainSequenceClient:
         data = await self._request(
             "GET",
             (
-                "/orm/api/agents/v1/model_provider_credentials/status/"
-                f"?created_by_user_uid={created_by_user_uid or ''}"
+                model_provider_credentials("status")
+                + f"?created_by_user_uid={created_by_user_uid or ''}"
             ),
             idempotent=True,
         )
@@ -435,7 +446,7 @@ class MainSequenceClient:
     ) -> dict[str, Any]:
         data = await self._request(
             "POST",
-            "/orm/api/agents/v1/model_provider_credentials/flush/",
+            model_provider_credentials("flush"),
             json={
                 "created_by_user_uid": created_by_user_uid,
                 "agent_session_uid": session_uid,
@@ -459,7 +470,7 @@ class MainSequenceClient:
     ) -> dict[str, Any]:
         data = await self._request(
             "POST",
-            "/orm/api/agents/v1/model_provider_credentials/revoke/",
+            model_provider_credentials("revoke"),
             json={
                 "created_by_user_uid": created_by_user_uid,
                 "provider": provider,
@@ -474,7 +485,7 @@ class MainSequenceClient:
     async def create_task(self, payload: Mapping[str, Any]) -> AgentTask:
         data = await self._request(
             "POST",
-            "/orm/api/agents/v1/tasks/",
+            AGENT_TASKS,
             json=payload,
             idempotent=True,
         )
@@ -482,7 +493,7 @@ class MainSequenceClient:
 
     async def list_tasks(self, **filters: str) -> list[AgentTask]:
         query = urlencode({key: value for key, value in filters.items() if value})
-        path = "/orm/api/agents/v1/tasks/" + (f"?{query}" if query else "")
+        path = AGENT_TASKS + (f"?{query}" if query else "")
         data = await self._request("GET", path, idempotent=True)
         values = data.get("results", []) if isinstance(data, dict) else data
         return TypeAdapter(list[AgentTask]).validate_python(values or [])
@@ -505,7 +516,7 @@ class MainSequenceClient:
             payload["status_message"] = status_message
         data = await self._request(
             "POST",
-            f"/orm/api/agents/v1/tasks/{task_uid}/status/",
+            agent_task_operation(task_uid, "status"),
             json=payload,
             idempotent=True,
         )
@@ -518,7 +529,7 @@ class MainSequenceClient:
     ) -> dict[str, Any]:
         data = await self._request(
             "POST",
-            f"/orm/api/agents/v1/tasks/{task_uid}/messages/",
+            agent_task_operation(task_uid, "messages"),
             json=payload,
             idempotent=True,
         )
@@ -529,13 +540,14 @@ class MainSequenceClient:
     async def cancel_task(self, task_uid: str) -> AgentTask:
         data = await self._request(
             "POST",
-            f"/orm/api/agents/v1/tasks/{task_uid}/cancel/",
+            agent_task_operation(task_uid, "cancel"),
             json={},
             idempotent=True,
         )
         return AgentTask.model_validate(data)
 
     async def list_task_push_configs(self, task_uid: str) -> list[dict[str, Any]]:
+        # Deferred contract gap: AgentTaskViewSet has no canonical counterpart.
         data = await self._request(
             "GET",
             f"/orm/api/agents/v1/tasks/{task_uid}/push-notification-configs/",
