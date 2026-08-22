@@ -33,12 +33,11 @@ It must belong to the deployed coding-agent service; organization-test and
 project runtime credentials are not valid for MCP.
 Provider API keys remain backend-owned and are hydrated per user/session.
 
-For a Project Executor deployment, Django injects
-`MAIN_SEQUENCE_ORGANIZATION_PROJECT_ENVIRONMENT_UID` from the service's
-persisted ProjectBranch. Astro uses it automatically for `agent.list` and
-`agent.search`, overwrites any caller-provided value, and hides the selector
-from Tau. One Astro Project Executor deployment serves exactly that one
-environment; users and project code do not select or switch it.
+For a Project Executor deployment, Django derives Agent discovery scope from
+the authenticated service credential and the service's persisted
+ProjectBranch. Astro sends no Environment selector and hides that selector from
+Tau. One Astro Project Executor deployment serves exactly that one Environment;
+users and project code do not select or switch it.
 
 See [`.env.example`](./.env.example) for optional web-provider settings.
 

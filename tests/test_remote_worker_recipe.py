@@ -13,6 +13,21 @@ def test_remote_worker_recipe_uses_backend_supplied_executor_bundle_image() -> N
     assert "ARG PROJECT_ID" not in recipe
 
 
+def test_remote_worker_recipe_preserves_and_verifies_project_git_context() -> None:
+    recipe = (REPOSITORY_ROOT / "Dockerfile.remote-worker").read_text()
+
+    assert "ARG SOURCE_COMMIT_SHA" in recipe
+    assert "ARG SOURCE_REPOSITORY_BRANCH" in recipe
+    assert "ARG SOURCE_REPOSITORY_REF" in recipe
+    assert "USER ${NB_USER}" in recipe
+    assert 'cd "${SKEL_APP_DIR}"' in recipe
+    assert "git diff --quiet --ignore-submodules HEAD" in recipe
+    assert "git diff --cached --quiet --ignore-submodules HEAD" in recipe
+    assert "git branch --show-current" in recipe
+    assert "git symbolic-ref HEAD" in recipe
+    assert "git rev-parse HEAD" in recipe
+
+
 def test_cloud_build_publishes_unrendered_provider_neutral_recipe() -> None:
     cloud_build = (REPOSITORY_ROOT / "deployment/gcp/cloudbuild.yaml").read_text()
 
