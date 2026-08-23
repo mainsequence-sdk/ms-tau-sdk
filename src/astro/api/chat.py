@@ -10,7 +10,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
-from astro.logging import conversation_log_fields
+from astro.logging import bind_request_log_fields, conversation_log_fields
 from astro.protocols.assistant_ui import AssistantUiEncoder
 from astro.runtime.manager import SessionRuntimeManager
 
@@ -42,14 +42,17 @@ async def chat(
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
-    request.state.request_log_fields = {
-        "session_uid": body.session_uid,
+    bind_request_log_fields(
+        request.scope,
+        session_uid=body.session_uid,
+        agent_session_uid=body.session_uid,
+        is_streaming=True,
         **conversation_log_fields(
             prompt,
             include_excerpt=manager.settings.log_payloads,
             message_count=len(body.messages) if body.messages else None,
         ),
-    }
+    )
 
     async def stream() -> AsyncIterator[bytes]:
         encoder = AssistantUiEncoder()
@@ -68,8 +71,8 @@ async def chat(
                 "chat.stream.failed",
                 message="Chat stream failed",
                 session_uid=body.session_uid,
+                agent_session_uid=body.session_uid,
                 error_type=type(error).__name__,
-                error_message=str(error),
             )
             yield encoder.sse(
                 {

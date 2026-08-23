@@ -18,11 +18,12 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import structlog
-from fastapi import APIRouter, Depends, Header, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from astro.backend.client import MainSequenceClient
 from astro.backend.models import AgentTask
+from astro.logging import bind_request_log_fields
 from astro.protocols.strict_json import (
     StrictJsonContract,
     StrictJsonError,
@@ -69,6 +70,41 @@ PUSH_NOTIFICATION_RPC_METHODS = frozenset(
         "tasks/pushNotificationConfig/delete",
     }
 )
+SAFE_CORRELATION_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def _safe_correlation(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized if SAFE_CORRELATION_PATTERN.fullmatch(normalized) else None
+
+
+def _bind_a2a_context(
+    request: Request,
+    *,
+    method: str,
+    request_id: object = None,
+    message: dict[str, Any] | None = None,
+    task_id: object = None,
+    streaming: bool = False,
+) -> None:
+    message = message or {}
+    fields: dict[str, object] = {
+        "a2a_method": method[:128],
+        "a2a_streaming": streaming,
+    }
+    candidates = {
+        "a2a_request_id": request_id,
+        "a2a_context_id": message.get("contextId"),
+        "a2a_message_id": message.get("messageId"),
+        "a2a_task_id": task_id,
+    }
+    for correlation_field, value in candidates.items():
+        normalized = _safe_correlation(value)
+        if normalized is not None:
+            fields[correlation_field] = normalized
+    if "a2a_context_id" in fields:
+        fields["agent_session_uid"] = fields["a2a_context_id"]
+    bind_request_log_fields(request.scope, **fields)
 
 
 class ResponseKind(StrEnum):
@@ -996,12 +1032,19 @@ async def message_send(
     client: BackendDep,
     manager: RuntimeManagerDep,
     config: SettingsDep,
+    request: Request,
     a2a_extensions: Annotated[
         str | None,
         Header(alias="A2A-Extensions"),
     ] = None,
 ) -> dict[str, Any]:
     message, prompt = _request_parts(body, config)
+    _bind_a2a_context(
+        request,
+        method="message/send",
+        message=message,
+        task_id=body.get("taskId"),
+    )
     output_contract = _output_contract(body)
     response_kind, was_explicit = _response_kind(
         body,
@@ -1025,6 +1068,7 @@ async def message_send(
                 max_output_bytes=config.max_turn_output_bytes,
             ),
             name=f"a2a-task-{task.task_id}",
+            operation_uid=task.uid,
         )
         return {"task": _task_payload(task)}
     result = await _execute_message(
@@ -1043,6 +1087,7 @@ async def message_stream(
     client: BackendDep,
     manager: RuntimeManagerDep,
     config: SettingsDep,
+    request: Request,
     a2a_extensions: Annotated[
         str | None,
         Header(alias="A2A-Extensions"),
@@ -1054,6 +1099,13 @@ async def message_stream(
         streaming=True,
     )
     message, prompt = _request_parts(body, config)
+    _bind_a2a_context(
+        request,
+        method="message/stream",
+        message=message,
+        task_id=body.get("taskId"),
+        streaming=True,
+    )
     output_contract = _output_contract(body)
     task = await _create_backend_task(client, message=message, task_id=_task_id(body))
     return _message_stream_response(
@@ -1153,19 +1205,26 @@ async def json_rpc(
     client: BackendDep,
     manager: RuntimeManagerDep,
     config: SettingsDep,
+    request: Request,
     a2a_extensions: Annotated[
         str | None,
         Header(alias="A2A-Extensions"),
     ] = None,
 ) -> dict[str, Any] | StreamingResponse:
     request_id = body.get("id")
+    method = str(body.get("method") or "")
+    _bind_a2a_context(
+        request,
+        method=method or "invalid",
+        request_id=request_id,
+        streaming=method in {"SendStreamingMessage", "message/stream"},
+    )
     if body.get("jsonrpc") != "2.0":
         return {
             "jsonrpc": "2.0",
             "id": request_id,
             "error": {"code": -32600, "message": "Invalid Request"},
         }
-    method = str(body.get("method") or "")
     if method in PUSH_NOTIFICATION_RPC_METHODS:
         return _push_notification_json_rpc_error(request_id)
     params = body.get("params", {})
@@ -1189,6 +1248,7 @@ async def json_rpc(
                 client,
                 manager,
                 config,
+                request,
                 a2a_extensions,
             )
         elif method in {"SendStreamingMessage", "message/stream"}:
@@ -1198,6 +1258,14 @@ async def json_rpc(
                 streaming=True,
             )
             message, prompt = _request_parts(params, config)
+            _bind_a2a_context(
+                request,
+                method=method,
+                request_id=request_id,
+                message=message,
+                task_id=params.get("taskId") or params.get("id"),
+                streaming=True,
+            )
             output_contract = _output_contract(params)
             task = await _create_backend_task(
                 client,

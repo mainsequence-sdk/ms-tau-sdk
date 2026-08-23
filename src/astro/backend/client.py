@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import re
+import time
 from collections.abc import Mapping
 from typing import Any, TypeVar
 from urllib.parse import urlencode
@@ -52,6 +54,15 @@ from .routes import (
 T = TypeVar("T")
 RETRYABLE_BACKEND_STATUS_CODES = frozenset({500, 502, 503, 504})
 logger = structlog.get_logger(__name__)
+PATH_IDENTIFIER_PATTERN = re.compile(
+    r"(?<=/)(?:[0-9a-f]{8}-[0-9a-f-]{27,}|[0-9]+)(?=/|$)",
+    re.IGNORECASE,
+)
+
+
+def _dependency_operation(method: str, path: str) -> str:
+    normalized_path = PATH_IDENTIFIER_PATTERN.sub("{id}", path.split("?", 1)[0])
+    return f"{method.upper()} {normalized_path[:192]}"
 
 
 class MainSequenceClient:
@@ -95,12 +106,37 @@ class MainSequenceClient:
         transport_attempt = 0
         last_error: Exception | None = None
         while transport_attempt < attempts:
+            attempt_started_at = time.monotonic()
+            attempt_number = transport_attempt + 1
+            operation = _dependency_operation(method, path)
             try:
                 response = await self._client.request(
                     method,
                     path,
                     headers=await self.auth.headers(force=force_auth),
                     json=json,
+                )
+                status_outcome = (
+                    "success"
+                    if response.is_success
+                    else "rejected"
+                    if response.status_code < 500
+                    else "failed"
+                )
+                logger.info(
+                    "dependency.call.completed",
+                    message="Backend dependency call completed",
+                    dependency_operation=operation,
+                    target_system="mainsequence_backend",
+                    dependency_attempt=attempt_number,
+                    status_code=response.status_code,
+                    duration_ms=round(
+                        (time.monotonic() - attempt_started_at) * 1000,
+                        3,
+                    ),
+                    outcome=status_outcome,
+                    retryable=response.status_code in RETRYABLE_BACKEND_STATUS_CODES,
+                    circuit_breaker_state="not_configured",
                 )
                 if response.status_code == 401 and not auth_retried:
                     auth_retried = True
@@ -143,6 +179,21 @@ class MainSequenceClient:
                     raise BackendError("Backend response exceeded configured size limit")
                 return response.json() if response.content else None
             except (httpx.TimeoutException, httpx.NetworkError) as error:
+                logger.warning(
+                    "dependency.call.failed",
+                    message="Backend dependency call failed",
+                    dependency_operation=operation,
+                    target_system="mainsequence_backend",
+                    dependency_attempt=attempt_number,
+                    duration_ms=round(
+                        (time.monotonic() - attempt_started_at) * 1000,
+                        3,
+                    ),
+                    error_type=type(error).__name__,
+                    outcome="failed",
+                    retryable=idempotent,
+                    circuit_breaker_state="not_configured",
+                )
                 last_error = error
                 transport_attempt += 1
                 if transport_attempt >= attempts:

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from structlog.contextvars import bind_contextvars, clear_contextvars, get_contextvars
 
 from astro.backend.models import AgentSession, RuntimeLease, SessionEntryList
 from astro.errors import ConfigurationError
@@ -148,7 +149,10 @@ async def test_runtime_manager_flushes_persistence_before_agent_settled(tmp_path
 
 
 @pytest.mark.asyncio
-async def test_runtime_manager_logs_prompt_excerpt_when_enabled(tmp_path, capsys):
+async def test_runtime_manager_logs_only_prompt_size_when_payload_logging_enabled(
+    tmp_path,
+    capsys,
+):
     configure_logging("INFO", machine_sink=True, human_sink=False)
     manager, _backend = _loaded_manager(tmp_path, _FakeCodingSession())
     manager.settings.log_payloads = True
@@ -169,11 +173,14 @@ async def test_runtime_manager_logs_prompt_excerpt_when_enabled(tmp_path, capsys
         if line.startswith("{")
     ]
     received = next(
-        event for event in events if event["event"] == "runtime.turn.received"
+        event for event in events if event["event"] == "agent.run.accepted"
     )
-    assert received["prompt_excerpt"] == "Analyze this portfolio allocation."
-    assert received["prompt_chars"] == 38
-    assert len(received["prompt_sha256"]) == 64
+    assert received["input_size_bytes"] == 38
+    assert "prompt_excerpt" not in received
+    assert "prompt_sha256" not in received
+    assert received["agent_session_uid"] == "session-1"
+    assert received["agent_run_uid"]
+    assert received["turn_uid"]
 
 
 @pytest.mark.asyncio
@@ -218,9 +225,10 @@ async def test_runtime_manager_logs_prompt_before_session_load_failure(
         if line.startswith("{")
     ]
     received = next(
-        event for event in events if event["event"] == "runtime.turn.received"
+        event for event in events if event["event"] == "agent.run.accepted"
     )
-    assert received["prompt_excerpt"] == "Explain this failed request."
+    assert received["input_size_bytes"] == len(b"Explain this failed request.")
+    assert "prompt_excerpt" not in received
 
 
 @pytest.mark.asyncio
@@ -252,6 +260,36 @@ async def test_runtime_manager_drains_tracked_background_tasks(tmp_path):
     assert task.done()
     assert not task.cancelled()
     assert completed.is_set()
+
+
+@pytest.mark.asyncio
+async def test_background_task_detaches_request_and_keeps_causation(tmp_path):
+    manager, _backend = _loaded_manager(tmp_path, _FakeCodingSession())
+    bind_contextvars(
+        request_id="request-1",
+        request_start_event_id="event-1",
+        trace_id="trace-1",
+        span_id="span-1",
+        user_uid="user-1",
+    )
+
+    async def worker():
+        return get_contextvars()
+
+    try:
+        task = manager.create_background_task(worker(), name="a2a-context-test")
+        context = await task
+    finally:
+        clear_contextvars()
+
+    assert "request_id" not in context
+    assert context["origin_request_id"] == "request-1"
+    assert context["causation_event_id"] == "event-1"
+    assert context["trace_id"] == "trace-1"
+    assert context["parent_span_id"] == "span-1"
+    assert context["span_id"] != "span-1"
+    manager._runtimes.clear()
+    await manager.aclose()
 
 
 @pytest.mark.asyncio

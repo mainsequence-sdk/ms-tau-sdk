@@ -53,10 +53,12 @@ Optional settings:
 
 `ASTRO_SESSION_LEASE_RENEW_SECONDS` must be lower than
 `ASTRO_SESSION_LEASE_TTL_SECONDS`. At least one logging sink must be enabled.
-Machine logs are structured JSON; human logs are concise text. Prompt excerpts
-are emitted only when `ASTRO_LOG_PAYLOADS=true`; complete histories, tool output,
-credentials, and provider headers are never logged. Both sinks use the same
-Structlog event pipeline as `tdag-django`; see [logging](./logging.md).
+Machine logs are structured JSON; human logs are concise text.
+`ASTRO_LOG_PAYLOADS` is retained as a compatibility setting but does not enable
+content capture. Prompts, prompt hashes, complete histories, model output, tool
+payloads, credentials, and provider headers are never logged. Both sinks use
+the same Structlog event pipeline as `tdag-django`; see
+[logging](./logging.md).
 
 ## Web tools
 

@@ -6,6 +6,7 @@ import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
+from starlette.requests import Request
 from tau_agent.events import MessageEndEvent, MessageUpdateEvent
 from tau_agent.messages import AssistantMessage, StopReason
 from tau_agent.provider_events import TextDeltaEvent
@@ -31,6 +32,18 @@ from astro.api.dependencies import backend, runtime_manager, settings
 from astro.backend.models import AgentCardEnvelope, AgentSession, AgentTask
 from astro.runtime.events import AstroRuntimeEvent, translate_tau_event
 from astro.settings import Settings
+
+
+def _request() -> Request:
+    return Request(
+        {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/a2a/rpc",
+            "headers": [],
+            "query_string": b"",
+        }
+    )
 
 
 def _assistant_message(
@@ -471,7 +484,8 @@ async def test_message_send_task_requires_advertised_task_and_returns_task():
     class BackgroundManager(_TauEventManager):
         background = None
 
-        def create_background_task(self, coroutine, *, name):
+        def create_background_task(self, coroutine, *, name, operation_uid=None):
+            del name, operation_uid
             self.background = coroutine
 
     manager = BackgroundManager(
@@ -588,6 +602,7 @@ async def test_push_notification_json_rpc_operations_are_explicitly_unsupported(
         client,
         AsyncMock(),
         Settings(_env_file=None),
+        _request(),
     )
 
     assert result == {
@@ -692,6 +707,7 @@ async def test_json_rpc_message_stream_returns_sse_response():
         client,
         manager,
         config,
+        _request(),
     )
 
     assert isinstance(response, StreamingResponse)

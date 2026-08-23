@@ -35,6 +35,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        logger.info(
+            "runtime.started",
+            message="Astro Tau runtime process started",
+            runtime_kind="coding_agent",
+            runtime="tau",
+            version=__version__,
+        )
         resolved.validate_runtime_auth()
         auth = RuntimeCredentialAuth(resolved)
         backend_client = MainSequenceClient(resolved, auth)
@@ -52,18 +59,30 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.runtime_manager = manager
         await manager.start()
         logger.info(
-            "astro.service.started",
+            "runtime.ready",
+            message="Astro Tau runtime is ready",
+            runtime_kind="coding_agent",
             runtime="tau",
             version=__version__,
         )
         try:
             yield
         finally:
-            logger.info("astro.service.stopping", runtime="tau")
+            logger.info(
+                "runtime.shutdown.started",
+                message="Astro Tau runtime shutdown started",
+                runtime_kind="coding_agent",
+                runtime="tau",
+            )
             await manager.aclose()
             await provider_signin_manager.aclose()
             await backend_client.aclose()
-            logger.info("astro.service.stopped", runtime="tau")
+            logger.info(
+                "runtime.shutdown",
+                message="Astro Tau runtime stopped",
+                runtime_kind="coding_agent",
+                runtime="tau",
+            )
 
     app = FastAPI(
         title="Main Sequence Astro",

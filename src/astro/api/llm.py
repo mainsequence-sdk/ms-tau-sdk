@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import asyncio
+import time
 import uuid
 from typing import Annotated, Any, Literal
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 from tau_agent.harness import AgentHarness, AgentHarnessConfig
 from tau_agent.messages import AssistantMessage, TextContent, UserMessage
 
 from astro.backend.client import MainSequenceClient
-from astro.logging import conversation_log_fields
+from astro.logging import bind_request_log_fields, conversation_log_fields
 from astro.protocols.strict_json import (
     StrictJsonError,
     build_repair_prompt,
@@ -133,10 +134,22 @@ async def _run_prompt(
 @router.post("/chat")
 async def stateless_chat(
     body: StatelessChatRequest,
+    request: Request,
     client: BackendDep,
     providers: ProviderFactoryDep,
     runtime_settings: SettingsDep,
 ) -> dict[str, Any]:
+    agent_run_uid = str(uuid.uuid4())
+    turn_uid = str(uuid.uuid4())
+    model_call_uid = str(uuid.uuid4())
+    bind_request_log_fields(
+        request.scope,
+        agent_session_uid=body.agent_session_uid,
+        agent_run_uid=agent_run_uid,
+        turn_uid=turn_uid,
+        model_call_uid=model_call_uid,
+        agent_uid="astro-tau-stateless",
+    )
     metadata = _astro_metadata(body)
     provider_name = str(metadata.get("provider") or "openai").strip()
     timeout_seconds = min(max(float(metadata.get("timeout_seconds") or 120), 1), 900)
@@ -154,10 +167,11 @@ async def stateless_chat(
     )
     system, history, prompt = _history_and_prompt(body.messages)
     logger.info(
-        "llm.turn.started",
-        message="Started stateless Tau turn",
-        provider=provider_name,
-        model=body.model,
+        "agent.run.started",
+        message="Started stateless Tau agent run",
+        agent_type="tau_stateless",
+        model_provider=provider_name,
+        model_name=body.model,
         **conversation_log_fields(
             prompt,
             include_excerpt=runtime_settings.log_payloads,
@@ -190,6 +204,15 @@ async def stateless_chat(
         ),
         messages=history,
     )
+    model_started_at = time.monotonic()
+    logger.info(
+        "agent.model.started",
+        message="Model call started",
+        model_provider=provider_name,
+        model_name=body.model,
+        model_operation="response",
+        model_attempt=1,
+    )
     try:
         message = await _run_prompt(harness, prompt, timeout_seconds=timeout_seconds)
         text = message.text.strip()
@@ -220,6 +243,33 @@ async def stateless_chat(
                     )
                     text = message.text.strip()
         usage = message.usage
+        logger.info(
+            "agent.model.completed",
+            message="Model call completed",
+            model_provider=provider_name,
+            model_name=body.model,
+            model_operation="response",
+            model_duration_ms=round(
+                (time.monotonic() - model_started_at) * 1000,
+                3,
+            ),
+            input_tokens=usage.input,
+            output_tokens=usage.output,
+            total_tokens=usage.total_tokens,
+            finish_reason=message.stop_reason,
+            rate_limited=False,
+            outcome="success",
+        )
+        logger.info(
+            "agent.run.completed",
+            message="Completed stateless Tau agent run",
+            agent_type="tau_stateless",
+            model_calls=1,
+            input_tokens=usage.input,
+            output_tokens=usage.output,
+            total_tokens=usage.total_tokens,
+            outcome="success",
+        )
         return {
             "ok": True,
             "provider": provider_name,
@@ -233,6 +283,29 @@ async def stateless_chat(
                 "total_tokens": usage.total_tokens,
             },
         }
+    except Exception as error:
+        logger.error(
+            "agent.model.failed",
+            message="Model call failed",
+            model_provider=provider_name,
+            model_name=body.model,
+            model_operation="response",
+            model_duration_ms=round(
+                (time.monotonic() - model_started_at) * 1000,
+                3,
+            ),
+            model_error_type=type(error).__name__,
+            rate_limited=type(error).__name__ in {"RateLimitError", "TooManyRequests"},
+            outcome="failed",
+        )
+        logger.error(
+            "agent.run.failed",
+            message="Failed stateless Tau agent run",
+            agent_type="tau_stateless",
+            error_type=type(error).__name__,
+            outcome="failed",
+        )
+        raise
     finally:
         close = getattr(provider, "aclose", None)
         if close is not None:

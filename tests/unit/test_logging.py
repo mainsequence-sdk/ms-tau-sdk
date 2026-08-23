@@ -1,4 +1,3 @@
-import hashlib
 import json
 import logging
 
@@ -6,16 +5,19 @@ import structlog
 from fastapi.testclient import TestClient
 from starlette.applications import Starlette
 from starlette.requests import Request
-from starlette.responses import PlainTextResponse
+from starlette.responses import PlainTextResponse, StreamingResponse
 from starlette.routing import Route
 from structlog.contextvars import bind_contextvars, clear_contextvars
 
 from astro.app import create_app
 from astro.logging import (
     RequestContextMiddleware,
+    bind_request_log_fields,
     configure_logging,
     conversation_log_fields,
 )
+from astro.runtime.events import AstroRuntimeEvent
+from astro.runtime.observability import TauTurnObserver
 from astro.settings import Settings
 
 
@@ -37,22 +39,21 @@ def test_conversation_log_fields_are_safe_by_default():
     )
 
     assert fields == {
-        "prompt_chars": len(prompt),
-        "prompt_sha256": hashlib.sha256(prompt.encode()).hexdigest(),
+        "input_size_bytes": len(prompt.encode()),
         "message_count": 3,
     }
 
 
-def test_conversation_log_fields_normalize_and_truncate_excerpt():
+def test_conversation_log_fields_never_include_content_when_opted_in():
     prompt = f"  {'x' * 205}\n final"
 
     fields = conversation_log_fields(prompt, include_excerpt=True)
 
-    assert fields["prompt_excerpt"] == f"{'x' * 197}..."
-    assert len(str(fields["prompt_excerpt"])) == 200
+    assert fields == {"input_size_bytes": len(prompt.encode())}
+    assert "prompt_excerpt" not in fields
 
 
-def test_conversation_excerpt_passes_through_secret_redaction(capsys):
+def test_conversation_content_never_reaches_the_logger(capsys):
     configure_logging("INFO", machine_sink=True, human_sink=False)
 
     structlog.get_logger("astro.test").info(
@@ -64,7 +65,9 @@ def test_conversation_excerpt_passes_through_secret_redaction(capsys):
     )
 
     event = _json_events(capsys.readouterr().out)[-1]
-    assert event["prompt_excerpt"] == "Use Bearer [REDACTED] to continue"
+    assert event["input_size_bytes"] == len(
+        b"Use Bearer private-token to continue"
+    )
     assert "private-token" not in json.dumps(event)
 
 
@@ -96,6 +99,8 @@ def test_structlog_json_matches_backend_fields_and_redacts(capsys):
     assert native["level"] == "info"
     assert native["severity"] == "INFO"
     assert native["component"] == "astro.test"
+    assert native["event_id"]
+    assert native["runtime_instance_uid"]
     assert native["request_id"] == "request-1"
     assert native["session_uid"] == "session-1"
     assert native["authorization"] == "[REDACTED]"
@@ -168,7 +173,14 @@ def test_request_context_emits_correlated_access_events(tmp_path, capsys):
     )
 
     with TestClient(app) as client:
-        response = client.get("/health")
+        response = client.get(
+            "/health?private=value",
+            headers={
+                "X-Request-ID": "request-from-gateway",
+                "X-User-UID": "user-1",
+                "X-Coding-Agent-Service-UID": "service-1",
+            },
+        )
 
     events = _json_events(capsys.readouterr().out)
     started = next(
@@ -178,11 +190,16 @@ def test_request_context_emits_correlated_access_events(tmp_path, capsys):
         event for event in events if event["event"] == "http.request.completed"
     )
 
-    assert response.headers["x-request-id"] == started["request_id"]
+    assert response.headers["x-request-id"] == "request-from-gateway"
     assert completed["request_id"] == started["request_id"]
     assert completed["http_method"] == "GET"
     assert completed["route"] == "/health"
-    assert completed["http_path"] == "/health"
+    assert completed["user_uid"] == "user-1"
+    assert completed["coding_agent_service_uid"] == "service-1"
+    assert completed["principal_type"] == "user"
+    assert completed["status_class"] == "2xx"
+    assert completed["outcome"] == "success"
+    assert "private=value" not in json.dumps(completed)
     assert completed["status_code"] == 200
     assert isinstance(completed["duration_ms"], float)
     assert completed["response_size_bytes"] > 0
@@ -192,10 +209,11 @@ def test_request_context_adds_endpoint_fields_to_completion_event(capsys):
     configure_logging("INFO", machine_sink=True, human_sink=False)
 
     async def endpoint(request: Request) -> PlainTextResponse:
-        request.state.request_log_fields = {
-            "session_uid": "session-1",
-            "prompt_excerpt": "Analyze this portfolio.",
-        }
+        bind_request_log_fields(
+            request.scope,
+            session_uid="session-1",
+            agent_session_uid="session-1",
+        )
         return PlainTextResponse("ok")
 
     app = RequestContextMiddleware(
@@ -211,17 +229,41 @@ def test_request_context_adds_endpoint_fields_to_completion_event(capsys):
 
     assert response.status_code == 200
     assert completed["session_uid"] == "session-1"
-    assert completed["prompt_excerpt"] == "Analyze this portfolio."
+    assert completed["agent_session_uid"] == "session-1"
 
 
-def test_human_request_completion_is_one_line_with_prompt_excerpt(capsys):
+def test_request_logging_failure_does_not_change_response(monkeypatch):
+    class FailingLogger:
+        def info(self, event, **fields):
+            raise OSError("sink unavailable")
+
+        warning = info
+        error = info
+
+    monkeypatch.setattr(structlog, "get_logger", lambda *_args: FailingLogger())
+
+    async def endpoint(_request: Request) -> PlainTextResponse:
+        return PlainTextResponse("ok")
+
+    app = RequestContextMiddleware(
+        Starlette(routes=[Route("/health", endpoint)])
+    )
+    response = TestClient(app).get("/health")
+
+    assert response.status_code == 200
+    assert response.text == "ok"
+    assert response.headers["x-request-id"]
+
+
+def test_human_request_completion_is_one_line_without_content(capsys):
     configure_logging("INFO", machine_sink=False, human_sink=True)
 
     async def endpoint(request: Request) -> PlainTextResponse:
-        request.state.request_log_fields = {
-            "session_uid": "session-1",
-            "prompt_excerpt": "Analyze this portfolio.",
-        }
+        bind_request_log_fields(
+            request.scope,
+            session_uid="session-1",
+            agent_session_uid="session-1",
+        )
         return PlainTextResponse("ok")
 
     app = RequestContextMiddleware(
@@ -235,7 +277,113 @@ def test_human_request_completion_is_one_line_with_prompt_excerpt(capsys):
 
     assert response.status_code == 200
     assert "http_method=POST" in completed
-    assert "http_path=/chat" in completed
+    assert "route=__unmatched__" in completed
     assert "session_uid=session-1" in completed
-    assert "prompt_excerpt='Analyze this portfolio.'" in completed
+    assert "agent_session_uid=session-1" in completed
+    assert "Analyze this portfolio." not in completed
     assert "source=" not in completed
+
+
+def test_request_context_covers_stream_failure_and_context_cleanup(capsys):
+    configure_logging("INFO", machine_sink=True, human_sink=False)
+
+    async def stream(_request: Request) -> StreamingResponse:
+        async def body():
+            yield b"one"
+            yield b"two"
+
+        return StreamingResponse(body())
+
+    async def fail(_request: Request) -> PlainTextResponse:
+        raise ValueError("private exception value")
+
+    app = RequestContextMiddleware(
+        Starlette(
+            routes=[
+                Route("/stream", stream),
+                Route("/fail", fail),
+            ]
+        )
+    )
+    with TestClient(app, raise_server_exceptions=False) as client:
+        assert client.get("/stream", headers={"X-User-UID": "user-1"}).status_code == 200
+        assert client.get("/fail").status_code == 500
+
+    events = _json_events(capsys.readouterr().out)
+    terminals = [event for event in events if event["event"].startswith("http.request.")][1::2]
+    assert terminals[0]["event"] == "http.request.completed"
+    assert terminals[0]["is_streaming"] is True
+    assert terminals[0]["response_size_bytes"] == 6
+    assert terminals[0]["user_uid"] == "user-1"
+    assert terminals[1]["event"] == "http.request.failed"
+    assert terminals[1]["error_type"] == "ValueError"
+    assert "user_uid" not in terminals[1]
+    assert "private exception value" not in json.dumps(events)
+
+
+def test_tau_turn_observer_logs_model_tool_and_handoff_without_payloads(capsys):
+    configure_logging("INFO", machine_sink=True, human_sink=False)
+    observer = TauTurnObserver(provider="openai", model="controlled-model")
+
+    observer.observe(AstroRuntimeEvent(type="message_start"))
+    observer.observe(AstroRuntimeEvent(type="text_delta", data={"text": "private output"}))
+    observer.observe(
+        AstroRuntimeEvent(
+            type="tool_execution_start",
+            data={
+                "toolCallId": "tool-1",
+                "toolName": "lookup",
+                "arguments": {"password": "private input"},
+            },
+        )
+    )
+    observer.observe(
+        AstroRuntimeEvent(
+            type="tool_execution_end",
+            data={
+                "toolCallId": "tool-1",
+                "toolName": "lookup",
+                "result": {"secret": "private result"},
+            },
+        )
+    )
+    observer.observe(
+        AstroRuntimeEvent(
+            type="handoff_started",
+            data={"source": "root", "target": "reviewer"},
+        )
+    )
+    observer.observe(
+        AstroRuntimeEvent(
+            type="handoff_completed",
+            data={"source": "root", "target": "reviewer"},
+        )
+    )
+    observer.observe(
+        AstroRuntimeEvent(
+            type="message_end",
+            data={
+                "message": {
+                    "usage": {
+                        "input_tokens": 7,
+                        "output_tokens": 3,
+                        "total_tokens": 10,
+                    }
+                }
+            },
+        )
+    )
+
+    events = _json_events(capsys.readouterr().out)
+    names = [event["event"] for event in events]
+    assert "agent.model.started" in names
+    assert "agent.model.completed" in names
+    assert "agent.tool.started" in names
+    assert "agent.tool.completed" in names
+    assert "agent.handoff.started" in names
+    assert "agent.handoff.completed" in names
+    assert observer.terminal_fields()["input_tokens"] == 7
+    assert observer.terminal_fields()["tool_calls"] == 1
+    assert "private output" not in json.dumps(events)
+    assert "private input" not in json.dumps(events)
+    assert "private result" not in json.dumps(events)
