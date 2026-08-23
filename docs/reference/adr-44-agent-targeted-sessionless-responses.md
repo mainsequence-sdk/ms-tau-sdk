@@ -234,7 +234,7 @@ Accept: application/a2a+json
   },
   "configuration": {
     "acceptedOutputModes": ["text/plain"],
-    "returnImmediately": false
+    "responseKind": "message"
   },
   "metadata": {
     "https://mainsequence.ai/a2a/extensions/agent-inference/v1": {

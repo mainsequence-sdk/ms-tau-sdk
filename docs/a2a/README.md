@@ -15,11 +15,14 @@ Astro implements the standard A2A surface directly in FastAPI:
 
 `message.contextId` is the backend `AgentSession.uid`. Astro loads that Tau
 session, acquires its runtime lease, and persists task/message/status state in
-the Django `AgentTask` models.
+the Django `AgentTask` models only when the caller selects a Task result.
 
-Synchronous sends return an A2A agent `Message`. Requests with
-`configuration.returnImmediately=true` return a durable `Task` and execute it
-as tracked background work that drains or cancels during ASGI shutdown.
+`configuration.responseKind="message"` executes directly and returns an A2A
+agent `Message` without creating an `AgentTask`.
+`configuration.responseKind="task"` returns a durable `Task` and executes it
+as tracked background work that drains or cancels during ASGI shutdown. The
+field activates the versioned response-kind extension through the
+`A2A-Extensions` header; omission defaults to direct Message execution.
 Streaming and subscription responses use SSE. Non-strict streaming emits
 incremental artifact updates with direct backpressure before the final durable
 task event. Strict JSON output is bounded and validated before its artifact is

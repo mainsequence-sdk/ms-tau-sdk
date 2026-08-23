@@ -257,7 +257,7 @@ Authorization: Bearer <token>
   "configuration": {
     "acceptedOutputModes": ["application/json"],
     "historyLength": 0,
-    "returnImmediately": false
+    "responseKind": "message"
   },
   "metadata": {
     "https://mainsequence.ai/a2a/extensions/output-contract/v1": {
@@ -274,7 +274,8 @@ Authorization: Bearer <token>
 Rules:
 
 - `message` is required.
-- `message.messageId` is client-provided and idempotency-relevant.
+- `message.messageId` is client-provided request identity. Durable send idempotency applies only to
+  the Task path; direct Message execution creates no hidden Task receipt.
 - `message.role` must use A2A role enum values such as `ROLE_USER`.
 - `message.parts` must use A2A part objects such as `{ "text": "..." }`,
   `{ "data": {...}, "mediaType": "application/json" }`, or standard PDF file parts such as
@@ -481,7 +482,7 @@ logical `SendMessageResponse` object: exactly one of `message` or `task`.
     },
     "configuration": {
       "acceptedOutputModes": ["text/plain"],
-      "returnImmediately": false
+      "responseKind": "message"
     }
   }
 }
@@ -614,8 +615,9 @@ Proposed internal mapping:
   use backend `AgentSession` authority.
 
 ADR 35 is superseded. Public A2A session continuity now lives in the standard message envelope:
-`message.contextId` selects the backend `AgentSession.uid`, and `message.messageId` provides
-idempotency for retries.
+`message.contextId` selects the backend `AgentSession.uid`. Under ADR 47, `message.messageId`
+identifies retries, but direct Message execution is not durably replay-safe because it must not
+create an `AgentTask`; durable recovery uses the explicit Task path.
 
 ## Output Shape And Structured JSON
 
@@ -645,7 +647,7 @@ Example request for a dictionary:
   "configuration": {
     "acceptedOutputModes": ["application/json"],
     "historyLength": 0,
-    "returnImmediately": false
+    "responseKind": "message"
   },
   "metadata": {
     "https://mainsequence.ai/a2a/extensions/output-contract/v1": {

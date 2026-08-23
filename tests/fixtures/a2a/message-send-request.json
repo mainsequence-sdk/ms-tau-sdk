@@ -12,7 +12,7 @@
   "configuration": {
     "acceptedOutputModes": ["application/json"],
     "historyLength": 0,
-    "returnImmediately": false
+    "responseKind": "message"
   },
   "metadata": {
     "https://mainsequence.ai/a2a/extensions/output-contract/v1": {

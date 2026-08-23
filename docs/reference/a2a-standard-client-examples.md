@@ -6,7 +6,9 @@ They call `POST /api/a2a/v1/message:send` for direct request/response turns and 
 
 Phase 1 requires `message.contextId` to be the existing Main Sequence `AgentSession.uid`.
 Clients must generate `message.messageId` and reuse the same value when retrying the same
-logical message.
+logical message. This preserves request identity, but a direct Message send is not durably
+replay-safe and must not be retried automatically after an ambiguous timeout; select Task mode
+when durable recovery is required.
 The backend-owned `AgentSession` remains the authority for runtime identity, authorization,
 checkpointing, credentials, and session continuity.
 
@@ -18,6 +20,7 @@ curl -sS \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/a2a+json" \
   -H "Accept: application/a2a+json" \
+  -H "A2A-Extensions: https://mainsequence.ai/a2a/extensions/response-kind/v1" \
   -d '{
     "message": {
       "messageId": "msg-client-1",
@@ -31,7 +34,7 @@ curl -sS \
     },
     "configuration": {
       "acceptedOutputModes": ["application/json"],
-      "returnImmediately": false
+      "responseKind": "message"
     },
     "metadata": {
       "https://mainsequence.ai/a2a/extensions/output-contract/v1": {
@@ -67,7 +70,8 @@ Successful responses contain exactly one top-level result branch:
 
 ## REST: Async Task
 
-Set `configuration.returnImmediately` to `true` when the caller wants a task handle immediately.
+Set `configuration.responseKind` to `task` when the caller wants a durable asynchronous Task.
+Send the response-kind extension URI in `A2A-Extensions` as shown in the direct example.
 
 ```json
 {
@@ -83,7 +87,7 @@ Set `configuration.returnImmediately` to `true` when the caller wants a task han
   },
   "configuration": {
     "acceptedOutputModes": ["text/plain"],
-    "returnImmediately": true
+    "responseKind": "task"
   }
 }
 ```
@@ -133,6 +137,7 @@ curl -sS \
   -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -H "Accept: application/json" \
+  -H "A2A-Extensions: https://mainsequence.ai/a2a/extensions/response-kind/v1" \
   -d '{
     "jsonrpc": "2.0",
     "id": 1,
@@ -150,7 +155,7 @@ curl -sS \
       },
       "configuration": {
         "acceptedOutputModes": ["text/plain"],
-        "returnImmediately": false
+        "responseKind": "message"
       }
     }
   }'

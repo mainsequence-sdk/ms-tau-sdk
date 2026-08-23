@@ -13,11 +13,12 @@ import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Any
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Header, HTTPException, Query
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from astro.backend.client import MainSequenceClient
@@ -53,6 +54,9 @@ STATE_MAP = {
     "rejected": "TASK_STATE_REJECTED",
 }
 PUSH_NOTIFICATION_NOT_SUPPORTED_MESSAGE = "Push notifications are not supported"
+RESPONSE_KIND_EXTENSION_URI = (
+    "https://mainsequence.ai/a2a/extensions/response-kind/v1"
+)
 PUSH_NOTIFICATION_RPC_METHODS = frozenset(
     {
         "CreateTaskPushNotificationConfig",
@@ -65,6 +69,124 @@ PUSH_NOTIFICATION_RPC_METHODS = frozenset(
         "tasks/pushNotificationConfig/delete",
     }
 )
+
+
+class ResponseKind(StrEnum):
+    MESSAGE = "message"
+    TASK = "task"
+
+
+def _activated_extensions(value: str | None) -> set[str]:
+    return {
+        extension.strip()
+        for extension in str(value or "").split(",")
+        if extension.strip()
+    }
+
+
+def _response_kind(
+    body: dict[str, Any],
+    *,
+    a2a_extensions: str | None,
+    streaming: bool = False,
+) -> tuple[ResponseKind, bool]:
+    configuration = body.get("configuration", {})
+    if not isinstance(configuration, dict):
+        raise HTTPException(status_code=400, detail="configuration must be an object")
+    if "returnImmediately" in configuration:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "configuration.returnImmediately is not supported; use "
+                "configuration.responseKind with 'message' or 'task'"
+            ),
+        )
+    if "responseKind" not in configuration:
+        return ResponseKind.MESSAGE, False
+    if streaming:
+        raise HTTPException(
+            status_code=400,
+            detail="configuration.responseKind is not valid for message:stream",
+        )
+    try:
+        response_kind = ResponseKind(configuration["responseKind"])
+    except (TypeError, ValueError) as error:
+        raise HTTPException(
+            status_code=400,
+            detail="configuration.responseKind must be 'message' or 'task'",
+        ) from error
+    if RESPONSE_KIND_EXTENSION_URI not in _activated_extensions(a2a_extensions):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "configuration.responseKind requires A2A-Extensions: "
+                f"{RESPONSE_KIND_EXTENSION_URI}"
+            ),
+        )
+    return response_kind, True
+
+
+def _response_kind_extension(response_kinds: list[str]) -> dict[str, Any]:
+    return {
+        "uri": RESPONSE_KIND_EXTENSION_URI,
+        "description": (
+            "Select whether message:send returns a completed message or an "
+            "asynchronous task."
+        ),
+        "required": False,
+        "params": {
+            "supportedResponseKinds": response_kinds,
+            "defaultResponseKind": ResponseKind.MESSAGE.value,
+        },
+    }
+
+
+def _supported_response_kinds(agent_card: dict[str, Any] | None) -> list[str]:
+    if not isinstance(agent_card, dict):
+        return [ResponseKind.MESSAGE.value]
+    capabilities = agent_card.get("capabilities")
+    if not isinstance(capabilities, dict):
+        return [ResponseKind.MESSAGE.value]
+    extensions = capabilities.get("extensions")
+    if not isinstance(extensions, list):
+        return [ResponseKind.MESSAGE.value]
+    for extension in extensions:
+        if not isinstance(extension, dict) or extension.get("uri") != RESPONSE_KIND_EXTENSION_URI:
+            continue
+        params = extension.get("params")
+        values = params.get("supportedResponseKinds") if isinstance(params, dict) else None
+        if not isinstance(values, list):
+            return [ResponseKind.MESSAGE.value]
+        supported = [ResponseKind.MESSAGE.value]
+        if ResponseKind.TASK.value in values:
+            supported.append(ResponseKind.TASK.value)
+        return supported
+    return [ResponseKind.MESSAGE.value]
+
+
+def _with_effective_response_kind_capability(
+    agent_card: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if agent_card is None:
+        return None
+    normalized = dict(agent_card)
+    advertised = normalized.get("capabilities")
+    capabilities = dict(advertised) if isinstance(advertised, dict) else {}
+    extensions = capabilities.get("extensions")
+    preserved = (
+        [
+            dict(extension)
+            for extension in extensions
+            if isinstance(extension, dict)
+            and extension.get("uri") != RESPONSE_KIND_EXTENSION_URI
+        ]
+        if isinstance(extensions, list)
+        else []
+    )
+    preserved.append(_response_kind_extension(_supported_response_kinds(agent_card)))
+    capabilities["extensions"] = preserved
+    normalized["capabilities"] = capabilities
+    return normalized
 
 
 def _push_notification_error_info() -> dict[str, str]:
@@ -114,6 +236,30 @@ def _without_push_notification_capability(
     capabilities["pushNotifications"] = False
     normalized["capabilities"] = capabilities
     return normalized
+
+
+def _effective_agent_card(agent_card: dict[str, Any] | None) -> dict[str, Any] | None:
+    return _with_effective_response_kind_capability(
+        _without_push_notification_capability(agent_card)
+    )
+
+
+async def _require_advertised_response_kind(
+    client: MainSequenceClient,
+    *,
+    context_id: str,
+    response_kind: ResponseKind,
+) -> None:
+    envelope = await client.get_agent_card(context_id)
+    supported = _supported_response_kinds(_effective_agent_card(envelope.agent_card))
+    if response_kind.value not in supported:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"responseKind '{response_kind.value}' is not advertised by the "
+                "receiving agent"
+            ),
+        )
 
 
 def _sse(payload: dict[str, Any]) -> bytes:
@@ -280,6 +426,7 @@ def _agent_message(
     else:
         parts = [{"text": text}]
     return {
+        "kind": "message",
         "messageId": str(uuid.uuid4()),
         "role": "ROLE_AGENT",
         "contextId": context_id,
@@ -312,6 +459,7 @@ def _task_payload(task: AgentTask) -> dict[str, Any]:
     if task.status_message:
         status["message"] = task.status_message
     return {
+        "kind": "task",
         "id": task.task_id,
         "contextId": task.context_id,
         "status": status,
@@ -627,6 +775,28 @@ async def _execute_task(
         raise
 
 
+async def _execute_message(
+    manager: SessionRuntimeManager,
+    *,
+    context_id: str,
+    prompt: str,
+    output_contract: StrictJsonContract,
+    max_output_bytes: int,
+) -> dict[str, Any]:
+    text = await _collect_validated_turn(
+        manager,
+        context_id,
+        prompt,
+        output_contract,
+        max_output_bytes=max_output_bytes,
+    )
+    return _agent_message(
+        context_id=context_id,
+        text=text,
+        strict_json=output_contract.enabled,
+    )
+
+
 def _artifact_update(
     task: AgentTask,
     *,
@@ -826,15 +996,25 @@ async def message_send(
     client: BackendDep,
     manager: RuntimeManagerDep,
     config: SettingsDep,
+    a2a_extensions: Annotated[
+        str | None,
+        Header(alias="A2A-Extensions"),
+    ] = None,
 ) -> dict[str, Any]:
     message, prompt = _request_parts(body, config)
     output_contract = _output_contract(body)
-    task = await _create_backend_task(client, message=message, task_id=_task_id(body))
-    configuration = body.get("configuration", {})
-    return_immediately = (
-        bool(configuration.get("returnImmediately")) if isinstance(configuration, dict) else False
+    response_kind, was_explicit = _response_kind(
+        body,
+        a2a_extensions=a2a_extensions,
     )
-    if return_immediately:
+    if was_explicit:
+        await _require_advertised_response_kind(
+            client,
+            context_id=str(message["contextId"]),
+            response_kind=response_kind,
+        )
+    if response_kind is ResponseKind.TASK:
+        task = await _create_backend_task(client, message=message, task_id=_task_id(body))
         manager.create_background_task(
             _execute_task(
                 client,
@@ -847,10 +1027,9 @@ async def message_send(
             name=f"a2a-task-{task.task_id}",
         )
         return {"task": _task_payload(task)}
-    result = await _execute_task(
-        client,
+    result = await _execute_message(
         manager,
-        task,
+        context_id=str(message["contextId"]),
         prompt=prompt,
         output_contract=output_contract,
         max_output_bytes=config.max_turn_output_bytes,
@@ -864,7 +1043,16 @@ async def message_stream(
     client: BackendDep,
     manager: RuntimeManagerDep,
     config: SettingsDep,
+    a2a_extensions: Annotated[
+        str | None,
+        Header(alias="A2A-Extensions"),
+    ] = None,
 ) -> StreamingResponse:
+    _response_kind(
+        body,
+        a2a_extensions=a2a_extensions,
+        streaming=True,
+    )
     message, prompt = _request_parts(body, config)
     output_contract = _output_contract(body)
     task = await _create_backend_task(client, message=message, task_id=_task_id(body))
@@ -955,7 +1143,7 @@ async def extended_agent_card(
         raise HTTPException(status_code=400, detail="agent_session_uid is required")
     envelope = await client.get_agent_card(resolved_uid)
     payload = envelope.model_dump(mode="json")
-    payload["agent_card"] = _without_push_notification_capability(envelope.agent_card)
+    payload["agent_card"] = _effective_agent_card(envelope.agent_card)
     return payload
 
 
@@ -965,6 +1153,10 @@ async def json_rpc(
     client: BackendDep,
     manager: RuntimeManagerDep,
     config: SettingsDep,
+    a2a_extensions: Annotated[
+        str | None,
+        Header(alias="A2A-Extensions"),
+    ] = None,
 ) -> dict[str, Any] | StreamingResponse:
     request_id = body.get("id")
     if body.get("jsonrpc") != "2.0":
@@ -992,8 +1184,19 @@ async def json_rpc(
 
     try:
         if method in {"SendMessage", "message/send"}:
-            result = await message_send(params, client, manager, config)
+            result = await message_send(
+                params,
+                client,
+                manager,
+                config,
+                a2a_extensions,
+            )
         elif method in {"SendStreamingMessage", "message/stream"}:
+            _response_kind(
+                params,
+                a2a_extensions=a2a_extensions,
+                streaming=True,
+            )
             message, prompt = _request_parts(params, config)
             output_contract = _output_contract(params)
             task = await _create_backend_task(

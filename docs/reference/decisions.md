@@ -36,7 +36,8 @@ pre-UID API sketches have been removed from the active reference set.
     prompt guidance.
 - [`adr-35-a2a-runtime-attachment-protocol.md`](./adr-35-a2a-runtime-attachment-protocol.md)
   - Superseded proposal. Public A2A now continues sessions through `POST /api/a2a/v1/message:send`
-    with `message.contextId = AgentSession.uid` and idempotent `message.messageId` handling.
+    with `message.contextId = AgentSession.uid`; ADR 47 limits durable send idempotency to the Task
+    path and forbids creating hidden Tasks for direct Message sends.
 - [`adr-42-a2a-file-parts-and-pdf-intake.md`](./adr-42-a2a-file-parts-and-pdf-intake.md)
   - Public A2A should accept standard file parts for PDF input through `Part.raw` or `Part.url`,
     materialize them into session assets, and pass a safe file manifest to Pi.

@@ -12,6 +12,7 @@ from tau_agent.provider_events import TextDeltaEvent
 from tau_coding.events import SessionAgentEndEvent
 
 from astro.api.a2a import (
+    RESPONSE_KIND_EXTENSION_URI,
     REST_BASE,
     _agent_message,
     _collect_turn,
@@ -76,6 +77,11 @@ def _direct_message_client() -> tuple[AsyncMock, AgentTask]:
         harness_protocol="tau-session-v1",
         harness_version="0.3.1",
     )
+    client.get_agent_card.return_value = AgentCardEnvelope(
+        agent_session_uid="session-1",
+        agent_uid="agent-1",
+        agent_card=None,
+    )
     client.create_task.return_value = task
     client.update_task_status.side_effect = [
         task.model_copy(update={"status": "working"}),
@@ -86,6 +92,8 @@ def _direct_message_client() -> tuple[AsyncMock, AgentTask]:
 
 async def _direct_message_response(
     manager: _TauEventManager,
+    *,
+    explicit_response_kind: bool = True,
 ) -> tuple[httpx.Response, AsyncMock]:
     client, _task = _direct_message_client()
     config = Settings(_env_file=None)
@@ -98,20 +106,25 @@ async def _direct_message_response(
         transport=httpx.ASGITransport(app=app),
         base_url="http://test",
     ) as http:
+        body = {
+            "message": {
+                "messageId": "message-1",
+                "role": "ROLE_USER",
+                "contextId": "session-1",
+                "parts": [{"text": "What do the two DataNodes do?"}],
+            },
+            "configuration": {
+                "acceptedOutputModes": ["text/plain"],
+            },
+        }
+        headers = {}
+        if explicit_response_kind:
+            body["configuration"]["responseKind"] = "message"
+            headers["A2A-Extensions"] = RESPONSE_KIND_EXTENSION_URI
         response = await http.post(
             f"{REST_BASE}/message:send",
-            json={
-                "message": {
-                    "messageId": "message-1",
-                    "role": "ROLE_USER",
-                    "contextId": "session-1",
-                    "parts": [{"text": "What do the two DataNodes do?"}],
-                },
-                "configuration": {
-                    "acceptedOutputModes": ["text/plain"],
-                    "returnImmediately": False,
-                },
-            },
+            json=body,
+            headers=headers,
         )
     return response, client
 
@@ -339,10 +352,29 @@ async def test_direct_message_send_returns_final_tau_answer():
     assert response.json()["message"]["parts"] == [
         {"text": "The two DataNodes load and transform the tutorial data."}
     ]
-    client.add_task_message.assert_awaited_once()
-    assert client.add_task_message.await_args.args[1]["parts"] == [
-        {"text": "The two DataNodes load and transform the tutorial data."}
-    ]
+    client.create_task.assert_not_awaited()
+    client.add_task_message.assert_not_awaited()
+    client.update_task_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_omitted_response_kind_defaults_to_direct_message_without_task():
+    final = _assistant_message("The direct answer.")
+    response, client = await _direct_message_response(
+        _TauEventManager(
+            MessageEndEvent(message=final),
+            SessionAgentEndEvent(messages=[final], will_retry=False),
+        ),
+        explicit_response_kind=False,
+    )
+
+    assert response.status_code == 200
+    assert response.json()["message"]["kind"] == "message"
+    client.get_agent_card.assert_not_awaited()
+    client.get_session.assert_not_awaited()
+    client.create_task.assert_not_awaited()
+    client.add_task_message.assert_not_awaited()
+    client.update_task_status.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -357,8 +389,9 @@ async def test_direct_message_send_rejects_empty_tau_answer():
 
     assert response.status_code == 502
     assert response.json()["detail"] == "Agent turn produced no textual answer"
+    client.create_task.assert_not_awaited()
     client.add_task_message.assert_not_awaited()
-    assert client.update_task_status.await_args_list[-1].kwargs["status"] == "failed"
+    client.update_task_status.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -376,8 +409,139 @@ async def test_direct_message_send_surfaces_tau_terminal_failure():
 
     assert response.status_code == 502
     assert response.json()["detail"] == ("Agent turn failed: Provider could not complete the turn")
+    client.create_task.assert_not_awaited()
     client.add_task_message.assert_not_awaited()
-    assert client.update_task_status.await_args_list[-1].kwargs["status"] == "failed"
+    client.update_task_status.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_message_send_rejects_legacy_return_immediately():
+    client, _task = _direct_message_client()
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[backend] = lambda: client
+    app.dependency_overrides[runtime_manager] = lambda: _TauEventManager()
+    app.dependency_overrides[settings] = lambda: Settings(_env_file=None)
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as http:
+        response = await http.post(
+            f"{REST_BASE}/message:send",
+            json={
+                "message": {
+                    "messageId": "message-1",
+                    "role": "ROLE_USER",
+                    "contextId": "session-1",
+                    "parts": [{"text": "Do this."}],
+                },
+                "configuration": {"returnImmediately": False},
+            },
+        )
+
+    assert response.status_code == 400
+    assert "configuration.returnImmediately is not supported" in response.json()["detail"]
+    client.get_agent_card.assert_not_awaited()
+    client.create_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_message_send_task_requires_advertised_task_and_returns_task():
+    client, task = _direct_message_client()
+    client.get_agent_card.return_value = AgentCardEnvelope(
+        agent_session_uid="session-1",
+        agent_uid="agent-1",
+        agent_card={
+            "capabilities": {
+                "extensions": [
+                    {
+                        "uri": RESPONSE_KIND_EXTENSION_URI,
+                        "required": False,
+                        "params": {
+                            "supportedResponseKinds": ["message", "task"],
+                            "defaultResponseKind": "message",
+                        },
+                    }
+                ]
+            }
+        },
+    )
+    final = _assistant_message("Finished asynchronously.")
+
+    class BackgroundManager(_TauEventManager):
+        background = None
+
+        def create_background_task(self, coroutine, *, name):
+            self.background = coroutine
+
+    manager = BackgroundManager(
+        MessageEndEvent(message=final),
+        SessionAgentEndEvent(messages=[final], will_retry=False),
+    )
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[backend] = lambda: client
+    app.dependency_overrides[runtime_manager] = lambda: manager
+    app.dependency_overrides[settings] = lambda: Settings(_env_file=None)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as http:
+        response = await http.post(
+            f"{REST_BASE}/message:send",
+            headers={"A2A-Extensions": RESPONSE_KIND_EXTENSION_URI},
+            json={
+                "message": {
+                    "messageId": "message-1",
+                    "role": "ROLE_USER",
+                    "contextId": "session-1",
+                    "parts": [{"text": "Run this asynchronously."}],
+                },
+                "configuration": {"responseKind": "task"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["task"]["kind"] == "task"
+    assert response.json()["task"]["id"] == task.task_id
+    assert manager.background is not None
+    await manager.background
+    client.create_task.assert_awaited_once()
+    client.add_task_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_message_send_rejects_task_when_agent_card_is_message_only():
+    client, _task = _direct_message_client()
+    manager = AsyncMock()
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[backend] = lambda: client
+    app.dependency_overrides[runtime_manager] = lambda: manager
+    app.dependency_overrides[settings] = lambda: Settings(_env_file=None)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as http:
+        response = await http.post(
+            f"{REST_BASE}/message:send",
+            headers={"A2A-Extensions": RESPONSE_KIND_EXTENSION_URI},
+            json={
+                "message": {
+                    "messageId": "message-1",
+                    "role": "ROLE_USER",
+                    "contextId": "session-1",
+                    "parts": [{"text": "Run this asynchronously."}],
+                },
+                "configuration": {"responseKind": "task"},
+            },
+        )
+
+    assert response.status_code == 400
+    assert "not advertised" in response.json()["detail"]
+    client.create_task.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -472,6 +636,20 @@ async def test_extended_agent_card_is_loaded_from_backend():
         "capabilities": {
             "streaming": True,
             "pushNotifications": False,
+            "extensions": [
+                {
+                    "uri": RESPONSE_KIND_EXTENSION_URI,
+                    "description": (
+                        "Select whether message:send returns a completed message or an "
+                        "asynchronous task."
+                    ),
+                    "required": False,
+                    "params": {
+                        "supportedResponseKinds": ["message"],
+                        "defaultResponseKind": "message",
+                    },
+                }
+            ],
         },
     }
     client.get_agent_card.assert_awaited_once_with("session-1")
