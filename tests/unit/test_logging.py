@@ -152,7 +152,7 @@ async def test_request_context_emits_correlated_access_events(
     app = create_app(test_settings)
     async with asgi_client(app, lifespan=True) as client:
         response = await client.get(
-            "/health?private=value",
+            "/version?private=value",
             headers={
                 "X-Request-ID": "request-from-gateway",
                 "X-User-UID": "user-1",
@@ -161,13 +161,13 @@ async def test_request_context_emits_correlated_access_events(
         )
 
     events = _json_events(capsys.readouterr().out)
-    started = next(event for event in events if event["event"] == "http.request.started")
     completed = next(event for event in events if event["event"] == "http.request.completed")
 
     assert response.headers["x-request-id"] == "request-from-gateway"
-    assert completed["request_id"] == started["request_id"]
+    assert not any(event["event"] == "http.request.started" for event in events)
+    assert completed["request_id"] == "request-from-gateway"
     assert completed["http_method"] == "GET"
-    assert completed["route"] == "/health"
+    assert completed["route"] == "/version"
     assert completed["user_uid"] == "user-1"
     assert completed["coding_agent_service_uid"] == "service-1"
     assert completed["principal_type"] == "user"
@@ -177,6 +177,56 @@ async def test_request_context_emits_correlated_access_events(
     assert completed["status_code"] == 200
     assert isinstance(completed["duration_ms"], float)
     assert completed["response_size_bytes"] > 0
+    assert "filename" not in completed
+    assert "lineno" not in completed
+    assert "func_name" not in completed
+    assert "source" not in completed
+
+
+async def test_successful_platform_probes_emit_no_request_logs(
+    test_settings,
+    asgi_client,
+    capsys,
+):
+    app = create_app(test_settings)
+    async with asgi_client(app, lifespan=True) as client:
+        for _ in range(3):
+            assert (await client.get("/health")).status_code == 200
+            assert (await client.get("/ready")).status_code == 200
+
+    events = _json_events(capsys.readouterr().out)
+    assert not any(event["event"].startswith("http.request.") for event in events)
+    assert not any(event["event"].startswith("runtime.probe.") for event in events)
+
+
+async def test_probe_failures_are_rate_limited_and_recovery_is_logged(
+    capsys,
+    asgi_client,
+):
+    configure_logging("INFO", machine_sink=True, human_sink=False)
+    state = {"healthy": False}
+
+    async def health(_request: Request) -> PlainTextResponse:
+        return PlainTextResponse(
+            "ok" if state["healthy"] else "failed",
+            status_code=200 if state["healthy"] else 503,
+        )
+
+    app = RequestContextMiddleware(Starlette(routes=[Route("/health", health)]))
+    async with asgi_client(app) as client:
+        assert (await client.get("/health")).status_code == 503
+        assert (await client.get("/health")).status_code == 503
+        state["healthy"] = True
+        assert (await client.get("/health")).status_code == 200
+        assert (await client.get("/health")).status_code == 200
+
+    events = _json_events(capsys.readouterr().out)
+    probe_events = [event for event in events if event["event"].startswith("runtime.probe.")]
+    assert [event["event"] for event in probe_events] == [
+        "runtime.probe.failed",
+        "runtime.probe.recovered",
+    ]
+    assert not any(event["event"].startswith("http.request.") for event in events)
 
 
 async def test_request_context_adds_endpoint_fields_to_completion_event(capsys, asgi_client):
@@ -215,9 +265,9 @@ async def test_request_logging_failure_does_not_change_response(monkeypatch, asg
     async def endpoint(_request: Request) -> PlainTextResponse:
         return PlainTextResponse("ok")
 
-    app = RequestContextMiddleware(Starlette(routes=[Route("/health", endpoint)]))
+    app = RequestContextMiddleware(Starlette(routes=[Route("/application-health", endpoint)]))
     async with asgi_client(app) as client:
-        response = await client.get("/health")
+        response = await client.get("/application-health")
 
     assert response.status_code == 200
     assert response.text == "ok"
@@ -277,7 +327,7 @@ async def test_request_context_covers_stream_failure_and_context_cleanup(capsys,
         assert (await client.get("/fail")).status_code == 500
 
     events = _json_events(capsys.readouterr().out)
-    terminals = [event for event in events if event["event"].startswith("http.request.")][1::2]
+    terminals = [event for event in events if event["event"].startswith("http.request.")]
     assert terminals[0]["event"] == "http.request.completed"
     assert terminals[0]["is_streaming"] is True
     assert terminals[0]["response_size_bytes"] == 6

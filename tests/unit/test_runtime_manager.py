@@ -264,7 +264,7 @@ async def test_background_task_detaches_request_and_keeps_causation(tmp_path):
     manager, _backend = _loaded_manager(tmp_path, _FakeCodingSession())
     bind_contextvars(
         request_id="request-1",
-        request_start_event_id="event-1",
+        causation_event_id="event-1",
         trace_id="trace-1",
         span_id="span-1",
         user_uid="user-1",

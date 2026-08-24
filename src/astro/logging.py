@@ -67,6 +67,14 @@ CORRELATION_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 TRACEPARENT_PATTERN = re.compile(r"^[0-9a-f]{2}-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$")
 RUNTIME_INSTANCE_UID = str(uuid.uuid4())
 PROCESS_STARTED_AT = time.monotonic()
+PLATFORM_PROBE_PATHS = frozenset({"/health", "/ready"})
+PROBE_FAILURE_LOG_INTERVAL_SECONDS = 60.0
+PLATFORM_EVENT_PREFIXES = (
+    "http.request.",
+    "runtime.",
+    "agent.",
+    "dependency.call.",
+)
 
 ENVIRONMENT_CONTEXT_FIELDS: dict[str, tuple[str, ...]] = {
     "organization_uid": ("MAINSEQUENCE_ORGANIZATION_UID", "ORGANIZATION_UID"),
@@ -200,6 +208,25 @@ def _add_component(
     return event_dict
 
 
+def _remove_platform_callsite(
+    _logger: WrappedLogger,
+    _method_name: str,
+    event_dict: EventDict,
+) -> EventDict:
+    event = str(event_dict.get("event") or "")
+    if event.startswith(PLATFORM_EVENT_PREFIXES):
+        for key in (
+            "pathname",
+            "filename",
+            "module",
+            "lineno",
+            "func_name",
+            "source",
+        ):
+            event_dict.pop(key, None)
+    return event_dict
+
+
 def _environment_context() -> dict[str, object]:
     fields: dict[str, object] = {
         "runtime_instance_uid": RUNTIME_INSTANCE_UID,
@@ -269,6 +296,7 @@ def _common_processors() -> list[Processor]:
         _add_source,
         _add_severity,
         _add_component,
+        _remove_platform_callsite,
         _add_event_envelope,
         _sanitize_event,
     ]
@@ -424,6 +452,8 @@ class RequestContextMiddleware:
         self.logger = structlog.get_logger("astro.http")
         self.active_requests = 0
         self.request_count = 0
+        self._probe_health: dict[str, bool] = {}
+        self._probe_failure_logged_at: dict[str, float] = {}
 
     async def __call__(
         self,
@@ -463,7 +493,6 @@ class RequestContextMiddleware:
             "component": "astro.http",
             "runtime_kind": "coding_agent",
             "request_id": request_id,
-            "request_start_event_id": str(uuid.uuid4()),
             "trace_id": trace_id,
             "span_id": span_id,
             "trace_sampled": trace_sampled,
@@ -488,15 +517,6 @@ class RequestContextMiddleware:
         if request_size is not None:
             base_fields["request_size_bytes"] = request_size
         bind_request_log_fields(scope, **base_fields)
-
-        safe_log(
-            self.logger,
-            "info",
-            "http.request.started",
-            event_id=base_fields["request_start_event_id"],
-            message="HTTP request started",
-            **base_fields,
-        )
 
         async def receive_with_context() -> Message:
             nonlocal disconnected, observed_request_size_bytes
@@ -548,6 +568,58 @@ class RequestContextMiddleware:
             if terminal_emitted:
                 return
             terminal_emitted = True
+            probe_path = str(scope.get("path") or "")
+            if probe_path in PLATFORM_PROBE_PATHS:
+                outcome = str(fields.get("outcome") or "")
+                raw_status = fields.get("status_code")
+                status = raw_status if isinstance(raw_status, int) else 500
+                healthy = outcome == "success" and status < 400
+                previous = self._probe_health.get(probe_path)
+                self._probe_health[probe_path] = healthy
+                probe_fields = {
+                    key: fields[key]
+                    for key in (
+                        "component",
+                        "runtime_kind",
+                        "request_id",
+                        "trace_id",
+                        "span_id",
+                        "status_code",
+                        "status_class",
+                        "duration_ms",
+                        "outcome",
+                    )
+                    if key in fields
+                }
+                probe_fields["probe_path"] = probe_path
+                if healthy:
+                    if previous is False:
+                        safe_log(
+                            self.logger,
+                            "info",
+                            "runtime.probe.recovered",
+                            message="Runtime probe recovered",
+                            **probe_fields,
+                        )
+                    return
+
+                now = time.monotonic()
+                last_logged_at = self._probe_failure_logged_at.get(probe_path)
+                should_log = (
+                    previous is not False
+                    or last_logged_at is None
+                    or now - last_logged_at >= PROBE_FAILURE_LOG_INTERVAL_SECONDS
+                )
+                if should_log:
+                    self._probe_failure_logged_at[probe_path] = now
+                    safe_log(
+                        self.logger,
+                        "error" if status >= 500 else "warning",
+                        "runtime.probe.failed",
+                        message="Runtime probe failed",
+                        **probe_fields,
+                    )
+                return
             if fields.get("outcome") == "failed":
                 safe_log(self.logger, "error", event, **dict(fields))
             elif fields.get("outcome") in {"rejected", "cancelled", "disconnected"}:

@@ -37,20 +37,25 @@ selected request ID as `request.state.request_id`, and returns it as
 `X-Request-ID`. Runtime, backend, MCP, and provider logs emitted in the request
 inherit the same correlation context.
 
-Each HTTP request emits:
+Each non-probe HTTP request emits exactly one terminal event:
 
 ```text
-http.request.started
 http.request.completed
 ```
 
 Terminal events include the normalized route template, method/protocol, status
 class, duration, first-byte time, safe request/response sizes, streaming and
 disconnect state, authentication outcome, and actor/service/session IDs when
-known. Raw paths, query strings, IP addresses, user agents, and arbitrary
-headers are not access-log fields. Cancelled and failed requests use
-`http.request.cancelled` and `http.request.failed`, and every request receives
-exactly one terminal event.
+known. Successful platform-owned `/health` and `/ready` probes emit no request
+logs; probe failures and recoveries emit rate-limited operational events.
+Production never emits `http.request.started`. Raw paths, query strings, IP
+addresses, user agents, and arbitrary headers are not access-log fields.
+Cancelled and failed requests use `http.request.cancelled` and
+`http.request.failed`.
+
+Standard platform lifecycle events omit middleware implementation callsites
+such as `logging.py`, `__call__`, and `send_with_context`. Application-authored
+domain logs and separate exception events retain their genuine source fields.
 
 Chat and A2A routes bind `agent_session_uid`; A2A routes also bind safe method,
 request, context, task, and message identifiers. Agent run/turn events carry

@@ -452,7 +452,7 @@ class SessionRuntimeManager:
         }
         detached_fields.update(
             operation_uid=operation_uid or str(uuid.uuid4()),
-            causation_event_id=parent.get("request_start_event_id"),
+            causation_event_id=parent.get("causation_event_id"),
             origin_request_id=parent.get("request_id"),
             parent_span_id=parent.get("span_id"),
             span_id=uuid.uuid4().hex[:16],
