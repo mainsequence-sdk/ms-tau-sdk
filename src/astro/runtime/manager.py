@@ -446,7 +446,7 @@ class SessionRuntimeManager:
                 "coding_agent_service_uid",
                 "agent_session_uid",
                 "project_uid",
-                "project_environment_uid",
+                "organization_project_environment_uid",
             )
             if parent.get(field) is not None
         }

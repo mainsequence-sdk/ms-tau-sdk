@@ -23,6 +23,14 @@ service, deployment run, code/image digest, Knative revision, agent config,
 toolset, and model config revisions are added from trusted environment
 variables when available.
 
+The sole Environment correlation field is
+`organization_project_environment_uid`. Astro reads only
+`MAINSEQUENCE_ORGANIZATION_PROJECT_ENVIRONMENT_UID`, accepts the trusted
+`X-Organization-Project-Environment-UID` gateway header at the outer request
+boundary, and reserves the field against route, tool, backend, and application
+logger overrides. The shortened Environment input and output names are not
+accepted or emitted.
+
 When OpenTelemetry logging fields and `GOOGLE_CLOUD_PROJECT` are available, the
 processor adds the Google Cloud trace, span, and sampled fields used by the
 Django service.
@@ -32,10 +40,11 @@ Django service.
 The ASGI request middleware accepts a bounded, syntactically valid
 `X-Request-ID` from the platform gateway or creates a UUID. It binds that ID,
 trace/span IDs, and trusted `X-User-UID` and
-`X-Coding-Agent-Service-UID` values through Structlog contextvars, exposes the
-selected request ID as `request.state.request_id`, and returns it as
-`X-Request-ID`. Runtime, backend, MCP, and provider logs emitted in the request
-inherit the same correlation context.
+`X-Coding-Agent-Service-UID` and
+`X-Organization-Project-Environment-UID` values through Structlog contextvars,
+exposes the selected request ID as `request.state.request_id`, and returns it
+as `X-Request-ID`. Runtime, backend, MCP, and provider logs emitted in the
+request inherit the same correlation context.
 
 Each non-probe HTTP request emits exactly one terminal event:
 

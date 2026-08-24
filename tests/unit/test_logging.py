@@ -157,6 +157,7 @@ async def test_request_context_emits_correlated_access_events(
                 "X-Request-ID": "request-from-gateway",
                 "X-User-UID": "user-1",
                 "X-Coding-Agent-Service-UID": "service-1",
+                "X-Organization-Project-Environment-UID": "environment-1",
             },
         )
 
@@ -170,6 +171,8 @@ async def test_request_context_emits_correlated_access_events(
     assert completed["route"] == "/version"
     assert completed["user_uid"] == "user-1"
     assert completed["coding_agent_service_uid"] == "service-1"
+    assert completed["organization_project_environment_uid"] == "environment-1"
+    assert "project_environment_uid" not in completed
     assert completed["principal_type"] == "user"
     assert completed["status_class"] == "2xx"
     assert completed["outcome"] == "success"
@@ -181,6 +184,25 @@ async def test_request_context_emits_correlated_access_events(
     assert "lineno" not in completed
     assert "func_name" not in completed
     assert "source" not in completed
+
+
+def test_environment_context_uses_only_canonical_reserved_field(capsys, monkeypatch):
+    monkeypatch.setenv(
+        "MAINSEQUENCE_ORGANIZATION_PROJECT_ENVIRONMENT_UID",
+        "environment-trusted",
+    )
+    monkeypatch.setenv("MAINSEQUENCE_PROJECT_ENVIRONMENT_UID", "environment-legacy")
+    configure_logging("INFO", machine_sink=True, human_sink=False)
+
+    structlog.get_logger("astro.project").info(
+        "project.domain.event",
+        organization_project_environment_uid="environment-forged",
+        project_environment_uid="environment-legacy",
+    )
+
+    event = _json_events(capsys.readouterr().out)[-1]
+    assert event["organization_project_environment_uid"] == "environment-trusted"
+    assert "project_environment_uid" not in event
 
 
 async def test_successful_platform_probes_emit_no_request_logs(

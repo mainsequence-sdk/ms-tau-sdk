@@ -268,6 +268,7 @@ async def test_background_task_detaches_request_and_keeps_causation(tmp_path):
         trace_id="trace-1",
         span_id="span-1",
         user_uid="user-1",
+        organization_project_environment_uid="environment-1",
     )
 
     async def worker():
@@ -285,6 +286,8 @@ async def test_background_task_detaches_request_and_keeps_causation(tmp_path):
     assert context["trace_id"] == "trace-1"
     assert context["parent_span_id"] == "span-1"
     assert context["span_id"] != "span-1"
+    assert context["organization_project_environment_uid"] == "environment-1"
+    assert "project_environment_uid" not in context
     manager._runtimes.clear()
     await manager.aclose()
 
