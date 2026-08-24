@@ -83,9 +83,13 @@ class TauTurnObserver:
         self.tool_calls = 0
         self.handoffs = 0
         self.usage: dict[str, int] = {}
-        self._model: tuple[str, float] | None = None
+        self._model: tuple[str, float, int] | None = None
+        self._next_model_attempt = 1
         self._tools: dict[str, tuple[float, str, str]] = {}
-        self._handoffs: dict[str, tuple[float, str, str]] = {}
+        self._handoffs: dict[
+            str,
+            tuple[float, str, str, str | None, str | None, str],
+        ] = {}
 
     def observe(self, event: AstroRuntimeEvent) -> None:
         event_type = event.type.lower()
@@ -95,6 +99,15 @@ class TauTurnObserver:
             self._start_model()
         elif event_type in {"message_end", "model_end", "model_response_end"}:
             self._finish_model(data)
+        elif event_type in {
+            "message_error",
+            "model_error",
+            "model_failed",
+            "model_rate_limited",
+            "rate_limited",
+            "response_error",
+        }:
+            self._fail_model(data, event_type=event_type)
 
         if event_type in {"text_delta", "message_delta"} and self.first_token_ms is None:
             self.first_token_ms = round(
@@ -120,7 +133,8 @@ class TauTurnObserver:
         if self._model is not None:
             return
         call_uid = str(uuid.uuid4())
-        self._model = (call_uid, time.monotonic())
+        attempt = self._next_model_attempt
+        self._model = (call_uid, time.monotonic(), attempt)
         self.model_calls += 1
         safe_log(
             self.logger,
@@ -131,13 +145,17 @@ class TauTurnObserver:
             model_provider=self.provider,
             model_name=self.model,
             model_operation="response",
-            model_attempt=1,
+            model_attempt=attempt,
         )
 
     def _finish_model(self, data: Mapping[str, Any]) -> None:
         if self._model is None:
             self._start_model()
-        call_uid, started = self._model or (str(uuid.uuid4()), time.monotonic())
+        call_uid, started, attempt = self._model or (
+            str(uuid.uuid4()),
+            time.monotonic(),
+            self._next_model_attempt,
+        )
         usage = _usage(data)
         self.usage.update(usage)
         safe_log(
@@ -149,14 +167,54 @@ class TauTurnObserver:
             model_provider=self.provider,
             model_name=self.model,
             model_operation="response",
+            model_attempt=attempt,
             model_duration_ms=round((time.monotonic() - started) * 1000, 3),
             model_first_token_ms=self.first_token_ms,
             finish_reason=_bounded(_first(data, "stopReason", "stop_reason", "finish_reason")),
+            provider_request_id=_bounded(_first(data, "provider_request_id", "response_id")),
             rate_limited=False,
             outcome="success",
             **usage,
         )
         self._model = None
+        self._next_model_attempt = 1
+
+    def _fail_model(self, data: Mapping[str, Any], *, event_type: str) -> None:
+        if self._model is None:
+            self._start_model()
+        call_uid, started, attempt = self._model or (
+            str(uuid.uuid4()),
+            time.monotonic(),
+            self._next_model_attempt,
+        )
+        error_type = _bounded(_first(data, "error_type", "errorType")) or "ModelError"
+        raw_status_code = _first(data, "status_code", "status", "http_status")
+        status_code = raw_status_code if isinstance(raw_status_code, int) else None
+        rate_limited = (
+            status_code == 429
+            or "rate_limit" in event_type
+            or "ratelimit" in error_type.lower()
+        )
+        retryable = rate_limited or status_code in {408, 409, 425, 500, 502, 503, 504}
+        safe_log(
+            self.logger,
+            "warning" if retryable else "error",
+            "agent.model.failed",
+            message="Model call failed",
+            model_call_uid=call_uid,
+            model_provider=self.provider,
+            model_name=self.model,
+            model_operation="response",
+            model_attempt=attempt,
+            model_duration_ms=round((time.monotonic() - started) * 1000, 3),
+            model_error_type=error_type,
+            provider_request_id=_bounded(_first(data, "provider_request_id", "response_id")),
+            rate_limited=rate_limited,
+            retryable=retryable,
+            outcome="rate_limited" if rate_limited else "failed",
+        )
+        self._model = None
+        self._next_model_attempt = attempt + 1 if retryable else 1
 
     def _tool_identity(self, data: Mapping[str, Any]) -> tuple[str, str, str]:
         call_uid = _bounded(_first(data, "toolCallId", "tool_call_id", "id")) or str(uuid.uuid4())
@@ -208,7 +266,24 @@ class TauTurnObserver:
         handoff_uid = _bounded(data.get("handoff_uid")) or str(uuid.uuid4())
         source = _bounded(_first(data, "source_agent_uid", "source")) or "tau"
         target = _bounded(_first(data, "target_agent_uid", "target")) or "subagent"
-        self._handoffs[handoff_uid] = (time.monotonic(), source, target)
+        parent_session = _bounded(
+            _first(data, "parent_agent_session_uid", "parent_session_uid")
+        )
+        child_session = _bounded(_first(data, "child_agent_session_uid", "child_session_uid"))
+        requested_reason = _bounded(_first(data, "handoff_reason_code", "reason_code"))
+        handoff_reason = (
+            requested_reason
+            if requested_reason in {"delegation", "specialist", "supervisor", "retry"}
+            else "tau_subagent_event"
+        )
+        self._handoffs[handoff_uid] = (
+            time.monotonic(),
+            source,
+            target,
+            parent_session,
+            child_session,
+            handoff_reason,
+        )
         self.handoffs += 1
         safe_log(
             self.logger,
@@ -218,7 +293,9 @@ class TauTurnObserver:
             handoff_uid=handoff_uid,
             source_agent_uid=source,
             target_agent_uid=target,
-            handoff_reason_code="tau_subagent_event",
+            parent_agent_session_uid=parent_session,
+            child_agent_session_uid=child_session,
+            handoff_reason_code=handoff_reason,
         )
 
     def _finish_handoff(self, data: Mapping[str, Any], *, failed: bool) -> None:
@@ -229,7 +306,14 @@ class TauTurnObserver:
             handoff_uid = next(
                 (
                     uid
-                    for uid, (_started, candidate_source, candidate_target) in reversed(
+                    for uid, (
+                        _started,
+                        candidate_source,
+                        candidate_target,
+                        _parent_session,
+                        _child_session,
+                        _reason,
+                    ) in reversed(
                         self._handoffs.items()
                     )
                     if candidate_source == source and candidate_target == target
@@ -239,7 +323,9 @@ class TauTurnObserver:
         if handoff_uid is None or handoff_uid not in self._handoffs:
             self._start_handoff(data)
             handoff_uid = next(reversed(self._handoffs))
-        started, source, target = self._handoffs.pop(handoff_uid)
+        started, source, target, parent_session, child_session, handoff_reason = (
+            self._handoffs.pop(handoff_uid)
+        )
         safe_log(
             self.logger,
             "warning" if failed else "info",
@@ -248,6 +334,9 @@ class TauTurnObserver:
             handoff_uid=handoff_uid,
             source_agent_uid=source,
             target_agent_uid=target,
+            parent_agent_session_uid=parent_session,
+            child_agent_session_uid=child_session,
+            handoff_reason_code=handoff_reason,
             handoff_outcome="failed" if failed else "completed",
             outcome="failed" if failed else "success",
             duration_ms=round((time.monotonic() - started) * 1000, 3),

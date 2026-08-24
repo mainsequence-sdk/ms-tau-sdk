@@ -426,3 +426,84 @@ def test_tau_turn_observer_logs_model_tool_and_handoff_without_payloads(capsys):
     assert "private output" not in json.dumps(events)
     assert "private input" not in json.dumps(events)
     assert "private result" not in json.dumps(events)
+
+
+def test_tau_model_rate_limit_retry_preserves_safe_correlated_attempts(capsys):
+    configure_logging("INFO", machine_sink=True, human_sink=False)
+    observer = TauTurnObserver(provider="openai", model="controlled-model")
+
+    observer.observe(AstroRuntimeEvent(type="model_start"))
+    observer.observe(
+        AstroRuntimeEvent(
+            type="model_error",
+            data={
+                "error_type": "ProviderRateLimitError",
+                "status_code": 429,
+                "provider_request_id": "provider-request-1",
+                "message": "private provider response",
+                "prompt": "private prompt",
+            },
+        )
+    )
+    observer.observe(AstroRuntimeEvent(type="model_start"))
+    observer.observe(
+        AstroRuntimeEvent(
+            type="model_end",
+            data={"provider_request_id": "provider-request-2"},
+        )
+    )
+
+    events = _json_events(capsys.readouterr().out)
+    model_events = [event for event in events if event["event"].startswith("agent.model.")]
+    assert [event["event"] for event in model_events] == [
+        "agent.model.started",
+        "agent.model.failed",
+        "agent.model.started",
+        "agent.model.completed",
+    ]
+    assert [event["model_attempt"] for event in model_events] == [1, 1, 2, 2]
+    assert model_events[0]["model_call_uid"] == model_events[1]["model_call_uid"]
+    assert model_events[2]["model_call_uid"] == model_events[3]["model_call_uid"]
+    assert model_events[0]["model_call_uid"] != model_events[2]["model_call_uid"]
+    assert model_events[1]["rate_limited"] is True
+    assert model_events[1]["retryable"] is True
+    assert model_events[1]["provider_request_id"] == "provider-request-1"
+    assert "private provider response" not in json.dumps(model_events)
+    assert "private prompt" not in json.dumps(model_events)
+
+
+def test_tau_handoff_carries_session_correlation_and_allowlisted_reason(capsys):
+    configure_logging("INFO", machine_sink=True, human_sink=False)
+    observer = TauTurnObserver(provider="openai", model="controlled-model")
+
+    observer.observe(
+        AstroRuntimeEvent(
+            type="handoff_started",
+            data={
+                "handoff_uid": "handoff-1",
+                "source": "supervisor",
+                "target": "reviewer",
+                "parent_session_uid": "session-parent",
+                "child_session_uid": "session-child",
+                "reason_code": "specialist",
+                "prompt": "private handoff instructions",
+            },
+        )
+    )
+    observer.observe(
+        AstroRuntimeEvent(type="handoff_failed", data={"handoff_uid": "handoff-1"})
+    )
+
+    events = _json_events(capsys.readouterr().out)
+    handoffs = [event for event in events if event["event"].startswith("agent.handoff.")]
+    assert [event["event"] for event in handoffs] == [
+        "agent.handoff.started",
+        "agent.handoff.failed",
+    ]
+    for handoff in handoffs:
+        assert handoff["handoff_uid"] == "handoff-1"
+        assert handoff["parent_agent_session_uid"] == "session-parent"
+        assert handoff["child_agent_session_uid"] == "session-child"
+        assert handoff["handoff_reason_code"] == "specialist"
+    assert handoffs[1]["outcome"] == "failed"
+    assert "private handoff instructions" not in json.dumps(handoffs)

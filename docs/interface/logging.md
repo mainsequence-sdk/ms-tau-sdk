@@ -70,6 +70,10 @@ Chat and A2A routes bind `agent_session_uid`; A2A routes also bind safe method,
 request, context, task, and message identifiers. Agent run/turn events carry
 distinct run and turn IDs. Tau model, registered tool, and handoff events emit
 durations, controlled names, outcomes, and provider usage without content.
+Model retry and rate-limit events preserve a distinct model-call identifier per
+attempt and never include provider response bodies. Handoffs retain one
+identifier across their start and terminal events, optional parent/child
+session identifiers, and an allowlisted reason.
 Backend HTTP dependency calls use normalized semantic paths with status,
 attempt, latency, retryability, and outcome.
 
