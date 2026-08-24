@@ -22,7 +22,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from astro.backend.client import MainSequenceClient
-from astro.backend.models import AgentTask
+from astro.backend.models import AgentTask, AgentTaskCreateResult
 from astro.logging import bind_request_log_fields
 from astro.protocols.strict_json import (
     StrictJsonContract,
@@ -731,7 +731,7 @@ async def _create_backend_task(
     *,
     message: dict[str, Any],
     task_id: str,
-) -> AgentTask:
+) -> AgentTaskCreateResult:
     context_id = str(message["contextId"])
     session = await client.get_session(context_id)
     if not session.agent_uid:
@@ -1011,6 +1011,45 @@ def _message_stream_response(
     )
 
 
+def _existing_task_stream_response(
+    *,
+    client: MainSequenceClient,
+    task: AgentTask,
+    json_rpc: bool = False,
+    request_id: object = None,
+) -> StreamingResponse:
+    async def stream() -> AsyncIterator[bytes]:
+        current = task
+        previous: tuple[str, str] | None = None
+        while True:
+            marker = (current.status, str(current.status_timestamp))
+            if marker != previous:
+                payload: dict[str, Any] = {"task": _task_payload(current)}
+                if current.status in TERMINAL:
+                    payload["final"] = True
+                yield _sse(
+                    _stream_payload(
+                        payload,
+                        json_rpc=json_rpc,
+                        request_id=request_id,
+                    )
+                )
+                previous = marker
+            if current.status in TERMINAL:
+                break
+            await asyncio.sleep(1)
+            current = await client.get_task_by_protocol_id(current.task_id)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 def _task_id(body: dict[str, Any]) -> str:
     value = body.get("taskId")
     return str(value).strip() if value else str(uuid.uuid4())
@@ -1047,19 +1086,25 @@ async def message_send(
             response_kind=response_kind,
         )
     if response_kind is ResponseKind.TASK:
-        task = await _create_backend_task(client, message=message, task_id=_task_id(body))
-        manager.create_background_task(
-            _execute_task(
-                client,
-                manager,
-                task,
-                prompt=prompt,
-                output_contract=output_contract,
-                max_output_bytes=config.max_turn_output_bytes,
-            ),
-            name=f"a2a-task-{task.task_id}",
-            operation_uid=task.uid,
+        creation = await _create_backend_task(
+            client,
+            message=message,
+            task_id=_task_id(body),
         )
+        task = creation.task
+        if creation.created:
+            manager.create_background_task(
+                _execute_task(
+                    client,
+                    manager,
+                    task,
+                    prompt=prompt,
+                    output_contract=output_contract,
+                    max_output_bytes=config.max_turn_output_bytes,
+                ),
+                name=f"a2a-task-{task.task_id}",
+                operation_uid=task.uid,
+            )
         return {"task": _task_payload(task)}
     result = await _execute_message(
         manager,
@@ -1097,7 +1142,14 @@ async def message_stream(
         streaming=True,
     )
     output_contract = _output_contract(body)
-    task = await _create_backend_task(client, message=message, task_id=_task_id(body))
+    creation = await _create_backend_task(
+        client,
+        message=message,
+        task_id=_task_id(body),
+    )
+    task = creation.task
+    if not creation.created:
+        return _existing_task_stream_response(client=client, task=task)
     return _message_stream_response(
         client=client,
         manager=manager,
@@ -1257,11 +1309,19 @@ async def json_rpc(
                 streaming=True,
             )
             output_contract = _output_contract(params)
-            task = await _create_backend_task(
+            creation = await _create_backend_task(
                 client,
                 message=message,
                 task_id=_task_id(params),
             )
+            task = creation.task
+            if not creation.created:
+                return _existing_task_stream_response(
+                    client=client,
+                    task=task,
+                    json_rpc=True,
+                    request_id=request_id,
+                )
             return _message_stream_response(
                 client=client,
                 manager=manager,

@@ -19,7 +19,12 @@ from astro.api.a2a import (
     router,
 )
 from astro.api.dependencies import backend, runtime_manager, settings
-from astro.backend.models import AgentCardEnvelope, AgentSession, AgentTask
+from astro.backend.models import (
+    AgentCardEnvelope,
+    AgentSession,
+    AgentTask,
+    AgentTaskCreateResult,
+)
 from astro.runtime.events import translate_tau_event
 from astro.settings import Settings
 
@@ -73,7 +78,7 @@ def _direct_message_client() -> tuple[AsyncMock, AgentTask]:
         agent_uid="agent-1",
         agent_card=None,
     )
-    client.create_task.return_value = task
+    client.create_task.return_value = AgentTaskCreateResult(task=task, created=True)
     client.update_task_status.side_effect = [
         task.model_copy(update={"status": "working"}),
         task.model_copy(update={"status": "completed"}),

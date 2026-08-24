@@ -22,6 +22,7 @@ from .models import (
     AgentCardEnvelope,
     AgentSession,
     AgentTask,
+    AgentTaskCreateResult,
     CapabilityContent,
     ProviderCredential,
     ProviderStatus,
@@ -99,6 +100,7 @@ class MainSequenceClient:
         *,
         json: Mapping[str, Any] | None = None,
         idempotent: bool = False,
+        include_status: bool = False,
     ) -> Any:
         attempts = 3 if idempotent else 1
         force_auth = False
@@ -174,7 +176,8 @@ class MainSequenceClient:
                     )
                 if len(response.content) > self.settings.backend_max_response_bytes:
                     raise BackendError("Backend response exceeded configured size limit")
-                return response.json() if response.content else None
+                data = response.json() if response.content else None
+                return (data, response.status_code) if include_status else data
             except (httpx.TimeoutException, httpx.NetworkError) as error:
                 logger.warning(
                     "dependency.call.failed",
@@ -518,14 +521,18 @@ class MainSequenceClient:
             raise BackendError("Backend credential revoke response is invalid")
         return data
 
-    async def create_task(self, payload: Mapping[str, Any]) -> AgentTask:
-        data = await self._request(
+    async def create_task(self, payload: Mapping[str, Any]) -> AgentTaskCreateResult:
+        data, status_code = await self._request(
             "POST",
             AGENT_TASKS,
             json=payload,
             idempotent=True,
+            include_status=True,
         )
-        return AgentTask.model_validate(data)
+        return AgentTaskCreateResult(
+            task=AgentTask.model_validate(data),
+            created=status_code == 201,
+        )
 
     async def list_tasks(self, **filters: str) -> list[AgentTask]:
         query = urlencode({key: value for key, value in filters.items() if value})

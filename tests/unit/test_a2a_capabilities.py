@@ -16,7 +16,12 @@ from astro.api.a2a import (
     list_push_configs,
     set_push_config,
 )
-from astro.backend.models import AgentCardEnvelope, AgentSession, AgentTask
+from astro.backend.models import (
+    AgentCardEnvelope,
+    AgentSession,
+    AgentTask,
+    AgentTaskCreateResult,
+)
 from astro.runtime.events import AstroRuntimeEvent
 from astro.settings import Settings
 
@@ -151,12 +156,15 @@ async def test_json_rpc_message_stream_returns_sse_response():
         harness_protocol="tau-session-v1",
         harness_version="0.3.1",
     )
-    client.create_task.return_value = AgentTask(
-        uid="backend-task-1",
-        task_id="task-1",
-        context_id="session-1",
-        agent_uid="agent-1",
-        status="submitted",
+    client.create_task.return_value = AgentTaskCreateResult(
+        task=AgentTask(
+            uid="backend-task-1",
+            task_id="task-1",
+            context_id="session-1",
+            agent_uid="agent-1",
+            status="submitted",
+        ),
+        created=True,
     )
     manager = AsyncMock()
     config = Settings(_env_file=None)

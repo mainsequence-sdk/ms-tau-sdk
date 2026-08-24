@@ -469,7 +469,8 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
     assert flushed == {"accepted": True}
     assert revoked == {"revoked": True}
     assert requests[2][2] == "agent_session_uid=session-1"
-    assert created.uid == found.uid == "task-uid-1"
+    assert created.created is True
+    assert created.task.uid == found.uid == "task-uid-1"
     assert updated.status == "working"
     assert message == {"stored": True}
     assert cancelled.status == "canceled"

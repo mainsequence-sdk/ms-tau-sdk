@@ -253,3 +253,8 @@ class AgentTask(BackendModel):
     latest_message: dict[str, Any] | None = None
     outputs: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentTaskCreateResult(BackendModel):
+    task: AgentTask
+    created: bool
