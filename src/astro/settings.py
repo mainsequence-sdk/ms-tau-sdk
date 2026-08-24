@@ -167,9 +167,7 @@ class Settings(BaseSettings):
         if not self.runtime_credential_secret:
             missing.append("MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET")
         if missing:
-            raise ConfigurationError(
-                "Missing runtime credential settings: " + ", ".join(missing)
-            )
+            raise ConfigurationError("Missing runtime credential settings: " + ", ".join(missing))
 
 
 @lru_cache

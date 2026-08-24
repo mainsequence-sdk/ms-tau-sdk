@@ -227,9 +227,7 @@ async def stateless_chat(
                     if attempt >= contract.repair_attempts:
                         raise HTTPException(
                             status_code=502,
-                            detail=(
-                                f"Provider did not return valid {contract.mode}: {error}"
-                            ),
+                            detail=(f"Provider did not return valid {contract.mode}: {error}"),
                         ) from error
                     message = await _run_prompt(
                         harness,

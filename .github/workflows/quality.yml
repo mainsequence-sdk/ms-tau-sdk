@@ -1,0 +1,65 @@
+name: Quality
+
+on:
+  pull_request:
+  push:
+    branches:
+      - development
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: quality-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+      - name: Install Python
+        run: uv python install 3.13
+      - name: Sync locked workspace
+        run: uv sync --frozen
+      - name: Check formatting
+        run: uv run ruff format --check src tests packages
+      - name: Lint
+        run: uv run ruff check src tests packages
+      - name: Type check
+        run: uv run mypy
+      - name: Test with branch coverage
+        run: >-
+          uv run pytest
+          --cov=astro
+          --cov=tau_file_tools
+          --cov=tau_web_access
+          --cov-branch
+          --cov-report=term-missing:skip-covered
+
+  container-smoke:
+    needs: quality
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Build and verify runtime image
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n1)"
+          test -n "${version}"
+          docker build \
+            --target astro \
+            --build-arg "ASTRO_RELEASE_VERSION=${version}" \
+            --tag astro-tau:quality \
+            .
+          docker run --rm \
+            --env "EXPECTED_ASTRO_VERSION=${version}" \
+            --entrypoint python \
+            astro-tau:quality \
+            -c "import os; from importlib.metadata import version; assert version('mainsequence-astro') == os.environ['EXPECTED_ASTRO_VERSION']"

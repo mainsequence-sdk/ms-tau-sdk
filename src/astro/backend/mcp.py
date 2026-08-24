@@ -156,26 +156,20 @@ class MainSequenceMCPClient:
                         with bound_contextvars(**initial_log_context):
                             await session.initialize()
                             self.tools = tuple((await session.list_tools()).tools)
-                            self.resources = tuple(
-                                (await session.list_resources()).resources
-                            )
+                            self.resources = tuple((await session.list_resources()).resources)
                         if self._ready is not None and not self._ready.done():
                             self._ready.set_result(None)
                         await self._serve(session)
         except BaseException as error:
             actionable = _actionable_cleanup_error(error)
-            failure = actionable or RuntimeError(
-                "Main Sequence MCP owner task was cancelled"
-            )
+            failure = actionable or RuntimeError("Main Sequence MCP owner task was cancelled")
             self._failure = failure
         finally:
             if self._ready is not None and not self._ready.done():
                 self._ready.set_exception(
                     failure or RuntimeError("Main Sequence MCP client failed to start")
                 )
-            self._fail_pending_commands(
-                failure or RuntimeError("Main Sequence MCP client closed")
-            )
+            self._fail_pending_commands(failure or RuntimeError("Main Sequence MCP client closed"))
 
     async def _serve(self, session: ClientSession) -> None:
         commands = self._commands
@@ -201,9 +195,7 @@ class MainSequenceMCPClient:
             else:
                 try:
                     with bound_contextvars(**command.log_context):
-                        resource_result = await session.read_resource(
-                            AnyUrl(command.uri)
-                        )
+                        resource_result = await session.read_resource(AnyUrl(command.uri))
                 except Exception as error:
                     if not command.result.done():
                         command.result.set_exception(error)
@@ -234,9 +226,7 @@ class MainSequenceMCPClient:
         arguments: dict[str, object],
     ) -> types.CallToolResult:
         commands = self._require_commands()
-        result: asyncio.Future[types.CallToolResult] = (
-            asyncio.get_running_loop().create_future()
-        )
+        result: asyncio.Future[types.CallToolResult] = asyncio.get_running_loop().create_future()
         commands.put_nowait(
             _CallToolCommand(
                 name=name,

@@ -188,12 +188,16 @@ class ProviderFactory:
         api = credential.api or (
             model_metadata.api
             if model_metadata is not None and model_metadata.api
-            else definition.api if definition else "openai-completions"
+            else definition.api
+            if definition
+            else "openai-completions"
         )
         base_url = credential.base_url or (
             model_metadata.base_url
             if model_metadata is not None and model_metadata.base_url
-            else definition.base_url if definition else "https://api.openai.com/v1"
+            else definition.base_url
+            if definition
+            else "https://api.openai.com/v1"
         )
         headers = {
             **(catalog_provider.headers if catalog_provider is not None else {}),
@@ -211,11 +215,10 @@ class ProviderFactory:
                 raise ConfigurationError(
                     "OpenAI Codex requires backend-managed access_token and account_id"
                 )
+
             async def resolve_codex_credentials() -> OpenAICodexCredentials:
                 current = (
-                    await credential_resolver()
-                    if credential_resolver is not None
-                    else credential
+                    await credential_resolver() if credential_resolver is not None else credential
                 )
                 if not current.access_token or not current.account_id:
                     raise ConfigurationError(

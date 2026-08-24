@@ -36,8 +36,5 @@ def test_stateless_history_rejects_assistant_after_final_user():
 
 def test_strict_json_mode_normalizes_aliases():
     assert _strict_json_mode("dictionary") == "json_object"
-    assert (
-        _strict_json_mode(ResponseFormat(type="json_object", strict=True))
-        == "json_object"
-    )
+    assert _strict_json_mode(ResponseFormat(type="json_object", strict=True)) == "json_object"
     assert _strict_json_mode(ResponseFormat(type="text")) is None

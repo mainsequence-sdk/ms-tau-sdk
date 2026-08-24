@@ -168,13 +168,9 @@ async def test_runtime_manager_logs_only_prompt_size_when_payload_logging_enable
     await manager.aclose()
 
     events = [
-        json.loads(line)
-        for line in capsys.readouterr().out.splitlines()
-        if line.startswith("{")
+        json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")
     ]
-    received = next(
-        event for event in events if event["event"] == "agent.run.accepted"
-    )
+    received = next(event for event in events if event["event"] == "agent.run.accepted")
     assert received["input_size_bytes"] == 38
     assert "prompt_excerpt" not in received
     assert "prompt_sha256" not in received
@@ -220,13 +216,9 @@ async def test_runtime_manager_logs_prompt_before_session_load_failure(
     await manager.aclose()
 
     events = [
-        json.loads(line)
-        for line in capsys.readouterr().out.splitlines()
-        if line.startswith("{")
+        json.loads(line) for line in capsys.readouterr().out.splitlines() if line.startswith("{")
     ]
-    received = next(
-        event for event in events if event["event"] == "agent.run.accepted"
-    )
+    received = next(event for event in events if event["event"] == "agent.run.accepted")
     assert received["input_size_bytes"] == len(b"Explain this failed request.")
     assert "prompt_excerpt" not in received
 
@@ -247,13 +239,18 @@ async def test_runtime_manager_cancels_timed_out_turn(tmp_path):
 @pytest.mark.asyncio
 async def test_runtime_manager_drains_tracked_background_tasks(tmp_path):
     manager, _backend = _loaded_manager(tmp_path, _FakeCodingSession())
+    started = asyncio.Event()
+    release = asyncio.Event()
     completed = asyncio.Event()
 
     async def worker():
-        await asyncio.sleep(0.01)
+        started.set()
+        await release.wait()
         completed.set()
 
     task = manager.create_background_task(worker(), name="a2a-test")
+    await started.wait()
+    release.set()
     manager._runtimes.clear()
     await manager.aclose()
 
@@ -395,9 +392,7 @@ async def test_runtime_load_keeps_capability_root_and_reuses_backend_auth(tmp_pa
     config = load_coding_session.await_args.args[0]
     assert config.resource_paths.agents_root == capability_root
     assert config.resource_paths.cwd == tmp_path
-    assert "ensure_mainsequence_cli_auth" not in {
-        tool.name for tool in config.tools
-    }
+    assert "ensure_mainsequence_cli_auth" not in {tool.name for tool in config.tools}
     assert "Main Sequence MCP" in config.append_system_prompt
     assert "Main Sequence CLI" not in config.append_system_prompt
     assert "mainsequence-sdk" not in config.append_system_prompt

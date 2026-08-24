@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, Mock
 
-from fastapi.testclient import TestClient
+from fastapi import FastAPI
 
+import astro.api.providers as providers_api
 from astro.api.dependencies import backend, provider_signin_manager
-from astro.app import create_app
-from astro.settings import Settings
+from astro.backend.models import ProviderStatus
 
 
 def _attempt(status: str = "awaiting_browser") -> dict[str, object]:
@@ -25,38 +25,32 @@ def _attempt(status: str = "awaiting_browser") -> dict[str, object]:
     }
 
 
-def test_interactive_provider_attempt_routes_are_session_bound(tmp_path):
-    app = create_app(
-        Settings(
-            _env_file=None,
-            backend_url="http://backend:8000",
-            runtime_credential_id="credential-id",
-            runtime_credential_secret="credential-secret",
-            project_root=tmp_path,
-        )
-    )
+async def test_interactive_provider_attempt_routes_are_session_bound(
+    astro_app: FastAPI,
+    asgi_client,
+):
     signin = Mock()
     signin.start = AsyncMock(return_value=_attempt())
     signin.get.return_value = _attempt()
     signin.continue_attempt = AsyncMock(return_value=_attempt("running"))
     signin.cancel = AsyncMock(return_value=_attempt("cancelled"))
-    app.dependency_overrides[provider_signin_manager] = lambda: signin
+    astro_app.dependency_overrides[provider_signin_manager] = lambda: signin
 
-    with TestClient(app) as client:
-        started = client.post(
+    async with asgi_client(astro_app, lifespan=True) as client:
+        started = await client.post(
             "/api/model-providers/openai-codex/signin",
             json={"agent_session_uid": "session-1"},
         )
-        fetched = client.get(
+        fetched = await client.get(
             "/api/model-providers/openai-codex/signin/attempt-1",
             params={"agent_session_uid": "session-1"},
         )
-        continued = client.post(
+        continued = await client.post(
             "/api/model-providers/openai-codex/signin/attempt-1/manual",
             params={"agent_session_uid": "session-1"},
             json={"input": "short-lived-callback"},
         )
-        cancelled = client.post(
+        cancelled = await client.post(
             "/api/model-providers/openai-codex/signin/attempt-1/cancel",
             params={"agent_session_uid": "session-1"},
         )
@@ -88,25 +82,19 @@ def test_interactive_provider_attempt_routes_are_session_bound(tmp_path):
     )
 
 
-def test_complete_credential_signin_remains_backward_compatible(tmp_path):
-    app = create_app(
-        Settings(
-            _env_file=None,
-            backend_url="http://backend:8000",
-            runtime_credential_id="credential-id",
-            runtime_credential_secret="credential-secret",
-            project_root=tmp_path,
-        )
-    )
+async def test_complete_credential_signin_remains_backward_compatible(
+    astro_app: FastAPI,
+    asgi_client,
+):
     backend_client = AsyncMock()
     backend_client.flush_provider_credential.return_value = {
         "status": "active",
         "version": 2,
     }
-    app.dependency_overrides[backend] = lambda: backend_client
+    astro_app.dependency_overrides[backend] = lambda: backend_client
 
-    with TestClient(app) as client:
-        response = client.post(
+    async with asgi_client(astro_app, lifespan=True) as client:
+        response = await client.post(
             "/api/model-providers/openai-codex/signin",
             json={
                 "agent_session_uid": "session-1",
@@ -132,4 +120,68 @@ def test_complete_credential_signin_remains_backward_compatible(tmp_path):
             "expires": 1_900_000_000_000,
         },
         base_version=1,
+    )
+
+
+async def test_model_catalog_aliases_statuses_and_signoff_use_backend_contract(
+    astro_app: FastAPI,
+    asgi_client,
+    monkeypatch,
+):
+    backend_client = AsyncMock()
+    backend_client.list_provider_statuses.return_value = [
+        ProviderStatus(
+            provider="openai",
+            status="active",
+            credential_kind="api_key",
+        )
+    ]
+    backend_client.revoke_provider_credential.return_value = {"version": 3}
+    catalog = {
+        "version": 2,
+        "providers": [{"provider": "openai", "models": ["gpt-5.1"]}],
+    }
+    collect_catalog = AsyncMock(return_value=catalog)
+    monkeypatch.setattr(providers_api, "collect_model_catalog", collect_catalog)
+    astro_app.dependency_overrides[backend] = lambda: backend_client
+
+    async with asgi_client(astro_app, lifespan=True) as client:
+        chat_catalog = await client.get(
+            "/api/chat/get_available_models",
+            params={"agent_session_uid": "session-1"},
+        )
+        model_catalog = await client.get(
+            "/api/models/catalog",
+            params={"agent_session_uid": "session-1"},
+        )
+        statuses = await client.get(
+            "/api/model-providers",
+            params={"agent_session_uid": "session-1"},
+        )
+        signed_off = await client.post(
+            "/api/model-providers/openai/signoff",
+            json={"agent_session_uid": "session-1"},
+        )
+
+    assert chat_catalog.json() == model_catalog.json() == catalog
+    assert statuses.json()["providers"] == [
+        {
+            "provider": "openai",
+            "status": "active",
+            "credential_kind": "api_key",
+            "message": None,
+        }
+    ]
+    assert signed_off.json() == {
+        "ok": True,
+        "provider": "openai",
+        "authenticated": False,
+        "version": 3,
+    }
+    assert collect_catalog.await_count == 2
+    collect_catalog.assert_awaited_with(backend_client, session_uid="session-1")
+    backend_client.list_provider_statuses.assert_awaited_once_with(session_uid="session-1")
+    backend_client.revoke_provider_credential.assert_awaited_once_with(
+        provider="openai",
+        session_uid="session-1",
     )

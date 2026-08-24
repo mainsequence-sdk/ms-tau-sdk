@@ -88,9 +88,7 @@ class SessionRuntimeManager:
             "working_sessions": sum(
                 runtime.coding_session.is_running for runtime in self._runtimes.values()
             ),
-            "lease_lost_sessions": sum(
-                runtime.lease_lost for runtime in self._runtimes.values()
-            ),
+            "lease_lost_sessions": sum(runtime.lease_lost for runtime in self._runtimes.values()),
         }
 
     async def get(self, session_uid: str) -> ActiveSessionRuntime:
@@ -332,9 +330,7 @@ class SessionRuntimeManager:
         if runtime.lease_lost:
             raise LeaseLostError(f"Runtime lease was lost for session {session_uid}")
         if runtime.cancellation_requested:
-            raise LeaseLostError(
-                f"Runtime cancellation was requested for session {session_uid}"
-            )
+            raise LeaseLostError(f"Runtime cancellation was requested for session {session_uid}")
         started_at = time.monotonic()
         terminal_status = "completed"
         error_type: str | None = None
@@ -465,11 +461,7 @@ class SessionRuntimeManager:
         async def run_detached() -> object:
             clear_contextvars()
             bind_contextvars(
-                **{
-                    key: value
-                    for key, value in detached_fields.items()
-                    if value is not None
-                }
+                **{key: value for key, value in detached_fields.items() if value is not None}
             )
             try:
                 return await coroutine

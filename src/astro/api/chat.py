@@ -99,9 +99,7 @@ async def mock_chat(body: dict[str, object]) -> StreamingResponse:
 
     async def stream() -> AsyncIterator[bytes]:
         yield AssistantUiEncoder.sse({"type": "text-start", "id": "text-0"})
-        yield AssistantUiEncoder.sse(
-            {"type": "text-delta", "id": "text-0", "textDelta": text}
-        )
+        yield AssistantUiEncoder.sse({"type": "text-delta", "id": "text-0", "textDelta": text})
         yield AssistantUiEncoder.sse({"type": "text-end", "id": "text-0"})
         yield AssistantUiEncoder.sse({"type": "finish", "finishReason": "stop"})
         yield AssistantUiEncoder.done()

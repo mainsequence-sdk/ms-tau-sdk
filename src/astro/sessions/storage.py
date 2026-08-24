@@ -64,9 +64,7 @@ class BackendSessionStorage(SessionStorage):
         async with self._state_lock:
             self._raise_persistence_error()
             if not self._lease_valid:
-                raise LeaseLostError(
-                    f"Runtime lease was lost for session {self.session_uid}"
-                )
+                raise LeaseLostError(f"Runtime lease was lost for session {self.session_uid}")
             if self._entries is None:
                 await self._load_remote_entries()
             assert self._entries is not None
@@ -119,8 +117,7 @@ class BackendSessionStorage(SessionStorage):
     async def _load_remote_entries(self) -> None:
         result = await self.backend.get_entries(self.session_uid)
         entries = [
-            SESSION_ENTRY_ADAPTER.validate_python(record.entry_json)
-            for record in result.entries
+            SESSION_ENTRY_ADAPTER.validate_python(record.entry_json) for record in result.entries
         ]
         self._entries = entries
         self._next_sequence = result.next_sequence
@@ -133,18 +130,14 @@ class BackendSessionStorage(SessionStorage):
                     return
                 pending = self._pending.popleft()
                 if not self._lease_valid:
-                    error = LeaseLostError(
-                        f"Runtime lease was lost for session {self.session_uid}"
-                    )
+                    error = LeaseLostError(f"Runtime lease was lost for session {self.session_uid}")
                     self._record_persistence_error(error)
                     return
 
             try:
                 record = await self.backend.append_entry(
                     self.session_uid,
-                    pending.request.model_copy(
-                        update={"lease_token": self.lease_token}
-                    ),
+                    pending.request.model_copy(update={"lease_token": self.lease_token}),
                 )
                 if record.sequence != pending.request.expected_sequence:
                     raise BackendConflictError(

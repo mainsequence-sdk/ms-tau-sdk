@@ -31,6 +31,8 @@ dev = [
   "mypy>=1.17",
   "pytest>=8.4",
   "pytest-asyncio>=1.1",
+  "pytest-cov>=7.1.0",
+  "pytest-timeout>=2.4.0",
   "respx>=0.22",
   "ruff>=0.12",
   "types-jsonschema>=4.26.0.20260518",
@@ -50,7 +52,12 @@ members = [
 ]
 
 [tool.pytest.ini_options]
-addopts = ["--import-mode=importlib"]
+addopts = [
+  "--import-mode=importlib",
+  "--strict-config",
+  "--strict-markers",
+  "--timeout=10",
+]
 asyncio_mode = "auto"
 testpaths = [
   "tests",
@@ -71,4 +78,17 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
 [tool.mypy]
 python_version = "3.13"
 strict = true
-files = ["src/astro"]
+files = [
+  "src/astro",
+  "packages/tau-file-tools/src",
+  "packages/tau-web-access/src",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["astro", "tau_file_tools", "tau_web_access"]
+
+[tool.coverage.report]
+fail_under = 74
+show_missing = true
+skip_covered = true

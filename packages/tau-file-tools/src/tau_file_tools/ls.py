@@ -47,8 +47,7 @@ def create_ls_tool(*, cwd: str | Path | None = None) -> AgentTool:
             entries = sorted(path.iterdir(), key=lambda item: (item.name.casefold(), item.name))
             limited = len(entries) > limit
             formatted = [
-                f"{item.name}/" if item.is_dir() else item.name
-                for item in entries[:limit]
+                f"{item.name}/" if item.is_dir() else item.name for item in entries[:limit]
             ]
             return formatted, limited
 

@@ -96,10 +96,7 @@ async def test_python_client_matches_existing_django_session_contract():
                     "content_size": 7,
                 },
             )
-        if (
-            path == f"/api/v1/agent-sessions/{session_uid}/entries/"
-            and request.method == "GET"
-        ):
+        if path == f"/api/v1/agent-sessions/{session_uid}/entries/" and request.method == "GET":
             return httpx.Response(
                 200,
                 json={
@@ -561,10 +558,7 @@ async def test_session_get_rejects_missing_harness_contract():
         client = MainSequenceClient(settings, auth, client=http)
         with pytest.raises(
             BackendError,
-            match=(
-                "required harness contract: harness, harness_protocol, "
-                "harness_version"
-            ),
+            match=("required harness contract: harness, harness_protocol, harness_version"),
         ):
             await client.get_session("session-1")
 

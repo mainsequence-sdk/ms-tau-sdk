@@ -1,5 +1,4 @@
 import asyncio
-import sys
 
 import httpx
 import pytest
@@ -11,20 +10,21 @@ from tau_web_access.extractors import ContentExtractor, _communicate
 @pytest.mark.asyncio
 async def test_local_fetch_is_stored_and_retrievable(tmp_path):
     (tmp_path / "guide.md").write_text("# Guide\n\nFull content", encoding="utf-8")
-    tools = create_web_tools(
-        settings=WebAccessSettings(allow_local_files=True),
-        cwd=tmp_path,
-        client=httpx.AsyncClient(),
-    )
-    fetch = next(tool for tool in tools if tool.name == "fetch_content")
-    get_content = next(tool for tool in tools if tool.name == "get_search_content")
+    async with httpx.AsyncClient() as client:
+        tools = create_web_tools(
+            settings=WebAccessSettings(allow_local_files=True),
+            cwd=tmp_path,
+            client=client,
+        )
+        fetch = next(tool for tool in tools if tool.name == "fetch_content")
+        get_content = next(tool for tool in tools if tool.name == "get_search_content")
 
-    result = await fetch.execute("fetch-1", {"url": "guide.md"})
-    response_id = result.details["responseId"]
-    stored = await get_content.execute(
-        "get-1",
-        {"responseId": response_id, "urlIndex": 0},
-    )
+        result = await fetch.execute("fetch-1", {"url": "guide.md"})
+        response_id = result.details["responseId"]
+        stored = await get_content.execute(
+            "get-1",
+            {"responseId": response_id, "urlIndex": 0},
+        )
 
     assert "# Guide" in result.text
     assert "# guide.md" in stored.text
@@ -33,29 +33,43 @@ async def test_local_fetch_is_stored_and_retrievable(tmp_path):
 
 @pytest.mark.asyncio
 async def test_fetch_rejects_path_outside_root(tmp_path):
-    tools = create_web_tools(
-        settings=WebAccessSettings(allow_local_files=True),
-        cwd=tmp_path,
-        client=httpx.AsyncClient(),
-    )
-    fetch = next(tool for tool in tools if tool.name == "fetch_content")
+    async with httpx.AsyncClient() as client:
+        tools = create_web_tools(
+            settings=WebAccessSettings(allow_local_files=True),
+            cwd=tmp_path,
+            client=client,
+        )
+        fetch = next(tool for tool in tools if tool.name == "fetch_content")
 
-    result = await fetch.execute("fetch-1", {"url": "/etc/hosts"})
+        result = await fetch.execute("fetch-1", {"url": "/etc/hosts"})
 
     assert "Local files must be inside" in result.details["error"]
 
 
 @pytest.mark.asyncio
 async def test_cancelled_extractor_subprocess_is_terminated():
-    process = await asyncio.create_subprocess_exec(
-        sys.executable,
-        "-c",
-        "import time; time.sleep(5)",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    task = asyncio.create_task(_communicate(process))
-    await asyncio.sleep(0.01)
+    class Process:
+        def __init__(self):
+            self.returncode = None
+            self.started = asyncio.Event()
+            self.terminated = asyncio.Event()
+
+        async def communicate(self):
+            self.started.set()
+            await self.terminated.wait()
+            return b"", b""
+
+        def terminate(self):
+            self.returncode = -15
+            self.terminated.set()
+
+        def kill(self):
+            self.returncode = -9
+            self.terminated.set()
+
+    process = Process()
+    task = asyncio.create_task(_communicate(process))  # type: ignore[arg-type]
+    await process.started.wait()
     task.cancel()
 
     with pytest.raises(asyncio.CancelledError):

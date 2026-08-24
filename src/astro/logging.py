@@ -54,9 +54,7 @@ SENSITIVE_EXACT_KEYS = {
     "tool_result",
     "user_agent",
 }
-BEARER_PATTERN = re.compile(
-    r"(?i)\bbearer\s+(?!bearer\b)[A-Za-z0-9._~+/=-]+"
-)
+BEARER_PATTERN = re.compile(r"(?i)\bbearer\s+(?!bearer\b)[A-Za-z0-9._~+/=-]+")
 CALLSITE_PARAMETERS = {
     structlog.processors.CallsiteParameter.PATHNAME,
     structlog.processors.CallsiteParameter.FILENAME,
@@ -66,9 +64,7 @@ CALLSITE_PARAMETERS = {
 }
 MAX_CORRELATION_LENGTH = 128
 CORRELATION_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
-TRACEPARENT_PATTERN = re.compile(
-    r"^[0-9a-f]{2}-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$"
-)
+TRACEPARENT_PATTERN = re.compile(r"^[0-9a-f]{2}-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$")
 RUNTIME_INSTANCE_UID = str(uuid.uuid4())
 PROCESS_STARTED_AT = time.monotonic()
 
@@ -114,9 +110,8 @@ def conversation_log_fields(
 
 def _sanitize(value: object, *, key: str = "") -> object:
     normalized_key = key.lower().replace("-", "_")
-    if (
-        normalized_key in SENSITIVE_EXACT_KEYS
-        or normalized_key.endswith(("_credential", "_password", "_secret", "_token"))
+    if normalized_key in SENSITIVE_EXACT_KEYS or normalized_key.endswith(
+        ("_credential", "_password", "_secret", "_token")
     ):
         return "[REDACTED]"
     if isinstance(value, Mapping):
@@ -167,9 +162,7 @@ def _add_google_cloud_trace_fields(
     sampled = event_dict.pop("otelTraceSampled", False)
     project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
     if project_id and trace_id and trace_id != "0" and span_id and span_id != "0":
-        event_dict["logging.googleapis.com/trace"] = (
-            f"projects/{project_id}/traces/{trace_id}"
-        )
+        event_dict["logging.googleapis.com/trace"] = f"projects/{project_id}/traces/{trace_id}"
         event_dict["logging.googleapis.com/spanId"] = span_id
         event_dict["logging.googleapis.com/trace_sampled"] = sampled
     return event_dict
@@ -238,10 +231,7 @@ def _sanitize_event(
     _method_name: str,
     event_dict: EventDict,
 ) -> EventDict:
-    return {
-        str(key): _sanitize(value, key=str(key))
-        for key, value in event_dict.items()
-    }
+    return {str(key): _sanitize(value, key=str(key)) for key, value in event_dict.items()}
 
 
 class ClickableConsoleRenderer(structlog.dev.ConsoleRenderer):
@@ -373,9 +363,7 @@ def _bounded_identifier(value: object) -> str | None:
 
 
 def _request_id(scope: Scope) -> str:
-    return _bounded_identifier(_request_field(scope, b"x-request-id")) or str(
-        uuid.uuid4()
-    )
+    return _bounded_identifier(_request_field(scope, b"x-request-id")) or str(uuid.uuid4())
 
 
 def _trace_context(scope: Scope) -> tuple[str, str | None, bool]:
@@ -469,9 +457,7 @@ class RequestContextMiddleware:
         self.request_count += 1
 
         user_uid = _bounded_identifier(_request_field(scope, b"x-user-uid"))
-        service_uid = _bounded_identifier(
-            _request_field(scope, b"x-coding-agent-service-uid")
-        )
+        service_uid = _bounded_identifier(_request_field(scope, b"x-coding-agent-service-uid"))
         base_fields: dict[str, object] = {
             **_environment_context(),
             "component": "astro.http",
@@ -542,14 +528,11 @@ class RequestContextMiddleware:
                     "response_size_bytes": response_size_bytes,
                     "is_streaming": streaming,
                     "client_disconnected": disconnected,
-                    "outcome": outcome
-                    or _outcome(status_code, disconnected=disconnected),
+                    "outcome": outcome or _outcome(status_code, disconnected=disconnected),
                 }
             )
             fields["request_size_bytes"] = (
-                request_size
-                if request_size is not None
-                else observed_request_size_bytes
+                request_size if request_size is not None else observed_request_size_bytes
             )
             if status_code == 422:
                 fields["validation_error_count"] = 1

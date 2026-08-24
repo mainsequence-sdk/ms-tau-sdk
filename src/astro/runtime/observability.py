@@ -159,9 +159,7 @@ class TauTurnObserver:
         self._model = None
 
     def _tool_identity(self, data: Mapping[str, Any]) -> tuple[str, str, str]:
-        call_uid = _bounded(_first(data, "toolCallId", "tool_call_id", "id")) or str(
-            uuid.uuid4()
-        )
+        call_uid = _bounded(_first(data, "toolCallId", "tool_call_id", "id")) or str(uuid.uuid4())
         name = _bounded(_first(data, "toolName", "tool_name", "name")) or "unknown"
         category = _bounded(_first(data, "toolCategory", "tool_category")) or "other"
         return call_uid, name, category

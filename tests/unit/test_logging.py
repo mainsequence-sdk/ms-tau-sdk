@@ -2,7 +2,6 @@ import json
 import logging
 
 import structlog
-from fastapi.testclient import TestClient
 from starlette.applications import Starlette
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse, StreamingResponse
@@ -18,15 +17,10 @@ from astro.logging import (
 )
 from astro.runtime.events import AstroRuntimeEvent
 from astro.runtime.observability import TauTurnObserver
-from astro.settings import Settings
 
 
 def _json_events(output: str) -> list[dict[str, object]]:
-    return [
-        json.loads(line)
-        for line in output.splitlines()
-        if line.strip().startswith("{")
-    ]
+    return [json.loads(line) for line in output.splitlines() if line.strip().startswith("{")]
 
 
 def test_conversation_log_fields_are_safe_by_default():
@@ -65,9 +59,7 @@ def test_conversation_content_never_reaches_the_logger(capsys):
     )
 
     event = _json_events(capsys.readouterr().out)[-1]
-    assert event["input_size_bytes"] == len(
-        b"Use Bearer private-token to continue"
-    )
+    assert event["input_size_bytes"] == len(b"Use Bearer private-token to continue")
     assert "private-token" not in json.dumps(event)
 
 
@@ -89,11 +81,7 @@ def test_structlog_json_matches_backend_fields_and_redacts(capsys):
 
     events = _json_events(capsys.readouterr().out)
     native = next(event for event in events if event["event"] == "test.native")
-    foreign = next(
-        event
-        for event in events
-        if event["logger"] == "foreign.test"
-    )
+    foreign = next(event for event in events if event["logger"] == "foreign.test")
 
     assert native["logger"] == "astro.test"
     assert native["level"] == "info"
@@ -127,10 +115,7 @@ def test_google_cloud_trace_fields_are_derived_from_otel_context(
     )
 
     event = _json_events(capsys.readouterr().out)[-1]
-    assert (
-        event["logging.googleapis.com/trace"]
-        == "projects/test-project/traces/abc123"
-    )
+    assert event["logging.googleapis.com/trace"] == "projects/test-project/traces/abc123"
     assert event["logging.googleapis.com/spanId"] == "def456"
     assert event["logging.googleapis.com/trace_sampled"] is True
     assert "otelTraceID" not in event
@@ -159,21 +144,14 @@ def test_structlog_human_sink_uses_console_renderer_and_source(capsys):
     assert len(captured.err.splitlines()) == 1
 
 
-def test_request_context_emits_correlated_access_events(tmp_path, capsys):
-    app = create_app(
-        Settings(
-            _env_file=None,
-            backend_url="http://backend:8000",
-            runtime_credential_id="credential-id",
-            runtime_credential_secret="credential-secret",
-            project_root=tmp_path,
-            log_machine_sink=True,
-            log_human_sink=False,
-        )
-    )
-
-    with TestClient(app) as client:
-        response = client.get(
+async def test_request_context_emits_correlated_access_events(
+    test_settings,
+    asgi_client,
+    capsys,
+):
+    app = create_app(test_settings)
+    async with asgi_client(app, lifespan=True) as client:
+        response = await client.get(
             "/health?private=value",
             headers={
                 "X-Request-ID": "request-from-gateway",
@@ -183,12 +161,8 @@ def test_request_context_emits_correlated_access_events(tmp_path, capsys):
         )
 
     events = _json_events(capsys.readouterr().out)
-    started = next(
-        event for event in events if event["event"] == "http.request.started"
-    )
-    completed = next(
-        event for event in events if event["event"] == "http.request.completed"
-    )
+    started = next(event for event in events if event["event"] == "http.request.started")
+    completed = next(event for event in events if event["event"] == "http.request.completed")
 
     assert response.headers["x-request-id"] == "request-from-gateway"
     assert completed["request_id"] == started["request_id"]
@@ -205,7 +179,7 @@ def test_request_context_emits_correlated_access_events(tmp_path, capsys):
     assert completed["response_size_bytes"] > 0
 
 
-def test_request_context_adds_endpoint_fields_to_completion_event(capsys):
+async def test_request_context_adds_endpoint_fields_to_completion_event(capsys, asgi_client):
     configure_logging("INFO", machine_sink=True, human_sink=False)
 
     async def endpoint(request: Request) -> PlainTextResponse:
@@ -216,23 +190,19 @@ def test_request_context_adds_endpoint_fields_to_completion_event(capsys):
         )
         return PlainTextResponse("ok")
 
-    app = RequestContextMiddleware(
-        Starlette(routes=[Route("/chat", endpoint, methods=["POST"])])
-    )
-    with TestClient(app) as client:
-        response = client.post("/chat")
+    app = RequestContextMiddleware(Starlette(routes=[Route("/chat", endpoint, methods=["POST"])]))
+    async with asgi_client(app) as client:
+        response = await client.post("/chat")
 
     events = _json_events(capsys.readouterr().out)
-    completed = next(
-        event for event in events if event["event"] == "http.request.completed"
-    )
+    completed = next(event for event in events if event["event"] == "http.request.completed")
 
     assert response.status_code == 200
     assert completed["session_uid"] == "session-1"
     assert completed["agent_session_uid"] == "session-1"
 
 
-def test_request_logging_failure_does_not_change_response(monkeypatch):
+async def test_request_logging_failure_does_not_change_response(monkeypatch, asgi_client):
     class FailingLogger:
         def info(self, event, **fields):
             raise OSError("sink unavailable")
@@ -245,17 +215,16 @@ def test_request_logging_failure_does_not_change_response(monkeypatch):
     async def endpoint(_request: Request) -> PlainTextResponse:
         return PlainTextResponse("ok")
 
-    app = RequestContextMiddleware(
-        Starlette(routes=[Route("/health", endpoint)])
-    )
-    response = TestClient(app).get("/health")
+    app = RequestContextMiddleware(Starlette(routes=[Route("/health", endpoint)]))
+    async with asgi_client(app) as client:
+        response = await client.get("/health")
 
     assert response.status_code == 200
     assert response.text == "ok"
     assert response.headers["x-request-id"]
 
 
-def test_human_request_completion_is_one_line_without_content(capsys):
+async def test_human_request_completion_is_one_line_without_content(capsys, asgi_client):
     configure_logging("INFO", machine_sink=False, human_sink=True)
 
     async def endpoint(request: Request) -> PlainTextResponse:
@@ -266,11 +235,9 @@ def test_human_request_completion_is_one_line_without_content(capsys):
         )
         return PlainTextResponse("ok")
 
-    app = RequestContextMiddleware(
-        Starlette(routes=[Route("/chat", endpoint, methods=["POST"])])
-    )
-    with TestClient(app) as client:
-        response = client.post("/chat")
+    app = RequestContextMiddleware(Starlette(routes=[Route("/chat", endpoint, methods=["POST"])]))
+    async with asgi_client(app) as client:
+        response = await client.post("/chat")
 
     lines = capsys.readouterr().err.splitlines()
     completed = next(line for line in lines if "HTTP request completed" in line)
@@ -284,7 +251,7 @@ def test_human_request_completion_is_one_line_without_content(capsys):
     assert "source=" not in completed
 
 
-def test_request_context_covers_stream_failure_and_context_cleanup(capsys):
+async def test_request_context_covers_stream_failure_and_context_cleanup(capsys, asgi_client):
     configure_logging("INFO", machine_sink=True, human_sink=False)
 
     async def stream(_request: Request) -> StreamingResponse:
@@ -305,9 +272,9 @@ def test_request_context_covers_stream_failure_and_context_cleanup(capsys):
             ]
         )
     )
-    with TestClient(app, raise_server_exceptions=False) as client:
-        assert client.get("/stream", headers={"X-User-UID": "user-1"}).status_code == 200
-        assert client.get("/fail").status_code == 500
+    async with asgi_client(app, raise_app_exceptions=False) as client:
+        assert (await client.get("/stream", headers={"X-User-UID": "user-1"})).status_code == 200
+        assert (await client.get("/fail")).status_code == 500
 
     events = _json_events(capsys.readouterr().out)
     terminals = [event for event in events if event["event"].startswith("http.request.")][1::2]

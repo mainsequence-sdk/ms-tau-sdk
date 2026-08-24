@@ -142,10 +142,7 @@ class MainSequenceClient:
                     auth_retried = True
                     force_auth = True
                     continue
-                if (
-                    idempotent
-                    and response.status_code in RETRYABLE_BACKEND_STATUS_CODES
-                ):
+                if idempotent and response.status_code in RETRYABLE_BACKEND_STATUS_CODES:
                     transport_attempt += 1
                     if transport_attempt < attempts:
                         delay_seconds = 0.25 * (2 ** (transport_attempt - 1))
@@ -432,16 +429,10 @@ class MainSequenceClient:
         raw = hydrated.get("credential", {})
         if not isinstance(raw, dict):
             raise BackendError(f"Backend credential for {provider} is invalid")
-        credential_kind = str(
-            hydrated.get("credential_kind") or raw.get("type") or "api_key"
-        )
+        credential_kind = str(hydrated.get("credential_kind") or raw.get("type") or "api_key")
         access_token = raw.get("access_token") or raw.get("access")
         account_id = raw.get("account_id")
-        if (
-            provider == "openai-codex"
-            and isinstance(access_token, str)
-            and not account_id
-        ):
+        if provider == "openai-codex" and isinstance(access_token, str) and not account_id:
             account_id = account_id_from_access_token(access_token)
         return ProviderCredential.model_validate(
             {

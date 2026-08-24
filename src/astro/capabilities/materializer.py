@@ -14,8 +14,7 @@ from astro.errors import ConfigurationError
 
 def _safe_session_key(value: str) -> str:
     return "".join(
-        character if character.isalnum() or character in "_.-" else "_"
-        for character in value
+        character if character.isalnum() or character in "_.-" else "_" for character in value
     )
 
 
@@ -38,10 +37,7 @@ def _skill_path(value: str) -> Path | None:
 
 
 def _is_repository_capability(binding: SessionCapabilityBinding) -> bool:
-    return (
-        binding.source_type == "repository"
-        or binding.capability.source_type == "repository"
-    )
+    return binding.source_type == "repository" or binding.capability.source_type == "repository"
 
 
 def _content_digest(content: str) -> str:
@@ -91,28 +87,18 @@ async def materialize_session_capabilities(
             continue
         relative_path = _skill_path(capability.capability_path)
         if relative_path is None:
-            raise ConfigurationError(
-                f"Capability {capability.uid} has an unsafe skill path"
-            )
+            raise ConfigurationError(f"Capability {capability.uid} has an unsafe skill path")
         target = await asyncio.to_thread(_resolve_target, skills_root, relative_path)
         if not target.is_relative_to(skills_root):
-            raise ConfigurationError(
-                f"Capability {capability.uid} escaped the session skill root"
-            )
+            raise ConfigurationError(f"Capability {capability.uid} escaped the session skill root")
         content = await backend.get_capability_content(capability.uid)
         digest = _content_digest(content.content)
-        expected = (content.content_sha256 or capability.content_sha256).removeprefix(
-            "sha256:"
-        )
+        expected = (content.content_sha256 or capability.content_sha256).removeprefix("sha256:")
         if expected and expected != digest:
-            raise ConfigurationError(
-                f"Capability {capability.uid} content hash does not match"
-            )
+            raise ConfigurationError(f"Capability {capability.uid} content hash does not match")
         previous = targets.get(target)
         if previous is not None and previous != digest:
-            raise ConfigurationError(
-                f"Multiple capabilities resolve to {relative_path}"
-            )
+            raise ConfigurationError(f"Multiple capabilities resolve to {relative_path}")
         await asyncio.to_thread(_write_skill, target, content.content)
         targets[target] = digest
 

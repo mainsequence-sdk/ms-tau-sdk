@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Literal, overload
 
 from tau_agent.tools import ToolCancellationToken
 from tau_agent.types import JSONValue
@@ -25,6 +26,24 @@ def resolve_path(root: Path, value: str | None) -> Path:
     if not path.is_absolute():
         path = root / path
     return path.resolve()
+
+
+@overload
+def string_arg(
+    arguments: Mapping[str, JSONValue],
+    name: str,
+    *,
+    required: Literal[True],
+) -> str: ...
+
+
+@overload
+def string_arg(
+    arguments: Mapping[str, JSONValue],
+    name: str,
+    *,
+    required: Literal[False],
+) -> str | None: ...
 
 
 def string_arg(arguments: Mapping[str, JSONValue], name: str, *, required: bool) -> str | None:

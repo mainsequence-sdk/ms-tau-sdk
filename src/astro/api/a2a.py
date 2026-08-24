@@ -55,9 +55,7 @@ STATE_MAP = {
     "rejected": "TASK_STATE_REJECTED",
 }
 PUSH_NOTIFICATION_NOT_SUPPORTED_MESSAGE = "Push notifications are not supported"
-RESPONSE_KIND_EXTENSION_URI = (
-    "https://mainsequence.ai/a2a/extensions/response-kind/v1"
-)
+RESPONSE_KIND_EXTENSION_URI = "https://mainsequence.ai/a2a/extensions/response-kind/v1"
 PUSH_NOTIFICATION_RPC_METHODS = frozenset(
     {
         "CreateTaskPushNotificationConfig",
@@ -113,11 +111,7 @@ class ResponseKind(StrEnum):
 
 
 def _activated_extensions(value: str | None) -> set[str]:
-    return {
-        extension.strip()
-        for extension in str(value or "").split(",")
-        if extension.strip()
-    }
+    return {extension.strip() for extension in str(value or "").split(",") if extension.strip()}
 
 
 def _response_kind(
@@ -155,8 +149,7 @@ def _response_kind(
         raise HTTPException(
             status_code=400,
             detail=(
-                "configuration.responseKind requires A2A-Extensions: "
-                f"{RESPONSE_KIND_EXTENSION_URI}"
+                f"configuration.responseKind requires A2A-Extensions: {RESPONSE_KIND_EXTENSION_URI}"
             ),
         )
     return response_kind, True
@@ -166,8 +159,7 @@ def _response_kind_extension(response_kinds: list[str]) -> dict[str, Any]:
     return {
         "uri": RESPONSE_KIND_EXTENSION_URI,
         "description": (
-            "Select whether message:send returns a completed message or an "
-            "asynchronous task."
+            "Select whether message:send returns a completed message or an asynchronous task."
         ),
         "required": False,
         "params": {
@@ -213,8 +205,7 @@ def _with_effective_response_kind_capability(
         [
             dict(extension)
             for extension in extensions
-            if isinstance(extension, dict)
-            and extension.get("uri") != RESPONSE_KIND_EXTENSION_URI
+            if isinstance(extension, dict) and extension.get("uri") != RESPONSE_KIND_EXTENSION_URI
         ]
         if isinstance(extensions, list)
         else []
@@ -292,8 +283,7 @@ async def _require_advertised_response_kind(
         raise HTTPException(
             status_code=400,
             detail=(
-                f"responseKind '{response_kind.value}' is not advertised by the "
-                "receiving agent"
+                f"responseKind '{response_kind.value}' is not advertised by the receiving agent"
             ),
         )
 
@@ -1124,11 +1114,6 @@ async def list_tasks(client: BackendDep, contextId: str | None = None) -> dict[s
     return {"tasks": [_task_payload(task) for task in tasks]}
 
 
-@router.get(f"{REST_BASE}/tasks/{{task_id}}")
-async def get_task(task_id: str, client: BackendDep) -> dict[str, Any]:
-    return {"task": _task_payload(await client.get_task_by_protocol_id(task_id))}
-
-
 @router.post(f"{REST_BASE}/tasks/{{task_id}}:cancel")
 async def cancel_task(
     task_id: str,
@@ -1155,6 +1140,11 @@ async def subscribe_task(task_id: str, client: BackendDep) -> StreamingResponse:
             await asyncio.sleep(1)
 
     return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@router.get(f"{REST_BASE}/tasks/{{task_id}}")
+async def get_task(task_id: str, client: BackendDep) -> dict[str, Any]:
+    return {"task": _task_payload(await client.get_task_by_protocol_id(task_id))}
 
 
 @router.get(f"{REST_BASE}/tasks/{{task_id}}/pushNotificationConfigs")

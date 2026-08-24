@@ -29,12 +29,8 @@ def _binding(path: str) -> SessionCapabilityBinding:
 @pytest.mark.asyncio
 async def test_materializes_session_skill_into_private_agents_root(tmp_path):
     backend = AsyncMock()
-    backend.list_session_capabilities.return_value = [
-        _binding("skills/research/SKILL.md")
-    ]
-    backend.get_capability_content.return_value = CapabilityContent(
-        content="# Research\n"
-    )
+    backend.list_session_capabilities.return_value = [_binding("skills/research/SKILL.md")]
+    backend.get_capability_content.return_value = CapabilityContent(content="# Research\n")
 
     agents_root = await materialize_session_capabilities(
         backend=backend,
@@ -50,9 +46,7 @@ async def test_materializes_session_skill_into_private_agents_root(tmp_path):
 @pytest.mark.asyncio
 async def test_rejects_unsafe_session_skill_path(tmp_path):
     backend = AsyncMock()
-    backend.list_session_capabilities.return_value = [
-        _binding("skills/../secrets/SKILL.md")
-    ]
+    backend.list_session_capabilities.return_value = [_binding("skills/../secrets/SKILL.md")]
 
     with pytest.raises(ConfigurationError, match="unsafe skill path"):
         await materialize_session_capabilities(

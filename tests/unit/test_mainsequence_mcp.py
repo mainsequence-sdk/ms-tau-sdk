@@ -281,9 +281,7 @@ def test_agent_discovery_tool_hides_backend_controlled_environment_argument(tool
 
     tools = create_mainsequence_mcp_tools(client)
 
-    assert "organization_project_environment_uid" not in tools[0].parameters[
-        "properties"
-    ]
+    assert "organization_project_environment_uid" not in tools[0].parameters["properties"]
     assert tools[0].parameters["required"] == []
 
 

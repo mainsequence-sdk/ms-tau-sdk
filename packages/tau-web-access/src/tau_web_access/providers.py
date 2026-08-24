@@ -19,8 +19,7 @@ EXA_SEARCH_URL = "https://api.exa.ai/search"
 EXA_MCP_URL = "https://mcp.exa.ai/mcp"
 PERPLEXITY_URL = "https://api.perplexity.ai/chat/completions"
 GEMINI_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/models/"
-    "gemini-2.5-flash:generateContent"
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent"
 )
 
 
@@ -155,9 +154,7 @@ class SearchProviders:
         if not api_key:
             enriched = [query]
             for domain in options.domain_filter:
-                qualifier = (
-                    f"-site:{domain[1:]}" if domain.startswith("-") else f"site:{domain}"
-                )
+                qualifier = f"-site:{domain[1:]}" if domain.startswith("-") else f"site:{domain}"
                 enriched.append(qualifier)
             if options.recency_filter:
                 enriched.append(f"past {options.recency_filter}")
@@ -171,22 +168,22 @@ class SearchProviders:
                     "contextMaxCharacters": 50_000 if options.include_content else 3_000,
                 },
             )
-            results = _parse_exa_mcp_results(text)
+            mcp_results = _parse_exa_mcp_results(text)
             answer_parts = [
                 f"{item.snippet}\nSource: {item.title} ({item.url})"
-                for item in results
+                for item in mcp_results
                 if item.snippet
             ]
-            inline = [
+            mcp_inline = [
                 ExtractedContent(url=item.url, title=item.title, content=item.snippet)
-                for item in results
+                for item in mcp_results
                 if options.include_content and item.snippet
             ]
             return QueryResult(
                 query=query,
                 answer="\n\n".join(answer_parts) or text,
-                results=results,
-                inline_content=inline,
+                results=mcp_results,
+                inline_content=mcp_inline,
             )
 
         use_search = bool(
@@ -205,7 +202,7 @@ class SearchProviders:
             if not response.is_success:
                 raise RuntimeError(f"Exa API error {response.status_code}: {_error_text(response)}")
             data = response.json()
-            results = [
+            answer_results = [
                 SearchResult(
                     title=item.get("title") or f"Source {index + 1}",
                     url=item["url"],
@@ -213,7 +210,11 @@ class SearchProviders:
                 for index, item in enumerate(data.get("citations", []))
                 if item.get("url")
             ]
-            return QueryResult(query=query, answer=data.get("answer", ""), results=results)
+            return QueryResult(
+                query=query,
+                answer=data.get("answer", ""),
+                results=answer_results,
+            )
 
         included = [domain for domain in options.domain_filter if not domain.startswith("-")]
         excluded = [domain[1:] for domain in options.domain_filter if domain.startswith("-")]
@@ -232,9 +233,7 @@ class SearchProviders:
             payload["excludeDomains"] = excluded
         if options.recency_filter:
             days = {"day": 1, "week": 7, "month": 30, "year": 365}[options.recency_filter]
-            payload["startPublishedDate"] = (
-                datetime.now(UTC) - timedelta(days=days)
-            ).isoformat()
+            payload["startPublishedDate"] = (datetime.now(UTC) - timedelta(days=days)).isoformat()
 
         response = await self.client.post(EXA_SEARCH_URL, headers=headers, json=payload)
         if not response.is_success:
@@ -315,10 +314,9 @@ class SearchProviders:
             for part in candidate.get("content", {}).get("parts", [])
             if isinstance(part, dict)
         )
-        chunks = (
-            candidate.get("groundingMetadata", {}).get("groundingChunks", [])
-            or candidate.get("grounding_metadata", {}).get("grounding_chunks", [])
-        )
+        chunks = candidate.get("groundingMetadata", {}).get("groundingChunks", []) or candidate.get(
+            "grounding_metadata", {}
+        ).get("grounding_chunks", [])
         results: list[SearchResult] = []
         for index, chunk in enumerate(chunks[: options.num_results]):
             web = chunk.get("web", {})
