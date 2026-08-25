@@ -609,6 +609,13 @@ class RequestContextMiddleware:
                     for key in (
                         "component",
                         "runtime_kind",
+                        "organization_uid",
+                        "project_uid",
+                        "organization_project_environment_uid",
+                        "resource_release_uid",
+                        "coding_agent_service_uid",
+                        "runtime_instance_uid",
+                        "runtime_revision",
                         "request_id",
                         "trace_id",
                         "span_id",

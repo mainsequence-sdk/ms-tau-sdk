@@ -224,7 +224,9 @@ async def test_successful_platform_probes_emit_no_request_logs(
 async def test_probe_failures_are_rate_limited_and_recovery_is_logged(
     capsys,
     asgi_client,
+    monkeypatch,
 ):
+    monkeypatch.setenv("MAINSEQUENCE_ORGANIZATION_PROJECT_ENVIRONMENT_UID", "environment-probe")
     configure_logging("INFO", machine_sink=True, human_sink=False)
     state = {"healthy": False}
 
@@ -248,6 +250,10 @@ async def test_probe_failures_are_rate_limited_and_recovery_is_logged(
         "runtime.probe.failed",
         "runtime.probe.recovered",
     ]
+    assert all(
+        event["organization_project_environment_uid"] == "environment-probe"
+        for event in probe_events
+    )
     assert not any(event["event"].startswith("http.request.") for event in events)
 
 

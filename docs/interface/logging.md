@@ -56,7 +56,8 @@ Terminal events include the normalized route template, method/protocol, status
 class, duration, first-byte time, safe request/response sizes, streaming and
 disconnect state, authentication outcome, and actor/service/session IDs when
 known. Successful platform-owned `/health` and `/ready` probes emit no request
-logs; probe failures and recoveries emit rate-limited operational events.
+logs; probe failures and recoveries emit rate-limited operational events that
+retain their canonical Organization Environment, runtime, and service identity.
 Production never emits `http.request.started`. Raw paths, query strings, IP
 addresses, user agents, and arbitrary headers are not access-log fields.
 Cancelled and failed requests use `http.request.cancelled` and
