@@ -6,7 +6,9 @@
 2. `POST /api/chat` supplies that session UID and the latest user message.
 3. Astro authenticates to Django with its runtime credential.
 4. The session manager acquires the backend runtime lease.
-5. Astro hydrates the user-scoped provider credential from Django.
+5. Astro sends the exact backend AgentSession UID to Django; Django derives
+   that session's User owner and returns only the requested provider
+   credential. The runtime responsible User remains the acting principal.
 6. Enabled backend session skills are materialized into a private Tau resource root.
 7. Astro connects to Django `/mcp` with the same runtime bearer token.
 8. Main Sequence MCP tools and resources are exposed to Tau. For Agent
@@ -20,11 +22,15 @@
 There is no child coding-agent process, JSONL session file, checkpoint bundle,
 or checkpoint sidecar.
 
-## Stateless chat
+## Agent-targeted sessionless response
 
-`POST /api/llm/chat` hydrates a provider credential, creates a one-turn Tau
-`AgentHarness`, returns JSON, and closes the provider. It does not acquire a
-session lease or persist entries.
+`POST /api/agents/{agent_uid}/responses` validates the path UID against the
+immutable deployment snapshot, resolves Agent provider/model/thinking defaults,
+hydrates only the requested provider credential with `agent_uid`, creates a
+short-lived Tau `AgentHarness`, returns a canonical A2A Message, and closes the
+provider. It does not call session, task, entry, checkpoint, capability, or
+agent lookup endpoints. The streaming variant uses the same execution path and
+emits one final Message event.
 
 ## Tools and project context
 

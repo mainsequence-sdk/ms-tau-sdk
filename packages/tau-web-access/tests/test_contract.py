@@ -1,13 +1,16 @@
+import httpx
 from tau_agent.tools import AgentTool
 
 from tau_web_access import WebAccessSettings, create_web_tools
 
 
-def test_tool_names_and_tau_contract(tmp_path):
-    tools = create_web_tools(
-        settings=WebAccessSettings(allow_private_networks=True),
-        cwd=tmp_path,
-    )
+async def test_tool_names_and_tau_contract(tmp_path):
+    async with httpx.AsyncClient() as client:
+        tools = create_web_tools(
+            settings=WebAccessSettings(allow_private_networks=True),
+            cwd=tmp_path,
+            client=client,
+        )
 
     assert all(isinstance(tool, AgentTool) for tool in tools)
     assert [tool.name for tool in tools] == [

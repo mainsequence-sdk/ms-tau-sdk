@@ -138,7 +138,7 @@ Accept: application/a2a+json
   },
   "configuration": {
     "acceptedOutputModes": ["text/plain"],
-    "returnImmediately": false
+    "responseKind": "message"
   }
 }
 ```
@@ -291,9 +291,9 @@ Astro should not persist raw base64 PDF bytes into checkpoint metadata or conver
 If the pod restarts, the caller may need to resend the file unless a later backend object-store
 asset capability is added. That backend asset capability is outside this ADR.
 
-## Idempotency
+## Replay Identity
 
-A2A `message:send` remains idempotent by:
+A2A `message:send` request identity remains:
 
 ```text
 (message.contextId, message.messageId)
@@ -307,8 +307,10 @@ The message fingerprint must include file-part identity:
 - decoded/fetched content `sha256`
 - content size
 
-If the same `(contextId, messageId)` is reused with different file content or metadata, Astro must
-return the existing conflict behavior instead of starting another runtime turn.
+ADR 47 narrows the persistence guarantee: Task sends use the durable task-message conflict
+mechanism, while direct Message sends create no hidden `AgentTask` or task-message record and are
+not durably replay-safe. A caller must not automatically resend a direct request after an ambiguous
+timeout merely because it preserved `(contextId, messageId)`.
 
 ## URL Fetch Security
 
@@ -402,7 +404,7 @@ Rejected:
       `/session-state/session-assets/<contextId>/a2a-inputs/<messageId>/`.
 - [x] Compute and store `sha256` and `sizeBytes` for each materialized file.
 - [x] Include the file manifest in the runtime user message sent to Pi.
-- [x] Include file identity in the A2A message idempotency fingerprint.
+- [x] Include file identity in the durable Task-message idempotency fingerprint.
 - [x] Add focused normalizer tests for accepting a valid inline PDF `raw` part.
 - [x] Add focused normalizer tests for rejecting the non-standard `kind/file/bytes/mimeType` wrapper.
 - [x] Add focused normalizer tests for rejecting missing `mediaType`, non-PDF media type, invalid base64,

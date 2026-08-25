@@ -62,8 +62,9 @@ recorded in the active reference set:
   `message.contextId` when the caller is authorized to use that uid.
 - Warm A2A runners are internal Astro execution machinery. They are not a public attach/status
   protocol.
-- Stateless LLM passthrough is a separate endpoint, `POST /api/llm/chat`, and must not go through
-  sessions, checkpoints, Pi runners, capabilities, project attachment, queues, or persistence.
+- Agent-targeted sessionless execution uses `POST /api/agents/{agent_uid}/responses` and must not
+  go through sessions, checkpoints, Pi runners, project attachment, queues, or persistence. ADR 44
+  supersedes the former unscoped model passthrough.
 - Main Sequence runtime credential auth remains the deployed-runtime auth mechanism.
 - Main Sequence session capabilities and injected skills remain current behavior until an adapter
   split replaces the direct imports.
@@ -73,7 +74,8 @@ recorded in the active reference set:
 Current server startup advertises these primary endpoints:
 
 ```text
-POST /api/llm/chat
+POST /api/agents/{agent_uid}/responses
+POST /api/agents/{agent_uid}/responses/stream
 POST /api/chat
 POST /api/a2a/v1/message:send
 ```
@@ -89,8 +91,6 @@ GET  /api/a2a/v1/tasks/{task_id}
 POST /api/a2a/v1/tasks/{task_id}:cancel
 POST /api/a2a/v1/tasks/{task_id}:subscribe
 POST /api/a2a/v1/tasks/{task_id}/pushNotificationConfigs
-GET  /api/a2a/v1/tasks/{task_id}/pushNotificationConfigs
-GET  /api/a2a/v1/tasks/{task_id}/pushNotificationConfigs/{config_id}
 GET  /api/a2a/v1/extendedAgentCard
 POST /api/a2a/rpc
 ```
@@ -327,7 +327,7 @@ If Astro becomes a general Pi deployment runtime, the split should be:
 Astro Core
   Backend-neutral Pi deployment runtime.
   Owns HTTP/SSE/REST routes, public protocol translation, Pi launch, warm runners,
-  local runtime state, local session files, stateless LLM passthrough, generic
+  local runtime state, local session files, agent-targeted sessionless responses, generic
   fixed-cwd/project-attached runtime mechanics, and adapter hooks.
 
 Main Sequence Astro Adapter
@@ -356,7 +356,7 @@ Astro Core should own backend-neutral runtime mechanics:
 - REST and SSE response shaping
 - public A2A route handling and A2A object translation
 - session-backed chat route handling
-- stateless `POST /api/llm/chat`
+- sessionless `POST /api/agents/{agent_uid}/responses` and `/responses/stream`
 - request parsing and validation
 - Pi process launch
 - Pi RPC warm-runner lifecycle
@@ -896,11 +896,12 @@ This ADR should not change public endpoints by itself.
 Current endpoint ownership after the split should be:
 
 ```text
-POST /api/llm/chat
+POST /api/agents/{agent_uid}/responses
+POST /api/agents/{agent_uid}/responses/stream
   Astro Core.
-  Stateless provider call.
+  Sessionless AgentHarness call using a deployment-provided agent snapshot.
   No Pi runner, backend session, checkpoint, capability materialization, or persistence.
-  May call backend adapter only for provider credential policy if configured.
+  May call the backend adapter only for provider credential hydration or refresh.
 
 POST /api/a2a/v1/message:send
   Astro Core owns the A2A public protocol boundary.
@@ -950,7 +951,8 @@ state. Unchecked items are the remaining work.
 - [x] Do not add standalone `project-executor` package content to `adapters/mainsequence/pi-overlay`.
 - [x] Preserve public endpoints. This ADR does not add public runtime attachment endpoints.
 - [x] Keep public A2A on `POST /api/a2a/v1/message:send` and related standard A2A routes.
-- [x] Keep `/api/llm/chat` stateless and separate from Pi/session/checkpoint execution.
+- [x] Replace the unscoped model route with ADR 44 agent-targeted sessionless response endpoints,
+  separate from Pi/session/checkpoint execution.
 - [x] Supersede the standalone external package cutover direction. The active target is a
   Main Sequence adapter-owned Pi resource overlay plus SDK/CLI-owned skill content.
 
@@ -989,7 +991,7 @@ adapter slice.
 | --- | --- | --- | --- |
 | `OPTIONS *` | none | none | Core-only CORS preflight. |
 | `GET /health` | none | none | Core-only runtime health snapshot. |
-| `POST /api/llm/chat` | `providerCredentials` only when the selected provider requires backend-stored credentials and no usable env credential exists | `modelCatalog` for provider definition and future backend-owned provider/model validation | Stateless fast path. It does not require `auth`, `sessions`, `checkpoints`, `capabilities`, `projects`, or `a2a`. Provider credential and provider-definition access now enters through adapter capabilities. |
+| `POST /api/agents/{agent_uid}/responses[/stream]` | `providerCredentials` only | none | Agent-targeted sessionless fast path. Agent defaults, instructions, capability eligibility, and media policy come from the immutable local deployment snapshot. It does not require sessions, checkpoints, projects, or durable A2A persistence. |
 | `GET /api/chat/get_available_models` | none for local/Pi registry models | `modelCatalog`, `providerCredentials` for backend-authenticated provider status | Server now calls `backendAdapter.modelCatalog`; the Main Sequence adapter wraps the existing model/provider modules. |
 | `GET /api/models/catalog` | none for local/Pi registry catalog | `modelCatalog`, `providerCredentials` for backend-authenticated provider status | Server now calls `backendAdapter.modelCatalog`; the Main Sequence adapter wraps the existing model/provider modules. |
 | `GET /api/model-providers` | `providerCredentials` | `modelCatalog` for known model counts | Server now calls `backendAdapter.providerCredentials`. |
@@ -1144,7 +1146,7 @@ The refactor must preserve current Main Sequence behavior during migration:
 
 - Existing backend-backed sessions continue to use `AgentSession.uid`.
 - Existing A2A `message:send` behavior continues.
-- Existing stateless `/api/llm/chat` behavior continues.
+- ADR 44 agent-targeted sessionless response behavior continues; the unscoped model route remains absent.
 - Existing checkpoint, provider credential, and capability behavior continues through the adapter.
 - Existing Main Sequence runtime identities remain `astro-orchestrator` and `project-executor`
   during migration, but they are preserved by the Main Sequence composition/adapter rather than

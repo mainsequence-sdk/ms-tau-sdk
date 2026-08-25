@@ -1,5 +1,6 @@
 steps:
   - id: "upload-project-executor-dockerfile"
+    waitFor: ["build-and-tag"]
     name: "gcr.io/cloud-builders/gcloud"
     entrypoint: "bash"
     args:
@@ -10,6 +11,7 @@ steps:
           "gs://workload-default-${PROJECT_ID}/pod-dockerfiles/project_executor/Dockerfile"
 
   - id: "build-and-tag"
+    waitFor: ["-"]
     name: "gcr.io/cloud-builders/docker"
     entrypoint: "bash"
     args:
@@ -44,6 +46,9 @@ steps:
           -c "import platform; print(platform.python_version())")"
         PYTHON_VERSION_TAG="$$(docker run --rm --entrypoint python "$${LOCAL_IMAGE}" \
           -c "import sys; print(f'{sys.version_info.major}.{sys.version_info.minor}')")"
+        INSTALLED_ASTRO_VERSION="$$(docker run --rm --entrypoint python "$${LOCAL_IMAGE}" \
+          -c "from importlib.metadata import version; print(version('mainsequence-astro'))")"
+        test "$${INSTALLED_ASTRO_VERSION}" = "$${ASTRO_VERSION}"
 
         PYTHON_IMAGE="${_IMAGE_PREFIX}:python-$${PYTHON_VERSION_TAG}"
 
@@ -57,7 +62,7 @@ steps:
         docker tag "$${LOCAL_BUNDLE_IMAGE}" "$${BUNDLE_VERSION_IMAGE}"
         docker tag "$${LOCAL_BUNDLE_IMAGE}" "${_BUNDLE_LATEST_IMAGE}"
 
-        echo "Astro $${ASTRO_VERSION}; Python $${PYTHON_VERSION_FULL}"
+        echo "Astro $${INSTALLED_ASTRO_VERSION}; Python $${PYTHON_VERSION_FULL}"
 
   - id: "push-version"
     waitFor: ["build-and-tag"]

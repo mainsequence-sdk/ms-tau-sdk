@@ -22,17 +22,18 @@ async def test_get_search_content_preserves_query_index_contract(tmp_path):
             ],
         )
     )
-    tool_set = WebToolSet(
-        settings=WebAccessSettings(allow_private_networks=True),
-        store=store,
-        client=httpx.AsyncClient(),
-        cwd=tmp_path,
-    )
+    async with httpx.AsyncClient() as client:
+        tool_set = WebToolSet(
+            settings=WebAccessSettings(allow_private_networks=True),
+            store=store,
+            client=client,
+            cwd=tmp_path,
+        )
 
-    result = await tool_set.get_search_content_tool().execute(
-        "get-1",
-        {"responseId": "search-id", "queryIndex": 0},
-    )
+        result = await tool_set.get_search_content_tool().execute(
+            "get-1",
+            {"responseId": "search-id", "queryIndex": 0},
+        )
 
     assert '## Results for: "tau python"' in result.text
     assert result.details["resultCount"] == 1

@@ -11,6 +11,8 @@ import httpx
 from astro.errors import BackendError, ConfigurationError
 from astro.settings import Settings
 
+from .routes import RUNTIME_CREDENTIAL_TOKEN
+
 
 @dataclass(slots=True)
 class AccessToken:
@@ -59,7 +61,7 @@ class RuntimeCredentialAuth:
             close_client = self._client is None
             try:
                 response = await client.post(
-                    f"{self.settings.backend_url}/orm/api/pods/runtime-credentials/token/",
+                    f"{self.settings.backend_url.rstrip('/')}{RUNTIME_CREDENTIAL_TOKEN}",
                     json={
                         "credential_id": self.settings.runtime_credential_id,
                         "credential_secret": self.settings.runtime_credential_secret,

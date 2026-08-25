@@ -39,7 +39,7 @@ RUN --mount=type=cache,id=astro-pip-v2,target=/root/.cache/pip \
  && python -m pip install \
     --no-index \
     --find-links /opt/wheels \
-    mainsequence-astro==4.0.0
+    /opt/wheels/mainsequence_astro-*.whl
 
 FROM python:3.13-slim AS astro-runtime
 

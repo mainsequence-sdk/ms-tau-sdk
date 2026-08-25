@@ -12,12 +12,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from astro import __version__
-from astro.api import a2a, chat, health, llm, providers, sessions
+from astro.api import a2a, chat, health, providers, responses, sessions
 from astro.backend.auth import RuntimeCredentialAuth
 from astro.backend.client import MainSequenceClient
 from astro.errors import AstroError
 from astro.logging import RequestContextMiddleware, configure_logging
 from astro.providers.factory import ProviderFactory
+from astro.providers.signin import ProviderSignInManager
 from astro.runtime.manager import SessionRuntimeManager
 from astro.settings import Settings, get_settings
 
@@ -34,10 +35,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        logger.info(
+            "runtime.started",
+            message="Astro Tau runtime process started",
+            runtime_kind="coding_agent",
+            runtime="tau",
+            version=__version__,
+        )
         resolved.validate_runtime_auth()
         auth = RuntimeCredentialAuth(resolved)
         backend_client = MainSequenceClient(resolved, auth)
         provider_factory = ProviderFactory(backend_client)
+        provider_signin_manager = ProviderSignInManager(backend_client)
         manager = SessionRuntimeManager(
             settings=resolved,
             backend=backend_client,
@@ -46,20 +55,34 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app.state.settings = resolved
         app.state.backend = backend_client
         app.state.provider_factory = provider_factory
+        app.state.provider_signin_manager = provider_signin_manager
         app.state.runtime_manager = manager
         await manager.start()
         logger.info(
-            "astro.service.started",
+            "runtime.ready",
+            message="Astro Tau runtime is ready",
+            runtime_kind="coding_agent",
             runtime="tau",
             version=__version__,
         )
         try:
             yield
         finally:
-            logger.info("astro.service.stopping", runtime="tau")
+            logger.info(
+                "runtime.shutdown.started",
+                message="Astro Tau runtime shutdown started",
+                runtime_kind="coding_agent",
+                runtime="tau",
+            )
             await manager.aclose()
+            await provider_signin_manager.aclose()
             await backend_client.aclose()
-            logger.info("astro.service.stopped", runtime="tau")
+            logger.info(
+                "runtime.shutdown",
+                message="Astro Tau runtime stopped",
+                runtime_kind="coding_agent",
+                runtime="tau",
+            )
 
     app = FastAPI(
         title="Main Sequence Astro",
@@ -92,7 +115,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(chat.router)
-    app.include_router(llm.router)
+    app.include_router(responses.router)
     app.include_router(a2a.router)
     app.include_router(providers.router)
     app.include_router(sessions.router)

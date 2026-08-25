@@ -110,7 +110,8 @@ def _extract_html(body: bytes, *, url: str) -> tuple[str, str]:
 
 def _extract_pdf(body: bytes) -> tuple[str, str]:
     reader = PdfReader(BytesIO(body))
-    title = str((reader.metadata or {}).get("/Title") or "PDF document")
+    metadata = reader.metadata
+    title = str(metadata.title or "PDF document") if metadata else "PDF document"
     pages = []
     for index, page in enumerate(reader.pages):
         text = page.extract_text() or ""
@@ -128,11 +129,7 @@ def _collect_repository_content(target: Path, *, max_chars: int) -> str:
     sections: list[str] = []
     size = 0
     for path in sorted(target.rglob("*")):
-        if (
-            not path.is_file()
-            or ".git" in path.parts
-            or path.suffix.lower() not in TEXT_SUFFIXES
-        ):
+        if not path.is_file() or ".git" in path.parts or path.suffix.lower() not in TEXT_SUFFIXES:
             continue
         if path.stat().st_size > 512 * 1024:
             continue
@@ -231,8 +228,7 @@ class ContentExtractor:
         if "application/pdf" in content_type or urlparse(value).path.lower().endswith(".pdf"):
             title, content = await asyncio.to_thread(_extract_pdf, response.content)
         elif (
-            content_type.startswith("video/")
-            or Path(urlparse(value).path).suffix in VIDEO_SUFFIXES
+            content_type.startswith("video/") or Path(urlparse(value).path).suffix in VIDEO_SUFFIXES
         ):
             return await self._downloaded_video(
                 value,
@@ -267,9 +263,7 @@ class ContentExtractor:
                 continue
             response.raise_for_status()
             if len(response.content) > self.settings.max_response_bytes:
-                raise ValueError(
-                    f"Response exceeds {self.settings.max_response_bytes} byte limit"
-                )
+                raise ValueError(f"Response exceeds {self.settings.max_response_bytes} byte limit")
             return response
         raise RuntimeError(f"Too many redirects (maximum {self.settings.max_redirects})")
 
@@ -346,12 +340,8 @@ class ContentExtractor:
                 )
                 _, stderr = await _communicate(process)
                 if process.returncode != 0:
-                    raise RuntimeError(
-                        f"yt-dlp failed: {stderr.decode(errors='replace')[-500:]}"
-                    )
-                video_paths = await asyncio.to_thread(
-                    lambda: list(Path(temp_dir).glob("video.*"))
-                )
+                    raise RuntimeError(f"yt-dlp failed: {stderr.decode(errors='replace')[-500:]}")
+                video_paths = await asyncio.to_thread(lambda: list(Path(temp_dir).glob("video.*")))
                 if not video_paths:
                     raise RuntimeError("yt-dlp did not create a video file")
                 video_path = video_paths[0]
@@ -364,9 +354,7 @@ class ContentExtractor:
             extracted=ExtractedContent(
                 url=url,
                 title=f"YouTube video {video_id}",
-                content=f"{heading}# Transcript\n\n{text}"[
-                    : self.settings.max_stored_content
-                ],
+                content=f"{heading}# Transcript\n\n{text}"[: self.settings.max_stored_content],
             ),
             images=images,
             duration=duration,
@@ -451,8 +439,7 @@ class ContentExtractor:
                 url=source,
                 title=path.name,
                 content=(
-                    f"Video file: {path.name}\n"
-                    f"Duration: {duration or 'unknown'} seconds{focus}"
+                    f"Video file: {path.name}\nDuration: {duration or 'unknown'} seconds{focus}"
                 ),
             ),
             images=images,

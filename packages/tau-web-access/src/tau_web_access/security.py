@@ -48,11 +48,11 @@ async def validate_public_url(url: str, *, allow_private_networks: bool) -> None
         return
 
     loop = asyncio.get_running_loop()
-    records: Iterable[tuple[object, object, object, object, tuple[object, ...]]] = (
-        await loop.getaddrinfo(
-            parsed.hostname,
-            parsed.port or (443 if parsed.scheme == "https" else 80),
-        )
+    records: Iterable[
+        tuple[object, object, object, object, tuple[object, ...]]
+    ] = await loop.getaddrinfo(
+        parsed.hostname,
+        parsed.port or (443 if parsed.scheme == "https" else 80),
     )
     addresses = {str(record[4][0]) for record in records}
     if not addresses:

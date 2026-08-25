@@ -28,9 +28,6 @@ def _settings() -> Settings:
         backend_url="http://backend.test/",
         runtime_credential_id="credential-id",
         runtime_credential_secret="credential-secret",
-        organization_project_environment_uid=(
-            "00000000-0000-4000-8000-000000000042"
-        ),
     )
 
 
@@ -68,52 +65,6 @@ def test_mcp_url_is_derived_from_backend_url():
     )
 
     assert client.url == "http://backend.test/mcp"
-
-
-@pytest.mark.parametrize("tool_name", ["agent.list", "agent.search"])
-def test_agent_discovery_arguments_are_forced_to_deployment_environment(tool_name):
-    client = MainSequenceMCPClient(
-        settings=_settings(),
-        auth=AsyncMock(),
-    )
-
-    arguments = client._environment_scoped_tool_arguments(
-        name=tool_name,
-        arguments={
-            "q": "risk",
-            "organization_project_environment_uid": (
-                "00000000-0000-4000-8000-000000000099"
-            ),
-        },
-    )
-
-    assert arguments == {
-        "q": "risk",
-        "organization_project_environment_uid": (
-            "00000000-0000-4000-8000-000000000042"
-        ),
-    }
-
-
-def test_agent_discovery_requires_deployment_environment():
-    client = MainSequenceMCPClient(
-        settings=Settings(
-            _env_file=None,
-            backend_url="http://backend.test/",
-            runtime_credential_id="credential-id",
-            runtime_credential_secret="credential-secret",
-        ),
-        auth=AsyncMock(),
-    )
-
-    with pytest.raises(
-        RuntimeError,
-        match="MAIN_SEQUENCE_ORGANIZATION_PROJECT_ENVIRONMENT_UID",
-    ):
-        client._environment_scoped_tool_arguments(
-            name="agent.list",
-            arguments={},
-        )
 
 
 @pytest.mark.asyncio
@@ -330,9 +281,7 @@ def test_agent_discovery_tool_hides_backend_controlled_environment_argument(tool
 
     tools = create_mainsequence_mcp_tools(client)
 
-    assert "organization_project_environment_uid" not in tools[0].parameters[
-        "properties"
-    ]
+    assert "organization_project_environment_uid" not in tools[0].parameters["properties"]
     assert tools[0].parameters["required"] == []
 
 

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import re
+import time
 from collections.abc import Mapping
 from typing import Any, TypeVar
 from urllib.parse import urlencode
@@ -20,6 +22,7 @@ from .models import (
     AgentCardEnvelope,
     AgentSession,
     AgentTask,
+    AgentTaskCreateResult,
     CapabilityContent,
     ProviderCredential,
     ProviderStatus,
@@ -34,10 +37,33 @@ from .models import (
     SessionEntryList,
     SessionEntryRecord,
 )
+from .routes import (
+    AGENT_TASKS,
+    agent_capability_content,
+    agent_session,
+    agent_session_agent_card,
+    agent_session_capabilities,
+    agent_session_checkpoint_lease,
+    agent_session_entries,
+    agent_session_entries_append,
+    agent_session_runtime_cancel_request,
+    agent_session_runtime_state,
+    agent_task_operation,
+    model_provider_credentials,
+)
 
 T = TypeVar("T")
 RETRYABLE_BACKEND_STATUS_CODES = frozenset({500, 502, 503, 504})
 logger = structlog.get_logger(__name__)
+PATH_IDENTIFIER_PATTERN = re.compile(
+    r"(?<=/)(?:[0-9a-f]{8}-[0-9a-f-]{27,}|[0-9]+)(?=/|$)",
+    re.IGNORECASE,
+)
+
+
+def _dependency_operation(method: str, path: str) -> str:
+    normalized_path = PATH_IDENTIFIER_PATTERN.sub("{id}", path.split("?", 1)[0])
+    return f"{method.upper()} {normalized_path[:192]}"
 
 
 class MainSequenceClient:
@@ -74,6 +100,7 @@ class MainSequenceClient:
         *,
         json: Mapping[str, Any] | None = None,
         idempotent: bool = False,
+        include_status: bool = False,
     ) -> Any:
         attempts = 3 if idempotent else 1
         force_auth = False
@@ -81,6 +108,9 @@ class MainSequenceClient:
         transport_attempt = 0
         last_error: Exception | None = None
         while transport_attempt < attempts:
+            attempt_started_at = time.monotonic()
+            attempt_number = transport_attempt + 1
+            operation = _dependency_operation(method, path)
             try:
                 response = await self._client.request(
                     method,
@@ -88,14 +118,33 @@ class MainSequenceClient:
                     headers=await self.auth.headers(force=force_auth),
                     json=json,
                 )
+                status_outcome = (
+                    "success"
+                    if response.is_success
+                    else "rejected"
+                    if response.status_code < 500
+                    else "failed"
+                )
+                logger.info(
+                    "dependency.call.completed",
+                    message="Backend dependency call completed",
+                    dependency_operation=operation,
+                    target_system="mainsequence_backend",
+                    dependency_attempt=attempt_number,
+                    status_code=response.status_code,
+                    duration_ms=round(
+                        (time.monotonic() - attempt_started_at) * 1000,
+                        3,
+                    ),
+                    outcome=status_outcome,
+                    retryable=response.status_code in RETRYABLE_BACKEND_STATUS_CODES,
+                    circuit_breaker_state="not_configured",
+                )
                 if response.status_code == 401 and not auth_retried:
                     auth_retried = True
                     force_auth = True
                     continue
-                if (
-                    idempotent
-                    and response.status_code in RETRYABLE_BACKEND_STATUS_CODES
-                ):
+                if idempotent and response.status_code in RETRYABLE_BACKEND_STATUS_CODES:
                     transport_attempt += 1
                     if transport_attempt < attempts:
                         delay_seconds = 0.25 * (2 ** (transport_attempt - 1))
@@ -127,8 +176,24 @@ class MainSequenceClient:
                     )
                 if len(response.content) > self.settings.backend_max_response_bytes:
                     raise BackendError("Backend response exceeded configured size limit")
-                return response.json() if response.content else None
+                data = response.json() if response.content else None
+                return (data, response.status_code) if include_status else data
             except (httpx.TimeoutException, httpx.NetworkError) as error:
+                logger.warning(
+                    "dependency.call.failed",
+                    message="Backend dependency call failed",
+                    dependency_operation=operation,
+                    target_system="mainsequence_backend",
+                    dependency_attempt=attempt_number,
+                    duration_ms=round(
+                        (time.monotonic() - attempt_started_at) * 1000,
+                        3,
+                    ),
+                    error_type=type(error).__name__,
+                    outcome="failed",
+                    retryable=idempotent,
+                    circuit_breaker_state="not_configured",
+                )
                 last_error = error
                 transport_attempt += 1
                 if transport_attempt >= attempts:
@@ -150,7 +215,7 @@ class MainSequenceClient:
     async def get_session(self, session_uid: str) -> AgentSession:
         data = await self._request(
             "GET",
-            f"/orm/api/agents/v1/sessions/{session_uid}/",
+            agent_session(session_uid),
             idempotent=True,
         )
         try:
@@ -184,7 +249,7 @@ class MainSequenceClient:
             payload["llm_thinking"] = thinking_level
         data = await self._request(
             "PATCH",
-            f"/orm/api/agents/v1/sessions/{session_uid}/",
+            agent_session(session_uid),
             json=payload,
             idempotent=True,
         )
@@ -193,7 +258,7 @@ class MainSequenceClient:
     async def get_agent_card(self, session_uid: str) -> AgentCardEnvelope:
         data = await self._request(
             "GET",
-            f"/orm/api/agents/v1/sessions/{session_uid}/agent-card/",
+            agent_session_agent_card(session_uid),
             idempotent=True,
         )
         return AgentCardEnvelope.model_validate(data)
@@ -204,7 +269,7 @@ class MainSequenceClient:
     ) -> list[SessionCapabilityBinding]:
         data = await self._request(
             "GET",
-            f"/orm/api/agents/v1/sessions/{session_uid}/capabilities/",
+            agent_session_capabilities(session_uid),
             idempotent=True,
         )
         values = data.get("results", []) if isinstance(data, dict) else data
@@ -213,7 +278,7 @@ class MainSequenceClient:
     async def get_capability_content(self, capability_uid: str) -> CapabilityContent:
         data = await self._request(
             "GET",
-            f"/orm/api/agents/v1/capabilities/{capability_uid}/content/",
+            agent_capability_content(capability_uid),
             idempotent=True,
         )
         return CapabilityContent.model_validate(data)
@@ -228,10 +293,7 @@ class MainSequenceClient:
                 query["after_sequence"] = after_sequence
             data = await self._request(
                 "GET",
-                (
-                    f"/orm/api/agents/v1/sessions/{session_uid}/entries/"
-                    f"?{urlencode(query)}"
-                ),
+                f"{agent_session_entries(session_uid)}?{urlencode(query)}",
                 idempotent=True,
             )
             if isinstance(data, list):
@@ -260,7 +322,7 @@ class MainSequenceClient:
     ) -> SessionEntryRecord:
         data = await self._request(
             "POST",
-            f"/orm/api/agents/v1/sessions/{session_uid}/entries/append/",
+            agent_session_entries_append(session_uid),
             json=self._dump(request),
             idempotent=True,
         )
@@ -273,7 +335,7 @@ class MainSequenceClient:
     ) -> RuntimeLease:
         data = await self._request(
             "POST",
-            f"/orm/api/agents/v1/sessions/{session_uid}/checkpoint_lease/acquire/",
+            agent_session_checkpoint_lease(session_uid, "acquire"),
             json=self._dump(request),
         )
         return RuntimeLease.model_validate(data)
@@ -285,7 +347,7 @@ class MainSequenceClient:
     ) -> RuntimeLease:
         data = await self._request(
             "POST",
-            f"/orm/api/agents/v1/sessions/{session_uid}/checkpoint_lease/renew/",
+            agent_session_checkpoint_lease(session_uid, "renew"),
             json=self._dump(request),
             idempotent=True,
         )
@@ -298,7 +360,7 @@ class MainSequenceClient:
     ) -> None:
         await self._request(
             "POST",
-            f"/orm/api/agents/v1/sessions/{session_uid}/checkpoint_lease/release/",
+            agent_session_checkpoint_lease(session_uid, "release"),
             json=self._dump(request),
             idempotent=True,
         )
@@ -306,7 +368,7 @@ class MainSequenceClient:
     async def get_runtime_state(self, session_uid: str) -> RuntimeState:
         data = await self._request(
             "GET",
-            f"/orm/api/agents/v1/sessions/{session_uid}/runtime_state/",
+            agent_session_runtime_state(session_uid),
             idempotent=True,
         )
         return RuntimeState.model_validate(data)
@@ -318,7 +380,7 @@ class MainSequenceClient:
     ) -> RuntimeState:
         data = await self._request(
             "PATCH",
-            f"/orm/api/agents/v1/sessions/{session_uid}/runtime_state/",
+            agent_session_runtime_state(session_uid),
             json=self._dump(request),
             idempotent=True,
         )
@@ -334,7 +396,7 @@ class MainSequenceClient:
     ) -> RuntimeState:
         data = await self._request(
             "POST",
-            f"/orm/api/agents/v1/sessions/{session_uid}/runtime_cancel_request/",
+            agent_session_runtime_cancel_request(session_uid),
             json={
                 "reason": reason,
                 "message": message,
@@ -348,18 +410,20 @@ class MainSequenceClient:
         self,
         provider: str,
         *,
-        created_by_user_uid: str | None,
-        session_uid: str | None,
+        session_uid: str | None = None,
+        agent_uid: str | None = None,
         holder_id: str,
     ) -> ProviderCredential:
-        if not created_by_user_uid:
-            raise BackendError("Provider hydration requires created-by user identity")
+        if bool(session_uid) == bool(agent_uid):
+            raise BackendError(
+                "Provider hydration requires exactly one of AgentSession UID or Agent UID"
+            )
+        identity = {"agent_session_uid": session_uid} if session_uid else {"agent_uid": agent_uid}
         data = await self._request(
             "POST",
-            "/orm/api/agents/v1/model_provider_credentials/hydrate/",
+            model_provider_credentials("hydrate"),
             json={
-                "created_by_user_uid": created_by_user_uid,
-                "agent_session_uid": session_uid,
+                **identity,
                 "providers": [provider],
                 "holder_id": holder_id,
             },
@@ -372,16 +436,10 @@ class MainSequenceClient:
         raw = hydrated.get("credential", {})
         if not isinstance(raw, dict):
             raise BackendError(f"Backend credential for {provider} is invalid")
-        credential_kind = str(
-            hydrated.get("credential_kind") or raw.get("type") or "api_key"
-        )
+        credential_kind = str(hydrated.get("credential_kind") or raw.get("type") or "api_key")
         access_token = raw.get("access_token") or raw.get("access")
         account_id = raw.get("account_id")
-        if (
-            provider == "openai-codex"
-            and isinstance(access_token, str)
-            and not account_id
-        ):
+        if provider == "openai-codex" and isinstance(access_token, str) and not account_id:
             account_id = account_id_from_access_token(access_token)
         return ProviderCredential.model_validate(
             {
@@ -404,14 +462,12 @@ class MainSequenceClient:
     async def list_provider_statuses(
         self,
         *,
-        created_by_user_uid: str | None,
+        session_uid: str,
     ) -> list[ProviderStatus]:
+        query = urlencode({"agent_session_uid": session_uid})
         data = await self._request(
             "GET",
-            (
-                "/orm/api/agents/v1/model_provider_credentials/status/"
-                f"?created_by_user_uid={created_by_user_uid or ''}"
-            ),
+            model_provider_credentials("status") + f"?{query}",
             idempotent=True,
         )
         values = data.get("providers", {}) if isinstance(data, dict) else {}
@@ -427,17 +483,15 @@ class MainSequenceClient:
         self,
         *,
         provider: str,
-        created_by_user_uid: str,
-        session_uid: str | None,
+        session_uid: str,
         credential: Mapping[str, Any],
         base_version: int = 0,
         reason: str = "signin_completed",
     ) -> dict[str, Any]:
         data = await self._request(
             "POST",
-            "/orm/api/agents/v1/model_provider_credentials/flush/",
+            model_provider_credentials("flush"),
             json={
-                "created_by_user_uid": created_by_user_uid,
                 "agent_session_uid": session_uid,
                 "provider": provider,
                 "base_version": base_version,
@@ -454,14 +508,14 @@ class MainSequenceClient:
         self,
         *,
         provider: str,
-        created_by_user_uid: str,
+        session_uid: str,
         reason: str = "user_signoff",
     ) -> dict[str, Any]:
         data = await self._request(
             "POST",
-            "/orm/api/agents/v1/model_provider_credentials/revoke/",
+            model_provider_credentials("revoke"),
             json={
-                "created_by_user_uid": created_by_user_uid,
+                "agent_session_uid": session_uid,
                 "provider": provider,
                 "reason": reason,
             },
@@ -471,18 +525,22 @@ class MainSequenceClient:
             raise BackendError("Backend credential revoke response is invalid")
         return data
 
-    async def create_task(self, payload: Mapping[str, Any]) -> AgentTask:
-        data = await self._request(
+    async def create_task(self, payload: Mapping[str, Any]) -> AgentTaskCreateResult:
+        data, status_code = await self._request(
             "POST",
-            "/orm/api/agents/v1/tasks/",
+            AGENT_TASKS,
             json=payload,
             idempotent=True,
+            include_status=True,
         )
-        return AgentTask.model_validate(data)
+        return AgentTaskCreateResult(
+            task=AgentTask.model_validate(data),
+            created=status_code == 201,
+        )
 
     async def list_tasks(self, **filters: str) -> list[AgentTask]:
         query = urlencode({key: value for key, value in filters.items() if value})
-        path = "/orm/api/agents/v1/tasks/" + (f"?{query}" if query else "")
+        path = AGENT_TASKS + (f"?{query}" if query else "")
         data = await self._request("GET", path, idempotent=True)
         values = data.get("results", []) if isinstance(data, dict) else data
         return TypeAdapter(list[AgentTask]).validate_python(values or [])
@@ -505,7 +563,7 @@ class MainSequenceClient:
             payload["status_message"] = status_message
         data = await self._request(
             "POST",
-            f"/orm/api/agents/v1/tasks/{task_uid}/status/",
+            agent_task_operation(task_uid, "status"),
             json=payload,
             idempotent=True,
         )
@@ -518,7 +576,7 @@ class MainSequenceClient:
     ) -> dict[str, Any]:
         data = await self._request(
             "POST",
-            f"/orm/api/agents/v1/tasks/{task_uid}/messages/",
+            agent_task_operation(task_uid, "messages"),
             json=payload,
             idempotent=True,
         )
@@ -529,50 +587,8 @@ class MainSequenceClient:
     async def cancel_task(self, task_uid: str) -> AgentTask:
         data = await self._request(
             "POST",
-            f"/orm/api/agents/v1/tasks/{task_uid}/cancel/",
+            agent_task_operation(task_uid, "cancel"),
             json={},
             idempotent=True,
         )
         return AgentTask.model_validate(data)
-
-    async def list_task_push_configs(self, task_uid: str) -> list[dict[str, Any]]:
-        data = await self._request(
-            "GET",
-            f"/orm/api/agents/v1/tasks/{task_uid}/push-notification-configs/",
-            idempotent=True,
-        )
-        values = data.get("push_notification_configs", []) if isinstance(data, dict) else []
-        return TypeAdapter(list[dict[str, Any]]).validate_python(values)
-
-    async def set_task_push_config(
-        self,
-        task_uid: str,
-        payload: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        data = await self._request(
-            "POST",
-            f"/orm/api/agents/v1/tasks/{task_uid}/push-notification-configs/",
-            json=dict(payload),
-            idempotent=True,
-        )
-        if not isinstance(data, dict) or not isinstance(
-            data.get("push_notification_config"),
-            dict,
-        ):
-            raise BackendError("Backend push notification config response is invalid")
-        return TypeAdapter(dict[str, Any]).validate_python(
-            data["push_notification_config"]
-        )
-
-    async def delete_task_push_config(
-        self,
-        task_uid: str,
-        config_id: str,
-    ) -> bool:
-        data = await self._request(
-            "DELETE",
-            f"/orm/api/agents/v1/tasks/{task_uid}/push-notification-configs/",
-            json={"id": config_id},
-            idempotent=True,
-        )
-        return bool(data.get("deleted")) if isinstance(data, dict) else False

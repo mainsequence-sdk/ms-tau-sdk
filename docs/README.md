@@ -1,5 +1,6 @@
 # Astro Documentation
 
+- [Architecture decision records](./adrs/README.md)
 - [Tau migration implementation plan](./implemenation_task/remove-node-pi-migrate-to-tau.md)
 - [A2A interface](./a2a/README.md)
 - [Provider authentication](./interface/model-provider-auth.md)

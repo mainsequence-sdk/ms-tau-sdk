@@ -15,14 +15,13 @@ runtime credentials are not valid for MCP. Model-provider secrets are not
 configured globally in Astro; Django hydrates them for the owning user and
 session.
 
-`MAIN_SEQUENCE_ORGANIZATION_PROJECT_ENVIRONMENT_UID` is required for Project
-Executor Agent discovery, but it is not user deployment configuration. Django
-derives and injects it from the coding-agent service's persisted ProjectBranch.
-Astro forces it into `agent.list` and `agent.search`, overwrites any tool input,
-and removes the field from the Tau-visible MCP schemas. A missing value fails
-Agent discovery rather than falling back to production or Organization-wide
-visibility. One Project Executor process serves one backend-derived environment
-and never multiplexes sessions across environments.
+Project Executor Agent discovery requires no Environment variable. Django
+derives the exact Environment from the authenticated coding-agent service and
+its persisted ProjectBranch. Astro removes the selector from Tau-visible MCP
+schemas and sends no replacement argument. An inconsistent or unscoped Project
+Executor credential fails closed rather than falling back to production or
+Organization-wide visibility. One Project Executor process serves one backend-
+derived Environment and never multiplexes sessions across Environments.
 
 ## Service
 
@@ -54,10 +53,12 @@ Optional settings:
 
 `ASTRO_SESSION_LEASE_RENEW_SECONDS` must be lower than
 `ASTRO_SESSION_LEASE_TTL_SECONDS`. At least one logging sink must be enabled.
-Machine logs are structured JSON; human logs are concise text. Prompt excerpts
-are emitted only when `ASTRO_LOG_PAYLOADS=true`; complete histories, tool output,
-credentials, and provider headers are never logged. Both sinks use the same
-Structlog event pipeline as `tdag-django`; see [logging](./logging.md).
+Machine logs are structured JSON; human logs are concise text.
+`ASTRO_LOG_PAYLOADS` is retained as a compatibility setting but does not enable
+content capture. Prompts, prompt hashes, complete histories, model output, tool
+payloads, credentials, and provider headers are never logged. Both sinks use
+the same Structlog event pipeline as `tdag-django`; see
+[logging](./logging.md).
 
 ## Web tools
 

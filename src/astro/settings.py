@@ -5,10 +5,11 @@ from __future__ import annotations
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal
-from uuid import UUID
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from astro.agents import AgentExecutionSnapshot
 
 from .errors import ConfigurationError
 
@@ -38,10 +39,6 @@ class Settings(BaseSettings):
         default=None,
         validation_alias="MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET",
     )
-    organization_project_environment_uid: UUID | None = Field(
-        default=None,
-        validation_alias="MAIN_SEQUENCE_ORGANIZATION_PROJECT_ENVIRONMENT_UID",
-    )
     host: str = Field(default="0.0.0.0", validation_alias="ASTRO_HOST")
     port: int = Field(default=8787, validation_alias="ASTRO_PORT")
     trusted_origins: tuple[str, ...] = Field(
@@ -67,6 +64,25 @@ class Settings(BaseSettings):
     a2a_max_inline_file_bytes: int = Field(
         default=20 * 1024 * 1024,
         validation_alias="ASTRO_A2A_MAX_INLINE_FILE_BYTES",
+    )
+    a2a_max_aggregate_file_bytes: int = Field(
+        default=40 * 1024 * 1024,
+        gt=0,
+        validation_alias="ASTRO_A2A_MAX_AGGREGATE_FILE_BYTES",
+    )
+    a2a_max_inline_file_count: int = Field(
+        default=8,
+        ge=1,
+        le=64,
+        validation_alias="ASTRO_A2A_MAX_INLINE_FILE_COUNT",
+    )
+    sessionless_asset_root: Path = Field(
+        default=Path("/tmp/astro-sessionless-assets"),
+        validation_alias="ASTRO_SESSIONLESS_ASSET_ROOT",
+    )
+    agent_execution_snapshot: AgentExecutionSnapshot | None = Field(
+        default=None,
+        validation_alias="ASTRO_AGENT_EXECUTION_SNAPSHOT",
     )
     log_level: str = Field(default="INFO", validation_alias="ASTRO_LOG_LEVEL")
     log_machine_sink: bool = Field(
@@ -172,9 +188,7 @@ class Settings(BaseSettings):
         if not self.runtime_credential_secret:
             missing.append("MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET")
         if missing:
-            raise ConfigurationError(
-                "Missing runtime credential settings: " + ", ".join(missing)
-            )
+            raise ConfigurationError("Missing runtime credential settings: " + ", ".join(missing))
 
 
 @lru_cache

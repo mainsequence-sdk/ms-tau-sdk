@@ -2,7 +2,7 @@
 
 Astro is Main Sequence's Python 3.13 agent service built on
 [Hugging Face Tau](https://github.com/huggingface/tau). It exposes durable
-Assistant UI chat, stateless model chat, and standard A2A transports.
+Assistant UI chat, agent-targeted sessionless responses, and standard A2A transports.
 
 Astro is container-only. Do not run a second host Python or Node runtime.
 
@@ -31,14 +31,14 @@ The runtime credential pair is required because Astro authenticates every
 session, task, provider credential, lease request, and MCP call to Django.
 It must belong to the deployed coding-agent service; organization-test and
 project runtime credentials are not valid for MCP.
-Provider API keys remain backend-owned and are hydrated per user/session.
+Provider API keys remain backend-owned and are hydrated for the exact session
+or Agent execution identity.
 
-For a Project Executor deployment, Django injects
-`MAIN_SEQUENCE_ORGANIZATION_PROJECT_ENVIRONMENT_UID` from the service's
-persisted ProjectBranch. Astro uses it automatically for `agent.list` and
-`agent.search`, overwrites any caller-provided value, and hides the selector
-from Tau. One Astro Project Executor deployment serves exactly that one
-environment; users and project code do not select or switch it.
+For a Project Executor deployment, Django derives Agent discovery scope from
+the authenticated service credential and the service's persisted
+ProjectBranch. Astro sends no Environment selector and hides that selector from
+Tau. One Astro Project Executor deployment serves exactly that one Environment;
+users and project code do not select or switch it.
 
 See [`.env.example`](./.env.example) for optional web-provider settings.
 
@@ -78,15 +78,22 @@ health endpoints with:
 - `GET /ready`
 - `GET /version`
 - `POST /api/chat`
-- `POST /api/llm/chat`
+- `POST /api/agents/{agent_uid}/responses`
+- `POST /api/agents/{agent_uid}/responses/stream`
 - `GET /api/models/catalog`
 - `GET /api/model-providers`
 - `POST /api/model-providers/{provider}/signin`
+- `GET /api/model-providers/{provider}/signin/{attempt_id}`
+- `POST /api/model-providers/{provider}/signin/{attempt_id}/manual`
+- `POST /api/model-providers/{provider}/signin/{attempt_id}/cancel`
 - `POST /api/model-providers/{provider}/signoff`
 - `POST /api/a2a/v1/message:send`
 - `POST /api/a2a/v1/message:stream`
 - `GET /api/a2a/v1/tasks`
 - `POST /api/a2a/rpc`
+
+The unscoped LLM chat surface is not exposed. Agent identity is mandatory for
+all one-shot model execution.
 
 FastAPI publishes the full schema at `/docs` and `/openapi.json`.
 

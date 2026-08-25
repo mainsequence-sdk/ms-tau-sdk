@@ -31,7 +31,7 @@ async def test_runtime_credential_exchange_is_cached():
 
     assert first == second == {"Authorization": "Bearer access-token"}
     assert len(requests) == 1
-    assert requests[0].url.path == "/orm/api/pods/runtime-credentials/token/"
+    assert requests[0].url.path == "/api/v1/runtime-credentials/token/"
     await client.aclose()
 
 

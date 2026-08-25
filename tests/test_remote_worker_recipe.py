@@ -1,6 +1,25 @@
+import tomllib
+from importlib.metadata import version
 from pathlib import Path
 
+from astro import __version__
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_package_metadata_is_the_runtime_version_source_of_truth() -> None:
+    project = tomllib.loads((REPOSITORY_ROOT / "pyproject.toml").read_text())
+    project_version = project["project"]["version"]
+
+    assert __version__ == project_version
+    assert version("mainsequence-astro") == project_version
+
+
+def test_container_recipes_install_the_locally_built_astro_wheel() -> None:
+    for recipe_name in ("Dockerfile", "Dockerfile.remote-worker"):
+        recipe = (REPOSITORY_ROOT / recipe_name).read_text()
+        assert "/opt/wheels/mainsequence_astro-*.whl" in recipe
+        assert "mainsequence-astro==" not in recipe
 
 
 def test_remote_worker_recipe_uses_backend_supplied_executor_bundle_image() -> None:
@@ -11,6 +30,21 @@ def test_remote_worker_recipe_uses_backend_supplied_executor_bundle_image() -> N
     assert "FROM ${EXECUTOR_BUNDLE_IMAGE} AS astro-executor-bundle" in recipe
     assert "europe-west1-docker.pkg.dev" not in recipe
     assert "ARG PROJECT_ID" not in recipe
+
+
+def test_remote_worker_recipe_preserves_and_verifies_project_git_context() -> None:
+    recipe = (REPOSITORY_ROOT / "Dockerfile.remote-worker").read_text()
+
+    assert "ARG SOURCE_COMMIT_SHA" in recipe
+    assert "ARG SOURCE_REPOSITORY_BRANCH" in recipe
+    assert "ARG SOURCE_REPOSITORY_REF" in recipe
+    assert "USER ${NB_USER}" in recipe
+    assert 'cd "${SKEL_APP_DIR}"' in recipe
+    assert "git diff --quiet --ignore-submodules HEAD" in recipe
+    assert "git diff --cached --quiet --ignore-submodules HEAD" in recipe
+    assert "git branch --show-current" in recipe
+    assert "git symbolic-ref HEAD" in recipe
+    assert "git rev-parse HEAD" in recipe
 
 
 def test_cloud_build_publishes_unrendered_provider_neutral_recipe() -> None:

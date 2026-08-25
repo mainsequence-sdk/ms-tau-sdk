@@ -65,8 +65,7 @@ async def test_hydration_uses_django_tau_credential_contract():
         client = MainSequenceClient(settings, auth, client=http)
         credential = await client.hydrate_provider_credential(
             "openai",
-            created_by_user_uid="user-1",
-            session_uid=None,
+            session_uid="session-1",
             holder_id="test",
         )
 
@@ -76,15 +75,19 @@ async def test_hydration_uses_django_tau_credential_contract():
 
 @pytest.mark.asyncio
 async def test_hydration_derives_openai_codex_account_id_from_access_token():
-    payload = base64.urlsafe_b64encode(
-        json.dumps(
-            {
-                "https://api.openai.com/auth": {
-                    "chatgpt_account_id": "account-id",
+    payload = (
+        base64.urlsafe_b64encode(
+            json.dumps(
+                {
+                    "https://api.openai.com/auth": {
+                        "chatgpt_account_id": "account-id",
+                    }
                 }
-            }
-        ).encode()
-    ).decode().rstrip("=")
+            ).encode()
+        )
+        .decode()
+        .rstrip("=")
+    )
     access_token = f"header.{payload}.signature"
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -127,7 +130,6 @@ async def test_hydration_derives_openai_codex_account_id_from_access_token():
         client = MainSequenceClient(settings, auth, client=http)
         credential = await client.hydrate_provider_credential(
             "openai-codex",
-            created_by_user_uid="user-1",
             session_uid="session-1",
             holder_id="test",
         )
@@ -171,14 +173,12 @@ async def test_flush_uses_django_tau_credential_contract():
         client = MainSequenceClient(settings, auth, client=http)
         await client.flush_provider_credential(
             provider="openai-codex",
-            created_by_user_uid="user-1",
             session_uid="session-1",
             credential={"type": "oauth", "access": "access-token"},
         )
 
     assert requests == [
         {
-            "created_by_user_uid": "user-1",
             "agent_session_uid": "session-1",
             "provider": "openai-codex",
             "base_version": 0,
@@ -199,9 +199,7 @@ def test_provider_defaults_cover_tau_catalog():
 
 def test_factory_builds_catalog_openai_compatible_provider():
     factory = ProviderFactory(backend=None)  # type: ignore[arg-type]
-    provider = factory.build(
-        ProviderCredential(provider="deepseek", api_key="secret")
-    )
+    provider = factory.build(ProviderCredential(provider="deepseek", api_key="secret"))
 
     assert isinstance(provider, OpenAICompatibleProvider)
 
@@ -424,16 +422,12 @@ async def test_every_tau_transport_class_completes_fake_stream(
             )
         elif ":streamGenerateContent" in request.url.path:
             body = (
-                'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},'
-                '"finishReason":"STOP"}]}'
+                'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}'
             )
         elif request.url.path.endswith("/chat/completions"):
             body = "\n\n".join(
                 [
-                    (
-                        'data: {"choices":[{"delta":{"content":"ok"},'
-                        '"finish_reason":"stop"}]}'
-                    ),
+                    ('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}'),
                     "data: [DONE]",
                 ]
             )

@@ -13,7 +13,7 @@ from tau_agent.messages import ImageContent, TextContent
 from tau_agent.tools import AgentTool, AgentToolResult, ToolCancellationToken, ToolUpdateCallback
 from tau_agent.types import JSONValue
 
-from .extractors import ContentExtractor
+from .extractors import ContentExtractor, FetchOutcome
 from .models import (
     ExtractedContent,
     QueryResult,
@@ -187,7 +187,7 @@ class WebToolSet:
             options = SearchOptions(
                 num_results=int(num_results),
                 include_content=include_content,
-                recency_filter=cast(str | None, recency),
+                recency_filter=recency,
                 domain_filter=tuple(cast(list[str], domains)),
             )
             search_results: list[QueryResult] = []
@@ -233,9 +233,7 @@ class WebToolSet:
             output_sections: list[str] = []
             for result in search_results:
                 if result.error:
-                    output_sections.append(
-                        f'## Query: "{result.query}"\n\nError: {result.error}'
-                    )
+                    output_sections.append(f'## Query: "{result.query}"\n\nError: {result.error}')
                 else:
                     output_sections.append(
                         f'## Query: "{result.query}"\n\n{_format_search_summary(result)}'
@@ -300,8 +298,8 @@ class WebToolSet:
             except Exception as error:
                 return _error(
                     str(error),
-                    query=cast(JSONValue, arguments.get("query", "")),
-                    maxTokens=cast(JSONValue, arguments.get("maxTokens", 5_000)),
+                    query=arguments.get("query", ""),
+                    maxTokens=arguments.get("maxTokens", 5_000),
                 )
 
         return AgentTool(
@@ -355,7 +353,7 @@ class WebToolSet:
             timestamp = _as_string(arguments.get("timestamp"), name="timestamp")
             model = _as_string(arguments.get("model"), name="model")
 
-            outcomes = []
+            outcomes: list[FetchOutcome] = []
             extracted: list[ExtractedContent] = []
             for index, url in enumerate(urls):
                 _cancelled(signal)
@@ -365,7 +363,7 @@ class WebToolSet:
                         force_clone=force_clone,
                         prompt=prompt,
                         timestamp=timestamp,
-                        frames=cast(int | None, frames),
+                        frames=frames,
                         model=model,
                     )
                     outcomes.append(outcome)
@@ -375,9 +373,7 @@ class WebToolSet:
                 if on_update:
                     on_update(
                         AgentToolResult(
-                            content=[
-                                TextContent(text=f"Fetched {index + 1}/{len(urls)} URL(s)")
-                            ],
+                            content=[TextContent(text=f"Fetched {index + 1}/{len(urls)} URL(s)")],
                             details={
                                 "phase": "fetch",
                                 "progress": (index + 1) / len(urls),
@@ -395,12 +391,13 @@ class WebToolSet:
             )
             successful = sum(item.error is None for item in extracted)
             total_chars = sum(len(item.content) for item in extracted)
+            url_details: list[JSONValue] = list(urls)
             if len(urls) == 1:
                 result = extracted[0]
                 if result.error:
                     return _error(
                         result.error,
-                        urls=urls,
+                        urls=url_details,
                         urlCount=1,
                         successful=0,
                         responseId=response_id,
@@ -416,17 +413,17 @@ class WebToolSet:
                         "urlIndex: 0 }) for full content."
                     )
                 content: list[TextContent | ImageContent] = []
-                outcome = outcomes[0] if outcomes else None
-                if outcome:
-                    for image in outcome.images:
+                first_outcome = outcomes[0] if outcomes else None
+                if first_outcome:
+                    for image in first_outcome.images:
                         content.append(ImageContent(data=image.data, mime_type=image.mime_type))
                         content.append(TextContent(text=image.label))
                 content.append(TextContent(text=output))
-                image_count = len(outcome.images) if outcome else 0
+                image_count = len(first_outcome.images) if first_outcome else 0
                 return AgentToolResult(
                     content=content,
                     details={
-                        "urls": urls,
+                        "urls": url_details,
                         "urlCount": 1,
                         "successful": 1,
                         "totalChars": full_length,
@@ -438,7 +435,7 @@ class WebToolSet:
                         "prompt": prompt,
                         "timestamp": timestamp,
                         "frames": frames,
-                        "duration": outcome.duration if outcome else None,
+                        "duration": first_outcome.duration if first_outcome else None,
                     },
                 )
 
@@ -459,7 +456,7 @@ class WebToolSet:
             return AgentToolResult(
                 content=[TextContent(text="\n".join(lines))],
                 details={
-                    "urls": urls,
+                    "urls": url_details,
                     "urlCount": len(urls),
                     "successful": successful,
                     "totalChars": total_chars,
@@ -522,8 +519,7 @@ class WebToolSet:
                         return AgentToolResult(
                             content=[
                                 TextContent(
-                                    text=f"Index {index} out of range "
-                                    f"(0-{len(data.queries) - 1})"
+                                    text=f"Index {index} out of range (0-{len(data.queries) - 1})"
                                 )
                             ],
                             details={"error": "Index out of range"},
@@ -531,14 +527,11 @@ class WebToolSet:
                     query_data = data.queries[index]
                 else:
                     available = ", ".join(
-                        f'{index}: "{item.query}"'
-                        for index, item in enumerate(data.queries)
+                        f'{index}: "{item.query}"' for index, item in enumerate(data.queries)
                     )
                     return AgentToolResult(
                         content=[
-                            TextContent(
-                                text=f"Specify query or queryIndex. Available: {available}"
-                            )
+                            TextContent(text=f"Specify query or queryIndex. Available: {available}")
                         ],
                         details={"error": "No query specified"},
                     )
@@ -560,9 +553,7 @@ class WebToolSet:
                 if url_data is None:
                     available = "\n  ".join(item.url for item in data.urls)
                     return AgentToolResult(
-                        content=[
-                            TextContent(text=f"URL not found. Available:\n  {available}")
-                        ],
+                        content=[TextContent(text=f"URL not found. Available:\n  {available}")],
                         details={"error": "URL not found"},
                     )
             elif isinstance(url_index, (int, float)) and not isinstance(url_index, bool):
@@ -570,9 +561,7 @@ class WebToolSet:
                 if index < 0 or index >= len(data.urls):
                     return AgentToolResult(
                         content=[
-                            TextContent(
-                                text=f"Index {index} out of range (0-{len(data.urls) - 1})"
-                            )
+                            TextContent(text=f"Index {index} out of range (0-{len(data.urls) - 1})")
                         ],
                         details={"error": "Index out of range"},
                     )
@@ -583,9 +572,7 @@ class WebToolSet:
                 )
                 return AgentToolResult(
                     content=[
-                        TextContent(
-                            text=f"Specify url or urlIndex. Available:\n  {available}"
-                        )
+                        TextContent(text=f"Specify url or urlIndex. Available:\n  {available}")
                     ],
                     details={"error": "No URL specified"},
                 )

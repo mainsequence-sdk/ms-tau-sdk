@@ -13,7 +13,12 @@ from typing import Any
 
 import httpx
 import structlog
-from structlog.contextvars import bound_contextvars
+from structlog.contextvars import (
+    bind_contextvars,
+    bound_contextvars,
+    clear_contextvars,
+    get_contextvars,
+)
 from tau_coding import CodingSession, CodingSessionConfig
 from tau_coding.resources import TauResourcePaths
 from tau_coding.tools import create_coding_tools
@@ -33,6 +38,7 @@ from astro.logging import conversation_log_fields
 from astro.providers.factory import ProviderFactory
 from astro.resources.loader import append_system_prompt, resource_root
 from astro.runtime.events import AstroRuntimeEvent
+from astro.runtime.observability import TauTurnObserver
 from astro.sessions.storage import BackendSessionStorage
 from astro.settings import Settings
 from astro.tools.mainsequence_mcp import (
@@ -82,9 +88,7 @@ class SessionRuntimeManager:
             "working_sessions": sum(
                 runtime.coding_session.is_running for runtime in self._runtimes.values()
             ),
-            "lease_lost_sessions": sum(
-                runtime.lease_lost for runtime in self._runtimes.values()
-            ),
+            "lease_lost_sessions": sum(runtime.lease_lost for runtime in self._runtimes.values()),
         }
 
     async def get(self, session_uid: str) -> ActiveSessionRuntime:
@@ -293,7 +297,15 @@ class SessionRuntimeManager:
         session_uid: str,
         content: str,
     ) -> AsyncIterator[AstroRuntimeEvent]:
-        with bound_contextvars(session_uid=session_uid):
+        agent_run_uid = str(uuid.uuid4())
+        turn_uid = str(uuid.uuid4())
+        with bound_contextvars(
+            session_uid=session_uid,
+            agent_session_uid=session_uid,
+            agent_run_uid=agent_run_uid,
+            turn_uid=turn_uid,
+            agent_uid="astro-tau",
+        ):
             async for event in self._prompt_with_context(session_uid, content):
                 yield event
 
@@ -303,9 +315,12 @@ class SessionRuntimeManager:
         content: str,
     ) -> AsyncIterator[AstroRuntimeEvent]:
         logger.info(
-            "runtime.turn.received",
-            message="Received Tau turn",
+            "agent.run.accepted",
+            message="Accepted Tau agent run",
             session_uid=session_uid,
+            agent_session_uid=session_uid,
+            agent_type="tau_coding",
+            is_streaming=True,
             **conversation_log_fields(
                 content,
                 include_excerpt=self.settings.log_payloads,
@@ -315,47 +330,92 @@ class SessionRuntimeManager:
         if runtime.lease_lost:
             raise LeaseLostError(f"Runtime lease was lost for session {session_uid}")
         if runtime.cancellation_requested:
-            raise LeaseLostError(
-                f"Runtime cancellation was requested for session {session_uid}"
-            )
+            raise LeaseLostError(f"Runtime cancellation was requested for session {session_uid}")
         started_at = time.monotonic()
         terminal_status = "completed"
-        logger.info(
-            "runtime.turn.started",
-            message="Started Tau turn",
-            session_uid=session_uid,
+        error_type: str | None = None
+        observer = TauTurnObserver(
             provider=runtime.provider_name,
             model=runtime.model,
+        )
+        logger.info(
+            "agent.run.started",
+            message="Started Tau agent run",
+            session_uid=session_uid,
+            agent_session_uid=session_uid,
+            agent_type="tau_coding",
+            provider=runtime.provider_name,
+            model=runtime.model,
+            is_streaming=True,
+        )
+        logger.info(
+            "agent.turn.started",
+            message="Started Tau turn",
+            agent_session_uid=session_uid,
+            agent_type="tau_coding",
+            provider=runtime.provider_name,
+            model=runtime.model,
+            is_streaming=True,
         )
         try:
             try:
                 async with asyncio.timeout(self.settings.turn_timeout_seconds):
                     async for event in runtime.prompt(content):
+                        observer.observe(event)
                         yield event
             except TimeoutError:
                 terminal_status = "timed_out"
+                error_type = "TimeoutError"
                 runtime.cancel(force=True)
                 raise
         except asyncio.CancelledError:
             terminal_status = "cancelled"
+            error_type = "CancelledError"
             raise
-        except Exception:
+        except Exception as error:
             if terminal_status == "completed":
                 terminal_status = "failed"
+            error_type = type(error).__name__
             raise
         finally:
             log = logger.info if terminal_status == "completed" else logger.warning
-            log(
-                f"runtime.turn.{terminal_status}",
-                message="Finished Tau turn",
-                session_uid=session_uid,
-                provider=runtime.provider_name,
-                model=runtime.model,
-                terminal_status=terminal_status,
-                duration_ms=round(
+            outcome = (
+                "success"
+                if terminal_status == "completed"
+                else "cancelled"
+                if terminal_status == "cancelled"
+                else "failed"
+            )
+            terminal_event = (
+                "completed"
+                if terminal_status == "completed"
+                else "cancelled"
+                if terminal_status == "cancelled"
+                else "failed"
+            )
+            terminal_fields = {
+                "agent_session_uid": session_uid,
+                "agent_type": "tau_coding",
+                "provider": runtime.provider_name,
+                "model": runtime.model,
+                "terminal_status": terminal_status,
+                "outcome": outcome,
+                "error_type": error_type,
+                "duration_ms": round(
                     (time.monotonic() - started_at) * 1000,
                     3,
                 ),
+                **observer.terminal_fields(),
+            }
+            log(
+                f"agent.turn.{terminal_event}",
+                message="Finished Tau turn",
+                **terminal_fields,
+            )
+            log(
+                f"agent.run.{terminal_event}",
+                message="Finished Tau agent run",
+                **terminal_fields,
             )
 
     async def cancel(self, session_uid: str) -> bool:
@@ -371,11 +431,44 @@ class SessionRuntimeManager:
         coroutine: Coroutine[Any, Any, object],
         *,
         name: str,
+        operation_uid: str | None = None,
     ) -> asyncio.Task[object]:
         if self._draining or self._closed:
             coroutine.close()
             raise RuntimeError("Astro runtime is shutting down")
-        task = asyncio.create_task(coroutine, name=name)
+        parent = get_contextvars()
+        detached_fields = {
+            field: parent[field]
+            for field in (
+                "trace_id",
+                "user_uid",
+                "principal_type",
+                "coding_agent_service_uid",
+                "agent_session_uid",
+                "project_uid",
+                "organization_project_environment_uid",
+            )
+            if parent.get(field) is not None
+        }
+        detached_fields.update(
+            operation_uid=operation_uid or str(uuid.uuid4()),
+            causation_event_id=parent.get("causation_event_id"),
+            origin_request_id=parent.get("request_id"),
+            parent_span_id=parent.get("span_id"),
+            span_id=uuid.uuid4().hex[:16],
+        )
+
+        async def run_detached() -> object:
+            clear_contextvars()
+            bind_contextvars(
+                **{key: value for key, value in detached_fields.items() if value is not None}
+            )
+            try:
+                return await coroutine
+            finally:
+                clear_contextvars()
+
+        task = asyncio.create_task(run_detached(), name=name)
         self._background_tasks.add(task)
         task.add_done_callback(self._background_task_done)
         return task
@@ -414,9 +507,11 @@ class SessionRuntimeManager:
         )
 
     async def _renew_lease(self, runtime: ActiveSessionRuntime) -> None:
+        clear_contextvars()
         with bound_contextvars(
-            request_id=None,
             session_uid=runtime.session_uid,
+            agent_session_uid=runtime.session_uid,
+            operation_uid=str(uuid.uuid4()),
         ):
             await self._renew_lease_with_context(runtime)
 

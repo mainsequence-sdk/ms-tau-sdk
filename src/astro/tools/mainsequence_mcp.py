@@ -60,9 +60,7 @@ def _tool_result(
                 )
             )
         else:
-            content.append(
-                TextContent(text=_json_text(block.model_dump(mode="json")))
-            )
+            content.append(TextContent(text=_json_text(block.model_dump(mode="json"))))
     if not content and result.structuredContent is not None:
         content.append(TextContent(text=_json_text(result.structuredContent)))
     if not content and result.isError:
@@ -91,9 +89,7 @@ def _tau_tool_input_schema(tool: types.Tool) -> Mapping[str, JSONValue]:
     required = schema.get("required")
     if isinstance(required, list):
         schema["required"] = [
-            field_name
-            for field_name in required
-            if field_name != ENVIRONMENT_UID_ARGUMENT
+            field_name for field_name in required if field_name != ENVIRONMENT_UID_ARGUMENT
         ]
     return cast(Mapping[str, JSONValue], schema)
 
@@ -218,10 +214,7 @@ def mainsequence_mcp_resource_prompt(
         return ""
     lines = [
         "# Main Sequence platform resources",
-        (
-            f"Use `{_RESOURCE_TOOL_NAME}` to read a resource when its guidance "
-            "is relevant."
-        ),
+        (f"Use `{_RESOURCE_TOOL_NAME}` to read a resource when its guidance is relevant."),
     ]
     for resource in client.resources:
         description = f": {resource.description}" if resource.description else ""

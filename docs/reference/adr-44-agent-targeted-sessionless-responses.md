@@ -2,17 +2,17 @@
 
 Status: Accepted
 Date: 2026-07-26
-Implementation Status: Not implemented
+Implementation Status: Implemented for the canonical response endpoints
 
 ## Context
 
-Astro currently exposes two durable agent execution paths and one stateless model path:
+Before this decision, Astro exposed two durable agent execution paths and one stateless model path:
 
 - `POST /api/chat` attaches to an existing backend `AgentSession` and preserves conversation
   entries, checkpoints, session capabilities, and runtime state.
 - A2A `message:send` and `message:stream` use `message.contextId = AgentSession.uid` and persist
   task and message state.
-- `POST /api/llm/chat`, defined by ADR 36, is a direct model passthrough. It deliberately does not
+- `POST /api/llm/chat`, defined by ADR 36, was a direct model passthrough. It deliberately did not
   resolve an agent, load agent defaults, materialize capabilities, or attach project context.
 
 These contracts do not cover a common request: ask a particular agent one question, optionally
@@ -20,12 +20,12 @@ provide a PDF, document, or image, use the agent's configured model and applicab
 and return the answer without creating or recording a conversation session.
 
 Routing this request through Chat or A2A creates durable state that the caller did not request.
-Routing it through `/api/llm/chat` loses the agent identity, defaults, instructions, and
+Routing it through that unscoped model API lost the agent identity, defaults, instructions, and
 capabilities that the caller did request.
 
 ## Decision
 
-Astro will add a third execution mode: an agent-targeted, sessionless response.
+Astro exposes an agent-targeted, sessionless response mode.
 
 The public endpoints are:
 
@@ -234,7 +234,7 @@ Accept: application/a2a+json
   },
   "configuration": {
     "acceptedOutputModes": ["text/plain"],
-    "returnImmediately": false
+    "responseKind": "message"
   },
   "metadata": {
     "https://mainsequence.ai/a2a/extensions/agent-inference/v1": {
@@ -307,9 +307,8 @@ returns a `Task`:
           "inputTokens": 1250,
           "outputTokens": 280
         },
-        "capabilitiesUsed": [
-          "pdf-text-extraction"
-        ]
+        "capabilitiesEligible": ["pdf-text-extraction"],
+        "capabilitiesUsed": ["pdf-text-extraction"]
       }
     }
   }
@@ -319,6 +318,9 @@ returns a `Task`:
 Text output uses `Part.text`. Structured JSON output uses `Part.data` with
 `mediaType: "application/json"`, exactly as ADR 37. Model resolution, usage, and capability
 telemetry live in the declared inference extension rather than a second custom response envelope.
+`capabilitiesEligible` reports the immutable sessionless allowlist. `capabilitiesUsed` reports
+only capabilities actually invoked during execution and may be empty even when capabilities were
+eligible.
 
 The response omits `contextId` and must not include a session UID, task ID, checkpoint version, or
 continuation token.
@@ -515,12 +517,11 @@ capabilities, or mutating project/platform work.
 Use A2A when another agent needs a durable task, task status, artifacts, continuation, or standard
 A2A interoperability.
 
-Use `/api/llm/chat` from ADR 36 when the caller wants raw model inference and owns the full prompt,
-provider, and model context. ADR 36 remains model-only and must not start resolving agents or
-capabilities.
-
 Use `/api/agents/{agent_uid}/responses` when the caller wants a configured agent for one independent
 response without a recorded session.
+
+Main Sequence does not expose a public raw-model endpoint unrelated to an Agent. ADR 36 is
+superseded and `/api/llm/chat` is absent from routing and OpenAPI.
 
 ## Consequences
 
@@ -530,7 +531,7 @@ Positive:
 - callers can use agent defaults and safe capabilities without manufacturing a session
 - model and thinking overrides remain available per request
 - one-shot document and image questions gain explicit capability and modality validation
-- Chat, A2A, raw model inference, and one-shot agent inference have distinct persistence semantics
+- Chat, durable A2A, and one-shot agent inference have distinct persistence semantics
 
 Costs:
 
@@ -551,60 +552,60 @@ Costs:
 - Do not make all agent capabilities available outside a session.
 - Do not permit silent fallback to another agent, provider, model, or media-processing strategy.
 - Do not change the agent's persisted defaults when applying request overrides.
-- Do not replace Chat, A2A, or ADR 36.
+- Do not replace Chat or durable A2A.
 
 ## Implementation Plan
 
 ### Phase 1: Shared Contract And Deployment Snapshot
 
-- [ ] Extract canonical A2A `Message`, `Part`, configuration, metadata-extension, prepared-input,
+- [x] Extract canonical A2A `Message`, `Part`, configuration, metadata-extension, prepared-input,
       direct-message response, SSE, and error components from the durable A2A handler.
-- [ ] Make durable A2A and sessionless agent responses consume those shared components.
-- [ ] Add policy inputs for context requirements, task support, materialization root, and
+- [x] Make durable A2A and sessionless agent responses consume those shared components.
+- [x] Add policy inputs for context requirements, task support, materialization root, and
       persistence instead of branching inside duplicate parsers.
-- [ ] Define a versioned local agent execution snapshot schema keyed by `agent_uid`.
-- [ ] Package or mount the resolved snapshot and all required prompt/capability content before
+- [x] Define a versioned local agent execution snapshot schema keyed by `agent_uid`.
+- [x] Package or mount the resolved snapshot and configured prompt content before
       Astro startup.
 - [ ] Validate the requested `agent_uid` and caller claims locally.
-- [ ] Add sessionless, agent-authorized provider credential hydration.
+- [x] Add sessionless, agent-authorized provider credential hydration.
 - [ ] Define capability metadata for sessionless eligibility, mutations, and media types.
-- [ ] Add the declared
+- [x] Add the declared
       `https://mainsequence.ai/a2a/extensions/agent-inference/v1` request/response model.
 
 ### Phase 2: Text-Only Agent Responses
 
-- [ ] Implement `POST /api/agents/{agent_uid}/responses`.
-- [ ] Require the A2A request content type and return the direct A2A `Message` response branch.
-- [ ] Implement agent default and request override resolution.
-- [ ] Compose the agent instructions and prompt capabilities from the immutable snapshot.
-- [ ] Execute a text-only response without session, checkpoint, task, or transcript writes.
+- [x] Implement `POST /api/agents/{agent_uid}/responses`.
+- [x] Require the A2A request content type and return the direct A2A `Message` response branch.
+- [x] Implement agent default and request override resolution.
+- [x] Compose configured Agent instructions from the immutable snapshot.
+- [x] Execute a text-only response without session, checkpoint, task, or transcript writes.
 - [ ] Assert the non-persistence boundary in integration tests.
 - [ ] Run the same message/part/output/error conformance fixtures against durable A2A and the
       sessionless endpoint.
 
 ### Phase 3: Safe Capabilities And Attachments
 
-- [ ] Add request-scoped attachment normalization, limits, and cleanup.
-- [ ] Add bounded text and embedded-PDF-text extraction.
+- [x] Add request-scoped attachment normalization, limits, and cleanup.
+- [x] Add bounded text and embedded-PDF-text extraction.
 - [ ] Add sessionless-safe read-only capabilities with multi-turn tool execution.
-- [ ] Add provider/model modality metadata and native image serialization.
-- [ ] Add DOCX and other formats only behind installed capability declarations.
+- [x] Add provider/model modality validation and native image serialization.
+- [x] Add DOCX and text formats behind the snapshot media allowlist.
 
 ### Phase 4: Streaming And Clients
 
-- [ ] Implement `POST /api/agents/{agent_uid}/responses/stream`.
-- [ ] Use the shared A2A SSE encoder and final direct `Message` event.
-- [ ] Do not add endpoint-specific token, model, tool, or reasoning delta events.
-- [ ] Cancel work and clean attachments on disconnect.
-- [ ] Add client helpers and an "Ask once" UI with file validation.
+- [x] Implement `POST /api/agents/{agent_uid}/responses/stream`.
+- [x] Use the shared A2A SSE encoder and final direct `Message` event.
+- [x] Do not add endpoint-specific token, model, tool, or reasoning delta events.
+- [x] Cancel work and clean attachments on disconnect.
+- [x] Add Python SDK client helpers with file validation.
 - [ ] Document retry, timeout, and idempotency behavior.
 
 ### Phase 5: Verification
 
 - [ ] Add endpoint tests for authentication, agent authorization, defaults, and every override
       combination.
-- [ ] Add provider-credential integration tests with no session UID.
-- [ ] Add tests that fail if the endpoint calls any backend operation other than provider
+- [x] Add provider-credential integration tests with no session UID.
+- [x] Add tests that fail if the endpoint calls any backend operation other than provider
       credential hydration or refresh.
 - [ ] Add tests proving requests still resolve agent defaults and capabilities when every
       non-credential backend operation is unavailable.

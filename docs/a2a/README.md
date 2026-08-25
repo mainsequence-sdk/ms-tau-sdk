@@ -8,17 +8,21 @@ Astro implements the standard A2A surface directly in FastAPI:
 - `GET /api/a2a/v1/tasks/{task_id}`
 - `POST /api/a2a/v1/tasks/{task_id}:cancel`
 - `GET /api/a2a/v1/tasks/{task_id}:subscribe`
-- task push-notification configuration routes
+- task push-notification configuration routes, which currently return the standard unsupported
+  response
 - `GET /api/a2a/v1/extendedAgentCard`
 - `POST /api/a2a/rpc`
 
 `message.contextId` is the backend `AgentSession.uid`. Astro loads that Tau
 session, acquires its runtime lease, and persists task/message/status state in
-the Django `AgentTask` models.
+the Django `AgentTask` models only when the caller selects a Task result.
 
-Synchronous sends return an A2A agent `Message`. Requests with
-`configuration.returnImmediately=true` return a durable `Task` and execute it
-as tracked background work that drains or cancels during ASGI shutdown.
+`configuration.responseKind="message"` executes directly and returns an A2A
+agent `Message` without creating an `AgentTask`.
+`configuration.responseKind="task"` returns a durable `Task` and executes it
+as tracked background work that drains or cancels during ASGI shutdown. The
+field activates the versioned response-kind extension through the
+`A2A-Extensions` header; omission defaults to direct Message execution.
 Streaming and subscription responses use SSE. Non-strict streaming emits
 incremental artifact updates with direct backpressure before the final durable
 task event. Strict JSON output is bounded and validated before its artifact is
@@ -29,6 +33,12 @@ JSON-RPC accepts both the named methods and standard slash forms, including
 `GetTask`/`tasks/get`, `ListTasks`/`tasks/list`, and
 `CancelTask`/`tasks/cancel`. Streaming JSON-RPC responses are SSE frames whose
 payloads retain the original JSON-RPC request id.
+
+Push notifications are deliberately disabled until the backend provides canonical durable
+configuration storage and webhook delivery. Agent Cards report `pushNotifications: false`.
+REST push-configuration routes return HTTP `400` with
+`PUSH_NOTIFICATION_NOT_SUPPORTED`; current and legacy JSON-RPC push methods return code `-32003`.
+Astro does not contact the backend for these unsupported operations.
 
 Input supports text parts and standard inline PDF `Part.raw` payloads. URL file
 parts and non-PDF raw parts are rejected. Inline files are size-limited,

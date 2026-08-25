@@ -3,28 +3,38 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import binascii
-import hashlib
 import json
-import os
 import re
 import uuid
 from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
+from enum import StrEnum
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+import structlog
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from astro.backend.client import MainSequenceClient
-from astro.backend.models import AgentTask
+from astro.backend.models import AgentTask, AgentTaskCreateResult
+from astro.logging import bind_request_log_fields
+from astro.protocols.a2a_message import (
+    agent_message as serialize_agent_message,
+)
+from astro.protocols.a2a_message import (
+    output_contract as parse_output_contract,
+)
+from astro.protocols.a2a_message import (
+    prepare_a2a_input,
+)
+from astro.protocols.a2a_message import (
+    sse as encode_sse,
+)
 from astro.protocols.strict_json import (
     StrictJsonContract,
     StrictJsonError,
     build_repair_prompt,
-    build_strict_json_contract,
     validate_strict_json,
 )
 from astro.runtime.manager import SessionRuntimeManager
@@ -36,6 +46,7 @@ router = APIRouter()
 BackendDep = Annotated[MainSequenceClient, Depends(backend)]
 RuntimeManagerDep = Annotated[SessionRuntimeManager, Depends(runtime_manager)]
 SettingsDep = Annotated[Settings, Depends(settings)]
+logger = structlog.get_logger(__name__)
 
 REST_BASE = "/api/a2a/v1"
 TERMINAL = {"completed", "failed", "canceled", "rejected"}
@@ -49,25 +60,242 @@ STATE_MAP = {
     "canceled": "TASK_STATE_CANCELED",
     "rejected": "TASK_STATE_REJECTED",
 }
+PUSH_NOTIFICATION_NOT_SUPPORTED_MESSAGE = "Push notifications are not supported"
+RESPONSE_KIND_EXTENSION_URI = "https://mainsequence.ai/a2a/extensions/response-kind/v1"
+PUSH_NOTIFICATION_RPC_METHODS = frozenset(
+    {
+        "CreateTaskPushNotificationConfig",
+        "GetTaskPushNotificationConfig",
+        "ListTaskPushNotificationConfigs",
+        "DeleteTaskPushNotificationConfig",
+        "tasks/pushNotificationConfig/set",
+        "tasks/pushNotificationConfig/get",
+        "tasks/pushNotificationConfig/list",
+        "tasks/pushNotificationConfig/delete",
+    }
+)
+SAFE_CORRELATION_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+
+
+def _safe_correlation(value: object) -> str | None:
+    normalized = str(value or "").strip()
+    return normalized if SAFE_CORRELATION_PATTERN.fullmatch(normalized) else None
+
+
+def _bind_a2a_context(
+    request: Request,
+    *,
+    method: str,
+    request_id: object = None,
+    message: dict[str, Any] | None = None,
+    task_id: object = None,
+    streaming: bool = False,
+) -> None:
+    message = message or {}
+    fields: dict[str, object] = {
+        "a2a_method": method[:128],
+        "a2a_streaming": streaming,
+    }
+    candidates = {
+        "a2a_request_id": request_id,
+        "a2a_context_id": message.get("contextId"),
+        "a2a_message_id": message.get("messageId"),
+        "a2a_task_id": task_id,
+    }
+    for correlation_field, value in candidates.items():
+        normalized = _safe_correlation(value)
+        if normalized is not None:
+            fields[correlation_field] = normalized
+    if "a2a_context_id" in fields:
+        fields["agent_session_uid"] = fields["a2a_context_id"]
+    bind_request_log_fields(request.scope, **fields)
+
+
+class ResponseKind(StrEnum):
+    MESSAGE = "message"
+    TASK = "task"
+
+
+def _activated_extensions(value: str | None) -> set[str]:
+    return {extension.strip() for extension in str(value or "").split(",") if extension.strip()}
+
+
+def _response_kind(
+    body: dict[str, Any],
+    *,
+    a2a_extensions: str | None,
+    streaming: bool = False,
+) -> tuple[ResponseKind, bool]:
+    configuration = body.get("configuration", {})
+    if not isinstance(configuration, dict):
+        raise HTTPException(status_code=400, detail="configuration must be an object")
+    if "returnImmediately" in configuration:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "configuration.returnImmediately is not supported; use "
+                "configuration.responseKind with 'message' or 'task'"
+            ),
+        )
+    if "responseKind" not in configuration:
+        return ResponseKind.MESSAGE, False
+    if streaming:
+        raise HTTPException(
+            status_code=400,
+            detail="configuration.responseKind is not valid for message:stream",
+        )
+    try:
+        response_kind = ResponseKind(configuration["responseKind"])
+    except (TypeError, ValueError) as error:
+        raise HTTPException(
+            status_code=400,
+            detail="configuration.responseKind must be 'message' or 'task'",
+        ) from error
+    if RESPONSE_KIND_EXTENSION_URI not in _activated_extensions(a2a_extensions):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"configuration.responseKind requires A2A-Extensions: {RESPONSE_KIND_EXTENSION_URI}"
+            ),
+        )
+    return response_kind, True
+
+
+def _response_kind_extension(response_kinds: list[str]) -> dict[str, Any]:
+    return {
+        "uri": RESPONSE_KIND_EXTENSION_URI,
+        "description": (
+            "Select whether message:send returns a completed message or an asynchronous task."
+        ),
+        "required": False,
+        "params": {
+            "supportedResponseKinds": response_kinds,
+            "defaultResponseKind": ResponseKind.MESSAGE.value,
+        },
+    }
+
+
+def _supported_response_kinds(agent_card: dict[str, Any] | None) -> list[str]:
+    if not isinstance(agent_card, dict):
+        return [ResponseKind.MESSAGE.value]
+    capabilities = agent_card.get("capabilities")
+    if not isinstance(capabilities, dict):
+        return [ResponseKind.MESSAGE.value]
+    extensions = capabilities.get("extensions")
+    if not isinstance(extensions, list):
+        return [ResponseKind.MESSAGE.value]
+    for extension in extensions:
+        if not isinstance(extension, dict) or extension.get("uri") != RESPONSE_KIND_EXTENSION_URI:
+            continue
+        params = extension.get("params")
+        values = params.get("supportedResponseKinds") if isinstance(params, dict) else None
+        if not isinstance(values, list):
+            return [ResponseKind.MESSAGE.value]
+        supported = [ResponseKind.MESSAGE.value]
+        if ResponseKind.TASK.value in values:
+            supported.append(ResponseKind.TASK.value)
+        return supported
+    return [ResponseKind.MESSAGE.value]
+
+
+def _with_effective_response_kind_capability(
+    agent_card: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if agent_card is None:
+        return None
+    normalized = dict(agent_card)
+    advertised = normalized.get("capabilities")
+    capabilities = dict(advertised) if isinstance(advertised, dict) else {}
+    extensions = capabilities.get("extensions")
+    preserved = (
+        [
+            dict(extension)
+            for extension in extensions
+            if isinstance(extension, dict) and extension.get("uri") != RESPONSE_KIND_EXTENSION_URI
+        ]
+        if isinstance(extensions, list)
+        else []
+    )
+    preserved.append(_response_kind_extension(_supported_response_kinds(agent_card)))
+    capabilities["extensions"] = preserved
+    normalized["capabilities"] = capabilities
+    return normalized
+
+
+def _push_notification_error_info() -> dict[str, str]:
+    return {
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "reason": "PUSH_NOTIFICATION_NOT_SUPPORTED",
+        "domain": "a2a-protocol.org",
+    }
+
+
+def _push_notification_rest_error() -> JSONResponse:
+    return JSONResponse(
+        status_code=400,
+        media_type="application/a2a+json",
+        content={
+            "error": {
+                "code": 400,
+                "status": "FAILED_PRECONDITION",
+                "message": PUSH_NOTIFICATION_NOT_SUPPORTED_MESSAGE,
+                "details": [_push_notification_error_info()],
+            }
+        },
+    )
+
+
+def _push_notification_json_rpc_error(request_id: object) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": {
+            "code": -32003,
+            "message": PUSH_NOTIFICATION_NOT_SUPPORTED_MESSAGE,
+            "data": [_push_notification_error_info()],
+        },
+    }
+
+
+def _without_push_notification_capability(
+    agent_card: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    if agent_card is None:
+        return None
+    normalized = dict(agent_card)
+    advertised = normalized.get("capabilities")
+    capabilities = dict(advertised) if isinstance(advertised, dict) else {}
+    capabilities.pop("push_notifications", None)
+    capabilities["pushNotifications"] = False
+    normalized["capabilities"] = capabilities
+    return normalized
+
+
+def _effective_agent_card(agent_card: dict[str, Any] | None) -> dict[str, Any] | None:
+    return _with_effective_response_kind_capability(
+        _without_push_notification_capability(agent_card)
+    )
+
+
+async def _require_advertised_response_kind(
+    client: MainSequenceClient,
+    *,
+    context_id: str,
+    response_kind: ResponseKind,
+) -> None:
+    envelope = await client.get_agent_card(context_id)
+    supported = _supported_response_kinds(_effective_agent_card(envelope.agent_card))
+    if response_kind.value not in supported:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"responseKind '{response_kind.value}' is not advertised by the receiving agent"
+            ),
+        )
 
 
 def _sse(payload: dict[str, Any]) -> bytes:
-    return f"data: {json.dumps(payload, separators=(',', ':'))}\n\n".encode()
-
-
-def _message_text(parts: object) -> str:
-    if not isinstance(parts, list):
-        raise HTTPException(status_code=400, detail="message.parts must be an array")
-    text = "\n".join(
-        str(part["text"])
-        for part in parts
-        if isinstance(part, dict) and isinstance(part.get("text"), str)
-    ).strip()
-    return text
-
-
-def _safe_component(value: str) -> str:
-    return re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip(".-") or "item"
+    return encode_sse(payload)
 
 
 def _materialize_pdfs(
@@ -76,125 +304,42 @@ def _materialize_pdfs(
     context_id: str,
     message_id: str,
     config: Settings,
-) -> list[Path]:
-    if not isinstance(parts, list):
-        raise HTTPException(status_code=400, detail="message.parts must be an array")
-    files: list[Path] = []
-    for index, part in enumerate(parts):
-        if not isinstance(part, dict) or "text" in part or "data" in part:
-            continue
-        if "url" in part:
-            raise HTTPException(
-                status_code=400,
-                detail=f"message.parts[{index}].url is not supported",
-            )
-        if "raw" not in part:
-            raise HTTPException(
-                status_code=400,
-                detail=f"message.parts[{index}] must use standard Part.raw",
-            )
-        if part.get("mediaType") != "application/pdf":
-            raise HTTPException(
-                status_code=400,
-                detail=f"message.parts[{index}].mediaType must be application/pdf",
-            )
-        filename = str(part.get("filename") or "")
-        if not filename or Path(filename).name != filename or not filename.lower().endswith(".pdf"):
-            raise HTTPException(
-                status_code=400,
-                detail=f"message.parts[{index}].filename must be a safe PDF filename",
-            )
-        try:
-            raw = base64.b64decode(str(part["raw"]), validate=True)
-        except (ValueError, binascii.Error) as error:
-            raise HTTPException(
-                status_code=400,
-                detail=f"message.parts[{index}].raw is not valid base64",
-            ) from error
-        if len(raw) > config.a2a_max_inline_file_bytes:
-            raise HTTPException(
-                status_code=413,
-                detail=f"message.parts[{index}].raw exceeds the inline file limit",
-            )
-        if not raw.startswith(b"%PDF-"):
-            raise HTTPException(
-                status_code=400,
-                detail=f"message.parts[{index}].raw is not a PDF",
-            )
-        digest = hashlib.sha256(raw).hexdigest()[:12]
-        directory = (
-            config.a2a_asset_root
-            / _safe_component(context_id)
-            / "a2a-inputs"
-            / _safe_component(message_id)
-        )
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        path = directory / f"{index}-{digest}-{_safe_component(filename)}"
-        path.write_bytes(raw)
-        os.chmod(path, 0o600)
-        files.append(path)
-    return files
+) -> list[Any]:
+    prepared = prepare_a2a_input(
+        {
+            "message": {
+                "messageId": message_id,
+                "contextId": context_id,
+                "role": "ROLE_USER",
+                "parts": parts,
+            }
+        },
+        config,
+        context_policy="required",
+        allowed_media_types={"application/pdf"},
+    )
+    return [item.path for item in prepared.files]
 
 
 def _request_parts(body: dict[str, Any], config: Settings) -> tuple[dict[str, Any], str]:
-    message = body.get("message")
-    if not isinstance(message, dict):
-        raise HTTPException(status_code=400, detail="message must be an object")
-    context_id = str(message.get("contextId") or "").strip()
-    message_id = str(message.get("messageId") or "").strip()
-    if not context_id or not message_id:
-        raise HTTPException(
-            status_code=400,
-            detail="message.contextId and message.messageId are required",
-        )
-    parts = message.get("parts")
-    text = _message_text(parts)
-    files = _materialize_pdfs(
-        parts=parts,
-        context_id=context_id,
-        message_id=message_id,
-        config=config,
+    normalized_body = body
+    if isinstance(body.get("message"), dict) and "role" not in body["message"]:
+        normalized_body = dict(body)
+        normalized_body["message"] = {
+            **body["message"],
+            "role": "ROLE_USER",
+        }
+    prepared = prepare_a2a_input(
+        normalized_body,
+        config,
+        context_policy="required",
+        allowed_media_types={"application/pdf"},
     )
-    if not text and not files:
-        raise HTTPException(status_code=400, detail="message.parts has no usable content")
-    if files:
-        attachment_lines = "\n".join(f"- {path}" for path in files)
-        text = (
-            f"{text}\n\nAttached PDF files:\n{attachment_lines}"
-            if text
-            else f"Review the attached PDF files:\n{attachment_lines}"
-        )
-    return message, text
+    return prepared.message, prepared.prompt()
 
 
 def _output_contract(body: dict[str, Any]) -> StrictJsonContract:
-    configuration = body.get("configuration", {})
-    modes = configuration.get("acceptedOutputModes", []) if isinstance(configuration, dict) else []
-    metadata = body.get("metadata", {})
-    extension = (
-        metadata.get("https://mainsequence.ai/a2a/extensions/output-contract/v1", {})
-        if isinstance(metadata, dict)
-        else {}
-    )
-    strict = bool(extension.get("strict")) if isinstance(extension, dict) else False
-    response_format = body.get("responseFormat", body.get("response_format"))
-    repair: object = body.get("jsonRepair", body.get("json_repair", {}))
-    if isinstance(extension, dict):
-        response_format = extension.get(
-            "responseFormat",
-            extension.get("response_format", response_format),
-        )
-        repair = extension.get("jsonRepair", extension.get("json_repair", repair))
-    attempts_value = repair.get("attempts", 3) if isinstance(repair, dict) else repair
-    try:
-        attempts = int(attempts_value) if isinstance(attempts_value, int | str) else 3
-    except (TypeError, ValueError):
-        attempts = 3
-    return build_strict_json_contract(
-        response_format,
-        force_strict=strict or "application/json" in modes,
-        repair_attempts=attempts,
-    )
+    return parse_output_contract(body)
 
 
 def _agent_message(
@@ -203,23 +348,11 @@ def _agent_message(
     text: str,
     strict_json: bool,
 ) -> dict[str, Any]:
-    if strict_json:
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError as error:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Agent did not return strict JSON: {error}",
-            ) from error
-        parts = [{"data": data, "mediaType": "application/json"}]
-    else:
-        parts = [{"text": text}]
-    return {
-        "messageId": str(uuid.uuid4()),
-        "role": "ROLE_AGENT",
-        "contextId": context_id,
-        "parts": parts,
-    }
+    return serialize_agent_message(
+        context_id=context_id,
+        text=text,
+        strict_json=strict_json,
+    )
 
 
 def _task_payload(task: AgentTask) -> dict[str, Any]:
@@ -247,6 +380,7 @@ def _task_payload(task: AgentTask) -> dict[str, Any]:
     if task.status_message:
         status["message"] = task.status_message
     return {
+        "kind": "task",
         "id": task.task_id,
         "contextId": task.context_id,
         "status": status,
@@ -286,6 +420,140 @@ def _event_text(event_type: str, data: dict[str, Any], *, has_chunks: bool) -> s
     return ""
 
 
+def _assistant_message_text(message: dict[str, Any]) -> str:
+    content = message.get("content", [])
+    if not isinstance(content, list):
+        return ""
+    return "".join(
+        part["text"]
+        for part in content
+        if isinstance(part, dict)
+        and part.get("type") == "text"
+        and isinstance(part.get("text"), str)
+    )
+
+
+def _assistant_message(value: object) -> dict[str, Any] | None:
+    if isinstance(value, dict) and value.get("role") == "assistant":
+        return value
+    return None
+
+
+def _last_assistant_message(value: object) -> dict[str, Any] | None:
+    if not isinstance(value, list):
+        return None
+    for message in reversed(value):
+        assistant = _assistant_message(message)
+        if assistant is not None:
+            return assistant
+    return None
+
+
+def _turn_failure_detail(message: dict[str, Any], stop_reason: str) -> str:
+    value = message.get("errorMessage", message.get("error_message"))
+    if value:
+        normalized = " ".join(str(value).split())
+        if len(normalized) > 500:
+            normalized = normalized[:497].rstrip() + "..."
+        return f"Agent turn failed: {normalized}"
+    if stop_reason == "aborted":
+        return "Agent turn was aborted"
+    return "Agent turn failed without a provider diagnostic"
+
+
+@dataclass(slots=True)
+class _TurnAccumulator:
+    max_output_bytes: int
+    delta_chunks: list[str] = field(default_factory=list)
+    delta_bytes: int = 0
+    latest_message_end: dict[str, Any] | None = None
+    latest_agent_end: dict[str, Any] | None = None
+    event_types: set[str] = field(default_factory=set)
+    assistant_content_types: set[str] = field(default_factory=set)
+
+    def consume(self, event: object) -> None:
+        event_type = str(getattr(event, "type", ""))
+        data = getattr(event, "data", {})
+        if not isinstance(data, dict):
+            return
+        self.event_types.add(event_type)
+        if event_type in {"text_delta", "text-delta"}:
+            value = str(data.get("delta", data.get("textDelta", "")))
+            if value:
+                self.delta_bytes = _append_bounded(
+                    self.delta_chunks,
+                    value,
+                    current_bytes=self.delta_bytes,
+                    max_output_bytes=self.max_output_bytes,
+                )
+            return
+        if event_type == "message_end":
+            assistant = _assistant_message(data.get("message"))
+            if assistant is not None:
+                self.latest_message_end = assistant
+                self._record_content_types(assistant)
+            return
+        if event_type == "agent_end":
+            assistant = _last_assistant_message(data.get("messages"))
+            if assistant is not None:
+                self.latest_agent_end = assistant
+                self._record_content_types(assistant)
+
+    def result(self) -> str:
+        final_message = self.latest_agent_end or self.latest_message_end
+        if final_message is not None:
+            stop_reason = str(
+                final_message.get(
+                    "stopReason",
+                    final_message.get("stop_reason", ""),
+                )
+            )
+            if stop_reason in {"error", "aborted"}:
+                raise HTTPException(
+                    status_code=502,
+                    detail=_turn_failure_detail(final_message, stop_reason),
+                )
+            final_text = _assistant_message_text(final_message).strip()
+            if final_text:
+                self._check_final_size(final_text)
+                return final_text
+
+        delta_text = "".join(self.delta_chunks).strip()
+        if delta_text:
+            return delta_text
+        raise HTTPException(
+            status_code=502,
+            detail="Agent turn produced no textual answer",
+        )
+
+    def diagnostics(self) -> dict[str, object]:
+        final_message = self.latest_agent_end or self.latest_message_end or {}
+        return {
+            "event_types": sorted(self.event_types),
+            "assistant_content_types": sorted(self.assistant_content_types),
+            "terminal_reason": final_message.get(
+                "stopReason",
+                final_message.get("stop_reason"),
+            ),
+            "delta_bytes": self.delta_bytes,
+        }
+
+    def _record_content_types(self, message: dict[str, Any]) -> None:
+        content = message.get("content", [])
+        if not isinstance(content, list):
+            return
+        self.assistant_content_types.update(
+            str(part.get("type")) for part in content if isinstance(part, dict) and part.get("type")
+        )
+
+    def _check_final_size(self, value: str) -> None:
+        if len(value.encode()) > self.max_output_bytes:
+            raise HTTPException(
+                status_code=502,
+                detail="Agent output exceeded ASTRO_MAX_TURN_OUTPUT_BYTES",
+            )
+
+
 async def _collect_turn(
     manager: SessionRuntimeManager,
     context_id: str,
@@ -293,18 +561,20 @@ async def _collect_turn(
     *,
     max_output_bytes: int,
 ) -> str:
-    chunks: list[str] = []
-    output_bytes = 0
+    accumulator = _TurnAccumulator(max_output_bytes=max_output_bytes)
     async for event in manager.prompt(context_id, prompt):
-        value = _event_text(event.type, event.data, has_chunks=bool(chunks))
-        if value:
-            output_bytes = _append_bounded(
-                chunks,
-                value,
-                current_bytes=output_bytes,
-                max_output_bytes=max_output_bytes,
-            )
-    return "".join(chunks).strip()
+        accumulator.consume(event)
+    try:
+        return accumulator.result()
+    except HTTPException as error:
+        logger.warning(
+            "a2a.turn.invalid_output",
+            message="Tau turn did not produce a valid textual A2A answer",
+            context_id=context_id,
+            status_code=error.status_code,
+            **accumulator.diagnostics(),
+        )
+        raise
 
 
 async def _collect_validated_turn(
@@ -356,7 +626,7 @@ async def _create_backend_task(
     *,
     message: dict[str, Any],
     task_id: str,
-) -> AgentTask:
+) -> AgentTaskCreateResult:
     context_id = str(message["contextId"])
     session = await client.get_session(context_id)
     if not session.agent_uid:
@@ -424,6 +694,28 @@ async def _execute_task(
             status_message={"message": str(error)},
         )
         raise
+
+
+async def _execute_message(
+    manager: SessionRuntimeManager,
+    *,
+    context_id: str,
+    prompt: str,
+    output_contract: StrictJsonContract,
+    max_output_bytes: int,
+) -> dict[str, Any]:
+    text = await _collect_validated_turn(
+        manager,
+        context_id,
+        prompt,
+        output_contract,
+        max_output_bytes=max_output_bytes,
+    )
+    return _agent_message(
+        context_id=context_id,
+        text=text,
+        strict_json=output_contract.enabled,
+    )
 
 
 def _artifact_update(
@@ -614,6 +906,45 @@ def _message_stream_response(
     )
 
 
+def _existing_task_stream_response(
+    *,
+    client: MainSequenceClient,
+    task: AgentTask,
+    json_rpc: bool = False,
+    request_id: object = None,
+) -> StreamingResponse:
+    async def stream() -> AsyncIterator[bytes]:
+        current = task
+        previous: tuple[str, str] | None = None
+        while True:
+            marker = (current.status, str(current.status_timestamp))
+            if marker != previous:
+                payload: dict[str, Any] = {"task": _task_payload(current)}
+                if current.status in TERMINAL:
+                    payload["final"] = True
+                yield _sse(
+                    _stream_payload(
+                        payload,
+                        json_rpc=json_rpc,
+                        request_id=request_id,
+                    )
+                )
+                previous = marker
+            if current.status in TERMINAL:
+                break
+            await asyncio.sleep(1)
+            current = await client.get_task_by_protocol_id(current.task_id)
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 def _task_id(body: dict[str, Any]) -> str:
     value = body.get("taskId")
     return str(value).strip() if value else str(uuid.uuid4())
@@ -625,33 +956,54 @@ async def message_send(
     client: BackendDep,
     manager: RuntimeManagerDep,
     config: SettingsDep,
+    request: Request,
+    a2a_extensions: Annotated[
+        str | None,
+        Header(alias="A2A-Extensions"),
+    ] = None,
 ) -> dict[str, Any]:
     message, prompt = _request_parts(body, config)
-    output_contract = _output_contract(body)
-    task = await _create_backend_task(client, message=message, task_id=_task_id(body))
-    configuration = body.get("configuration", {})
-    return_immediately = (
-        bool(configuration.get("returnImmediately"))
-        if isinstance(configuration, dict)
-        else False
+    _bind_a2a_context(
+        request,
+        method="message/send",
+        message=message,
+        task_id=body.get("taskId"),
     )
-    if return_immediately:
-        manager.create_background_task(
-            _execute_task(
-                client,
-                manager,
-                task,
-                prompt=prompt,
-                output_contract=output_contract,
-                max_output_bytes=config.max_turn_output_bytes,
-            ),
-            name=f"a2a-task-{task.task_id}",
+    output_contract = _output_contract(body)
+    response_kind, was_explicit = _response_kind(
+        body,
+        a2a_extensions=a2a_extensions,
+    )
+    if was_explicit:
+        await _require_advertised_response_kind(
+            client,
+            context_id=str(message["contextId"]),
+            response_kind=response_kind,
         )
+    if response_kind is ResponseKind.TASK:
+        creation = await _create_backend_task(
+            client,
+            message=message,
+            task_id=_task_id(body),
+        )
+        task = creation.task
+        if creation.created:
+            manager.create_background_task(
+                _execute_task(
+                    client,
+                    manager,
+                    task,
+                    prompt=prompt,
+                    output_contract=output_contract,
+                    max_output_bytes=config.max_turn_output_bytes,
+                ),
+                name=f"a2a-task-{task.task_id}",
+                operation_uid=task.uid,
+            )
         return {"task": _task_payload(task)}
-    result = await _execute_task(
-        client,
+    result = await _execute_message(
         manager,
-        task,
+        context_id=str(message["contextId"]),
         prompt=prompt,
         output_contract=output_contract,
         max_output_bytes=config.max_turn_output_bytes,
@@ -665,10 +1017,34 @@ async def message_stream(
     client: BackendDep,
     manager: RuntimeManagerDep,
     config: SettingsDep,
+    request: Request,
+    a2a_extensions: Annotated[
+        str | None,
+        Header(alias="A2A-Extensions"),
+    ] = None,
 ) -> StreamingResponse:
+    _response_kind(
+        body,
+        a2a_extensions=a2a_extensions,
+        streaming=True,
+    )
     message, prompt = _request_parts(body, config)
+    _bind_a2a_context(
+        request,
+        method="message/stream",
+        message=message,
+        task_id=body.get("taskId"),
+        streaming=True,
+    )
     output_contract = _output_contract(body)
-    task = await _create_backend_task(client, message=message, task_id=_task_id(body))
+    creation = await _create_backend_task(
+        client,
+        message=message,
+        task_id=_task_id(body),
+    )
+    task = creation.task
+    if not creation.created:
+        return _existing_task_stream_response(client=client, task=task)
     return _message_stream_response(
         client=client,
         manager=manager,
@@ -683,11 +1059,6 @@ async def message_stream(
 async def list_tasks(client: BackendDep, contextId: str | None = None) -> dict[str, Any]:
     tasks = await client.list_tasks(context_id=contextId or "")
     return {"tasks": [_task_payload(task) for task in tasks]}
-
-
-@router.get(f"{REST_BASE}/tasks/{{task_id}}")
-async def get_task(task_id: str, client: BackendDep) -> dict[str, Any]:
-    return {"task": _task_payload(await client.get_task_by_protocol_id(task_id))}
 
 
 @router.post(f"{REST_BASE}/tasks/{{task_id}}:cancel")
@@ -718,58 +1089,35 @@ async def subscribe_task(task_id: str, client: BackendDep) -> StreamingResponse:
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
+@router.get(f"{REST_BASE}/tasks/{{task_id}}")
+async def get_task(task_id: str, client: BackendDep) -> dict[str, Any]:
+    return {"task": _task_payload(await client.get_task_by_protocol_id(task_id))}
+
+
 @router.get(f"{REST_BASE}/tasks/{{task_id}}/pushNotificationConfigs")
-async def list_push_configs(task_id: str, client: BackendDep) -> dict[str, Any]:
-    task = await client.get_task_by_protocol_id(task_id)
-    return {
-        "pushNotificationConfigs": await client.list_task_push_configs(task.uid),
-    }
+async def list_push_configs(task_id: str) -> JSONResponse:
+    return _push_notification_rest_error()
 
 
 @router.post(f"{REST_BASE}/tasks/{{task_id}}/pushNotificationConfigs")
-async def set_push_config(
-    task_id: str,
-    body: dict[str, Any],
-    client: BackendDep,
-) -> dict[str, Any]:
-    task = await client.get_task_by_protocol_id(task_id)
-    payload = await client.set_task_push_config(
-        task.uid,
-        {**body, "id": str(body.get("id") or uuid.uuid4())},
-    )
-    return {"pushNotificationConfig": payload}
+async def set_push_config(task_id: str) -> JSONResponse:
+    return _push_notification_rest_error()
 
 
 @router.get(f"{REST_BASE}/tasks/{{task_id}}/pushNotificationConfigs/{{config_id}}")
 async def get_push_config(
     task_id: str,
     config_id: str,
-    client: BackendDep,
-) -> dict[str, Any]:
-    task = await client.get_task_by_protocol_id(task_id)
-    payload = next(
-        (
-            config
-            for config in await client.list_task_push_configs(task.uid)
-            if str(config.get("id")) == config_id
-        ),
-        None,
-    )
-    if payload is None:
-        raise HTTPException(status_code=404, detail="Push notification config not found")
-    return {"pushNotificationConfig": payload}
+) -> JSONResponse:
+    return _push_notification_rest_error()
 
 
 @router.delete(f"{REST_BASE}/tasks/{{task_id}}/pushNotificationConfigs/{{config_id}}")
 async def delete_push_config(
     task_id: str,
     config_id: str,
-    client: BackendDep,
-) -> dict[str, bool]:
-    task = await client.get_task_by_protocol_id(task_id)
-    return {
-        "deleted": await client.delete_task_push_config(task.uid, config_id),
-    }
+) -> JSONResponse:
+    return _push_notification_rest_error()
 
 
 @router.get(f"{REST_BASE}/extendedAgentCard")
@@ -783,7 +1131,9 @@ async def extended_agent_card(
     if not resolved_uid:
         raise HTTPException(status_code=400, detail="agent_session_uid is required")
     envelope = await client.get_agent_card(resolved_uid)
-    return envelope.model_dump(mode="json")
+    payload = envelope.model_dump(mode="json")
+    payload["agent_card"] = _effective_agent_card(envelope.agent_card)
+    return payload
 
 
 @router.post("/api/a2a/rpc", response_model=None)
@@ -792,15 +1142,28 @@ async def json_rpc(
     client: BackendDep,
     manager: RuntimeManagerDep,
     config: SettingsDep,
+    request: Request,
+    a2a_extensions: Annotated[
+        str | None,
+        Header(alias="A2A-Extensions"),
+    ] = None,
 ) -> dict[str, Any] | StreamingResponse:
     request_id = body.get("id")
+    method = str(body.get("method") or "")
+    _bind_a2a_context(
+        request,
+        method=method or "invalid",
+        request_id=request_id,
+        streaming=method in {"SendStreamingMessage", "message/stream"},
+    )
     if body.get("jsonrpc") != "2.0":
         return {
             "jsonrpc": "2.0",
             "id": request_id,
             "error": {"code": -32600, "message": "Invalid Request"},
         }
-    method = str(body.get("method") or "")
+    if method in PUSH_NOTIFICATION_RPC_METHODS:
+        return _push_notification_json_rpc_error(request_id)
     params = body.get("params", {})
     if not isinstance(params, dict):
         return {
@@ -817,15 +1180,43 @@ async def json_rpc(
 
     try:
         if method in {"SendMessage", "message/send"}:
-            result = await message_send(params, client, manager, config)
+            result = await message_send(
+                params,
+                client,
+                manager,
+                config,
+                request,
+                a2a_extensions,
+            )
         elif method in {"SendStreamingMessage", "message/stream"}:
+            _response_kind(
+                params,
+                a2a_extensions=a2a_extensions,
+                streaming=True,
+            )
             message, prompt = _request_parts(params, config)
+            _bind_a2a_context(
+                request,
+                method=method,
+                request_id=request_id,
+                message=message,
+                task_id=params.get("taskId") or params.get("id"),
+                streaming=True,
+            )
             output_contract = _output_contract(params)
-            task = await _create_backend_task(
+            creation = await _create_backend_task(
                 client,
                 message=message,
                 task_id=_task_id(params),
             )
+            task = creation.task
+            if not creation.created:
+                return _existing_task_stream_response(
+                    client=client,
+                    task=task,
+                    json_rpc=True,
+                    request_id=request_id,
+                )
             return _message_stream_response(
                 client=client,
                 manager=manager,

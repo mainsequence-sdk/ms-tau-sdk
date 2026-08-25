@@ -4,6 +4,10 @@ Status: Proposed
 Date: 2026-07-01
 Implementation Status: Not implemented
 
+Decision update: ADR 46 resolves the push-notification gap by making the capability explicitly
+unsupported until canonical backend persistence and webhook delivery exist. Astro must not keep
+process-local push configuration state or guess a backend route.
+
 ## Context
 
 Astro already exposes the public A2A boundary at `rpc_url`:

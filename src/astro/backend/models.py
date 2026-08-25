@@ -84,9 +84,7 @@ class AgentSession(BackendModel):
             "tau": "tau-session-v1",
         }[self.harness]
         if self.harness_protocol != expected:
-            raise ValueError(
-                f"Harness {self.harness!r} requires protocol {expected!r}"
-            )
+            raise ValueError(f"Harness {self.harness!r} requires protocol {expected!r}")
         return self
 
 
@@ -198,9 +196,7 @@ class RuntimeState(BackendModel):
             "tau": "tau-session-v1",
         }[self.harness]
         if self.harness_protocol != expected:
-            raise ValueError(
-                f"Harness {self.harness!r} requires protocol {expected!r}"
-            )
+            raise ValueError(f"Harness {self.harness!r} requires protocol {expected!r}")
         return self
 
 
@@ -257,3 +253,8 @@ class AgentTask(BackendModel):
     latest_message: dict[str, Any] | None = None
     outputs: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentTaskCreateResult(BackendModel):
+    task: AgentTask
+    created: bool

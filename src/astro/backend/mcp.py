@@ -15,7 +15,6 @@ from mcp.client.streamable_http import streamable_http_client
 from pydantic import AnyUrl
 from structlog.contextvars import bound_contextvars, get_contextvars
 
-from astro.errors import ConfigurationError
 from astro.settings import Settings
 
 from .auth import RuntimeCredentialAuth
@@ -157,26 +156,20 @@ class MainSequenceMCPClient:
                         with bound_contextvars(**initial_log_context):
                             await session.initialize()
                             self.tools = tuple((await session.list_tools()).tools)
-                            self.resources = tuple(
-                                (await session.list_resources()).resources
-                            )
+                            self.resources = tuple((await session.list_resources()).resources)
                         if self._ready is not None and not self._ready.done():
                             self._ready.set_result(None)
                         await self._serve(session)
         except BaseException as error:
             actionable = _actionable_cleanup_error(error)
-            failure = actionable or RuntimeError(
-                "Main Sequence MCP owner task was cancelled"
-            )
+            failure = actionable or RuntimeError("Main Sequence MCP owner task was cancelled")
             self._failure = failure
         finally:
             if self._ready is not None and not self._ready.done():
                 self._ready.set_exception(
                     failure or RuntimeError("Main Sequence MCP client failed to start")
                 )
-            self._fail_pending_commands(
-                failure or RuntimeError("Main Sequence MCP client closed")
-            )
+            self._fail_pending_commands(failure or RuntimeError("Main Sequence MCP client closed"))
 
     async def _serve(self, session: ClientSession) -> None:
         commands = self._commands
@@ -202,9 +195,7 @@ class MainSequenceMCPClient:
             else:
                 try:
                     with bound_contextvars(**command.log_context):
-                        resource_result = await session.read_resource(
-                            AnyUrl(command.uri)
-                        )
+                        resource_result = await session.read_resource(AnyUrl(command.uri))
                 except Exception as error:
                     if not command.result.done():
                         command.result.set_exception(error)
@@ -234,14 +225,8 @@ class MainSequenceMCPClient:
         name: str,
         arguments: dict[str, object],
     ) -> types.CallToolResult:
-        arguments = self._environment_scoped_tool_arguments(
-            name=name,
-            arguments=arguments,
-        )
         commands = self._require_commands()
-        result: asyncio.Future[types.CallToolResult] = (
-            asyncio.get_running_loop().create_future()
-        )
+        result: asyncio.Future[types.CallToolResult] = asyncio.get_running_loop().create_future()
         commands.put_nowait(
             _CallToolCommand(
                 name=name,
@@ -251,24 +236,6 @@ class MainSequenceMCPClient:
             )
         )
         return await result
-
-    def _environment_scoped_tool_arguments(
-        self,
-        *,
-        name: str,
-        arguments: dict[str, object],
-    ) -> dict[str, object]:
-        scoped_arguments = dict(arguments)
-        if name not in ENVIRONMENT_SCOPED_AGENT_TOOLS:
-            return scoped_arguments
-        environment_uid = self._settings.organization_project_environment_uid
-        if environment_uid is None:
-            raise ConfigurationError(
-                "MAIN_SEQUENCE_ORGANIZATION_PROJECT_ENVIRONMENT_UID is required "
-                f"before calling {name}."
-            )
-        scoped_arguments[ENVIRONMENT_UID_ARGUMENT] = str(environment_uid)
-        return scoped_arguments
 
     async def read_resource(self, uri: str) -> types.ReadResourceResult:
         commands = self._require_commands()
