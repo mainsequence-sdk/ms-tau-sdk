@@ -85,7 +85,11 @@ class TauTurnObserver:
         self.usage: dict[str, int] = {}
         self._model: tuple[str, float, int] | None = None
         self._next_model_attempt = 1
-        self._tools: dict[str, tuple[float, str, str]] = {}
+        self._tools: dict[
+            str,
+            tuple[float, str, str, int, str | None, str, bool, str],
+        ] = {}
+        self._tool_attempts: dict[str, int] = {}
         self._handoffs: dict[
             str,
             tuple[float, str, str, str | None, str | None, str],
@@ -119,6 +123,8 @@ class TauTurnObserver:
             self._start_tool(data)
         elif event_type in {"tool_execution_end", "tool_end"}:
             self._finish_tool(data)
+        elif event_type in {"tool_execution_error", "tool_error", "tool_failed", "tool_timeout"}:
+            self._finish_tool(data, event_type=event_type)
 
         if "handoff" in event_type or "subagent" in event_type:
             if event_type.endswith(("start", "started")):
@@ -224,7 +230,27 @@ class TauTurnObserver:
 
     def _start_tool(self, data: Mapping[str, Any]) -> None:
         call_uid, name, category = self._tool_identity(data)
-        self._tools[call_uid] = (time.monotonic(), name, category)
+        attempt = self._tool_attempts.get(name, 0) + 1
+        self._tool_attempts[name] = attempt
+        target_system = _bounded(_first(data, "target_system", "targetSystem"))
+        side_effect_class = _bounded(data.get("side_effect_class")) or "unknown"
+        approval_required = bool(data.get("approval_required", False))
+        requested_outcome = _bounded(_first(data, "approval_outcome", "approval_state"))
+        approval_outcome = (
+            requested_outcome
+            if requested_outcome in {"approved", "rejected", "expired", "pending", "not_required"}
+            else "pending" if approval_required else "not_required"
+        )
+        self._tools[call_uid] = (
+            time.monotonic(),
+            name,
+            category,
+            attempt,
+            target_system,
+            side_effect_class,
+            approval_required,
+            approval_outcome,
+        )
         self.tool_calls += 1
         safe_log(
             self.logger,
@@ -234,19 +260,44 @@ class TauTurnObserver:
             tool_call_uid=call_uid,
             tool_name=name,
             tool_category=category,
-            side_effect_class=_bounded(data.get("side_effect_class")) or "unknown",
-            approval_required=bool(data.get("approval_required", False)),
-            tool_attempt=1,
+            target_system=target_system,
+            side_effect_class=side_effect_class,
+            approval_required=approval_required,
+            approval_outcome=approval_outcome,
+            tool_attempt=attempt,
         )
 
-    def _finish_tool(self, data: Mapping[str, Any]) -> None:
+    def _finish_tool(self, data: Mapping[str, Any], *, event_type: str = "") -> None:
         call_uid, fallback_name, fallback_category = self._tool_identity(data)
-        started, name, category = self._tools.pop(
+        (
+            started,
+            name,
+            category,
+            attempt,
+            target_system,
+            side_effect_class,
+            approval_required,
+            approval_outcome,
+        ) = self._tools.pop(
             call_uid,
-            (time.monotonic(), fallback_name, fallback_category),
+            (
+                time.monotonic(),
+                fallback_name,
+                fallback_category,
+                self._tool_attempts.get(fallback_name, 1),
+                None,
+                "unknown",
+                False,
+                "not_required",
+            ),
         )
         error_type = _bounded(_first(data, "errorType", "error_type"))
+        if not error_type and event_type:
+            error_type = "TimeoutError" if "timeout" in event_type else "ToolError"
         outcome = "failed" if error_type else "success"
+        retryable = error_type in {"TimeoutError", "ConnectionError"}
+        if not error_type:
+            self._tool_attempts.pop(name, None)
         safe_log(
             self.logger,
             "error" if error_type else "info",
@@ -255,8 +306,14 @@ class TauTurnObserver:
             tool_call_uid=call_uid,
             tool_name=name,
             tool_category=category,
+            target_system=target_system,
+            side_effect_class=side_effect_class,
+            approval_required=approval_required,
+            approval_outcome=approval_outcome,
+            tool_attempt=attempt,
             result_size_bytes=_result_size(data),
             tool_error_type=error_type,
+            retryable=retryable,
             tool_outcome=outcome,
             outcome=outcome,
             duration_ms=round((time.monotonic() - started) * 1000, 3),

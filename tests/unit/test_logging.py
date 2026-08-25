@@ -530,6 +530,54 @@ def test_tau_model_rate_limit_retry_preserves_safe_correlated_attempts(capsys):
     assert "private prompt" not in json.dumps(model_events)
 
 
+def test_tau_tool_timeout_retry_preserves_safe_canonical_approval_outcome(capsys):
+    configure_logging("INFO", machine_sink=True, human_sink=False)
+    observer = TauTurnObserver(provider="openai", model="controlled-model")
+    metadata = {
+        "toolName": "create_ticket",
+        "tool_category": "mcp",
+        "target_system": "jira",
+        "side_effect_class": "write",
+        "approval_required": True,
+        "approval_outcome": "approved",
+    }
+
+    observer.observe(
+        AstroRuntimeEvent(
+            type="tool_execution_start",
+            data={**metadata, "toolCallId": "first", "arguments": {"token": "private token"}},
+        )
+    )
+    observer.observe(
+        AstroRuntimeEvent(
+            type="tool_timeout",
+            data={"toolCallId": "first", "message": "private provider response"},
+        )
+    )
+    observer.observe(
+        AstroRuntimeEvent(type="tool_execution_start", data={**metadata, "toolCallId": "second"})
+    )
+    observer.observe(
+        AstroRuntimeEvent(
+            type="tool_execution_end",
+            data={"toolCallId": "second", "result": {"secret": "private tool result"}},
+        )
+    )
+
+    events = [
+        event for event in _json_events(capsys.readouterr().out)
+        if event["event"].startswith("agent.tool.")
+    ]
+    assert [event["tool_attempt"] for event in events] == [1, 1, 2, 2]
+    assert events[1]["tool_error_type"] == "TimeoutError"
+    assert events[1]["retryable"] is True
+    assert all(event["target_system"] == "jira" for event in events)
+    assert all(event["approval_outcome"] == "approved" for event in events)
+    assert "private token" not in json.dumps(events)
+    assert "private provider response" not in json.dumps(events)
+    assert "private tool result" not in json.dumps(events)
+
+
 def test_tau_handoff_carries_session_correlation_and_allowlisted_reason(capsys):
     configure_logging("INFO", machine_sink=True, human_sink=False)
     observer = TauTurnObserver(provider="openai", model="controlled-model")

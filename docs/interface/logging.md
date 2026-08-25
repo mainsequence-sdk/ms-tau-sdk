@@ -60,6 +60,9 @@ logs; probe failures and recoveries emit rate-limited operational events that
 retain their canonical Organization Environment, runtime, and service identity.
 Cancelled and disconnected requests also produce exactly one terminal event and
 retain the same canonical Environment correlation without logging request bodies.
+Tool telemetry uses the canonical `approval_outcome` field, preserves safe
+target-system and side-effect metadata, and correlates timeout retries without
+logging tool arguments, credentials, results, or provider error content.
 Production never emits `http.request.started`. Raw paths, query strings, IP
 addresses, user agents, and arbitrary headers are not access-log fields.
 Cancelled and failed requests use `http.request.cancelled` and
