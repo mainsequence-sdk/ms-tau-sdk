@@ -9,6 +9,8 @@ from typing import Literal
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from astro.agents import AgentExecutionSnapshot
+
 from .errors import ConfigurationError
 
 
@@ -62,6 +64,25 @@ class Settings(BaseSettings):
     a2a_max_inline_file_bytes: int = Field(
         default=20 * 1024 * 1024,
         validation_alias="ASTRO_A2A_MAX_INLINE_FILE_BYTES",
+    )
+    a2a_max_aggregate_file_bytes: int = Field(
+        default=40 * 1024 * 1024,
+        gt=0,
+        validation_alias="ASTRO_A2A_MAX_AGGREGATE_FILE_BYTES",
+    )
+    a2a_max_inline_file_count: int = Field(
+        default=8,
+        ge=1,
+        le=64,
+        validation_alias="ASTRO_A2A_MAX_INLINE_FILE_COUNT",
+    )
+    sessionless_asset_root: Path = Field(
+        default=Path("/tmp/astro-sessionless-assets"),
+        validation_alias="ASTRO_SESSIONLESS_ASSET_ROOT",
+    )
+    agent_execution_snapshot: AgentExecutionSnapshot | None = Field(
+        default=None,
+        validation_alias="ASTRO_AGENT_EXECUTION_SNAPSHOT",
     )
     log_level: str = Field(default="INFO", validation_alias="ASTRO_LOG_LEVEL")
     log_machine_sink: bool = Field(

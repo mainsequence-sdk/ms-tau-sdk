@@ -2,7 +2,7 @@
 
 Astro is Main Sequence's Python 3.13 agent service built on
 [Hugging Face Tau](https://github.com/huggingface/tau). It exposes durable
-Assistant UI chat, stateless model chat, and standard A2A transports.
+Assistant UI chat, agent-targeted sessionless responses, and standard A2A transports.
 
 Astro is container-only. Do not run a second host Python or Node runtime.
 
@@ -31,7 +31,8 @@ The runtime credential pair is required because Astro authenticates every
 session, task, provider credential, lease request, and MCP call to Django.
 It must belong to the deployed coding-agent service; organization-test and
 project runtime credentials are not valid for MCP.
-Provider API keys remain backend-owned and are hydrated per user/session.
+Provider API keys remain backend-owned and are hydrated for the exact session
+or Agent execution identity.
 
 For a Project Executor deployment, Django derives Agent discovery scope from
 the authenticated service credential and the service's persisted
@@ -77,7 +78,8 @@ health endpoints with:
 - `GET /ready`
 - `GET /version`
 - `POST /api/chat`
-- `POST /api/llm/chat`
+- `POST /api/agents/{agent_uid}/responses`
+- `POST /api/agents/{agent_uid}/responses/stream`
 - `GET /api/models/catalog`
 - `GET /api/model-providers`
 - `POST /api/model-providers/{provider}/signin`
@@ -89,6 +91,9 @@ health endpoints with:
 - `POST /api/a2a/v1/message:stream`
 - `GET /api/a2a/v1/tasks`
 - `POST /api/a2a/rpc`
+
+The unscoped LLM chat surface is not exposed. Agent identity is mandatory for
+all one-shot model execution.
 
 FastAPI publishes the full schema at `/docs` and `/openapi.json`.
 

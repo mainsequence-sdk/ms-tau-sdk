@@ -197,9 +197,7 @@ class TauTurnObserver:
         raw_status_code = _first(data, "status_code", "status", "http_status")
         status_code = raw_status_code if isinstance(raw_status_code, int) else None
         rate_limited = (
-            status_code == 429
-            or "rate_limit" in event_type
-            or "ratelimit" in error_type.lower()
+            status_code == 429 or "rate_limit" in event_type or "ratelimit" in error_type.lower()
         )
         retryable = rate_limited or status_code in {408, 409, 425, 500, 502, 503, 504}
         safe_log(
@@ -239,7 +237,9 @@ class TauTurnObserver:
         approval_outcome = (
             requested_outcome
             if requested_outcome in {"approved", "rejected", "expired", "pending", "not_required"}
-            else "pending" if approval_required else "not_required"
+            else "pending"
+            if approval_required
+            else "not_required"
         )
         self._tools[call_uid] = (
             time.monotonic(),
@@ -323,9 +323,7 @@ class TauTurnObserver:
         handoff_uid = _bounded(data.get("handoff_uid")) or str(uuid.uuid4())
         source = _bounded(_first(data, "source_agent_uid", "source")) or "tau"
         target = _bounded(_first(data, "target_agent_uid", "target")) or "subagent"
-        parent_session = _bounded(
-            _first(data, "parent_agent_session_uid", "parent_session_uid")
-        )
+        parent_session = _bounded(_first(data, "parent_agent_session_uid", "parent_session_uid"))
         child_session = _bounded(_first(data, "child_agent_session_uid", "child_session_uid"))
         requested_reason = _bounded(_first(data, "handoff_reason_code", "reason_code"))
         handoff_reason = (
@@ -370,9 +368,7 @@ class TauTurnObserver:
                         _parent_session,
                         _child_session,
                         _reason,
-                    ) in reversed(
-                        self._handoffs.items()
-                    )
+                    ) in reversed(self._handoffs.items())
                     if candidate_source == source and candidate_target == target
                 ),
                 None,
@@ -380,8 +376,8 @@ class TauTurnObserver:
         if handoff_uid is None or handoff_uid not in self._handoffs:
             self._start_handoff(data)
             handoff_uid = next(reversed(self._handoffs))
-        started, source, target, parent_session, child_session, handoff_reason = (
-            self._handoffs.pop(handoff_uid)
+        started, source, target, parent_session, child_session, handoff_reason = self._handoffs.pop(
+            handoff_uid
         )
         safe_log(
             self.logger,

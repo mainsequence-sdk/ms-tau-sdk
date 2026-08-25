@@ -3,7 +3,8 @@
 Astro exposes:
 
 - assistant-ui streaming at `POST /api/chat`
-- stateless model execution at `POST /api/llm/chat`
+- agent-targeted sessionless execution at `POST /api/agents/{agent_uid}/responses`
+  and `POST /api/agents/{agent_uid}/responses/stream`
 - model catalog and provider credential control under `/api/models` and
   `/api/model-providers`
 - session model, config, and cancellation under `/api/chat`

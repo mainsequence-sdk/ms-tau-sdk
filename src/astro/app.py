@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from astro import __version__
-from astro.api import a2a, chat, health, llm, providers, sessions
+from astro.api import a2a, chat, health, providers, responses, sessions
 from astro.backend.auth import RuntimeCredentialAuth
 from astro.backend.client import MainSequenceClient
 from astro.errors import AstroError
@@ -115,7 +115,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app.include_router(health.router)
     app.include_router(chat.router)
-    app.include_router(llm.router)
+    app.include_router(responses.router)
     app.include_router(a2a.router)
     app.include_router(providers.router)
     app.include_router(sessions.router)

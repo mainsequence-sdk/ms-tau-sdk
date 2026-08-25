@@ -22,7 +22,9 @@ from tau_coding.provider_catalog import BUILTIN_PROVIDER_CATALOG, ProviderCatalo
 from tau_coding.thinking import (
     DEFAULT_THINKING_LEVEL,
     ThinkingLevel,
+    anthropic_thinking_budget_for_level,
     normalize_thinking_level,
+    reasoning_effort_for_level,
 )
 
 from astro.backend.client import MainSequenceClient
@@ -106,6 +108,19 @@ class ProviderFactory:
         default = provider.thinking_default
         return default if default in available else DEFAULT_THINKING_LEVEL
 
+    def validate_input_media(
+        self,
+        provider_name: str,
+        model: str,
+        media_types: set[str],
+    ) -> None:
+        if not any(media_type.startswith("image/") for media_type in media_types):
+            return
+        provider = CATALOG_BY_NAME.get(provider_name)
+        metadata = provider.model_metadata.get(model) if provider is not None else None
+        if metadata is None or "image" not in metadata.input:
+            raise ConfigurationError(f"Model {provider_name}:{model} does not support image input")
+
     async def for_session(
         self,
         session: AgentSession,
@@ -151,6 +166,7 @@ class ProviderFactory:
             provider=self.build(
                 credential,
                 model=model,
+                thinking_level=thinking_level,
                 credential_resolver=resolve_credential,
             ),
             credential=credential,
@@ -171,6 +187,7 @@ class ProviderFactory:
         *,
         model: str | None = None,
         credential_resolver: CredentialResolver | None = None,
+        thinking_level: str | None = None,
         max_tokens: int | None = None,
         timeout_seconds: float = 60,
     ) -> ModelProvider:
@@ -185,6 +202,17 @@ class ProviderFactory:
             if catalog_provider is not None and model is not None
             else None
         )
+        normalized_thinking = (
+            normalize_thinking_level(thinking_level) if thinking_level is not None else None
+        )
+        mapped_thinking: str | None = None
+        if normalized_thinking is not None:
+            mapped_thinking = reasoning_effort_for_level(normalized_thinking)
+            if (
+                model_metadata is not None
+                and normalized_thinking in model_metadata.thinking_level_map
+            ):
+                mapped_thinking = model_metadata.thinking_level_map[normalized_thinking]
         api = credential.api or (
             model_metadata.api
             if model_metadata is not None and model_metadata.api
@@ -235,6 +263,7 @@ class ProviderFactory:
                     base_url=base_url,
                     headers=headers,
                     timeout_seconds=timeout_seconds,
+                    reasoning_effort=mapped_thinking,
                     provider_name=credential.provider,
                 )
             )
@@ -246,6 +275,13 @@ class ProviderFactory:
                     base_url=base_url,
                     headers=headers,
                     provider_name=credential.provider,
+                    timeout_seconds=timeout_seconds,
+                    max_tokens=max_tokens,
+                    thinking_budget_tokens=(
+                        anthropic_thinking_budget_for_level(normalized_thinking)
+                        if normalized_thinking is not None and mapped_thinking is not None
+                        else None
+                    ),
                 )
             )
 
@@ -258,6 +294,14 @@ class ProviderFactory:
             omit_authorization_header=credential.provider == "ollama" and not secret,
             max_tokens=max_tokens,
             timeout_seconds=timeout_seconds,
+            reasoning_effort=mapped_thinking,
+            reasoning_effort_parameter=(
+                catalog_provider.thinking_parameter
+                if catalog_provider is not None
+                and catalog_provider.thinking_parameter in {"reasoning_effort", "reasoning.effort"}
+                else "reasoning_effort"
+            ),
+            compat=model_metadata.compat if model_metadata is not None else {},
         )
         if api == "google-generative-ai":
             return GoogleGenerativeAIProvider(config)

@@ -51,8 +51,7 @@ pre-UID API sketches have been removed from the active reference set.
 ## Sessionless Inference
 
 - [`adr-36-stateless-llm-passthrough.md`](./adr-36-stateless-llm-passthrough.md)
-  - Simple LLM calls should use a separate stateless JSON endpoint that skips sessions, checkpoints,
-    Pi runners, capabilities, project attachment, queues, and persistence.
+  - Superseded by ADR 44. The unscoped route is removed from the runtime and OpenAPI.
 - [`adr-44-agent-targeted-sessionless-responses.md`](./adr-44-agent-targeted-sessionless-responses.md)
   - One-shot agent responses require `agent_uid`, resolve optional provider/model/thinking overrides
     over agent defaults, use only sessionless-safe capabilities, and create no session, task,

@@ -23,23 +23,33 @@ be used instead of `messages`.
 Astro attaches to the existing session. It never allocates a backend session
 from the chat request.
 
-## Stateless model chat
+## Agent-targeted sessionless response
 
-`POST /api/llm/chat` requires `x-mainsequence-user-uid`:
+`POST /api/agents/{agent_uid}/responses` accepts the canonical A2A message
+envelope without `contextId` or any other session identity:
 
 ```json
 {
-  "model": "gpt-5.4",
-  "messages": [{"role": "user", "content": "Return a short status."}],
-  "max_tokens": 200,
+  "message": {
+    "messageId": "msg-1",
+    "role": "ROLE_USER",
+    "parts": [{"text": "Return a short status."}]
+  },
+  "configuration": {
+    "acceptedOutputModes": ["text/plain"],
+    "responseKind": "message"
+  },
   "metadata": {
-    "astro": {
+    "https://mainsequence.ai/a2a/extensions/agent-inference/v1": {
       "provider": "openai",
-      "timeout_seconds": 120
+      "model": "gpt-5.4",
+      "thinking": "medium",
+      "timeoutSeconds": 120
     }
   }
 }
 ```
 
-Set `response_format` to `json` or `json_object` for strict JSON validation and
-bounded repair attempts.
+Provider, model, and thinking inherit the deployment's immutable Agent snapshot
+when omitted. The request creates no session, task, transcript, or checkpoint.
+Use the standard output-contract metadata extension for strict JSON.

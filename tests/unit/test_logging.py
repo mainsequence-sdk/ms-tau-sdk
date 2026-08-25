@@ -396,15 +396,12 @@ async def test_cancelled_and_disconnected_requests_have_one_safe_terminal(capsys
         return None
 
     with pytest.raises(asyncio.CancelledError):
-        await RequestContextMiddleware(cancelled)(
-            scope("/cancelled"), receive_disconnect, send
-        )
-    await RequestContextMiddleware(disconnected)(
-        scope("/disconnected"), receive_disconnect, send
-    )
+        await RequestContextMiddleware(cancelled)(scope("/cancelled"), receive_disconnect, send)
+    await RequestContextMiddleware(disconnected)(scope("/disconnected"), receive_disconnect, send)
 
     terminals = [
-        event for event in _json_events(capsys.readouterr().out)
+        event
+        for event in _json_events(capsys.readouterr().out)
         if event["event"].startswith("http.request.")
     ]
     assert [event["event"] for event in terminals] == [
@@ -413,8 +410,7 @@ async def test_cancelled_and_disconnected_requests_have_one_safe_terminal(capsys
     ]
     assert [event["outcome"] for event in terminals] == ["cancelled", "disconnected"]
     assert all(
-        event["organization_project_environment_uid"] == "environment-1"
-        for event in terminals
+        event["organization_project_environment_uid"] == "environment-1" for event in terminals
     )
 
 
@@ -565,7 +561,8 @@ def test_tau_tool_timeout_retry_preserves_safe_canonical_approval_outcome(capsys
     )
 
     events = [
-        event for event in _json_events(capsys.readouterr().out)
+        event
+        for event in _json_events(capsys.readouterr().out)
         if event["event"].startswith("agent.tool.")
     ]
     assert [event["tool_attempt"] for event in events] == [1, 1, 2, 2]
@@ -596,9 +593,7 @@ def test_tau_handoff_carries_session_correlation_and_allowlisted_reason(capsys):
             },
         )
     )
-    observer.observe(
-        AstroRuntimeEvent(type="handoff_failed", data={"handoff_uid": "handoff-1"})
-    )
+    observer.observe(AstroRuntimeEvent(type="handoff_failed", data={"handoff_uid": "handoff-1"}))
 
     events = _json_events(capsys.readouterr().out)
     handoffs = [event for event in events if event["event"].startswith("agent.handoff.")]

@@ -410,16 +410,20 @@ class MainSequenceClient:
         self,
         provider: str,
         *,
-        session_uid: str,
+        session_uid: str | None = None,
+        agent_uid: str | None = None,
         holder_id: str,
     ) -> ProviderCredential:
-        if not session_uid:
-            raise BackendError("Provider hydration requires an AgentSession UID")
+        if bool(session_uid) == bool(agent_uid):
+            raise BackendError(
+                "Provider hydration requires exactly one of AgentSession UID or Agent UID"
+            )
+        identity = {"agent_session_uid": session_uid} if session_uid else {"agent_uid": agent_uid}
         data = await self._request(
             "POST",
             model_provider_credentials("hydrate"),
             json={
-                "agent_session_uid": session_uid,
+                **identity,
                 "providers": [provider],
                 "holder_id": holder_id,
             },

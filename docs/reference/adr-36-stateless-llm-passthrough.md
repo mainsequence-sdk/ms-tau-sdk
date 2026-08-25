@@ -1,4 +1,4 @@
-# ADR 36: Stateless LLM Passthrough Endpoint
+# ADR 36: Stateless LLM Passthrough Endpoint (Superseded)
 
 > Credential-ownership correction: the one-turn response remains stateless,
 > but runtime credential hydration now requires an exact `agent_session_uid`.
@@ -6,9 +6,15 @@
 > ADR-022 because a service runtime credential cannot safely select a User
 > without an authoritative session.
 
-Status: Accepted
+Status: Superseded by ADR 44
 Date: 2026-06-16
-Implementation Status: Partially implemented
+Implementation Status: Removed
+
+ADR 44 replaces this unscoped model abstraction with agent-targeted,
+sessionless responses. The `/api/llm/chat` and `/api/llm/chat/stream` routes do
+not exist and are not advertised. Main Sequence does not expose raw model calls
+unrelated to an Agent. The strict-JSON, timeout, token-limit, and provider execution code
+described here remains reusable internal machinery, not a competing public API.
 
 ## Context
 

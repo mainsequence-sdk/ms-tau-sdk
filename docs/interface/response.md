@@ -10,21 +10,28 @@ data: [DONE]
 
 Tau implementation objects and raw provider events are never exposed.
 
-`POST /api/llm/chat` returns JSON:
+`POST /api/agents/{agent_uid}/responses` returns the direct A2A Message branch:
 
 ```json
 {
-  "ok": true,
-  "provider": "openai",
-  "model": "gpt-5.4",
-  "message": {"role": "assistant", "content": "Ready."},
-  "finish_reason": "stop",
-  "usage": {
-    "input_tokens": 10,
-    "output_tokens": 2,
-    "total_tokens": 12
+  "message": {
+    "kind": "message",
+    "messageId": "msg-agent-1",
+    "role": "ROLE_AGENT",
+    "parts": [{"text": "Ready."}],
+    "metadata": {
+      "https://mainsequence.ai/a2a/extensions/agent-inference/v1": {
+        "agentUid": "11111111-1111-4111-8111-111111111111",
+        "resolved": {
+          "provider": "openai",
+          "model": "gpt-5.4",
+          "thinking": "medium"
+        }
+      }
+    }
   }
 }
 ```
 
-Strict JSON requests also include a parsed `json` field.
+Strict JSON is returned as a `Part.data` object. The stream endpoint buffers the
+same result and emits one final A2A Message SSE event.

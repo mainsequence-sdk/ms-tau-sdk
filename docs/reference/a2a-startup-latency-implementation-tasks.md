@@ -268,8 +268,8 @@ The split is now endpoint-level:
 
 - session-backed A2A `message:send` uses backend session semantics and preserves checkpoint/session-history
   safety
-- stateless LLM passthrough uses `POST /api/llm/chat` and does not attach to a session, start Pi,
-  acquire checkpoints, or persist history
+- agent-targeted sessionless execution uses `POST /api/agents/{agent_uid}/responses` and does not
+  attach to a session, start Pi, acquire checkpoints, or persist history
 
 This avoids a hidden mode switch inside the A2A runtime contract. If a caller wants no session
 mutation, it should call the stateless endpoint instead of sending an A2A session-runtime turn.
@@ -277,21 +277,21 @@ mutation, it should call the stateless endpoint instead of sending an A2A sessio
 ### Safety Rules
 
 - Session-backed A2A turns preserve checkpoint/session-history safety.
-- Stateless LLM passthrough must not mutate canonical session history.
-- Stateless LLM passthrough must not acquire checkpoint leases, restore checkpoints, start Pi, or
+- Agent-targeted sessionless execution must not mutate canonical session history.
+- Agent-targeted sessionless execution must not acquire checkpoint leases, restore checkpoints, start Pi, or
   write conversation history.
-- Backend checkpoint failures must not affect `POST /api/llm/chat`.
+- Backend checkpoint failures must not affect the ADR 44 response endpoints.
 
 ### Acceptance Criteria
 
 - Session-backed A2A turns have no request-level durability selector.
-- `POST /api/llm/chat` handles strict JSON machine calls without session attachment.
-- Logs distinguish attached runtime work from stateless LLM passthrough work by endpoint/event name,
+- `POST /api/agents/{agent_uid}/responses` handles strict JSON machine calls without session attachment.
+- Logs distinguish attached runtime work from agent-targeted sessionless work by endpoint/event name,
   not by a mode flag.
 
 ### Expected Latency Impact
 
-Stateless LLM passthrough removes checkpoint and Pi startup latency entirely from the request path.
+Agent-targeted sessionless execution removes checkpoint and Pi startup latency entirely from the request path.
 
 Session-backed A2A remains optimized through internal warm runner reuse behind
 `POST /api/a2a/v1/message:send`; clients do not call a separate attach/status endpoint.

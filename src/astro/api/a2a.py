@@ -3,18 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import binascii
-import hashlib
 import json
-import os
 import re
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from pathlib import Path
 from typing import Annotated, Any
 
 import structlog
@@ -24,11 +19,22 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from astro.backend.client import MainSequenceClient
 from astro.backend.models import AgentTask, AgentTaskCreateResult
 from astro.logging import bind_request_log_fields
+from astro.protocols.a2a_message import (
+    agent_message as serialize_agent_message,
+)
+from astro.protocols.a2a_message import (
+    output_contract as parse_output_contract,
+)
+from astro.protocols.a2a_message import (
+    prepare_a2a_input,
+)
+from astro.protocols.a2a_message import (
+    sse as encode_sse,
+)
 from astro.protocols.strict_json import (
     StrictJsonContract,
     StrictJsonError,
     build_repair_prompt,
-    build_strict_json_contract,
     validate_strict_json,
 )
 from astro.runtime.manager import SessionRuntimeManager
@@ -289,22 +295,7 @@ async def _require_advertised_response_kind(
 
 
 def _sse(payload: dict[str, Any]) -> bytes:
-    return f"data: {json.dumps(payload, separators=(',', ':'))}\n\n".encode()
-
-
-def _message_text(parts: object) -> str:
-    if not isinstance(parts, list):
-        raise HTTPException(status_code=400, detail="message.parts must be an array")
-    text = "\n".join(
-        str(part["text"])
-        for part in parts
-        if isinstance(part, dict) and isinstance(part.get("text"), str)
-    ).strip()
-    return text
-
-
-def _safe_component(value: str) -> str:
-    return re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip(".-") or "item"
+    return encode_sse(payload)
 
 
 def _materialize_pdfs(
@@ -313,125 +304,42 @@ def _materialize_pdfs(
     context_id: str,
     message_id: str,
     config: Settings,
-) -> list[Path]:
-    if not isinstance(parts, list):
-        raise HTTPException(status_code=400, detail="message.parts must be an array")
-    files: list[Path] = []
-    for index, part in enumerate(parts):
-        if not isinstance(part, dict) or "text" in part or "data" in part:
-            continue
-        if "url" in part:
-            raise HTTPException(
-                status_code=400,
-                detail=f"message.parts[{index}].url is not supported",
-            )
-        if "raw" not in part:
-            raise HTTPException(
-                status_code=400,
-                detail=f"message.parts[{index}] must use standard Part.raw",
-            )
-        if part.get("mediaType") != "application/pdf":
-            raise HTTPException(
-                status_code=400,
-                detail=f"message.parts[{index}].mediaType must be application/pdf",
-            )
-        filename = str(part.get("filename") or "")
-        if not filename or Path(filename).name != filename or not filename.lower().endswith(".pdf"):
-            raise HTTPException(
-                status_code=400,
-                detail=f"message.parts[{index}].filename must be a safe PDF filename",
-            )
-        try:
-            raw = base64.b64decode(str(part["raw"]), validate=True)
-        except (ValueError, binascii.Error) as error:
-            raise HTTPException(
-                status_code=400,
-                detail=f"message.parts[{index}].raw is not valid base64",
-            ) from error
-        if len(raw) > config.a2a_max_inline_file_bytes:
-            raise HTTPException(
-                status_code=413,
-                detail=f"message.parts[{index}].raw exceeds the inline file limit",
-            )
-        if not raw.startswith(b"%PDF-"):
-            raise HTTPException(
-                status_code=400,
-                detail=f"message.parts[{index}].raw is not a PDF",
-            )
-        digest = hashlib.sha256(raw).hexdigest()[:12]
-        directory = (
-            config.a2a_asset_root
-            / _safe_component(context_id)
-            / "a2a-inputs"
-            / _safe_component(message_id)
-        )
-        directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-        path = directory / f"{index}-{digest}-{_safe_component(filename)}"
-        path.write_bytes(raw)
-        os.chmod(path, 0o600)
-        files.append(path)
-    return files
+) -> list[Any]:
+    prepared = prepare_a2a_input(
+        {
+            "message": {
+                "messageId": message_id,
+                "contextId": context_id,
+                "role": "ROLE_USER",
+                "parts": parts,
+            }
+        },
+        config,
+        context_policy="required",
+        allowed_media_types={"application/pdf"},
+    )
+    return [item.path for item in prepared.files]
 
 
 def _request_parts(body: dict[str, Any], config: Settings) -> tuple[dict[str, Any], str]:
-    message = body.get("message")
-    if not isinstance(message, dict):
-        raise HTTPException(status_code=400, detail="message must be an object")
-    context_id = str(message.get("contextId") or "").strip()
-    message_id = str(message.get("messageId") or "").strip()
-    if not context_id or not message_id:
-        raise HTTPException(
-            status_code=400,
-            detail="message.contextId and message.messageId are required",
-        )
-    parts = message.get("parts")
-    text = _message_text(parts)
-    files = _materialize_pdfs(
-        parts=parts,
-        context_id=context_id,
-        message_id=message_id,
-        config=config,
+    normalized_body = body
+    if isinstance(body.get("message"), dict) and "role" not in body["message"]:
+        normalized_body = dict(body)
+        normalized_body["message"] = {
+            **body["message"],
+            "role": "ROLE_USER",
+        }
+    prepared = prepare_a2a_input(
+        normalized_body,
+        config,
+        context_policy="required",
+        allowed_media_types={"application/pdf"},
     )
-    if not text and not files:
-        raise HTTPException(status_code=400, detail="message.parts has no usable content")
-    if files:
-        attachment_lines = "\n".join(f"- {path}" for path in files)
-        text = (
-            f"{text}\n\nAttached PDF files:\n{attachment_lines}"
-            if text
-            else f"Review the attached PDF files:\n{attachment_lines}"
-        )
-    return message, text
+    return prepared.message, prepared.prompt()
 
 
 def _output_contract(body: dict[str, Any]) -> StrictJsonContract:
-    configuration = body.get("configuration", {})
-    modes = configuration.get("acceptedOutputModes", []) if isinstance(configuration, dict) else []
-    metadata = body.get("metadata", {})
-    extension = (
-        metadata.get("https://mainsequence.ai/a2a/extensions/output-contract/v1", {})
-        if isinstance(metadata, dict)
-        else {}
-    )
-    strict = bool(extension.get("strict")) if isinstance(extension, dict) else False
-    response_format = body.get("responseFormat", body.get("response_format"))
-    repair: object = body.get("jsonRepair", body.get("json_repair", {}))
-    if isinstance(extension, dict):
-        response_format = extension.get(
-            "responseFormat",
-            extension.get("response_format", response_format),
-        )
-        repair = extension.get("jsonRepair", extension.get("json_repair", repair))
-    attempts_value = repair.get("attempts", 3) if isinstance(repair, dict) else repair
-    try:
-        attempts = int(attempts_value) if isinstance(attempts_value, int | str) else 3
-    except (TypeError, ValueError):
-        attempts = 3
-    return build_strict_json_contract(
-        response_format,
-        force_strict=strict or "application/json" in modes,
-        repair_attempts=attempts,
-    )
+    return parse_output_contract(body)
 
 
 def _agent_message(
@@ -440,24 +348,11 @@ def _agent_message(
     text: str,
     strict_json: bool,
 ) -> dict[str, Any]:
-    if strict_json:
-        try:
-            data = json.loads(text)
-        except json.JSONDecodeError as error:
-            raise HTTPException(
-                status_code=502,
-                detail=f"Agent did not return strict JSON: {error}",
-            ) from error
-        parts = [{"data": data, "mediaType": "application/json"}]
-    else:
-        parts = [{"text": text}]
-    return {
-        "kind": "message",
-        "messageId": str(uuid.uuid4()),
-        "role": "ROLE_AGENT",
-        "contextId": context_id,
-        "parts": parts,
-    }
+    return serialize_agent_message(
+        context_id=context_id,
+        text=text,
+        strict_json=strict_json,
+    )
 
 
 def _task_payload(task: AgentTask) -> dict[str, Any]:

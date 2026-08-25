@@ -110,9 +110,7 @@ async def test_message_send_returns_replayed_task_without_scheduling_execution(
 
     assert response.status_code == 200
     assert response.json()["task"]["status"]["state"] == f"TASK_STATE_{status.upper()}"
-    assert response.json()["task"]["artifacts"][0]["parts"] == [
-        {"text": "Stored answer."}
-    ]
+    assert response.json()["task"]["artifacts"][0]["parts"] == [{"text": "Stored answer."}]
     assert manager.background is None
     client.update_task_status.assert_not_awaited()
 

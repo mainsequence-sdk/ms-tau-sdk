@@ -22,12 +22,15 @@
 There is no child coding-agent process, JSONL session file, checkpoint bundle,
 or checkpoint sidecar.
 
-## Stateless chat
+## Agent-targeted sessionless response
 
-`POST /api/llm/chat` requires `agent_session_uid`, hydrates that exact session
-owner's provider credential, creates a one-turn Tau `AgentHarness`, returns
-JSON, and closes the provider. It does not acquire a session lease or persist
-entries.
+`POST /api/agents/{agent_uid}/responses` validates the path UID against the
+immutable deployment snapshot, resolves Agent provider/model/thinking defaults,
+hydrates only the requested provider credential with `agent_uid`, creates a
+short-lived Tau `AgentHarness`, returns a canonical A2A Message, and closes the
+provider. It does not call session, task, entry, checkpoint, capability, or
+agent lookup endpoints. The streaming variant uses the same execution path and
+emits one final Message event.
 
 ## Tools and project context
 
