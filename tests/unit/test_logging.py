@@ -1,6 +1,8 @@
+import asyncio
 import json
 import logging
 
+import pytest
 import structlog
 from starlette.applications import Starlette
 from starlette.requests import Request
@@ -364,6 +366,56 @@ async def test_request_context_covers_stream_failure_and_context_cleanup(capsys,
     assert terminals[1]["error_type"] == "ValueError"
     assert "user_uid" not in terminals[1]
     assert "private exception value" not in json.dumps(events)
+
+
+async def test_cancelled_and_disconnected_requests_have_one_safe_terminal(capsys, monkeypatch):
+    monkeypatch.setenv("MAINSEQUENCE_ORGANIZATION_PROJECT_ENVIRONMENT_UID", "environment-1")
+    configure_logging("INFO", machine_sink=True, human_sink=False)
+
+    async def cancelled(scope, receive, send):
+        raise asyncio.CancelledError
+
+    async def disconnected(scope, receive, send):
+        assert (await receive())["type"] == "http.disconnect"
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b""})
+
+    def scope(path):
+        return {
+            "type": "http",
+            "method": "GET",
+            "path": path,
+            "headers": [],
+            "http_version": "1.1",
+        }
+
+    async def receive_disconnect():
+        return {"type": "http.disconnect"}
+
+    async def send(_message):
+        return None
+
+    with pytest.raises(asyncio.CancelledError):
+        await RequestContextMiddleware(cancelled)(
+            scope("/cancelled"), receive_disconnect, send
+        )
+    await RequestContextMiddleware(disconnected)(
+        scope("/disconnected"), receive_disconnect, send
+    )
+
+    terminals = [
+        event for event in _json_events(capsys.readouterr().out)
+        if event["event"].startswith("http.request.")
+    ]
+    assert [event["event"] for event in terminals] == [
+        "http.request.cancelled",
+        "http.request.completed",
+    ]
+    assert [event["outcome"] for event in terminals] == ["cancelled", "disconnected"]
+    assert all(
+        event["organization_project_environment_uid"] == "environment-1"
+        for event in terminals
+    )
 
 
 def test_tau_turn_observer_logs_model_tool_and_handoff_without_payloads(capsys):
