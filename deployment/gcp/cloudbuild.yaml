@@ -1,15 +1,4 @@
 steps:
-  - id: "upload-project-executor-dockerfile"
-    waitFor: ["build-and-tag"]
-    name: "gcr.io/cloud-builders/gcloud"
-    entrypoint: "bash"
-    args:
-      - "-c"
-      - |
-        set -euo pipefail
-        gsutil cp Dockerfile.remote-worker \
-          "gs://workload-default-${PROJECT_ID}/pod-dockerfiles/project_executor/Dockerfile"
-
   - id: "build-and-tag"
     waitFor: ["-"]
     name: "gcr.io/cloud-builders/docker"
@@ -63,6 +52,17 @@ steps:
         docker tag "$${LOCAL_BUNDLE_IMAGE}" "${_BUNDLE_LATEST_IMAGE}"
 
         echo "Astro $${INSTALLED_ASTRO_VERSION}; Python $${PYTHON_VERSION_FULL}"
+
+  - id: "upload-project-executor-dockerfile"
+    waitFor: ["build-and-tag"]
+    name: "gcr.io/cloud-builders/gcloud"
+    entrypoint: "bash"
+    args:
+      - "-c"
+      - |
+        set -euo pipefail
+        gsutil cp Dockerfile.remote-worker \
+          "gs://workload-default-${PROJECT_ID}/pod-dockerfiles/project_executor/Dockerfile"
 
   - id: "push-version"
     waitFor: ["build-and-tag"]
