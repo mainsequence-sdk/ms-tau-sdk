@@ -33,6 +33,9 @@ def _app(client: AsyncMock, manager: object) -> FastAPI:
 class _DirectManager:
     settings = Settings(_env_file=None)
 
+    def __init__(self) -> None:
+        self.delivered_sessions: list[str] = []
+
     async def prompt(self, _context_id: str, _prompt: str):
         yield AstroRuntimeEvent(
             type="message_end",
@@ -46,6 +49,10 @@ class _DirectManager:
         )
 
     async def cancel(self, _context_id: str) -> bool:
+        return True
+
+    def mark_response_delivered(self, session_uid: str) -> bool:
+        self.delivered_sessions.append(session_uid)
         return True
 
 

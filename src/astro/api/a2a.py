@@ -682,6 +682,7 @@ async def _execute_task(
             },
         )
         await client.update_task_status(task.uid, status="completed")
+        manager.mark_response_delivered(task.context_id)
         return message
     except asyncio.CancelledError:
         await manager.cancel(task.context_id)
@@ -711,11 +712,13 @@ async def _execute_message(
         output_contract,
         max_output_bytes=max_output_bytes,
     )
-    return _agent_message(
+    message = _agent_message(
         context_id=context_id,
         text=text,
         strict_json=output_contract.enabled,
     )
+    manager.mark_response_delivered(context_id)
+    return message
 
 
 def _artifact_update(
@@ -877,6 +880,7 @@ def _message_stream_response(
                         request_id=request_id,
                     )
                 )
+            manager.mark_response_delivered(task.context_id)
         except asyncio.CancelledError:
             await manager.cancel(task.context_id)
             raise

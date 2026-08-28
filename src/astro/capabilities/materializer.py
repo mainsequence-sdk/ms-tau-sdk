@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import shutil
+from collections.abc import Awaitable, Callable
 from pathlib import Path, PurePosixPath
 
 from astro.backend.client import MainSequenceClient
@@ -62,20 +63,28 @@ def _write_skill(target: Path, content: str) -> None:
     target.chmod(0o600)
 
 
-async def materialize_session_capabilities(
+def known_capability_hashes(asset_root: Path) -> list[str]:
+    cache_root = asset_root.resolve() / ".content"
+    if not cache_root.exists():
+        return []
+    return sorted(path.stem for path in cache_root.glob("*.md") if path.is_file())
+
+
+async def _materialize_bindings(
     *,
-    backend: MainSequenceClient,
+    bindings: list[SessionCapabilityBinding],
     session_uid: str,
     asset_root: Path,
+    content_resolver: Callable[[SessionCapabilityBinding], Awaitable[str]],
 ) -> Path:
     agents_root, skills_root = await asyncio.to_thread(
         _prepare_skill_root,
         asset_root,
         session_uid,
     )
-
+    cache_root = (await asyncio.to_thread(asset_root.resolve)) / ".content"
+    await asyncio.to_thread(cache_root.mkdir, parents=True, mode=0o700, exist_ok=True)
     targets: dict[Path, str] = {}
-    bindings = await backend.list_session_capabilities(session_uid)
     for binding in bindings:
         capability = binding.capability
         if (
@@ -91,17 +100,65 @@ async def materialize_session_capabilities(
         target = await asyncio.to_thread(_resolve_target, skills_root, relative_path)
         if not target.is_relative_to(skills_root):
             raise ConfigurationError(f"Capability {capability.uid} escaped the session skill root")
-        content = await backend.get_capability_content(capability.uid)
-        digest = _content_digest(content.content)
-        expected = (content.content_sha256 or capability.content_sha256).removeprefix("sha256:")
+        expected = capability.content_sha256.removeprefix("sha256:")
+        cache_path = cache_root / f"{expected}.md" if expected else None
+        if cache_path is not None and cache_path.exists():
+            content = await asyncio.to_thread(cache_path.read_text, encoding="utf-8")
+        else:
+            content = await content_resolver(binding)
+        digest = _content_digest(content)
         if expected and expected != digest:
             raise ConfigurationError(f"Capability {capability.uid} content hash does not match")
+        if cache_path is not None and not cache_path.exists():
+            await asyncio.to_thread(_write_skill, cache_path, content)
         previous = targets.get(target)
         if previous is not None and previous != digest:
             raise ConfigurationError(f"Multiple capabilities resolve to {relative_path}")
-        await asyncio.to_thread(_write_skill, target, content.content)
+        await asyncio.to_thread(_write_skill, target, content)
         targets[target] = digest
-
     if not targets:
         await asyncio.to_thread(shutil.rmtree, skills_root, ignore_errors=True)
     return agents_root
+
+
+async def materialize_session_capabilities(
+    *,
+    backend: MainSequenceClient,
+    session_uid: str,
+    asset_root: Path,
+) -> Path:
+    bindings = await backend.list_session_capabilities(session_uid)
+
+    async def resolve(binding: SessionCapabilityBinding) -> str:
+        capability = binding.capability
+        content = await backend.get_capability_content(capability.uid)
+        return content.content
+
+    return await _materialize_bindings(
+        bindings=bindings,
+        session_uid=session_uid,
+        asset_root=asset_root,
+        content_resolver=resolve,
+    )
+
+
+async def materialize_bootstrap_capabilities(
+    *,
+    bindings: list[SessionCapabilityBinding],
+    session_uid: str,
+    asset_root: Path,
+) -> Path:
+    async def resolve(binding: SessionCapabilityBinding) -> str:
+        content = binding.capability.content
+        if content is None:
+            raise ConfigurationError(
+                f"Capability {binding.capability.uid} body is not cached or bootstrapped"
+            )
+        return content
+
+    return await _materialize_bindings(
+        bindings=bindings,
+        session_uid=session_uid,
+        asset_root=asset_root,
+        content_resolver=resolve,
+    )

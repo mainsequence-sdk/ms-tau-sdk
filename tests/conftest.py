@@ -20,6 +20,7 @@ def test_settings(tmp_path) -> Settings:
         runtime_credential_id="credential-id",
         runtime_credential_secret="credential-secret",
         project_root=tmp_path,
+        startup_dependencies_enabled=False,
     )
 
 

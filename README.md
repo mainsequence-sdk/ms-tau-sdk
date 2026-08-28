@@ -72,6 +72,34 @@ health endpoints with:
 ./scripts/verify-runtime-image.sh astro:tau
 ```
 
+## Real Conversation Verification
+
+The opt-in test builds and starts Astro through local Compose, proves the HTTP
+response came from that container, executes two real provider turns, verifies
+SSE ordering and UX latency budgets, restarts the container, and proves that
+the same conversation resumes from Django-persisted Tau entries:
+
+```bash
+ASTRO_REAL_CONVERSATION_SESSION_UID=<existing-tau-session-uid> \
+  uv run pytest tests/e2e/test_real_conversation.py -q -s
+```
+
+The test requires a backend-owned Tau AgentSession that belongs to the runtime
+credential configured in `.env`. It records container startup, response
+headers, first SSE event, time to first text, maximum SSE event gap, output
+streaming, finish, durability, total-turn, restart, and resumed-turn timings in
+`.astro/test-results/real-conversation-timing.json`.
+
+The default UX gates are 0.25 seconds for response headers, 0.5 seconds for the
+truthful lifecycle event, 15 seconds for first text, 10 seconds for the maximum
+SSE gap, 45 seconds for a complete turn, 2 seconds for durability after
+`finish`, and 10 seconds for restart-to-ready. The 2-second durability ceiling
+is for the main-orchestrator development profile, where local Django reaches
+the development database through a host proxy; ADR 49 retains a 1-second
+co-located target. Override gates with the corresponding
+`ASTRO_REAL_CONVERSATION_MAX_*_SECONDS` variables or change the report path
+with `ASTRO_REAL_CONVERSATION_REPORT_PATH`.
+
 ## Public APIs
 
 - `GET /health`

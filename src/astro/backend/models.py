@@ -28,6 +28,7 @@ type TauEntryType = Literal[
     "custom",
 ]
 type TauThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh"]
+type AgentRuntimeActivity = Literal["loading", "idle", "working", "persisting"]
 type AgentCapabilityKind = Literal["skill", "prompt", "extension"]
 type AgentCapabilitySourceType = Literal[
     "inline",
@@ -76,6 +77,7 @@ class AgentSession(BackendModel):
     )
     status: str | None = None
     created_by_user_uid: str | None = None
+    runtime_capabilities: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_harness_protocol(self) -> AgentSession:
@@ -101,6 +103,11 @@ class AgentCapability(BackendModel):
     capability_path: str = ""
     has_content: bool = False
     content_sha256: str = ""
+    content: str | None = None
+    name: str = ""
+    description: str = ""
+    content_mime_type: str = ""
+    content_size: int = 0
 
 
 class SessionCapabilityBinding(BackendModel):
@@ -139,6 +146,51 @@ class SessionEntryAppendRequest(BackendRequestModel):
     entry: dict[str, Any]
 
 
+class SessionEntryBatchItem(BackendRequestModel):
+    idempotency_key: str
+    entry: dict[str, Any]
+
+
+type TauTurnPhase = Literal["started", "progress", "committed"]
+
+
+class TauTurnLifecycle(BackendRequestModel):
+    turn_uid: str
+    phase: TauTurnPhase
+    activity_sequence: int = Field(ge=1)
+
+
+class TauTurnCommit(BackendModel):
+    turn_uid: str
+    next_sequence: int = Field(ge=0)
+    committed_at: datetime
+
+
+class SessionEntryBatchAppendRequest(BackendRequestModel):
+    lease_token: str
+    expected_sequence: int = Field(ge=0)
+    entries: list[SessionEntryBatchItem]
+    holder_id: str | None = None
+    turn: TauTurnLifecycle | None = None
+
+    @model_validator(mode="after")
+    def validate_empty_commit(self) -> SessionEntryBatchAppendRequest:
+        if not self.entries and (self.turn is None or self.turn.phase != "committed"):
+            raise ValueError("An empty batch is allowed only for a committed turn")
+        if self.turn is not None and not self.holder_id:
+            raise ValueError("holder_id is required when turn is supplied")
+        return self
+
+
+class SessionEntryBatchAppendResponse(BackendModel):
+    entries: list[SessionEntryRecord]
+    next_sequence: int = Field(ge=0)
+    created_count: int = Field(ge=0)
+    replayed: bool
+    turn_commit: TauTurnCommit | None = None
+    runtime_state: RuntimeState | None = None
+
+
 type RuntimeLeasePurpose = Literal["runtime_run"]
 type RuntimeLeaseReleaseReason = Literal[
     "runtime_load_failed",
@@ -154,6 +206,11 @@ class RuntimeLease(BackendModel):
     lease_purpose: RuntimeLeasePurpose = "runtime_run"
     cancel_requested: bool = False
     cancellation: dict[str, Any] | None = None
+    runtime_activity: AgentRuntimeActivity | None = None
+    active_turn_uid: str | None = None
+    activity_revision: int | None = None
+    activity_sequence: int | None = None
+    activity_updated_at: datetime | None = None
 
 
 class RuntimeLeaseRequest(BackendRequestModel):
@@ -185,6 +242,14 @@ class RuntimeState(BackendModel):
     active_thinking: TauThinkingLevel | None = None
     status: str | None = None
     working: bool = False
+    runtime_activity: AgentRuntimeActivity | None = None
+    active_turn_uid: str | None = None
+    activity_revision: int | None = None
+    activity_sequence: int | None = None
+    activity_updated_at: datetime | None = None
+    last_committed_turn_uid: str | None = None
+    applied: bool | None = None
+    runtime_capabilities: dict[str, str] = Field(default_factory=dict)
     cancel_state: Literal["not_running", "requested"] | None = None
     cancel_requested: bool = False
     cancellation_id: str | None = None
@@ -204,6 +269,81 @@ class RuntimeStatePatch(BackendRequestModel):
     active_provider: str | None = None
     active_model: str | None = None
     active_thinking: TauThinkingLevel | None = None
+
+
+class RuntimeActivityPatch(BackendRequestModel):
+    holder_id: str
+    lease_token: str
+    expected_activity_revision: int | None = Field(default=None, ge=0)
+    activity_sequence: int | None = Field(default=None, ge=1)
+    runtime_activity: AgentRuntimeActivity
+    active_turn_uid: str | None = None
+
+    @model_validator(mode="after")
+    def validate_concurrency_mode(self) -> RuntimeActivityPatch:
+        if (self.expected_activity_revision is None) == (self.activity_sequence is None):
+            raise ValueError("Send exactly one of expected_activity_revision or activity_sequence")
+        return self
+
+
+class TauRuntimeBootstrapRequest(BackendRequestModel):
+    holder_id: str
+    ttl_seconds: int = Field(ge=1)
+    bootstrap_request_uid: str
+    history_after_sequence: int | None = Field(default=None, ge=0)
+    known_capability_hashes: list[str] = Field(default_factory=list)
+    supported_snapshot_schema_versions: list[int] = Field(default_factory=lambda: [1])
+    tau_runtime_version: str
+
+
+class TauResumeSnapshot(BackendModel):
+    base_sequence: int = Field(ge=0)
+    last_committed_turn_uid: str
+    snapshot_schema_version: int = Field(ge=1)
+    tau_runtime_version: str
+    runtime_config_sha256: str
+    capability_set_sha256: str
+    payload_sha256: str
+    canonical_size: int = Field(ge=0)
+    snapshot: dict[str, Any]
+
+
+class TauRuntimeBootstrap(BackendModel):
+    session: AgentSession
+    lease: RuntimeLease
+    runtime_state: RuntimeState
+    history: SessionEntryList
+    resume_snapshot: TauResumeSnapshot | None = None
+    capabilities: list[SessionCapabilityBinding] = Field(default_factory=list)
+    provider_credentials: dict[str, Any]
+    runtime_capabilities: dict[str, str]
+    bootstrap_replayed: bool = False
+
+
+class TauResumeSnapshotUploadRequest(BackendRequestModel):
+    holder_id: str
+    lease_token: str
+    base_sequence: int = Field(ge=0)
+    last_committed_turn_uid: str
+    snapshot_schema_version: int = Field(ge=1)
+    tau_runtime_version: str
+    runtime_config_sha256: str
+    capability_set_sha256: str
+    payload_sha256: str
+    snapshot: dict[str, Any]
+
+
+class TauResumeSnapshotUploadResponse(BackendModel):
+    applied: bool
+    replayed: bool
+    base_sequence: int = Field(ge=0)
+    last_committed_turn_uid: str
+    snapshot_schema_version: int = Field(ge=1)
+    tau_runtime_version: str
+    runtime_config_sha256: str
+    capability_set_sha256: str
+    payload_sha256: str
+    canonical_size: int = Field(ge=0)
 
 
 class ProviderCredential(BackendModel):

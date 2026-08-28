@@ -70,7 +70,7 @@ class _CloseCommand:
 type _MCPCommand = _CallToolCommand | _ReadResourceCommand | _CloseCommand
 
 ENVIRONMENT_SCOPED_AGENT_TOOLS = frozenset({"agent.list", "agent.search"})
-ENVIRONMENT_UID_ARGUMENT = "organization_project_environment_uid"
+ENVIRONMENT_UID_ARGUMENT = "organization_environment_uid"
 
 
 class MainSequenceMCPClient:
@@ -89,6 +89,7 @@ class MainSequenceMCPClient:
         self._failure: Exception | None = None
         self.tools: tuple[types.Tool, ...] = ()
         self.resources: tuple[types.Resource, ...] = ()
+        self._parallel_tool_names: frozenset[str] = frozenset()
         self._closed = False
 
     @classmethod
@@ -155,8 +156,19 @@ class MainSequenceMCPClient:
                     ) as session:
                         with bound_contextvars(**initial_log_context):
                             await session.initialize()
-                            self.tools = tuple((await session.list_tools()).tools)
-                            self.resources = tuple((await session.list_resources()).resources)
+                            tools_result, resources_result = await asyncio.gather(
+                                session.list_tools(),
+                                session.list_resources(),
+                            )
+                            self.tools = tuple(tools_result.tools)
+                            self.resources = tuple(resources_result.resources)
+                            self._parallel_tool_names = frozenset(
+                                tool.name
+                                for tool in self.tools
+                                if tool.annotations is not None
+                                and tool.annotations.readOnlyHint is True
+                                and tool.annotations.idempotentHint is True
+                            )
                         if self._ready is not None and not self._ready.done():
                             self._ready.set_result(None)
                         await self._serve(session)
@@ -175,33 +187,59 @@ class MainSequenceMCPClient:
         commands = self._commands
         if commands is None:
             raise RuntimeError("Main Sequence MCP command queue is not initialized")
-        while True:
-            command = await commands.get()
-            if isinstance(command, _CloseCommand):
-                return
-            if isinstance(command, _CallToolCommand):
-                try:
-                    with bound_contextvars(**command.log_context):
+        active_reads: set[asyncio.Task[None]] = set()
+        read_slots = asyncio.Semaphore(self._settings.mcp_read_concurrency)
+
+        async def execute(command: _CallToolCommand | _ReadResourceCommand) -> None:
+            try:
+                with bound_contextvars(**command.log_context):
+                    if isinstance(command, _CallToolCommand):
                         tool_result = await session.call_tool(
                             command.name,
                             command.arguments,
                         )
-                except Exception as error:
-                    if not command.result.done():
-                        command.result.set_exception(error)
-                else:
-                    if not command.result.done():
-                        command.result.set_result(tool_result)
-            else:
-                try:
-                    with bound_contextvars(**command.log_context):
+                        if not command.result.done():
+                            command.result.set_result(tool_result)
+                    else:
                         resource_result = await session.read_resource(AnyUrl(command.uri))
-                except Exception as error:
-                    if not command.result.done():
-                        command.result.set_exception(error)
-                else:
-                    if not command.result.done():
-                        command.result.set_result(resource_result)
+                        if not command.result.done():
+                            command.result.set_result(resource_result)
+            except Exception as error:
+                if not command.result.done():
+                    command.result.set_exception(error)
+
+        async def execute_read(
+            command: _CallToolCommand | _ReadResourceCommand,
+        ) -> None:
+            async with read_slots:
+                await execute(command)
+
+        async def drain_reads() -> None:
+            if active_reads:
+                await asyncio.gather(*tuple(active_reads))
+
+        try:
+            while True:
+                command = await commands.get()
+                if isinstance(command, _CloseCommand):
+                    await drain_reads()
+                    return
+                is_parallel_read = isinstance(command, _ReadResourceCommand) or (
+                    isinstance(command, _CallToolCommand)
+                    and command.name in self._parallel_tool_names
+                )
+                if is_parallel_read:
+                    task = asyncio.create_task(execute_read(command))
+                    active_reads.add(task)
+                    task.add_done_callback(active_reads.discard)
+                    continue
+                await drain_reads()
+                await execute(command)
+        finally:
+            if active_reads:
+                for task in active_reads:
+                    task.cancel()
+                await asyncio.gather(*tuple(active_reads), return_exceptions=True)
 
     def _fail_pending_commands(self, error: Exception) -> None:
         if self._commands is None:

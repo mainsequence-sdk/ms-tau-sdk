@@ -79,7 +79,7 @@ PLATFORM_EVENT_PREFIXES = (
 ENVIRONMENT_CONTEXT_FIELDS: dict[str, tuple[str, ...]] = {
     "organization_uid": ("MAINSEQUENCE_ORGANIZATION_UID", "ORGANIZATION_UID"),
     "project_uid": ("MAINSEQUENCE_PROJECT_UID", "PROJECT_UID"),
-    "organization_project_environment_uid": ("MAINSEQUENCE_ORGANIZATION_PROJECT_ENVIRONMENT_UID",),
+    "organization_environment_uid": ("MAINSEQUENCE_ORGANIZATION_ENVIRONMENT_UID",),
     "coding_agent_service_uid": (
         "MAINSEQUENCE_CODING_AGENT_SERVICE_UID",
         "CODING_AGENT_SERVICE_UID",
@@ -243,20 +243,21 @@ def _add_event_envelope(
     _method_name: str,
     event_dict: EventDict,
 ) -> EventDict:
+    event_dict.pop("organization_project_environment_uid", None)
     event_dict.pop("project_environment_uid", None)
     event_dict.setdefault("event_id", str(uuid.uuid4()))
     event_dict.setdefault("message", str(event_dict.get("event") or ""))
     environment_context = _environment_context()
     for key, value in environment_context.items():
-        if key != "organization_project_environment_uid":
+        if key != "organization_environment_uid":
             event_dict.setdefault(key, value)
     trusted_environment_uid = environment_context.get(
-        "organization_project_environment_uid"
+        "organization_environment_uid"
     ) or get_contextvars().get(
-        "organization_project_environment_uid",
+        "organization_environment_uid",
     )
     if trusted_environment_uid is not None:
-        event_dict["organization_project_environment_uid"] = trusted_environment_uid
+        event_dict["organization_environment_uid"] = trusted_environment_uid
     return event_dict
 
 
@@ -431,7 +432,7 @@ def bind_request_log_fields(scope: Scope, **fields: object) -> None:
         "trace_id",
         "span_id",
         "parent_span_id",
-        "organization_project_environment_uid",
+        "organization_environment_uid",
     }
     for key, value in clean.items():
         if key not in reserved or key not in request_fields:
@@ -510,7 +511,7 @@ class RequestContextMiddleware:
         environment_uid = _bounded_identifier(
             _request_field(
                 scope,
-                b"x-organization-project-environment-uid",
+                b"x-organization-environment-uid",
             )
         )
         base_fields: dict[str, object] = {
@@ -539,8 +540,8 @@ class RequestContextMiddleware:
         if service_uid is not None:
             base_fields["coding_agent_service_uid"] = service_uid
         if environment_uid is not None:
-            base_fields["organization_project_environment_uid"] = environment_uid
-            state["organization_project_environment_uid"] = environment_uid
+            base_fields["organization_environment_uid"] = environment_uid
+            state["organization_environment_uid"] = environment_uid
         request_size = _content_length(scope)
         if request_size is not None:
             base_fields["request_size_bytes"] = request_size
@@ -611,7 +612,7 @@ class RequestContextMiddleware:
                         "runtime_kind",
                         "organization_uid",
                         "project_uid",
-                        "organization_project_environment_uid",
+                        "organization_environment_uid",
                         "resource_release_uid",
                         "coding_agent_service_uid",
                         "runtime_instance_uid",

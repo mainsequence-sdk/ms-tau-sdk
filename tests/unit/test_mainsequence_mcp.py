@@ -269,10 +269,10 @@ def test_agent_discovery_tool_hides_backend_controlled_environment_argument(tool
             inputSchema={
                 "type": "object",
                 "properties": {
-                    "organization_project_environment_uid": {"type": "string"},
+                    "organization_environment_uid": {"type": "string"},
                     "limit": {"type": "integer"},
                 },
-                "required": ["organization_project_environment_uid"],
+                "required": ["organization_environment_uid"],
                 "additionalProperties": False,
             },
         ),
@@ -281,7 +281,7 @@ def test_agent_discovery_tool_hides_backend_controlled_environment_argument(tool
 
     tools = create_mainsequence_mcp_tools(client)
 
-    assert "organization_project_environment_uid" not in tools[0].parameters["properties"]
+    assert "organization_environment_uid" not in tools[0].parameters["properties"]
     assert tools[0].parameters["required"] == []
 
 
@@ -295,3 +295,80 @@ def test_normalized_mcp_tool_name_collisions_fail_session_setup():
 
     with pytest.raises(ValueError, match="tool name collision"):
         create_mainsequence_mcp_tools(client)
+
+
+def test_only_read_only_idempotent_mcp_tools_are_parallel():
+    client = AsyncMock()
+    client.tools = (
+        types.Tool(
+            name="project.list",
+            inputSchema={"type": "object"},
+            annotations=types.ToolAnnotations(
+                readOnlyHint=True,
+                idempotentHint=True,
+            ),
+        ),
+        types.Tool(
+            name="project.create",
+            inputSchema={"type": "object"},
+            annotations=types.ToolAnnotations(
+                readOnlyHint=False,
+                idempotentHint=False,
+            ),
+        ),
+        types.Tool(
+            name="project.unknown",
+            inputSchema={"type": "object"},
+        ),
+    )
+    client.resources = ()
+
+    tools = create_mainsequence_mcp_tools(client)
+
+    assert [tool.execution_mode for tool in tools] == [
+        "parallel",
+        "sequential",
+        "sequential",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_process_mcp_runs_safe_reads_concurrently_and_orders_mutations():
+    settings = _settings().model_copy(update={"mcp_read_concurrency": 2})
+    client = MainSequenceMCPClient(settings=settings, auth=AsyncMock())
+    client._commands = asyncio.Queue()
+    client._parallel_tool_names = frozenset({"project.get"})
+    reads_started = asyncio.Event()
+    release_reads = asyncio.Event()
+    mutation_started = asyncio.Event()
+    active_reads = 0
+    maximum_reads = 0
+
+    class FakeSession:
+        async def call_tool(self, name, _arguments):
+            nonlocal active_reads, maximum_reads
+            if name == "project.get":
+                active_reads += 1
+                maximum_reads = max(maximum_reads, active_reads)
+                if active_reads == 2:
+                    reads_started.set()
+                await release_reads.wait()
+                active_reads -= 1
+            else:
+                mutation_started.set()
+            return types.CallToolResult(content=[])
+
+    client._owner_task = asyncio.create_task(client._serve(FakeSession()))
+    first = asyncio.create_task(client.call_tool("project.get", {"uid": "one"}))
+    second = asyncio.create_task(client.call_tool("project.get", {"uid": "two"}))
+    mutation = asyncio.create_task(client.call_tool("project.update", {"uid": "one"}))
+
+    await reads_started.wait()
+    await asyncio.sleep(0)
+    assert maximum_reads == 2
+    assert mutation_started.is_set() is False
+
+    release_reads.set()
+    await asyncio.gather(first, second, mutation)
+    assert mutation_started.is_set() is True
+    await client.aclose()

@@ -45,6 +45,7 @@ def _loaded_manager(tmp_path, coding_session, *, timeout: float = 1):
         runtime_credential_id="credential-id",
         runtime_credential_secret="credential-secret",
         project_root=tmp_path,
+        tau_runtime_contract="adr48",
     )
     settings.turn_timeout_seconds = timeout
     manager = SessionRuntimeManager(
@@ -81,6 +82,7 @@ async def test_runtime_manager_rejects_pi_sessions(tmp_path):
             runtime_credential_id="credential-id",
             runtime_credential_secret="credential-secret",
             project_root=tmp_path,
+            tau_runtime_contract="adr48",
         ),
         backend=backend,
         providers=Mock(),
@@ -103,15 +105,15 @@ async def test_runtime_manager_serializes_same_session_prompts(tmp_path):
 
     first, second = await asyncio.gather(consume("first"), consume("second"))
 
-    assert first[0].data["delta"] == "first"
-    assert second[0].data["delta"] == "second"
+    assert first[2].data["delta"] == "first"
+    assert second[2].data["delta"] == "second"
     assert coding_session.max_active == 1
     manager._runtimes.clear()
     await manager.aclose()
 
 
 @pytest.mark.asyncio
-async def test_runtime_manager_flushes_persistence_before_agent_settled(tmp_path):
+async def test_runtime_manager_emits_output_finish_before_persistence_settles(tmp_path):
     class SettlingCodingSession(_FakeCodingSession):
         async def prompt(self, content: str):
             yield {"type": "text_delta", "delta": content}
@@ -138,12 +140,69 @@ async def test_runtime_manager_flushes_persistence_before_agent_settled(tmp_path
     await first_event_received.wait()
     await flush_started.wait()
 
-    assert [event.type for event in received] == ["text_delta"]
+    assert [event.type for event in received] == [
+        "lifecycle",
+        "lifecycle",
+        "text_delta",
+        "agent_settled",
+        "lifecycle",
+    ]
 
     release_flush.set()
     await consume_task
-    assert [event.type for event in received] == ["text_delta", "agent_settled"]
+    assert [event.type for event in received] == [
+        "lifecycle",
+        "lifecycle",
+        "text_delta",
+        "agent_settled",
+        "lifecycle",
+        "lifecycle",
+        "persistence_settled",
+    ]
+    activities = [
+        call.args[1].runtime_activity for call in _backend.patch_runtime_activity.await_args_list
+    ]
+    assert activities == ["working", "persisting", "idle"]
 
+    manager._runtimes.clear()
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_disconnect_after_finish_keeps_durability_task_running(tmp_path):
+    class SettlingCodingSession(_FakeCodingSession):
+        async def prompt(self, content: str):
+            yield {"type": "text_delta", "delta": content}
+            yield {"type": "agent_settled"}
+
+    manager, _backend = _loaded_manager(tmp_path, SettlingCodingSession())
+    runtime = manager._runtimes["session-1"]
+    flush_started = asyncio.Event()
+    release_flush = asyncio.Event()
+
+    async def flush():
+        flush_started.set()
+        await release_flush.wait()
+
+    runtime.storage.flush = AsyncMock(side_effect=flush)
+    stream = manager.prompt("session-1", "hello")
+
+    assert (await anext(stream)).data["phase"] == "loading_session"
+    assert (await anext(stream)).data["phase"] == "generating"
+    assert (await anext(stream)).type == "text_delta"
+    assert (await anext(stream)).type == "agent_settled"
+    await flush_started.wait()
+    await stream.aclose()
+
+    assert runtime.persistence_task is not None
+    assert not runtime.persistence_task.done()
+    release_flush.set()
+    await runtime.persistence_task
+
+    activities = [
+        call.args[1].runtime_activity for call in _backend.patch_runtime_activity.await_args_list
+    ]
+    assert activities == ["working", "persisting", "idle"]
     manager._runtimes.clear()
     await manager.aclose()
 
@@ -200,6 +259,7 @@ async def test_runtime_manager_logs_prompt_before_session_load_failure(
             runtime_credential_secret="credential-secret",
             project_root=tmp_path,
             log_payloads=True,
+            tau_runtime_contract="adr48",
         ),
         backend=backend,
         providers=Mock(),
@@ -268,7 +328,10 @@ async def test_background_task_detaches_request_and_keeps_causation(tmp_path):
         trace_id="trace-1",
         span_id="span-1",
         user_uid="user-1",
-        organization_project_environment_uid="environment-1",
+        organization_environment_uid="environment-1",
+        agent_session_uid="session-1",
+        agent_run_uid="run-1",
+        turn_uid="turn-1",
     )
 
     async def worker():
@@ -286,30 +349,36 @@ async def test_background_task_detaches_request_and_keeps_causation(tmp_path):
     assert context["trace_id"] == "trace-1"
     assert context["parent_span_id"] == "span-1"
     assert context["span_id"] != "span-1"
-    assert context["organization_project_environment_uid"] == "environment-1"
+    assert context["organization_environment_uid"] == "environment-1"
+    assert context["agent_session_uid"] == "session-1"
+    assert context["agent_run_uid"] == "run-1"
+    assert context["turn_uid"] == "turn-1"
     assert "project_environment_uid" not in context
     manager._runtimes.clear()
     await manager.aclose()
 
 
 @pytest.mark.asyncio
-async def test_runtime_manager_closes_mcp_client_on_eviction(tmp_path):
+async def test_runtime_manager_keeps_shared_mcp_client_on_eviction(tmp_path):
     manager, backend = _loaded_manager(tmp_path, _FakeCodingSession())
     runtime = manager._runtimes["session-1"]
     runtime.mcp_client = AsyncMock()
+    manager._mcp_client = runtime.mcp_client
 
     await manager.evict("session-1")
 
-    runtime.mcp_client.aclose.assert_awaited_once_with()
+    runtime.mcp_client.aclose.assert_not_awaited()
     backend.release_runtime_lease.assert_awaited_once()
     await manager.aclose()
+    runtime.mcp_client.aclose.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
-async def test_runtime_manager_closes_mcp_client_when_lease_is_lost(tmp_path):
+async def test_runtime_manager_keeps_shared_mcp_client_when_lease_is_lost(tmp_path):
     manager, backend = _loaded_manager(tmp_path, _FakeCodingSession())
     runtime = manager._runtimes["session-1"]
     runtime.mcp_client = AsyncMock()
+    manager._mcp_client = runtime.mcp_client
     runtime.storage.invalidate_lease = Mock()
     manager.settings.runtime_lease_renew_interval_seconds = 0
     backend.renew_runtime_lease.side_effect = RuntimeError("lease lost")
@@ -317,9 +386,10 @@ async def test_runtime_manager_closes_mcp_client_when_lease_is_lost(tmp_path):
     await manager._renew_lease(runtime)
 
     assert runtime.lease_lost is True
-    runtime.mcp_client.aclose.assert_awaited_once_with()
+    runtime.mcp_client.aclose.assert_not_awaited()
     manager._runtimes.clear()
     await manager.aclose()
+    runtime.mcp_client.aclose.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
@@ -362,6 +432,7 @@ async def test_runtime_load_keeps_capability_root_and_reuses_backend_auth(tmp_pa
             runtime_credential_id="credential-id",
             runtime_credential_secret="credential-secret",
             project_root=tmp_path,
+            tau_runtime_contract="adr48",
         ),
         backend=backend,
         providers=providers,
@@ -463,6 +534,7 @@ async def test_runtime_load_runs_independent_startup_io_concurrently(tmp_path):
             runtime_credential_id="credential-id",
             runtime_credential_secret="credential-secret",
             project_root=tmp_path,
+            tau_runtime_contract="adr48",
         ),
         backend=backend,
         providers=providers,
@@ -496,7 +568,7 @@ async def test_runtime_load_runs_independent_startup_io_concurrently(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_coding_session_load_failure_closes_mcp_before_registration(tmp_path):
+async def test_coding_session_load_failure_keeps_process_mcp_until_shutdown(tmp_path):
     backend = AsyncMock()
     backend.auth = Mock()
     backend.get_session.return_value = AgentSession(
@@ -532,6 +604,7 @@ async def test_coding_session_load_failure_closes_mcp_before_registration(tmp_pa
             runtime_credential_id="credential-id",
             runtime_credential_secret="credential-secret",
             project_root=tmp_path,
+            tau_runtime_contract="adr48",
         ),
         backend=backend,
         providers=providers,
@@ -559,6 +632,7 @@ async def test_coding_session_load_failure_closes_mcp_before_registration(tmp_pa
             await manager.get("session-1")
 
     assert "session-1" not in manager._runtimes
-    mcp_client.aclose.assert_awaited_once_with()
+    mcp_client.aclose.assert_not_awaited()
     backend.release_runtime_lease.assert_awaited_once()
     await manager.aclose()
+    mcp_client.aclose.assert_awaited_once_with()

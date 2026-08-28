@@ -11,6 +11,7 @@ class _ChatManager:
 
     def __init__(self) -> None:
         self.prompts: list[tuple[str, str]] = []
+        self.delivered_sessions: list[str] = []
 
     async def prompt(self, session_uid: str, prompt: str):
         self.prompts.append((session_uid, prompt))
@@ -23,6 +24,10 @@ class _ChatManager:
         yield AstroRuntimeEvent(type="agent_settled")
 
     async def cancel(self, _session_uid: str) -> bool:
+        return True
+
+    def mark_response_delivered(self, session_uid: str) -> bool:
+        self.delivered_sessions.append(session_uid)
         return True
 
 
@@ -53,6 +58,7 @@ async def test_chat_streams_real_runtime_events_with_assistant_ui_contract(asgi_
     assert '"type":"finish"' in response.text
     assert response.text.endswith("data: [DONE]\n\n")
     assert manager.prompts == [("session-1", "Answer this.")]
+    assert manager.delivered_sessions == ["session-1"]
 
 
 async def test_chat_rejects_missing_user_prompt_before_runtime_execution(asgi_client):

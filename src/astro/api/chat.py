@@ -62,9 +62,13 @@ async def chat(
                     yield encoder.sse(payload)
             if not encoder.finished:
                 yield encoder.sse({"type": "finish", "finishReason": "stop"})
-            yield encoder.done()
+            try:
+                yield encoder.done()
+            finally:
+                manager.mark_response_delivered(body.session_uid)
         except asyncio.CancelledError:
-            await manager.cancel(body.session_uid)
+            if not encoder.finished:
+                await manager.cancel(body.session_uid)
             raise
         except Exception as error:
             logger.exception(
@@ -77,7 +81,11 @@ async def chat(
             yield encoder.sse(
                 {
                     "type": "error",
-                    "errorText": str(error),
+                    "errorText": (
+                        f"Conversation output completed, but saving failed: {error}"
+                        if encoder.finished
+                        else str(error)
+                    ),
                 }
             )
             yield encoder.done()

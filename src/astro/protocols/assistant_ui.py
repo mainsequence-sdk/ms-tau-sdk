@@ -19,6 +19,13 @@ class AssistantUiEncoder:
     def encode(self, event: AstroRuntimeEvent) -> list[dict[str, Any]]:
         event_type = event.type
         data = event.data
+        if event_type == "lifecycle":
+            return [
+                {
+                    "type": "data-runtime-lifecycle",
+                    "data": {"phase": str(data.get("phase") or "")},
+                }
+            ]
         if event_type == "text_start":
             index = int(data.get("contentIndex", 0))
             text_id = self.text_ids.setdefault(index, f"text-{index}")

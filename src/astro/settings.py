@@ -117,10 +117,35 @@ class Settings(BaseSettings):
         gt=0,
         validation_alias="ASTRO_BACKEND_POOL_TIMEOUT_SECONDS",
     )
+    mcp_read_concurrency: int = Field(
+        default=8,
+        ge=1,
+        validation_alias="ASTRO_MCP_READ_CONCURRENCY",
+    )
     backend_max_response_bytes: int = Field(
         default=10 * 1024 * 1024,
         gt=0,
         validation_alias="ASTRO_BACKEND_MAX_RESPONSE_BYTES",
+    )
+    startup_dependencies_enabled: bool = Field(
+        default=True,
+        validation_alias="ASTRO_STARTUP_DEPENDENCIES_ENABLED",
+    )
+    tau_runtime_contract: Literal["v1", "adr48"] = Field(
+        default="v1",
+        validation_alias="ASTRO_TAU_RUNTIME_CONTRACT",
+    )
+    session_entry_batch_max_entries: int = Field(
+        default=100,
+        ge=1,
+        le=100,
+        validation_alias="ASTRO_SESSION_ENTRY_BATCH_MAX_ENTRIES",
+    )
+    session_entry_batch_max_bytes: int = Field(
+        default=8 * 1024 * 1024,
+        gt=0,
+        le=8 * 1024 * 1024,
+        validation_alias="ASTRO_SESSION_ENTRY_BATCH_MAX_BYTES",
     )
     max_turn_output_bytes: int = Field(
         default=4 * 1024 * 1024,

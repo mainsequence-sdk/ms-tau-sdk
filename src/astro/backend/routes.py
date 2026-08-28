@@ -37,6 +37,10 @@ def agent_session_entries_append(session_uid: str) -> str:
     return f"{agent_session_entries(session_uid)}append/"
 
 
+def agent_session_entries_append_batch(session_uid: str) -> str:
+    return f"{agent_session_entries(session_uid)}append-batch/"
+
+
 def agent_session_checkpoint_lease(
     session_uid: str,
     operation: CheckpointLeaseOperation,
@@ -46,6 +50,18 @@ def agent_session_checkpoint_lease(
 
 def agent_session_runtime_state(session_uid: str) -> str:
     return f"{agent_session(session_uid)}runtime-state/"
+
+
+def agent_session_tau_runtime_activity(session_uid: str) -> str:
+    return f"{agent_session(session_uid)}tau-runtime-activity/"
+
+
+def agent_session_tau_runtime_bootstrap(session_uid: str) -> str:
+    return f"{agent_session(session_uid)}tau-runtime/bootstrap/"
+
+
+def agent_session_tau_resume_snapshot(session_uid: str) -> str:
+    return f"{agent_session(session_uid)}tau-runtime/resume-snapshot/"
 
 
 def agent_session_runtime_cancel_request(session_uid: str) -> str:

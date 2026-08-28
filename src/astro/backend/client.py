@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import time
 from collections.abc import Mapping
@@ -26,6 +27,7 @@ from .models import (
     CapabilityContent,
     ProviderCredential,
     ProviderStatus,
+    RuntimeActivityPatch,
     RuntimeLease,
     RuntimeLeaseReleaseRequest,
     RuntimeLeaseRenewRequest,
@@ -34,8 +36,14 @@ from .models import (
     RuntimeStatePatch,
     SessionCapabilityBinding,
     SessionEntryAppendRequest,
+    SessionEntryBatchAppendRequest,
+    SessionEntryBatchAppendResponse,
     SessionEntryList,
     SessionEntryRecord,
+    TauResumeSnapshotUploadRequest,
+    TauResumeSnapshotUploadResponse,
+    TauRuntimeBootstrap,
+    TauRuntimeBootstrapRequest,
 )
 from .routes import (
     AGENT_TASKS,
@@ -46,8 +54,12 @@ from .routes import (
     agent_session_checkpoint_lease,
     agent_session_entries,
     agent_session_entries_append,
+    agent_session_entries_append_batch,
     agent_session_runtime_cancel_request,
     agent_session_runtime_state,
+    agent_session_tau_resume_snapshot,
+    agent_session_tau_runtime_activity,
+    agent_session_tau_runtime_bootstrap,
     agent_task_operation,
     model_provider_credentials,
 )
@@ -101,6 +113,7 @@ class MainSequenceClient:
         json: Mapping[str, Any] | None = None,
         idempotent: bool = False,
         include_status: bool = False,
+        dependency_fields: Mapping[str, Any] | None = None,
     ) -> Any:
         attempts = 3 if idempotent else 1
         force_auth = False
@@ -139,6 +152,7 @@ class MainSequenceClient:
                     outcome=status_outcome,
                     retryable=response.status_code in RETRYABLE_BACKEND_STATUS_CODES,
                     circuit_breaker_state="not_configured",
+                    **dict(dependency_fields or {}),
                 )
                 if response.status_code == 401 and not auth_retried:
                     auth_retried = True
@@ -193,6 +207,7 @@ class MainSequenceClient:
                     outcome="failed",
                     retryable=idempotent,
                     circuit_breaker_state="not_configured",
+                    **dict(dependency_fields or {}),
                 )
                 last_error = error
                 transport_attempt += 1
@@ -328,6 +343,84 @@ class MainSequenceClient:
         )
         return SessionEntryRecord.model_validate(data)
 
+    async def append_entries(
+        self,
+        session_uid: str,
+        request: SessionEntryBatchAppendRequest,
+    ) -> SessionEntryBatchAppendResponse:
+        canonical_bytes = sum(
+            len(
+                json.dumps(
+                    item.entry,
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ).encode("utf-8")
+            )
+            for item in request.entries
+        )
+        data = await self._request(
+            "POST",
+            agent_session_entries_append_batch(session_uid),
+            json=self._dump(request),
+            idempotent=True,
+            dependency_fields={
+                "persistence_phase": "batch_append",
+                "entry_count": len(request.entries),
+                "canonical_bytes": canonical_bytes,
+                "expected_sequence": request.expected_sequence,
+            },
+        )
+        return SessionEntryBatchAppendResponse.model_validate(data)
+
+    async def bootstrap_tau_runtime(
+        self,
+        session_uid: str,
+        request: TauRuntimeBootstrapRequest,
+    ) -> TauRuntimeBootstrap:
+        data = await self._request(
+            "POST",
+            agent_session_tau_runtime_bootstrap(session_uid),
+            json=self._dump(request),
+            idempotent=True,
+            dependency_fields={
+                "bootstrap_request_uid": request.bootstrap_request_uid,
+                "persistence_phase": "runtime_bootstrap",
+            },
+        )
+        return TauRuntimeBootstrap.model_validate(data)
+
+    async def upload_tau_resume_snapshot(
+        self,
+        session_uid: str,
+        request: TauResumeSnapshotUploadRequest,
+    ) -> TauResumeSnapshotUploadResponse:
+        data = await self._request(
+            "PUT",
+            agent_session_tau_resume_snapshot(session_uid),
+            json=self._dump(request),
+            idempotent=True,
+            dependency_fields={
+                "turn_uid": request.last_committed_turn_uid,
+                "persistence_phase": "snapshot_upload",
+                "base_sequence": request.base_sequence,
+            },
+        )
+        return TauResumeSnapshotUploadResponse.model_validate(data)
+
+    async def patch_runtime_activity(
+        self,
+        session_uid: str,
+        request: RuntimeActivityPatch,
+    ) -> RuntimeState:
+        data = await self._request(
+            "PATCH",
+            agent_session_tau_runtime_activity(session_uid),
+            json=self._dump(request),
+            idempotent=True,
+        )
+        return RuntimeState.model_validate(data)
+
     async def acquire_runtime_lease(
         self,
         session_uid: str,
@@ -429,6 +522,13 @@ class MainSequenceClient:
             },
             idempotent=True,
         )
+        return self.provider_credential_from_hydration(provider, data)
+
+    @staticmethod
+    def provider_credential_from_hydration(
+        provider: str,
+        data: object,
+    ) -> ProviderCredential:
         credentials = data.get("credentials", {}) if isinstance(data, dict) else {}
         hydrated = credentials.get(provider)
         if not isinstance(hydrated, dict):

@@ -7,11 +7,14 @@ import time
 from dataclasses import dataclass
 
 import httpx
+import structlog
 
 from astro.errors import BackendError, ConfigurationError
 from astro.settings import Settings
 
 from .routes import RUNTIME_CREDENTIAL_TOKEN
+
+logger = structlog.get_logger(__name__)
 
 
 @dataclass(slots=True)
@@ -45,6 +48,10 @@ class RuntimeCredentialAuth:
         token = await self._access_token(force=force)
         return {"Authorization": f"{token.token_type} {token.value}"}
 
+    async def prefetch(self) -> None:
+        """Authenticate during process startup so readiness is truthful."""
+        await self._access_token(force=False)
+
     async def _access_token(self, *, force: bool) -> AccessToken:
         if not force and self._token is not None and not self._token.needs_refresh():
             return self._token
@@ -59,6 +66,7 @@ class RuntimeCredentialAuth:
                 raise ConfigurationError("Runtime credentials are not configured")
             client = self._client or httpx.AsyncClient(timeout=10)
             close_client = self._client is None
+            started_at = time.monotonic()
             try:
                 response = await client.post(
                     f"{self.settings.backend_url.rstrip('/')}{RUNTIME_CREDENTIAL_TOKEN}",
@@ -89,5 +97,10 @@ class RuntimeCredentialAuth:
                 value=value,
                 token_type=str(data.get("token_type") or "Bearer"),
                 expires_at=expires_at,
+            )
+            logger.info(
+                "runtime.auth.exchange.completed",
+                duration_ms=round((time.monotonic() - started_at) * 1000, 3),
+                outcome="success",
             )
             return self._token

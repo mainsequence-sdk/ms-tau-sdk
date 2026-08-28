@@ -159,7 +159,7 @@ async def test_request_context_emits_correlated_access_events(
                 "X-Request-ID": "request-from-gateway",
                 "X-User-UID": "user-1",
                 "X-Coding-Agent-Service-UID": "service-1",
-                "X-Organization-Project-Environment-UID": "environment-1",
+                "X-Organization-Environment-UID": "environment-1",
             },
         )
 
@@ -173,7 +173,7 @@ async def test_request_context_emits_correlated_access_events(
     assert completed["route"] == "/version"
     assert completed["user_uid"] == "user-1"
     assert completed["coding_agent_service_uid"] == "service-1"
-    assert completed["organization_project_environment_uid"] == "environment-1"
+    assert completed["organization_environment_uid"] == "environment-1"
     assert "project_environment_uid" not in completed
     assert completed["principal_type"] == "user"
     assert completed["status_class"] == "2xx"
@@ -190,7 +190,7 @@ async def test_request_context_emits_correlated_access_events(
 
 def test_environment_context_uses_only_canonical_reserved_field(capsys, monkeypatch):
     monkeypatch.setenv(
-        "MAINSEQUENCE_ORGANIZATION_PROJECT_ENVIRONMENT_UID",
+        "MAINSEQUENCE_ORGANIZATION_ENVIRONMENT_UID",
         "environment-trusted",
     )
     monkeypatch.setenv("MAINSEQUENCE_PROJECT_ENVIRONMENT_UID", "environment-legacy")
@@ -198,12 +198,14 @@ def test_environment_context_uses_only_canonical_reserved_field(capsys, monkeypa
 
     structlog.get_logger("astro.project").info(
         "project.domain.event",
-        organization_project_environment_uid="environment-forged",
+        organization_environment_uid="environment-forged",
+        organization_project_environment_uid="environment-legacy",
         project_environment_uid="environment-legacy",
     )
 
     event = _json_events(capsys.readouterr().out)[-1]
-    assert event["organization_project_environment_uid"] == "environment-trusted"
+    assert event["organization_environment_uid"] == "environment-trusted"
+    assert "organization_project_environment_uid" not in event
     assert "project_environment_uid" not in event
 
 
@@ -228,7 +230,7 @@ async def test_probe_failures_are_rate_limited_and_recovery_is_logged(
     asgi_client,
     monkeypatch,
 ):
-    monkeypatch.setenv("MAINSEQUENCE_ORGANIZATION_PROJECT_ENVIRONMENT_UID", "environment-probe")
+    monkeypatch.setenv("MAINSEQUENCE_ORGANIZATION_ENVIRONMENT_UID", "environment-probe")
     configure_logging("INFO", machine_sink=True, human_sink=False)
     state = {"healthy": False}
 
@@ -253,8 +255,7 @@ async def test_probe_failures_are_rate_limited_and_recovery_is_logged(
         "runtime.probe.recovered",
     ]
     assert all(
-        event["organization_project_environment_uid"] == "environment-probe"
-        for event in probe_events
+        event["organization_environment_uid"] == "environment-probe" for event in probe_events
     )
     assert not any(event["event"].startswith("http.request.") for event in events)
 
@@ -369,7 +370,7 @@ async def test_request_context_covers_stream_failure_and_context_cleanup(capsys,
 
 
 async def test_cancelled_and_disconnected_requests_have_one_safe_terminal(capsys, monkeypatch):
-    monkeypatch.setenv("MAINSEQUENCE_ORGANIZATION_PROJECT_ENVIRONMENT_UID", "environment-1")
+    monkeypatch.setenv("MAINSEQUENCE_ORGANIZATION_ENVIRONMENT_UID", "environment-1")
     configure_logging("INFO", machine_sink=True, human_sink=False)
 
     async def cancelled(scope, receive, send):
@@ -409,9 +410,7 @@ async def test_cancelled_and_disconnected_requests_have_one_safe_terminal(capsys
         "http.request.completed",
     ]
     assert [event["outcome"] for event in terminals] == ["cancelled", "disconnected"]
-    assert all(
-        event["organization_project_environment_uid"] == "environment-1" for event in terminals
-    )
+    assert all(event["organization_environment_uid"] == "environment-1" for event in terminals)
 
 
 def test_tau_turn_observer_logs_model_tool_and_handoff_without_payloads(capsys):

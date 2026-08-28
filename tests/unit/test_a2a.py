@@ -48,12 +48,17 @@ def _assistant_message(
 class _TauEventManager:
     def __init__(self, *events: object) -> None:
         self.events = events
+        self.delivered_sessions: list[str] = []
 
     async def prompt(self, _context_id: str, _prompt: str):
         for event in self.events:
             yield translate_tau_event(event)
 
     async def cancel(self, _context_id: str) -> bool:
+        return True
+
+    def mark_response_delivered(self, session_uid: str) -> bool:
+        self.delivered_sessions.append(session_uid)
         return True
 
 

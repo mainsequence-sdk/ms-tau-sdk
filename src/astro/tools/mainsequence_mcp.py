@@ -6,7 +6,7 @@ import json
 import re
 from collections.abc import Mapping
 from copy import deepcopy
-from typing import cast
+from typing import Literal, cast
 
 from mcp import types
 from tau_agent.messages import ImageContent, TextContent
@@ -101,6 +101,14 @@ def _create_mcp_tool(
     tau_name: str,
 ) -> AgentTool:
     canonical_name = tool.name
+    annotations = tool.annotations
+    execution_mode: Literal["sequential", "parallel"] = (
+        "parallel"
+        if annotations is not None
+        and bool(getattr(annotations, "readOnlyHint", False))
+        and bool(getattr(annotations, "idempotentHint", False))
+        else "sequential"
+    )
 
     async def execute(
         tool_call_id: str,
@@ -123,7 +131,7 @@ def _create_mcp_tool(
         description=tool.description or f"Call Main Sequence MCP tool {canonical_name}.",
         parameters=_tau_tool_input_schema(tool),
         execute_fn=execute,
-        execution_mode="sequential",
+        execution_mode=execution_mode,
     )
 
 

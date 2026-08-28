@@ -133,15 +133,34 @@ class ProviderFactory:
             raise ConfigurationError(
                 f"Session {session.uid} does not have an active provider and model"
             )
-        thinking_level = self.validate_selection(
-            provider_name,
-            model,
-            session.active_thinking,
-        )
         credential = await self.backend.hydrate_provider_credential(
             provider_name,
             session_uid=session.uid,
             holder_id=holder_id,
+        )
+        return self.for_session_credential(
+            session,
+            holder_id=holder_id,
+            credential=credential,
+        )
+
+    def for_session_credential(
+        self,
+        session: AgentSession,
+        *,
+        holder_id: str,
+        credential: ProviderCredential,
+    ) -> ProviderRuntime:
+        provider_name = session.active_provider
+        model = session.active_model
+        if not provider_name or not model:
+            raise ConfigurationError(
+                f"Session {session.uid} does not have an active provider and model"
+            )
+        thinking_level = self.validate_selection(
+            provider_name,
+            model,
+            session.active_thinking,
         )
         cached_credential = credential
         credential_refresh_lock = asyncio.Lock()
