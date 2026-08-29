@@ -568,10 +568,10 @@ class SessionRuntimeManager:
             raise
 
     def _resolve_cwd(self) -> Path:
-        project_root = self.settings.project_root.resolve()
-        if not project_root.exists() or not project_root.is_dir():
-            raise ValueError(f"ASTRO_PROJECT_CWD does not exist: {project_root}")
-        return project_root
+        code_repository_root = self.settings.code_repository_root.resolve()
+        if not code_repository_root.exists() or not code_repository_root.is_dir():
+            raise ValueError(f"ASTRO_CODE_REPOSITORY_CWD does not exist: {code_repository_root}")
+        return code_repository_root
 
     async def prompt(
         self,
@@ -961,7 +961,7 @@ class SessionRuntimeManager:
                 "agent_uid",
                 "agent_run_uid",
                 "turn_uid",
-                "project_uid",
+                "code_repository_uid",
                 "organization_environment_uid",
             )
             if parent.get(field) is not None

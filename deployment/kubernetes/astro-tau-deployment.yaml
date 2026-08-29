@@ -32,7 +32,7 @@ spec:
               value: 0.0.0.0
             - name: ASTRO_PORT
               value: "8787"
-            - name: ASTRO_PROJECT_CWD
+            - name: ASTRO_CODE_REPOSITORY_CWD
               value: /workspace
             - name: ASTRO_HOME
               value: /home/jovyan
@@ -72,8 +72,8 @@ spec:
               cpu: "2"
               memory: 4Gi
           volumeMounts:
-            - name: project
+            - name: code-repository
               mountPath: /workspace
       volumes:
-        - name: project
+        - name: code-repository
           emptyDir: {}

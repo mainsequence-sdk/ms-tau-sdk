@@ -45,9 +45,9 @@ class Settings(BaseSettings):
         default=(),
         validation_alias="ASTRO_TRUSTED_ORIGINS",
     )
-    project_root: Path = Field(
+    code_repository_root: Path = Field(
         default=Path("/workspace"),
-        validation_alias="ASTRO_PROJECT_CWD",
+        validation_alias="ASTRO_CODE_REPOSITORY_CWD",
     )
     home: Path = Field(
         default_factory=Path.home,

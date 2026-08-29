@@ -30,15 +30,15 @@ MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET=replace-with-coding-agent-service-credent
 The runtime credential pair is required because Astro authenticates every
 session, task, provider credential, lease request, and MCP call to Django.
 It must belong to the deployed coding-agent service; organization-test and
-project runtime credentials are not valid for MCP.
+code repository runtime credentials are not valid for MCP.
 Provider API keys remain backend-owned and are hydrated for the exact session
 or Agent execution identity.
 
-For a Project Executor deployment, Django derives Agent discovery scope from
+For a CodeRepository Executor deployment, Django derives Agent discovery scope from
 the authenticated service credential and the service's persisted
-ProjectBranch. Astro sends no Environment selector and hides that selector from
-Tau. One Astro Project Executor deployment serves exactly that one Environment;
-users and project code do not select or switch it.
+CodeRepositoryBranch. Astro sends no Environment selector and hides that selector from
+Tau. One Astro CodeRepository Executor deployment serves exactly that one Environment;
+users and code repository code do not select or switch it.
 
 See [`.env.example`](./.env.example) for optional web-provider settings.
 
@@ -50,7 +50,7 @@ members under `packages/`.
 
 `uv.lock` is the source dependency lock. `requirements-runtime.lock` is its
 hash-locked export used to build an offline wheelhouse for the runtime and
-project-executor images.
+code-repository-executor images.
 
 ```bash
 docker compose up --build astro
@@ -63,7 +63,7 @@ Compose always runs Astro in the container and points it at Django on host port
 http://api.main-sequence.app:8000
 ```
 
-Override `ASTRO_PROJECT_PATH` when the mounted project is not the Astro checkout.
+Override `ASTRO_CODE_REPOSITORY_PATH` when the mounted code repository is not the Astro checkout.
 
 Verify a built image's Python environment, runtime tools, Node absence, and
 health endpoints with:

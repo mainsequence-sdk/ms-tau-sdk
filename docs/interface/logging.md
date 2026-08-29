@@ -18,7 +18,7 @@ Every machine event includes the common backend fields:
 - `component`
 - `runtime_instance_uid` and `sdk_version`
 
-Deployment fields such as organization, project/environment, coding-agent
+Deployment fields such as organization, code-repository/environment, coding-agent
 service, deployment run, code/image digest, Knative revision, agent config,
 toolset, and model config revisions are added from trusted environment
 variables when available.

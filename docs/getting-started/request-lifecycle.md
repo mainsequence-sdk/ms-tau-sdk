@@ -13,7 +13,7 @@
 7. Astro connects to Django `/mcp` with the same runtime bearer token.
 8. Main Sequence MCP tools and resources are exposed to Tau. For Agent
    list/search, Astro removes the environment selector from the Tau schema and
-   injects the backend-provided ProjectBranch environment at transport time.
+   injects the backend-provided CodeRepositoryBranch environment at transport time.
 9. Astro builds the Tau provider and `CodingSession` in memory.
 10. Tau entries are read from and appended directly to Django.
 11. Tau events are translated to assistant-ui SSE chunks.
@@ -32,15 +32,15 @@ provider. It does not call session, task, entry, checkpoint, capability, or
 agent lookup endpoints. The streaming variant uses the same execution path and
 emits one final Message event.
 
-## Tools and project context
+## Tools and code repository context
 
 Tau core coding tools run against the mounted `/workspace`. Astro adds runtime
 information and the Main Sequence MCP tools and resources. File discovery
 comes from `tau-file-tools`; web search and extraction come from
 `tau-web-access`.
 
-Project-owned skills are discovered directly from the mounted project's
+CodeRepository-owned skills are discovered directly from the mounted code repository's
 `.agents/skills` directory. Backend-bound session capabilities continue to be
 materialized into the private session resource root. General Main Sequence
 platform skills and operations come from Django `/mcp`; SDK skills are not
-copied into the project.
+copied into the code repository.

@@ -48,7 +48,7 @@ def create_runtime_info_tool(
         name="runtime_info",
         label="Runtime Info",
         description=(
-            "Return the active Astro/Tau runtime, Python interpreter, project path, "
+            "Return the active Astro/Tau runtime, Python interpreter, code repository path, "
             "session, provider, and model."
         ),
         parameters={"type": "object", "properties": {}, "additionalProperties": False},

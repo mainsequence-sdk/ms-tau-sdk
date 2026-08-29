@@ -78,7 +78,7 @@ PLATFORM_EVENT_PREFIXES = (
 
 ENVIRONMENT_CONTEXT_FIELDS: dict[str, tuple[str, ...]] = {
     "organization_uid": ("MAINSEQUENCE_ORGANIZATION_UID", "ORGANIZATION_UID"),
-    "project_uid": ("MAINSEQUENCE_PROJECT_UID", "PROJECT_UID"),
+    "code_repository_uid": ("MAINSEQUENCE_CODE_REPOSITORY_UID",),
     "organization_environment_uid": ("MAINSEQUENCE_ORGANIZATION_ENVIRONMENT_UID",),
     "coding_agent_service_uid": (
         "MAINSEQUENCE_CODING_AGENT_SERVICE_UID",
@@ -611,7 +611,7 @@ class RequestContextMiddleware:
                         "component",
                         "runtime_kind",
                         "organization_uid",
-                        "project_uid",
+                        "code_repository_uid",
                         "organization_environment_uid",
                         "resource_release_uid",
                         "coding_agent_service_uid",

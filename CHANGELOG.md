@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+### CodeRepository Runtime Ontology
+
+- Replaced the Project Executor runtime contract with canonical-only CodeRepository settings,
+  executor and bundle discriminators, MCP examples, structured log fields, and deployment
+  artifacts under ADR-046. Legacy Project runtime names are no longer accepted.
+
 ## 2.0.7 - 2026-06-19
 
 ### General Pi Runtime Package Boundary

@@ -209,6 +209,19 @@ def test_environment_context_uses_only_canonical_reserved_field(capsys, monkeypa
     assert "project_environment_uid" not in event
 
 
+def test_environment_context_uses_only_code_repository_uid(capsys, monkeypatch):
+    monkeypatch.setenv("MAINSEQUENCE_PROJECT_UID", "legacy-project")
+    monkeypatch.setenv("PROJECT_UID", "legacy-project")
+    monkeypatch.setenv("MAINSEQUENCE_CODE_REPOSITORY_UID", "repository-1")
+    configure_logging("INFO", machine_sink=True, human_sink=False)
+
+    structlog.get_logger("astro.code_repository").info("code_repository.domain.event")
+
+    event = _json_events(capsys.readouterr().out)[-1]
+    assert event["code_repository_uid"] == "repository-1"
+    assert "project_uid" not in event
+
+
 async def test_successful_platform_probes_emit_no_request_logs(
     test_settings,
     asgi_client,

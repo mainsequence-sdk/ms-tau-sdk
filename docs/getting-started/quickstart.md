@@ -23,4 +23,4 @@ Check the service:
 curl http://localhost:8787/health
 ```
 
-Use `ASTRO_PROJECT_PATH` to mount a different project at `/workspace`.
+Use `ASTRO_CODE_REPOSITORY_PATH` to mount a different code repository at `/workspace`.

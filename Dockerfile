@@ -69,7 +69,7 @@ ENV APP_USER=jovyan \
     ASTRO_HOME=/home/jovyan \
     ASTRO_HOST=0.0.0.0 \
     ASTRO_PORT=8787 \
-    ASTRO_PROJECT_CWD=/workspace \
+    ASTRO_CODE_REPOSITORY_CWD=/workspace \
     ASTRO_A2A_ASSET_ROOT=/tmp/astro-a2a-assets \
     ASTRO_SESSION_ASSET_ROOT=/tmp/astro-session-assets
 
@@ -87,12 +87,12 @@ EXPOSE 8787
 
 CMD ["astro-stream"]
 
-FROM scratch AS project-executor-bundle
+FROM scratch AS code-repository-executor-bundle
 
 ARG ASTRO_RELEASE_VERSION=dev
 
 LABEL org.opencontainers.image.title="astro-${ASTRO_RELEASE_VERSION}" \
-    org.opencontainers.image.description="Python 3.13 Tau project executor source bundle." \
+    org.opencontainers.image.description="Python 3.13 Tau code repository executor source bundle." \
     org.opencontainers.image.version="${ASTRO_RELEASE_VERSION}"
 
 COPY . /app

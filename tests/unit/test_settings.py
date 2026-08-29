@@ -11,11 +11,22 @@ def test_settings_normalize_backend_and_origins():
         _env_file=None,
         backend_url="http://backend:8000/",
         trusted_origins="http://one.test,http://two.test",
-        project_root=Path("/workspace"),
+        code_repository_root=Path("/workspace"),
     )
 
     assert settings.backend_url == "http://backend:8000"
     assert settings.trusted_origins == ("http://one.test", "http://two.test")
+
+
+def test_settings_accept_only_code_repository_cwd(monkeypatch):
+    monkeypatch.delenv("ASTRO_CODE_REPOSITORY_CWD", raising=False)
+    monkeypatch.setenv("ASTRO_PROJECT_CWD", "/legacy")
+    settings = Settings(_env_file=None)
+    assert settings.code_repository_root == Path("/workspace")
+
+    monkeypatch.setenv("ASTRO_CODE_REPOSITORY_CWD", "/canonical")
+    settings = Settings(_env_file=None)
+    assert settings.code_repository_root == Path("/canonical")
 
 
 def test_runtime_auth_requires_both_credential_parts():

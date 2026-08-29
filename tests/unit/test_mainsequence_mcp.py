@@ -114,7 +114,7 @@ async def test_mcp_transport_does_not_leak_cancel_scope_into_streaming_response(
             auth=AsyncMock(),
         )
         clients.append(client)
-        await client.call_tool("project.list", {})
+        await client.call_tool("code_repository.list", {})
         yield b"ok"
 
     async def endpoint(_request):
@@ -207,14 +207,14 @@ async def test_mcp_tools_and_resources_are_exposed_to_tau():
     client = AsyncMock()
     client.tools = (
         types.Tool(
-            name="project.list",
-            description="List projects.",
+            name="code_repository.list",
+            description="List code repositories.",
             inputSchema={
                 "type": "object",
                 "properties": {"limit": {"type": "integer"}},
                 "additionalProperties": False,
             },
-            annotations=types.ToolAnnotations(title="List projects"),
+            annotations=types.ToolAnnotations(title="List code repositories"),
         ),
     )
     client.resources = (
@@ -226,7 +226,7 @@ async def test_mcp_tools_and_resources_are_exposed_to_tau():
         ),
     )
     client.call_tool.return_value = types.CallToolResult(
-        content=[types.TextContent(type="text", text="project result")],
+        content=[types.TextContent(type="text", text="code repository result")],
         structuredContent={"count": 1},
     )
     client.read_resource.return_value = types.ReadResourceResult(
@@ -242,13 +242,13 @@ async def test_mcp_tools_and_resources_are_exposed_to_tau():
     tools = create_mainsequence_mcp_tools(client)
 
     assert [tool.name for tool in tools] == [
-        "mainsequence__project_list",
+        "mainsequence__code_repository_list",
         "mainsequence__read_resource",
     ]
-    project_result = await tools[0].execute("call-1", {"limit": 5})
-    assert project_result.text == "project result"
-    assert project_result.details["structured_content"] == {"count": 1}
-    client.call_tool.assert_awaited_once_with("project.list", {"limit": 5})
+    code_repository_result = await tools[0].execute("call-1", {"limit": 5})
+    assert code_repository_result.text == "code repository result"
+    assert code_repository_result.details["structured_content"] == {"count": 1}
+    client.call_tool.assert_awaited_once_with("code_repository.list", {"limit": 5})
 
     resource_result = await tools[1].execute("call-2", {"uri": resource_uri})
     assert resource_result.text == "# Project design"
@@ -288,8 +288,8 @@ def test_agent_discovery_tool_hides_backend_controlled_environment_argument(tool
 def test_normalized_mcp_tool_name_collisions_fail_session_setup():
     client = AsyncMock()
     client.tools = (
-        types.Tool(name="project.list", inputSchema={"type": "object"}),
-        types.Tool(name="project_list", inputSchema={"type": "object"}),
+        types.Tool(name="code_repository.list", inputSchema={"type": "object"}),
+        types.Tool(name="code_repository_list", inputSchema={"type": "object"}),
     )
     client.resources = ()
 
@@ -301,7 +301,7 @@ def test_only_read_only_idempotent_mcp_tools_are_parallel():
     client = AsyncMock()
     client.tools = (
         types.Tool(
-            name="project.list",
+            name="code_repository.list",
             inputSchema={"type": "object"},
             annotations=types.ToolAnnotations(
                 readOnlyHint=True,
@@ -309,7 +309,7 @@ def test_only_read_only_idempotent_mcp_tools_are_parallel():
             ),
         ),
         types.Tool(
-            name="project.create",
+            name="code_repository.create",
             inputSchema={"type": "object"},
             annotations=types.ToolAnnotations(
                 readOnlyHint=False,
@@ -317,7 +317,7 @@ def test_only_read_only_idempotent_mcp_tools_are_parallel():
             ),
         ),
         types.Tool(
-            name="project.unknown",
+            name="code_repository.unknown",
             inputSchema={"type": "object"},
         ),
     )
@@ -337,7 +337,7 @@ async def test_process_mcp_runs_safe_reads_concurrently_and_orders_mutations():
     settings = _settings().model_copy(update={"mcp_read_concurrency": 2})
     client = MainSequenceMCPClient(settings=settings, auth=AsyncMock())
     client._commands = asyncio.Queue()
-    client._parallel_tool_names = frozenset({"project.get"})
+    client._parallel_tool_names = frozenset({"code_repository.get"})
     reads_started = asyncio.Event()
     release_reads = asyncio.Event()
     mutation_started = asyncio.Event()
@@ -347,7 +347,7 @@ async def test_process_mcp_runs_safe_reads_concurrently_and_orders_mutations():
     class FakeSession:
         async def call_tool(self, name, _arguments):
             nonlocal active_reads, maximum_reads
-            if name == "project.get":
+            if name == "code_repository.get":
                 active_reads += 1
                 maximum_reads = max(maximum_reads, active_reads)
                 if active_reads == 2:
@@ -359,9 +359,9 @@ async def test_process_mcp_runs_safe_reads_concurrently_and_orders_mutations():
             return types.CallToolResult(content=[])
 
     client._owner_task = asyncio.create_task(client._serve(FakeSession()))
-    first = asyncio.create_task(client.call_tool("project.get", {"uid": "one"}))
-    second = asyncio.create_task(client.call_tool("project.get", {"uid": "two"}))
-    mutation = asyncio.create_task(client.call_tool("project.update", {"uid": "one"}))
+    first = asyncio.create_task(client.call_tool("code_repository.get", {"uid": "one"}))
+    second = asyncio.create_task(client.call_tool("code_repository.get", {"uid": "two"}))
+    mutation = asyncio.create_task(client.call_tool("code_repository.update", {"uid": "one"}))
 
     await reads_started.wait()
     await asyncio.sleep(0)

@@ -14,7 +14,7 @@ steps:
         test -n "$${ASTRO_VERSION}"
 
         LOCAL_IMAGE="astro-tau:build-${BUILD_ID}"
-        LOCAL_BUNDLE_IMAGE="project-executor-bundle:build-${BUILD_ID}"
+        LOCAL_BUNDLE_IMAGE="code-repository-executor-bundle:build-${BUILD_ID}"
         VERSION_IMAGE="${_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}"
         BUNDLE_VERSION_IMAGE="${_BUNDLE_IMAGE_PREFIX}:astro-$${ASTRO_VERSION}"
 
@@ -26,7 +26,7 @@ steps:
           .
         docker build \
           -f Dockerfile \
-          --target project-executor-bundle \
+          --target code-repository-executor-bundle \
           --build-arg "ASTRO_RELEASE_VERSION=$${ASTRO_VERSION}" \
           -t "$${LOCAL_BUNDLE_IMAGE}" \
           .
@@ -53,7 +53,7 @@ steps:
 
         echo "Astro $${INSTALLED_ASTRO_VERSION}; Python $${PYTHON_VERSION_FULL}"
 
-  - id: "upload-project-executor-dockerfile"
+  - id: "upload-code-repository-executor-dockerfile"
     waitFor: ["build-and-tag"]
     name: "gcr.io/cloud-builders/gcloud"
     entrypoint: "bash"
@@ -62,7 +62,7 @@ steps:
       - |
         set -euo pipefail
         gsutil cp Dockerfile.remote-worker \
-          "gs://workload-default-${PROJECT_ID}/pod-dockerfiles/project_executor/Dockerfile"
+          "gs://workload-default-${PROJECT_ID}/pod-dockerfiles/code_repository_executor/Dockerfile"
 
   - id: "push-version"
     waitFor: ["build-and-tag"]
@@ -96,7 +96,7 @@ substitutions:
   _AR_REGION: "europe-west1"
   _AR_REPO: "workload-default-artifact-registry"
   _IMAGE_NAME: "astro/astro-tau"
-  _BUNDLE_IMAGE_NAME: "astro/project-executor-bundle"
+  _BUNDLE_IMAGE_NAME: "astro/code-repository-executor-bundle"
   _IMAGE_PREFIX: "${_AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_IMAGE_NAME}"
   _BUNDLE_IMAGE_PREFIX: "${_AR_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/${_BUNDLE_IMAGE_NAME}"
   _LATEST_IMAGE: "${_IMAGE_PREFIX}:latest"

@@ -19,7 +19,7 @@ def test_settings(tmp_path) -> Settings:
         backend_url="http://backend:8000",
         runtime_credential_id="credential-id",
         runtime_credential_secret="credential-secret",
-        project_root=tmp_path,
+        code_repository_root=tmp_path,
         startup_dependencies_enabled=False,
     )
 

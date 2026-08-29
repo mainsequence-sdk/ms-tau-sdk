@@ -10,17 +10,17 @@ MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET=replace-with-coding-agent-service-credent
 ```
 
 The credential pair must belong to the deployed coding-agent service and
-authenticates Astro to Django REST and MCP. Organization-test and project
+authenticates Astro to Django REST and MCP. Organization-test and code repository
 runtime credentials are not valid for MCP. Model-provider secrets are not
 configured globally in Astro; Django hydrates them for the owning user and
 session.
 
-Project Executor Agent discovery requires no Environment variable. Django
+CodeRepository Executor Agent discovery requires no Environment variable. Django
 derives the exact Environment from the authenticated coding-agent service and
-its persisted ProjectBranch. Astro removes the selector from Tau-visible MCP
-schemas and sends no replacement argument. An inconsistent or unscoped Project
+its persisted CodeRepositoryBranch. Astro removes the selector from Tau-visible MCP
+schemas and sends no replacement argument. An inconsistent or unscoped CodeRepository
 Executor credential fails closed rather than falling back to production or
-Organization-wide visibility. One Project Executor process serves one backend-
+Organization-wide visibility. One CodeRepository Executor process serves one backend-
 derived Environment and never multiplexes sessions across Environments.
 
 ## Service
@@ -28,7 +28,7 @@ derived Environment and never multiplexes sessions across Environments.
 ```dotenv
 ASTRO_HOST=0.0.0.0
 ASTRO_PORT=8787
-ASTRO_PROJECT_CWD=/workspace
+ASTRO_CODE_REPOSITORY_CWD=/workspace
 ASTRO_HOME=/home/jovyan
 ASTRO_A2A_ASSET_ROOT=/tmp/astro-a2a-assets
 ASTRO_SESSION_ASSET_ROOT=/tmp/astro-session-assets

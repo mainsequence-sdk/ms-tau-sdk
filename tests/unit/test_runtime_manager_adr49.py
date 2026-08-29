@@ -30,7 +30,7 @@ def _settings(tmp_path):
         _env_file=None,
         runtime_credential_id="credential-id",
         runtime_credential_secret="credential-secret",
-        project_root=tmp_path,
+        code_repository_root=tmp_path,
         tau_runtime_contract="v1",
         startup_dependencies_enabled=False,
     )

@@ -32,7 +32,7 @@ def test_remote_worker_recipe_uses_backend_supplied_executor_bundle_image() -> N
     assert "ARG PROJECT_ID" not in recipe
 
 
-def test_remote_worker_recipe_preserves_and_verifies_project_git_context() -> None:
+def test_remote_worker_recipe_preserves_and_verifies_code_repository_git_context() -> None:
     recipe = (REPOSITORY_ROOT / "Dockerfile.remote-worker").read_text()
 
     assert "ARG SOURCE_COMMIT_SHA" in recipe
@@ -45,6 +45,28 @@ def test_remote_worker_recipe_preserves_and_verifies_project_git_context() -> No
     assert "git branch --show-current" in recipe
     assert "git symbolic-ref HEAD" in recipe
     assert "git rev-parse HEAD" in recipe
+
+
+def test_deployment_recipes_use_only_code_repository_runtime_names() -> None:
+    runtime_recipe = (REPOSITORY_ROOT / "Dockerfile").read_text()
+    worker_recipe = (REPOSITORY_ROOT / "Dockerfile.remote-worker").read_text()
+    cloud_build = (REPOSITORY_ROOT / "deployment/gcp/cloudbuild.yaml").read_text()
+    compose = (REPOSITORY_ROOT / "docker-compose.yml").read_text()
+    kubernetes = (
+        REPOSITORY_ROOT / "deployment/kubernetes/astro-tau-deployment.yaml"
+    ).read_text()
+    active_contract = "\n".join(
+        (runtime_recipe, worker_recipe, cloud_build, compose, kubernetes)
+    )
+
+    assert "ASTRO_CODE_REPOSITORY_CWD" in active_contract
+    assert "ASTRO_FIXED_CODE_REPOSITORY_CWD" in worker_recipe
+    assert "ASTRO_CODE_REPOSITORY_IMAGE_REF" in worker_recipe
+    assert "code-repository-executor-bundle" in active_contract
+    assert "pod-dockerfiles/code_repository_executor/Dockerfile" in cloud_build
+    assert "ASTRO_PROJECT_" not in active_contract
+    assert "project-executor" not in active_contract
+    assert "project_executor" not in active_contract
 
 
 def test_cloud_build_publishes_unrendered_provider_neutral_recipe() -> None:
