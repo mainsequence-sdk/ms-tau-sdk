@@ -17,6 +17,7 @@ import sys
 
 assert sys.version_info >= (3, 13), sys.version
 prefix = pathlib.Path(sys.prefix).resolve()
+assert prefix == pathlib.Path("/opt/venv"), prefix
 for module_name in (
     "astro",
     "tau_agent",
@@ -40,6 +41,15 @@ print(sys.executable)
 '
 
 docker run --rm --entrypoint sh "${image}" -ceu '
+test "$(id -u)" = "10000"
+test "$(id -g)" = "10000"
+test "${APP_HOME}" = "/home/appuser"
+test "${HOME}" = "/home/appuser"
+test "${VIRTUAL_ENV}" = "/opt/venv"
+test "$(command -v python)" = "/opt/venv/bin/python"
+test "$(pwd)" = "/workspace"
+test -d /home/appuser
+test ! -e /home/jovyan
 if command -v node >/dev/null 2>&1; then
   echo "Node must not be installed in the Tau runtime image" >&2
   exit 1
@@ -51,11 +61,12 @@ command -v rg
 command -v yt-dlp
 '
 
-docker run --detach --rm \
+docker run --detach \
   --name "${container_name}" \
   --env MAINSEQUENCE_BACKEND=http://127.0.0.1:8000 \
   --env MAINSEQUENCE_RUNTIME_CREDENTIAL_ID=container-verification \
   --env MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET=container-verification \
+  --env ASTRO_STARTUP_DEPENDENCIES_ENABLED=false \
   "${image}" >/dev/null
 
 probe='

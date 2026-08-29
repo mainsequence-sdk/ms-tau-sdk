@@ -16,20 +16,33 @@ ARG SOURCE_REPOSITORY_REF
 
 USER root
 
-COPY --from=astro-executor-bundle /app /app
-COPY --from=astro-executor-bundle /opt/wheels /opt/wheels
+COPY --chown=0:0 --from=astro-executor-bundle /app /app
 
 # Astro and code repository dependencies intentionally share the base image's Python
 # environment. Images older than Python 3.13 are rejected rather than receiving
 # a second interpreter or a private /opt/astro environment.
-RUN python -c "import sys; assert sys.version_info >= (3, 13), 'BASE_IMAGE must provide Python >=3.13'" \
+RUN chown 0:0 /app \
+ && test "$(stat -c '%u:%g' /app)" = "0:0" \
+ && test "${APP_USER}" = "appuser" \
+ && test "${APP_GROUP}" = "appuser" \
+ && test "${APP_UID}" = "10000" \
+ && test "${APP_GID}" = "10000" \
+ && test "${APP_HOME}" = "/home/appuser" \
+ && test "${HOME}" = "/home/appuser" \
+ && test "${VIRTUAL_ENV}" = "/opt/venv" \
+ && test "$(command -v python)" = "/opt/venv/bin/python" \
+ && python -c "import sys; assert sys.version_info >= (3, 13), 'BASE_IMAGE must provide Python >=3.13'; assert sys.prefix == '/opt/venv', sys.prefix" \
  && command -v ffmpeg \
  && command -v ffprobe \
- && command -v git
+ && command -v git \
+ && command -v rg \
+ && test -d /workspace/.git
 
-USER ${NB_USER}
-RUN set -euo pipefail; \
-    cd "${SKEL_APP_DIR}"; \
+USER 10000:10000
+WORKDIR /workspace
+RUN set -eu; \
+    test -r .git; \
+    test -w .; \
     git diff --quiet --ignore-submodules HEAD --; \
     git diff --cached --quiet --ignore-submodules HEAD --; \
     test -n "${SOURCE_COMMIT_SHA}"; \
@@ -40,32 +53,54 @@ RUN set -euo pipefail; \
     test "$(git rev-parse HEAD)" = "${SOURCE_COMMIT_SHA}"
 
 USER root
-RUN python -m pip install \
+RUN --mount=from=astro-executor-bundle,source=/opt/wheels,target=/opt/astro-wheels,ro \
+    python -m pip install \
     --no-index \
-    --find-links /opt/wheels \
-    /opt/wheels/mainsequence_astro-*.whl
+    --find-links /opt/astro-wheels \
+    /opt/astro-wheels/mainsequence_astro-*.whl \
+ && python -m pip check \
+ && python -c "import astro, tau_agent, tau_coding, tau_file_tools, tau_web_access" \
+ && command -v yt-dlp
 
 ENV ASTRO_RELEASE_VERSION=${ASTRO_EXECUTOR_BUNDLE_REF} \
-    HOME=/home/${NB_USER} \
-    ASTRO_HOME=/home/${NB_USER} \
+    APP_HOME=/home/appuser \
+    HOME=/home/appuser \
+    VIRTUAL_ENV=/opt/venv \
+    PATH=/opt/venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin \
+    ASTRO_HOME=/home/appuser \
+    ASTRO_CONTAINER_DATA_DIR=/home/appuser/.astro-container-data \
+    ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence \
+    PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent \
     ASTRO_HOST=0.0.0.0 \
     ASTRO_PORT=8787 \
-    ASTRO_CODE_REPOSITORY_CWD=${SKEL_APP_DIR} \
-    ASTRO_FIXED_CODE_REPOSITORY_CWD=${SKEL_APP_DIR} \
+    ASTRO_CODE_REPOSITORY_CWD=/workspace \
+    ASTRO_FIXED_CODE_REPOSITORY_CWD=/workspace \
     ASTRO_CODE_REPOSITORY_IMAGE_REF=${BASE_IMAGE} \
+    ASTRO_SESSION_STATE_DIR=/session-state \
+    ASTRO_STREAM_SESSION_DIR=/session-state/sessions \
+    ASTRO_SESSION_OVERRIDES_DIR=/session-state/session-overrides \
+    ASTRO_PROVIDER_CREDENTIAL_DIR=/session-state/pi-agent-auth \
     ASTRO_A2A_ASSET_ROOT=/tmp/astro-a2a-assets \
     ASTRO_SESSION_ASSET_ROOT=/tmp/astro-session-assets
 
-RUN mkdir -p /tmp/astro-a2a-assets /tmp/astro-session-assets \
- && chown -R 10000:10000 \
-    ${APP_DIR} \
-    ${SKEL_APP_DIR} \
-    /home/${NB_USER} \
-    /tmp/astro-a2a-assets \
-    /tmp/astro-session-assets
+RUN mkdir -p \
+    "${ASTRO_CONTAINER_DATA_DIR}" \
+    "${ASTRO_MAINSEQUENCE_CONFIG_DIR}" \
+    "${PI_CODING_AGENT_DIR}" \
+    "${ASTRO_STREAM_SESSION_DIR}" \
+    "${ASTRO_SESSION_OVERRIDES_DIR}" \
+    "${ASTRO_PROVIDER_CREDENTIAL_DIR}" \
+    "${ASTRO_A2A_ASSET_ROOT}" \
+    "${ASTRO_SESSION_ASSET_ROOT}" \
+ && chown -R "${APP_UID}:${APP_GID}" \
+    "${ASTRO_CONTAINER_DATA_DIR}" \
+    /session-state \
+    "${ASTRO_A2A_ASSET_ROOT}" \
+    "${ASTRO_SESSION_ASSET_ROOT}" \
+ && test "$(stat -c '%u:%g' /app)" = "0:0"
 
 USER 10000:10000
-WORKDIR ${SKEL_APP_DIR}
+WORKDIR /workspace
 
 EXPOSE 8787
 

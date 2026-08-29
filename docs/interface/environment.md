@@ -29,7 +29,7 @@ derived Environment and never multiplexes sessions across Environments.
 ASTRO_HOST=0.0.0.0
 ASTRO_PORT=8787
 ASTRO_CODE_REPOSITORY_CWD=/workspace
-ASTRO_HOME=/home/jovyan
+ASTRO_HOME=/home/appuser
 ASTRO_A2A_ASSET_ROOT=/tmp/astro-a2a-assets
 ASTRO_SESSION_ASSET_ROOT=/tmp/astro-session-assets
 ASTRO_SESSION_IDLE_TTL_SECONDS=900
@@ -43,6 +43,13 @@ ASTRO_LOG_MACHINE_SINK=true
 ASTRO_LOG_HUMAN_SINK=false
 ASTRO_LOG_PAYLOADS=false
 ```
+
+Container deployments use the lean Python runtime ABI: `APP_HOME`, `HOME`,
+and `ASTRO_HOME` are `/home/appuser`, the single active Python environment is
+`/opt/venv`, the CodeRepository checkout is `/workspace`, the immutable Astro
+executor bundle is `/app`, and mutable executor session state is
+`/session-state`. Runtime images and Kubernetes examples execute as
+UID/GID `10000:10000`.
 
 Optional settings:
 

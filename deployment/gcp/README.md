@@ -28,11 +28,24 @@ The pipeline builds and publishes:
 The Docker build step enables BuildKit because the trusted runtime Dockerfile
 uses cache mounts while materializing its locked Python dependencies.
 
-The remote-worker Dockerfile rejects any code repository base image whose active
-`python` is older than 3.13. Astro and code repository dependencies are installed into
-that same environment. It does not install Node.js or a second interpreter.
-CodeRepository base images must also provide `ffmpeg`, `ffprobe`, and `git`; the remote
-worker build rejects images missing those web/tool runtime dependencies.
+The main image is built from the digest-pinned official
+`python:3.13-slim-bookworm` index and installs Astro into the single
+`/opt/venv` runtime environment. It runs as `appuser` (`10000:10000`) with
+`HOME=/home/appuser` and `/workspace` as its working directory.
+
+The remote-worker Dockerfile accepts only a CodeRepository base implementing
+that same ABI. It rejects a base whose active `python` is older than 3.13,
+whose active prefix is not `/opt/venv`, or whose user/filesystem variables do
+not match the contract. Astro and CodeRepository dependencies remain in that
+one environment. The overlay keeps its immutable source bundle root-owned at
+`/app`, verifies the Git checkout at `/workspace`, and uses `/session-state`
+for mutable executor state. It does not install Node.js, a second interpreter,
+or a compatibility path for the retired notebook image ABI.
+
+CodeRepository base images must also provide `ffmpeg`, `ffprobe`, `git`, and
+`rg`; the remote worker build rejects images missing those web/file-tool
+runtime dependencies. The offline Astro install must also produce the
+`yt-dlp` executable.
 
 The published remote-worker recipe is provider-neutral. Its
 `EXECUTOR_BUNDLE_IMAGE` is supplied by the backend as the exact digest-pinned

@@ -15,6 +15,14 @@ spec:
         app.kubernetes.io/name: astro-tau
     spec:
       terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10000
+        runAsGroup: 10000
+        fsGroup: 10000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: astro
           image: europe-west1-docker.pkg.dev/PROJECT_ID/workload-default-artifact-registry/astro/astro-tau:latest
@@ -35,7 +43,7 @@ spec:
             - name: ASTRO_CODE_REPOSITORY_CWD
               value: /workspace
             - name: ASTRO_HOME
-              value: /home/jovyan
+              value: /home/appuser
             - name: ASTRO_A2A_ASSET_ROOT
               value: /tmp/astro-a2a-assets
             - name: ASTRO_SESSION_ASSET_ROOT
@@ -71,6 +79,16 @@ spec:
             limits:
               cpu: "2"
               memory: 4Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 10000
+            runAsGroup: 10000
+            capabilities:
+              drop:
+                - ALL
+            seccompProfile:
+              type: RuntimeDefault
           volumeMounts:
             - name: code-repository
               mountPath: /workspace

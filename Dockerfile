@@ -1,10 +1,14 @@
 # syntax=docker/dockerfile:1.7
 
-FROM python:3.13-slim AS astro-build
+ARG PYTHON_BASE_IMAGE=python:3.13-slim-bookworm@sha256:c45a22ea000adfd9cda29364bbe7edd23001ce5cc2ad15857cfbf7766943b9ca
+
+FROM ${PYTHON_BASE_IMAGE} AS astro-build
 
 ARG ASTRO_RELEASE_VERSION=dev
 
-ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+ENV VIRTUAL_ENV=/opt/build-venv \
+    PATH=/opt/build-venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_DEFAULT_TIMEOUT=300 \
     PIP_RETRIES=10 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -13,7 +17,8 @@ ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     git \
- && rm -rf /var/lib/apt/lists/*
+ && rm -rf /var/lib/apt/lists/* \
+ && python -m venv "${VIRTUAL_ENV}"
 
 # Cache the hash-locked third-party wheelhouse independently from source edits.
 COPY requirements-runtime.lock /tmp/requirements-runtime.lock
@@ -39,16 +44,40 @@ RUN --mount=type=cache,id=astro-pip-v2,target=/root/.cache/pip \
  && python -m pip install \
     --no-index \
     --find-links /opt/wheels \
-    /opt/wheels/mainsequence_astro-*.whl
+    /opt/wheels/mainsequence_astro-*.whl \
+ && python -m pip check \
+ && python -c "import astro, tau_agent, tau_coding"
 
-FROM python:3.13-slim AS astro-runtime
+FROM ${PYTHON_BASE_IMAGE} AS astro-runtime
 
 ARG ASTRO_RELEASE_VERSION=dev
 
-ENV PIP_DISABLE_PIP_VERSION_CHECK=1 \
+ENV APP_USER=appuser \
+    APP_GROUP=appuser \
+    APP_UID=10000 \
+    APP_GID=10000 \
+    APP_HOME=/home/appuser \
+    HOME=/home/appuser \
+    VIRTUAL_ENV=/opt/venv \
+    PATH=/opt/venv/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    PIP_NO_CACHE_DIR=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    ASTRO_RELEASE_VERSION=${ASTRO_RELEASE_VERSION}
+    ASTRO_RELEASE_VERSION=${ASTRO_RELEASE_VERSION} \
+    ASTRO_HOME=/home/appuser \
+    ASTRO_CONTAINER_DATA_DIR=/home/appuser/.astro-container-data \
+    ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence \
+    PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent \
+    ASTRO_HOST=0.0.0.0 \
+    ASTRO_PORT=8787 \
+    ASTRO_CODE_REPOSITORY_CWD=/workspace \
+    ASTRO_SESSION_STATE_DIR=/session-state \
+    ASTRO_STREAM_SESSION_DIR=/session-state/sessions \
+    ASTRO_SESSION_OVERRIDES_DIR=/session-state/session-overrides \
+    ASTRO_PROVIDER_CREDENTIAL_DIR=/session-state/pi-agent-auth \
+    ASTRO_A2A_ASSET_ROOT=/tmp/astro-a2a-assets \
+    ASTRO_SESSION_ASSET_ROOT=/tmp/astro-session-assets
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -58,27 +87,36 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ripgrep \
  && rm -rf /var/lib/apt/lists/*
 
-# Keep one system Python environment while excluding build-only OS packages.
-COPY --from=astro-build /usr/local /usr/local
-
-ENV APP_USER=jovyan \
-    APP_GROUP=jovyan \
-    APP_UID=10000 \
-    APP_GID=10000 \
-    HOME=/home/jovyan \
-    ASTRO_HOME=/home/jovyan \
-    ASTRO_HOST=0.0.0.0 \
-    ASTRO_PORT=8787 \
-    ASTRO_CODE_REPOSITORY_CWD=/workspace \
-    ASTRO_A2A_ASSET_ROOT=/tmp/astro-a2a-assets \
-    ASTRO_SESSION_ASSET_ROOT=/tmp/astro-session-assets
-
 RUN groupadd --gid "${APP_GID}" "${APP_GROUP}" \
  && useradd --uid "${APP_UID}" --gid "${APP_GID}" --create-home \
     --home-dir "${HOME}" --shell /bin/bash "${APP_USER}" \
- && mkdir -p /workspace "${ASTRO_A2A_ASSET_ROOT}" "${ASTRO_SESSION_ASSET_ROOT}" \
- && chown -R "${APP_UID}:${APP_GID}" "${HOME}" /workspace \
-    "${ASTRO_A2A_ASSET_ROOT}" "${ASTRO_SESSION_ASSET_ROOT}"
+ && python -m venv "${VIRTUAL_ENV}" \
+ && mkdir -p \
+    /workspace \
+    "${ASTRO_CONTAINER_DATA_DIR}" \
+    "${ASTRO_MAINSEQUENCE_CONFIG_DIR}" \
+    "${PI_CODING_AGENT_DIR}" \
+    "${ASTRO_STREAM_SESSION_DIR}" \
+    "${ASTRO_SESSION_OVERRIDES_DIR}" \
+    "${ASTRO_PROVIDER_CREDENTIAL_DIR}" \
+    "${ASTRO_A2A_ASSET_ROOT}" \
+    "${ASTRO_SESSION_ASSET_ROOT}" \
+ && chown -R "${APP_UID}:${APP_GID}" \
+    "${HOME}" \
+    /workspace \
+    /session-state \
+    "${ASTRO_A2A_ASSET_ROOT}" \
+    "${ASTRO_SESSION_ASSET_ROOT}"
+
+# Install only the builder-produced wheelhouse into the one runtime venv. The
+# wheelhouse is mounted from the build stage and is not retained in a layer.
+RUN --mount=from=astro-build,source=/opt/wheels,target=/opt/wheels,ro \
+    python -m pip install \
+      --no-index \
+      --find-links /opt/wheels \
+      /opt/wheels/mainsequence_astro-*.whl \
+ && python -m pip check \
+ && python -c "import astro, tau_agent, tau_coding, tau_file_tools, tau_web_access"
 
 USER 10000:10000
 WORKDIR /workspace

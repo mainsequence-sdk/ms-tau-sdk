@@ -10,6 +10,11 @@ ontology cutover removes the retired worker profile and topology environment
 fallback immediately. Fixed executor deployments require
 `ASTRO_FIXED_AGENT_TYPE=code-repository-executor`.
 
+Amended 2026-08-29 by ADR 50: the earlier Jupyter-derived filesystem contract
+is superseded. Both standalone and CodeRepository Executor images now use
+`appuser` (`10000:10000`), `/home/appuser`, `/opt/venv`, `/workspace`, `/app`,
+and `/session-state`. No Jovyan, `NB_*`, or `user-skel` compatibility remains.
+
 ## Context
 
 Astro currently uses backend-visible `agent_type` values such as:
@@ -323,9 +328,11 @@ Audit result:
   than scattered prompt-role conditionals.
 - Durable A2A metadata remains session metadata and checkpoint metadata, not prompt/runtime-role
   state.
-- The repo-owned deployment contract now uses the `/home/jovyan` Astro home/config/Pi layout for
-  orchestrator, local worker, Compose, Kubernetes example manifests, and docs. `Dockerfile.remote-worker`
-  remains the canonical external CodeRepository-worker image reference and keeps `/home/${NB_USER}`.
+- The repo-owned deployment contract now uses the `/home/appuser` Astro
+  home/config layout for standalone runtime, Compose, Kubernetes, and the
+  CodeRepository Executor. `Dockerfile.remote-worker` remains the canonical
+  external executor overlay, but consumes the platform ABI directly instead
+  of inheriting notebook-image variables.
 
 ### Runtime profile model
 
@@ -411,16 +418,19 @@ Implemented in the prompt-contract pass:
 
 ### Deployment and sidecar contract
 
-- `Dockerfile.remote-worker` is the canonical reference for the code-repository-executor runtime filesystem
-  contract and should not be changed as part of this convergence. Orchestrator deployment should be
-  aligned toward that home-derived contract instead.
+- `Dockerfile.remote-worker` is the canonical reference for the
+  code-repository-executor runtime filesystem contract. ADR 50 replaces its
+  former notebook-derived inputs with the shared lean Python ABI.
 
 Canonical Astro runtime filesystem contract:
 
-- `HOME=/home/jovyan`
-- `ASTRO_CONTAINER_DATA_DIR=/home/jovyan/.astro-container-data`
-- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/jovyan/.astro-container-data/.config/mainsequence`
-- `PI_CODING_AGENT_DIR=/home/jovyan/.astro-container-data/.pi/agent`
+- `HOME=/home/appuser`
+- `VIRTUAL_ENV=/opt/venv`
+- `ASTRO_CONTAINER_DATA_DIR=/home/appuser/.astro-container-data`
+- `ASTRO_MAINSEQUENCE_CONFIG_DIR=/home/appuser/.astro-container-data/.config/mainsequence`
+- `PI_CODING_AGENT_DIR=/home/appuser/.astro-container-data/.pi/agent`
+- `ASTRO_CODE_REPOSITORY_CWD=/workspace`
+- immutable executor bundle `/app`
 - `ASTRO_SESSION_STATE_DIR=/session-state`
 - `ASTRO_STREAM_SESSION_DIR=/session-state/sessions`
 - `ASTRO_SESSION_OVERRIDES_DIR=/session-state/session-overrides`
@@ -437,9 +447,9 @@ Canonical Astro runtime filesystem contract:
       to write under an unwritable home directory.
 - [x] Keep the effective working root as the intentional profile difference: orchestrator runtime
       cwd for repository-independent sessions, prepared code repository cwd for code-repository-attached sessions.
-- [x] Update `Dockerfile`, `docker-compose.yml`, sidecar deployment config, and deployment docs
-      after the canonical contract is chosen. Remove the obsolete local mounted-CodeRepository Dockerfile
-      harness. Do not change `Dockerfile.remote-worker`.
+- [x] Update `Dockerfile`, `Dockerfile.remote-worker`, `docker-compose.yml`,
+      Kubernetes deployment config, and deployment docs for the ADR 50 ABI.
+      Remove the obsolete local mounted-CodeRepository Dockerfile harness.
 
 ### Model and session policy
 

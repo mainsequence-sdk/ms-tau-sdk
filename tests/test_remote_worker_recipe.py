@@ -18,8 +18,32 @@ def test_package_metadata_is_the_runtime_version_source_of_truth() -> None:
 def test_container_recipes_install_the_locally_built_astro_wheel() -> None:
     for recipe_name in ("Dockerfile", "Dockerfile.remote-worker"):
         recipe = (REPOSITORY_ROOT / recipe_name).read_text()
-        assert "/opt/wheels/mainsequence_astro-*.whl" in recipe
+        assert "mainsequence_astro-*.whl" in recipe
         assert "mainsequence-astro==" not in recipe
+
+
+def test_main_image_implements_the_lean_python_runtime_abi() -> None:
+    recipe = (REPOSITORY_ROOT / "Dockerfile").read_text()
+
+    assert (
+        "python:3.13-slim-bookworm@sha256:"
+        "c45a22ea000adfd9cda29364bbe7edd23001ce5cc2ad15857cfbf7766943b9ca"
+    ) in recipe
+    assert "APP_USER=appuser" in recipe
+    assert "APP_GROUP=appuser" in recipe
+    assert "APP_UID=10000" in recipe
+    assert "APP_GID=10000" in recipe
+    assert "APP_HOME=/home/appuser" in recipe
+    assert "HOME=/home/appuser" in recipe
+    assert "VIRTUAL_ENV=/opt/venv" in recipe
+    assert "PATH=/opt/venv/bin:" in recipe
+    assert "ASTRO_CODE_REPOSITORY_CWD=/workspace" in recipe
+    assert "ASTRO_SESSION_STATE_DIR=/session-state" in recipe
+    assert "USER 10000:10000" in recipe
+    assert "WORKDIR /workspace" in recipe
+    assert "python -m pip check" in recipe
+    assert "FROM python:3.13-slim AS" not in recipe
+    assert "jovyan" not in recipe.lower()
 
 
 def test_remote_worker_recipe_uses_backend_supplied_executor_bundle_image() -> None:
@@ -38,8 +62,9 @@ def test_remote_worker_recipe_preserves_and_verifies_code_repository_git_context
     assert "ARG SOURCE_COMMIT_SHA" in recipe
     assert "ARG SOURCE_REPOSITORY_BRANCH" in recipe
     assert "ARG SOURCE_REPOSITORY_REF" in recipe
-    assert "USER ${NB_USER}" in recipe
-    assert 'cd "${SKEL_APP_DIR}"' in recipe
+    assert "USER 10000:10000" in recipe
+    assert "WORKDIR /workspace" in recipe
+    assert "test -d /workspace/.git" in recipe
     assert "git diff --quiet --ignore-submodules HEAD" in recipe
     assert "git diff --cached --quiet --ignore-submodules HEAD" in recipe
     assert "git branch --show-current" in recipe
@@ -47,17 +72,65 @@ def test_remote_worker_recipe_preserves_and_verifies_code_repository_git_context
     assert "git rev-parse HEAD" in recipe
 
 
+def test_remote_worker_consumes_only_the_lean_python_runtime_abi() -> None:
+    recipe = (REPOSITORY_ROOT / "Dockerfile.remote-worker").read_text()
+
+    for retired_name in (
+        "NB_USER",
+        "NB_UID",
+        "NB_GID",
+        "SKEL_APP_DIR",
+        "SKEL_DIR",
+        "APP_DIR",
+        "jovyan",
+        "/opt/conda",
+        "/usr/local/share/user-skel",
+    ):
+        assert retired_name not in recipe
+
+    assert 'test "${APP_USER}" = "appuser"' in recipe
+    assert 'test "${APP_HOME}" = "/home/appuser"' in recipe
+    assert 'test "${VIRTUAL_ENV}" = "/opt/venv"' in recipe
+    assert 'test "$(command -v python)" = "/opt/venv/bin/python"' in recipe
+    assert "HOME=/home/appuser" in recipe
+    assert "ASTRO_HOME=/home/appuser" in recipe
+    assert "ASTRO_CODE_REPOSITORY_CWD=/workspace" in recipe
+    assert "ASTRO_FIXED_CODE_REPOSITORY_CWD=/workspace" in recipe
+    assert "ASTRO_SESSION_STATE_DIR=/session-state" in recipe
+    assert "source=/opt/wheels,target=/opt/astro-wheels,ro" in recipe
+    assert "COPY --chown=0:0 --from=astro-executor-bundle /app /app" in recipe
+    assert "chown 0:0 /app" in recipe
+    assert "COPY --from=astro-executor-bundle /opt/wheels" not in recipe
+    assert "python -m pip check" in recipe
+    assert "command -v rg" in recipe
+    assert "command -v yt-dlp" in recipe
+    assert 'test "$(stat -c \'%u:%g\' /app)" = "0:0"' in recipe
+
+
+def test_active_deployment_examples_use_the_non_root_runtime_contract() -> None:
+    compose = (REPOSITORY_ROOT / "docker-compose.yml").read_text()
+    kubernetes = (REPOSITORY_ROOT / "deployment/kubernetes/astro-tau-deployment.yaml").read_text()
+    environment_example = (REPOSITORY_ROOT / ".env.example").read_text()
+    active_contract = "\n".join((compose, kubernetes, environment_example))
+
+    assert "/home/jovyan" not in active_contract
+    assert "ASTRO_HOME: /home/appuser" in compose
+    assert "ASTRO_HOME=/home/appuser" in environment_example
+    assert "runAsNonRoot: true" in kubernetes
+    assert "runAsUser: 10000" in kubernetes
+    assert "runAsGroup: 10000" in kubernetes
+    assert "allowPrivilegeEscalation: false" in kubernetes
+    assert "type: RuntimeDefault" in kubernetes
+    assert "- ALL" in kubernetes
+
+
 def test_deployment_recipes_use_only_code_repository_runtime_names() -> None:
     runtime_recipe = (REPOSITORY_ROOT / "Dockerfile").read_text()
     worker_recipe = (REPOSITORY_ROOT / "Dockerfile.remote-worker").read_text()
     cloud_build = (REPOSITORY_ROOT / "deployment/gcp/cloudbuild.yaml").read_text()
     compose = (REPOSITORY_ROOT / "docker-compose.yml").read_text()
-    kubernetes = (
-        REPOSITORY_ROOT / "deployment/kubernetes/astro-tau-deployment.yaml"
-    ).read_text()
-    active_contract = "\n".join(
-        (runtime_recipe, worker_recipe, cloud_build, compose, kubernetes)
-    )
+    kubernetes = (REPOSITORY_ROOT / "deployment/kubernetes/astro-tau-deployment.yaml").read_text()
+    active_contract = "\n".join((runtime_recipe, worker_recipe, cloud_build, compose, kubernetes))
 
     assert "ASTRO_CODE_REPOSITORY_CWD" in active_contract
     assert "ASTRO_FIXED_CODE_REPOSITORY_CWD" in worker_recipe

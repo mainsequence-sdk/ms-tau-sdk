@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Lean Python Runtime ABI
+
+- Replaced the standalone Tau image's floating slim/Jovyan layout with the
+  digest-pinned Python 3.13 Bookworm base, one `/opt/venv` environment, and the
+  non-root `appuser` identity (`10000:10000`).
+- Rewrote the CodeRepository Executor overlay to consume `/workspace`, `/app`,
+  `/home/appuser`, and `/session-state` directly, removing every `NB_*`,
+  `SKEL_APP_DIR`, `APP_DIR`, and Jovyan dependency.
+- Added fail-closed base-ABI, Git-provenance, wheel-integrity, filesystem
+  ownership, Compose, and Kubernetes security-context checks.
+
 ### CodeRepository Runtime Ontology
 
 - Replaced the repository executor runtime contract with canonical-only CodeRepository settings,
