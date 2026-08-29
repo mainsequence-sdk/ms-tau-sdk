@@ -81,7 +81,6 @@ ENV APP_USER=appuser \
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
-    ffmpeg \
     git \
     openssh-client \
     ripgrep \
