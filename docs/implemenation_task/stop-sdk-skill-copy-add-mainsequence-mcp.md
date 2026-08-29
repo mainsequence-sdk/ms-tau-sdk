@@ -312,8 +312,8 @@ Its current platform resources include:
 ```text
 mainsequence://platform/ontology
 mainsequence://platform/skills/a2a-communication
-mainsequence://platform/skills/project-design
-mainsequence://platform/skills/project-to-agent
+mainsequence://platform/skills/code-repository-design
+mainsequence://platform/skills/code-repository-to-agent
 mainsequence://platform/skills/static-site
 ```
 

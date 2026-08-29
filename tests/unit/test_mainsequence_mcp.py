@@ -203,7 +203,7 @@ async def test_mcp_connect_unwraps_transport_error_from_cancelled_task_group():
 
 @pytest.mark.asyncio
 async def test_mcp_tools_and_resources_are_exposed_to_tau():
-    resource_uri = "mainsequence://platform/skills/project-design"
+    resource_uri = "mainsequence://platform/skills/code-repository-design"
     client = AsyncMock()
     client.tools = (
         types.Tool(
@@ -219,9 +219,9 @@ async def test_mcp_tools_and_resources_are_exposed_to_tau():
     )
     client.resources = (
         types.Resource(
-            name="project_design",
+            name="code_repository_design",
             uri=resource_uri,
-            description="Project design guidance.",
+            description="CodeRepository design guidance.",
             mimeType="text/markdown",
         ),
     )
@@ -234,7 +234,7 @@ async def test_mcp_tools_and_resources_are_exposed_to_tau():
             types.TextResourceContents(
                 uri=resource_uri,
                 mimeType="text/markdown",
-                text="# Project design",
+                text="# CodeRepository design",
             )
         ]
     )
@@ -251,7 +251,7 @@ async def test_mcp_tools_and_resources_are_exposed_to_tau():
     client.call_tool.assert_awaited_once_with("code_repository.list", {"limit": 5})
 
     resource_result = await tools[1].execute("call-2", {"uri": resource_uri})
-    assert resource_result.text == "# Project design"
+    assert resource_result.text == "# CodeRepository design"
     client.read_resource.assert_awaited_once_with(resource_uri)
 
     prompt = mainsequence_mcp_resource_prompt(client)

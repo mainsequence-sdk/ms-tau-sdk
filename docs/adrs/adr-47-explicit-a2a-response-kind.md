@@ -239,7 +239,7 @@ closed-world schema. The implementation updates together:
 
 - agent search row/output schemas;
 - the `agents/a2a_communication` skill;
-- the `agents/project_to_agent` skill and its Agent Card template;
+- the `agents/code_repository_to_agent` skill and its Agent Card template;
 - platform ontology descriptions;
 - manifest hashes for changed packaged resources; and
 - MCP schema, packaging, resource, and end-to-end discovery tests.
@@ -248,7 +248,7 @@ The A2A communication skill discovers the profile, defaults to `message`, reques
 advertised, sends the activation header, branches on the discriminated result, and follows the Task
 when selected. It never infers Task mode from an empty answer.
 
-The project-to-agent skill explains that the stable response profile belongs in the source Agent
+The code-repository-to-agent skill explains that the stable response profile belongs in the source Agent
 Card while runtime URLs, security, push notifications, and harness flags remain runtime-owned.
 
 ## `mainsequence-sdk` Impact
