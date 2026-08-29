@@ -13,7 +13,7 @@ Before this decision, Astro exposed two durable agent execution paths and one st
 - A2A `message:send` and `message:stream` use `message.contextId = AgentSession.uid` and persist
   task and message state.
 - `POST /api/llm/chat`, defined by ADR 36, was a direct model passthrough. It deliberately did not
-  resolve an agent, load agent defaults, materialize capabilities, or attach project context.
+  resolve an agent, load agent defaults, materialize capabilities, or attach CodeRepository context.
 
 These contracts do not cover a common request: ask a particular agent one question, optionally
 provide a PDF, document, or image, use the agent's configured model and applicable capabilities,

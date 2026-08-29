@@ -61,7 +61,7 @@ astro/astro-tau:ms-sdk-<version> image tag
 This function copies Main Sequence SDK skills into
 `<project>/.agents/skills/mainsequence`. That copy is obsolete because:
 
-- project-specific skills already belong in the project
+- CodeRepository-specific skills already belong in the CodeRepository
 - general Main Sequence platform skills are MCP resources
 
 Keep:

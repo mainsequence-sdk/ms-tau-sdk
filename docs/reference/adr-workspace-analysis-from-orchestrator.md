@@ -203,8 +203,8 @@ This readiness signal should exist before the first chat request is handled.
 
 - [x] Update `.pi/APPEND_SYSTEM.md` to define `workspace analysis` as an explicit
   `astro-orchestrator` capability.
-- [x] Add orchestrator prompt rules that distinguish workspace analysis from project creation,
-  project implementation, and generic non-Main-Sequence repository analysis.
+- [x] Add orchestrator prompt rules that distinguish workspace analysis from CodeRepository creation,
+  CodeRepository implementation, and generic non-Main-Sequence repository analysis.
 - [x] Remove direct Astro bootstrap materialization for individual Main Sequence SDK skills.
 - [x] Load the Main Sequence Pi package through `ASTRO_PI_PACKAGE_PATHS`.
 - [x] Delegate SDK skill seeding to the package-owned discovery extension.

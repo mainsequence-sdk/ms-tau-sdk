@@ -1,23 +1,22 @@
 # Research guide
 
-> Historical note:
-> This guide started from experiments around the retired `mainsequence-project-coder` role.
-> `mainsequence-project-coder` is no longer a supported runtime path. Current implementation work
-> belongs on `code-repository-executor`, invoked through the orchestrator/executor workflow
-> rather than any direct child-launch surface.
+> Runtime note:
+> Current implementation work belongs on `code-repository-executor`, invoked
+> through the orchestrator/executor workflow rather than a direct child-launch
+> surface.
 
 ## Research problem: cost-effective agent evaluation for code generation
 
 We want a repeatable way to identify the cheapest coding agent that can complete a code-generation task at an acceptable quality level.
 
-We start with a specific example: the historical `main-sequence-project-coder` agent. That role was
-used to take a prompt and generate a full code folder intended to satisfy the prompt and follow
+We start with a specific example: a `code-repository-executor` Agent. It takes
+a prompt and generates a full code folder intended to satisfy the prompt and follow
 Main Sequence library guidelines.
 
 A second, stronger evaluator agent then compares the generated code against our reference implementation and assigns a score. This gives us a concrete Agent / Evaluator setup that can later be generalized into a broader experiment where the output is code.
 
-For that historical `main-sequence-project-coder` evaluation setup, we will provide several
-prompts and project examples.
+For that `code-repository-executor` evaluation setup, we provide several
+prompts and CodeRepository examples.
 
 The first test prompt is:
 
@@ -155,14 +154,12 @@ evaluation set.
 
 ## Current execution guidance
 
-Do not launch `mainsequence-project-coder` directly. That role is retired.
-
 For current Astro flows:
 
-- use the normal parent flow when orchestration, project selection, or handoff preparation still
+- use the normal parent flow when orchestration, CodeRepository selection, or handoff preparation still
   belongs to `astro-orchestrator`
 - use the dedicated `code-repository-executor` runtime once implementation work moves onto the
   executor path
 
-The important architecture change is that project implementation is no longer modeled as a direct
+The important architecture change is that CodeRepository implementation is no longer modeled as a direct
 child launch inside a coder session.

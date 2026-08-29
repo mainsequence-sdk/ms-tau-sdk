@@ -176,7 +176,7 @@ Astro Core should stop treating these as architectural branches:
 Instead:
 
 - cwd comes from runtime context resolution
-- code repository attachment is derived from configured/requested/backend project context
+- code repository attachment is derived from configured/requested/backend CodeRepository context
 - skills come from ordered runtime/package/session/project layers
 - backend `agent_type` is metadata and adapter/session policy
 
@@ -233,19 +233,18 @@ The migration should happen in small steps:
   backend/session policy permits it.
 - [x] Reclassify `ASTRO_FIXED_AGENT_TYPE` as backend/session identity policy, not required local
   runtime architecture selection.
-- [x] Remove new-deployment reliance on `ASTRO_EXECUTION_MODE=remote_project_worker`; keep it only
-  as tolerated legacy topology metadata for old deployments.
+- [x] Remove the retired repository-worker topology environment contract from new and existing deployment guidance.
 - [x] Replace `code-repository-executor` conditionals in request handling with checks for
   `codeRepositoryAttached`, fixed cwd, backend agent/session policy, or code repository metadata.
-- [x] Replace `resolveProjectAttachment(...)` logic that treated
-  `agentType === "code-repository-executor"` as image-backed project execution. Prepared project behavior
-  now comes from runtime context fields such as `codeRepositoryAttached`, `fixedProjectCwd`, and
+- [x] Replace the retired attachment helper logic that treated
+  `agentType === "code-repository-executor"` as image-backed CodeRepository execution. Prepared CodeRepository behavior
+  now comes from runtime context fields such as `codeRepositoryAttached`, `fixedCodeRepositoryCwd`, and
   `codeRepositoryImageRef`.
 - [x] Preserve the prepared code repository runtime behavior where `codeRepositoryId` may be omitted when the
   runtime is already pinned to a prepared image/cwd, but move that rule onto runtime
-  context/project-attachment policy.
+  CodeRepository-attachment policy.
 - [x] Replace `fixedWorkerRequiresBackendSessionAuthority` checks based on
-  `runtimeProfile.kind === "code-repository-executor"` with prepared-project/session-authority policy on
+  `runtimeProfile.kind === "code-repository-executor"` with prepared-CodeRepository/session-authority policy on
   the runtime context.
 - [x] Preserve backend-authority-first model binding for prepared code-repository-attached runtimes while
   expressing that as runtime context/session-authority policy instead of `code-repository-executor` role
@@ -277,9 +276,9 @@ The migration should happen in small steps:
   deployment images/examples so package skills load consistently.
 - [x] Update current docs that described `code-repository-executor` as a separate local runtime
   architecture so they describe backend identity plus code repository attachment instead.
-- [x] Update `Dockerfile.remote-worker` and deployment examples so new code-repository-attached deployments
-  do not require `ASTRO_EXECUTION_MODE=remote_project_worker`; old env combinations remain
-  accepted where supplied by existing deployments.
+- [x] Update `Dockerfile.remote-worker` and deployment examples so
+  code-repository-attached deployments use only canonical attachment and Agent
+  identity inputs.
 - [x] Add focused regression tests for the unified runtime-context contract, code-repository-attached image
   env, and preserved Main Sequence `code-repository-executor` unique-id behavior.
 - [x] Mark this ADR implemented after code no longer uses backend role names as the deciding local
@@ -294,8 +293,9 @@ coupling.
 - Existing backend sessions with `agent_type=code-repository-executor` remain valid.
 - Existing requests that send `agentType="code-repository-executor"` continue to work.
 - Existing requests that send `agentType="astro-orchestrator"` continue to work.
-- Existing `Dockerfile.remote-worker` images that set `ASTRO_EXECUTION_MODE=remote_project_worker`,
-  `ASTRO_FIXED_AGENT_TYPE=code-repository-executor`, and `ASTRO_FIXED_CODE_REPOSITORY_CWD` continue to boot.
+- Existing `Dockerfile.remote-worker` images must provide
+  `ASTRO_FIXED_AGENT_TYPE=code-repository-executor` and
+  `ASTRO_FIXED_CODE_REPOSITORY_CWD`; no retired topology fallback is consumed.
 - Existing prepared image-backed code repository runtimes may still omit `codeRepositoryId` when a fixed cwd/image
   context already supplies the code repository workspace.
 - Existing Main Sequence backend identity behavior for `code-repository-executor`, including the stable

@@ -4,14 +4,11 @@ Status: Accepted
 Date: 2026-05-16
 Implementation Status: Complete for the Astro runtime repository
 
-Amended 2026-06-15: Astro runtime profiles now use the same public vocabulary as backend
-`agent_type`: `astro-orchestrator` and `code-repository-executor`. The legacy
-`ASTRO_EXECUTION_MODE=remote_project_worker` env value remains supported as topology metadata, but
-`project_worker` is no longer a public runtime-profile name.
-
-Backward compatibility note: existing worker deployments may keep
-`ASTRO_EXECUTION_MODE=remote_project_worker` as topology metadata, but it is not an identity alias.
-Fixed executor deployments still require `ASTRO_FIXED_AGENT_TYPE=code-repository-executor`.
+Amended 2026-08-29: Astro runtime profiles use only the backend `agent_type`
+vocabulary `astro-orchestrator` and `code-repository-executor`. The repository
+ontology cutover removes the retired worker profile and topology environment
+fallback immediately. Fixed executor deployments require
+`ASTRO_FIXED_AGENT_TYPE=code-repository-executor`.
 
 ## Context
 
@@ -182,7 +179,7 @@ Astro should not maintain two large, mostly duplicated instruction sets just bec
 Astro should also avoid introducing hard capability restrictions purely from runtime role, such as:
 
 - “executor must never do platform/control-plane work”
-- “orchestrator must never do project implementation”
+- “orchestrator must never do CodeRepository implementation”
 
 Those restrictions are too rigid for the intended product model and create artificial prompt
 fragmentation.
@@ -200,19 +197,19 @@ The shared instruction set should own common behavior such as:
 - A2A request contract
 - shared response/reporting rules
 - platform interaction
-- project interaction
+- CodeRepository interaction
 - workspace analysis
 - implementation guidance
 
-The main contextual switch is whether the runtime is already attached to a prepared project:
+The main contextual switch is whether the runtime is already attached to a prepared CodeRepository:
 
 - if code-repository-attached:
-  - treat the current cwd as the prepared project root
-  - do not create/select/set up a different project
+  - treat the current cwd as the prepared CodeRepository root
+  - do not create/select/set up a different CodeRepository
   - prefer code-repository-local instructions, status files, and task files when present
   - perform work in-place inside that code repository runtime
 - if not code-repository-attached:
-  - allow project selection, creation, and setup flows
+  - allow CodeRepository selection, creation, and setup flows
   - allow broader platform/control-plane behavior
 
 This means backend/runtime identity and prompt capability should not be tightly coupled. The
@@ -224,11 +221,11 @@ overlay.
 The following runtime behavior belongs to runtime profile, not to scattered `agentType` checks:
 
 - prompt loading strategy
-- cwd and project-root assumptions
+- cwd and CodeRepository-root assumptions
 - fixed code repository image/runtime assumptions
 - worker-side model policy defaults
 - sidecar/main-container environment parity rules
-- project-worker-specific request validation
+- CodeRepository-attached runtime request validation
 
 ## Non-Goals
 
@@ -328,7 +325,7 @@ Audit result:
   state.
 - The repo-owned deployment contract now uses the `/home/jovyan` Astro home/config/Pi layout for
   orchestrator, local worker, Compose, Kubernetes example manifests, and docs. `Dockerfile.remote-worker`
-  remains the canonical external project-worker image reference and keeps `/home/${NB_USER}`.
+  remains the canonical external CodeRepository-worker image reference and keeps `/home/${NB_USER}`.
 
 ### Runtime profile model
 
@@ -350,26 +347,26 @@ Audit result:
       selector.
 - [x] Derive code repository attachment from runtime/profile context and session metadata, not from a
       role-specific prompt assumption.
-- [x] Move cwd, repo-root, code-repository-image, and project-id rules into project-attachment/profile
+- [x] Move cwd, repo-root, code-repository-image, and CodeRepository-id rules into CodeRepository-attachment/profile
       helpers.
-- [x] Remove project-worker behavior from generic specialist-routing branches.
+- [x] Remove CodeRepository-worker behavior from generic specialist-routing branches.
 - [x] Remove any Astro-local session ownership abstraction beyond the backend `AgentSession` and its
       `agent_type`.
 - [x] Keep A2A request handling session-first: target session identity and provenance remain
-      backend/session metadata, while local execution behavior follows runtime profile and project
+      backend/session metadata, while local execution behavior follows runtime profile and CodeRepository
       attachment.
 
 Implemented in the first pass:
 
 - `interface/stream/server.ts` now resolves and validates a `RuntimeProfile` before launching chat
 - or A2A execution.
-- Runtime profile `kind` now uses `astro-orchestrator` / `code-repository-executor`; the old
-  `project_worker` label was removed from runtime logs and `get_runtime_info`.
-- Fixed project-worker runtimes now treat request `agentType` as an assertion against
+- Runtime profile `kind` now uses `astro-orchestrator` / `code-repository-executor`; the retired
+  repository-worker label is absent from runtime logs and `get_runtime_info`.
+- Fixed CodeRepository-worker runtimes now treat request `agentType` as an assertion against
   `ASTRO_FIXED_AGENT_TYPE`; mismatches are rejected.
-- CodeRepository attachment now resolves cwd, repo root, project id, and code repository image from one helper
+- CodeRepository attachment now resolves cwd, repo root, CodeRepository id, and code repository image from one helper
   instead of scattered role checks.
-- Fixed project-worker requests no longer use generic specialist discovery as their local behavior
+- Fixed CodeRepository-worker requests no longer use generic specialist discovery as their local behavior
   selector.
 - Runtime profile is emitted in startup/request logs, `/health`, available-model logs, and
   `get_runtime_info`.
@@ -377,11 +374,11 @@ Implemented in the first pass:
 ### Prompt contract
 
 - [x] Define one shared Main Sequence Astro instruction contract that covers auth, CLI failure
-      handling, A2A request shape, response discipline, platform interaction, project interaction,
+      handling, A2A request shape, response discipline, platform interaction, CodeRepository interaction,
       workspace analysis, and implementation behavior.
 - [x] Replace role-restricted prompt policy with a code-repository-attached conditional rule:
       if attached to a prepared code repository cwd, treat that cwd as canonical and work in place; if not
-      attached, project selection, creation, setup, platform, and workspace flows remain available.
+      attached, CodeRepository selection, creation, setup, platform, and workspace flows remain available.
 - [x] Remove wording that says executor must never do platform/control-plane work solely because it
       is executor, or orchestrator must never do implementation solely because it is orchestrator.
 - [x] Keep code-repository-local instructions authoritative when code-repository-attached, including code-repository-local
@@ -441,7 +438,7 @@ Canonical Astro runtime filesystem contract:
 - [x] Keep the effective working root as the intentional profile difference: orchestrator runtime
       cwd for repository-independent sessions, prepared code repository cwd for code-repository-attached sessions.
 - [x] Update `Dockerfile`, `docker-compose.yml`, sidecar deployment config, and deployment docs
-      after the canonical contract is chosen. Remove the obsolete local mounted-project Dockerfile
+      after the canonical contract is chosen. Remove the obsolete local mounted-CodeRepository Dockerfile
       harness. Do not change `Dockerfile.remote-worker`.
 
 ### Model and session policy
@@ -481,15 +478,15 @@ Cleanup result:
       fixed code repository cwd.
 - [x] Verify fixed workers validate request `agentType` as an assertion and do not use
       it as the local behavior selector.
-- [x] Verify code-repository-attached requests get cwd/project behavior without generic
+- [x] Verify code-repository-attached requests get cwd/CodeRepository behavior without generic
       specialist discovery.
-- [x] Verify repository-independent requests can still use platform, project setup,
+- [x] Verify repository-independent requests can still use platform, CodeRepository setup,
       workspace analysis, and implementation guidance from the shared prompt contract.
 - [x] Verify A2A target sessions keep provenance/session metadata and do not rely on
       role-specific prompt overlays.
 - [x] Verify container config confirms executor main container and sidecar share writable
       home/config/Pi/session-state paths.
-- [x] Run TypeScript validation and targeted local contract smokes for non-project and
+- [x] Run TypeScript validation and targeted local contract smokes for repository-independent and
       code-repository-attached execution paths.
 
 Verification completed:

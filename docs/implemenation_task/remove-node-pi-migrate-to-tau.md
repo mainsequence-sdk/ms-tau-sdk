@@ -29,13 +29,13 @@ Replace the current Node.js and Pi runtime with a Python-only Astro service buil
 
 The completed system must:
 
-- run Astro and project code in one Python 3.13+ environment
+- run Astro and CodeRepository code in one Python 3.13+ environment
 - embed Tau as a Python library instead of spawning a coding-agent CLI
 - use a Python ASGI server for the existing HTTP, streaming, and A2A interfaces
 - use a Python client for all Main Sequence backend communication
 - persist native Tau session entries through backend APIs
 - keep provider credentials backend-owned and runtime-neutral
-- retain all required tools, skills, project context, provider auth, cancellation, and streaming behavior
+- retain all required tools, skills, CodeRepository context, provider auth, cancellation, and streaming behavior
 - remove Node.js, npm, TypeScript, Pi, `pi-web-access`, Pi overlays, Pi JSONL, Pi RPC, and the checkpoint sidecar
 
 ## Decisions
@@ -597,7 +597,7 @@ On cache miss:
 
 1. Acquire the backend runtime lease.
 2. Read native Tau entries from the backend.
-3. Resolve session configuration, provider credentials, capabilities, skills, and project context.
+3. Resolve session configuration, provider credentials, capabilities, skills, and CodeRepository context.
 4. Construct and load `CodingSession`.
 5. Register the active session runtime.
 6. Dispatch the prompt.
@@ -665,7 +665,7 @@ Use `CodingSession` because it provides:
 - model changes
 - thinking levels
 - custom entries
-- skills and project context
+- skills and CodeRepository context
 - steering and follow-up queues
 - cancellation
 
@@ -793,9 +793,9 @@ The package public API is:
 from tau_file_tools import create_find_tool, create_grep_tool, create_ls_tool
 
 tools = [
-    create_grep_tool(cwd=project_cwd),
-    create_find_tool(cwd=project_cwd),
-    create_ls_tool(cwd=project_cwd),
+    create_grep_tool(cwd=code_repository_cwd),
+    create_find_tool(cwd=code_repository_cwd),
+    create_ls_tool(cwd=code_repository_cwd),
 ]
 ```
 
@@ -1376,7 +1376,7 @@ Exit criteria:
 - [x] Import the three factories when Astro constructs a `CodingSession`.
 - [x] Port runtime-info.
 - [x] Port capability materialization.
-- [x] Port skill discovery and project context.
+- [x] Port skill discovery and CodeRepository context.
 - [x] Port project policy and telemetry.
 - [x] Port the `packages/tau-web-access` workspace distribution without changing its tool contract.
 - [ ] Publish and pin the `tau-web-access` wheel if it is consumed outside the monorepo.
@@ -1494,7 +1494,7 @@ restore the database snapshot and the previous backend and Astro images together
 The migration is complete only when:
 
 - Astro runs entirely on Python 3.13 or newer.
-- Astro and project code use the same Python environment.
+- Astro and CodeRepository code use the same Python environment.
 - Tau runs in-process as a library.
 - Every enabled provider has a working Tau or Astro provider implementation.
 - Custom providers are supported through Tau's `ModelProvider` protocol.

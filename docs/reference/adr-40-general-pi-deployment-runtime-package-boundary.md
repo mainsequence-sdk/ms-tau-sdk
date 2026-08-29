@@ -504,14 +504,14 @@ type BackendSessionAdapter = {
     requestSession?: unknown;
   }): Promise<AdapterResult<BackendSessionRef & {
     modelBinding: BackendModelBinding | null;
-    projectAttachment: BackendProjectAttachment | null;
+    codeRepositoryAttachment: BackendCodeRepositoryAttachment | null;
     raw?: unknown;
   }>>;
 };
 ```
 
 For Main Sequence, this wraps backend `AgentSession.uid` fetch/hydration and converts the response
-into normalized session, model-binding, and project-attachment values.
+into normalized session, model-binding, and CodeRepository-attachment values.
 
 #### `checkpoints`
 
