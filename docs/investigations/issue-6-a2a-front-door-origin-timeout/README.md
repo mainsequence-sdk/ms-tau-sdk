@@ -207,7 +207,7 @@ autoscaling.knative.dev/scale-down-delay = 15m
 ```
 
 The initial scheduling attempt reported insufficient CPU, pod-count pressure, and untolerated node
-taints. AKS Automatic nominated a new node, then the node had to pull the complete project runtime
+taints. AKS Automatic nominated a new node, then the node had to pull the complete code repository runtime
 image. Scale-from-zero itself is expected; a 200-second activation path for an interactive public
 request is not.
 
@@ -230,7 +230,7 @@ Relevant infrastructure sources:
 - `tests/test_runtime_gateway_deadlines.py`
 
 The current infrastructure tests prove that configured timeouts equal the intended provider maxima.
-They do not prove that a scale-zero service with an uncached project image can produce a direct A2A
+They do not prove that a scale-zero service with an uncached code repository image can produce a direct A2A
 response before the edge deadline.
 
 ### Readiness semantic gap in tdag-django
@@ -299,7 +299,7 @@ deadline or recovered on a later same-ID request.
 ### Always set `minScale=1`
 
 This would prevent this exact scale-zero path but can impose permanent per-service cost across many
-inactive project runtimes. It also does not protect an unusually long model/tool turn from the finite
+inactive code repository runtimes. It also does not protect an unusually long model/tool turn from the finite
 edge deadline. A bounded warm-lifecycle policy and idempotent recovery are still required.
 
 ### Use A2A Task mode
@@ -513,7 +513,7 @@ Message. A raw caller may still call the runtime directly, so gateway deadlines 
 remain mandatory.
 
 Warmth can initially be maintained with safe periodic internal readiness traffic during the bounded
-grace period. A blanket permanent `minScale=1` for every dormant project runtime is not the default
+grace period. A blanket permanent `minScale=1` for every dormant code repository runtime is not the default
 design. If Knative traffic-based warmth proves unreliable, introduce an explicit active-service
 minimum-scale policy with cost limits and expiry.
 
@@ -531,7 +531,7 @@ Required work:
   node;
 - define a disruption/consolidation policy that respects the conversational warm grace period;
 - measure node-claim-to-ready and pod-scheduled latency;
-- reduce the 1.39 GB project runtime image and establish a compressed-image size budget;
+- reduce the 1.39 GB code repository runtime image and establish a compressed-image size budget;
 - maximize reuse of stable base layers so project-source changes do not invalidate provider/runtime
   layers;
 - evaluate node image pre-pull or registry/layer caching for approved runtime images; and

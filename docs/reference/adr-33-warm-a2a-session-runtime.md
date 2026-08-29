@@ -69,7 +69,7 @@ The result is a fixed per-turn cost that is paid even when:
 - the model/provider binding is unchanged
 - the capability set is unchanged or empty
 - the credential version is unchanged
-- the cwd/project attachment is unchanged
+- the cwd/code repository attachment is unchanged
 
 ## Decision
 
@@ -152,7 +152,7 @@ Preparation state should include:
 type PreparedSessionRuntime = {
   agentSessionUid: string;
   userUid: string;
-  agentType: "astro-orchestrator" | "project-executor";
+  agentType: "astro-orchestrator" | "code-repository-executor";
   cwd: string;
   projectId: string | null;
   provider: string;
@@ -240,7 +240,7 @@ The warm runner owns:
 
 - the live Pi process or equivalent long-lived runtime adapter
 - the session path
-- cwd/project attachment
+- cwd/code repository attachment
 - model/provider binding
 - scoped provider auth directory
 - materialized skill paths
@@ -302,7 +302,7 @@ A prepared runtime or warm runner must be invalidated when any of these change:
 - `agentSessionId`
 - `userUid`
 - `agentType`
-- cwd or project attachment
+- cwd or code repository attachment
 - model/provider binding
 - reasoning effort
 - session config overrides

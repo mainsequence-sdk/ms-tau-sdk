@@ -63,7 +63,7 @@ Astro must not call backend `start_new_session` from `/api/chat` or
 That means:
 
 - no generic "missing session id => create one" fallback
-- no project-executor-specific creation exception
+- no code-repository-executor-specific creation exception
 - no orchestrator-specific creation exception
 
 If a caller needs a new session, that session must be created by the backend control plane first.
@@ -99,7 +99,7 @@ Astro must not launch Pi with:
 
 - null model binding
 - missing provider identity when the session requires a remote provider
-- guessed project identity
+- guessed code repository identity
 
 ### 4. No frontend `new_session` stream event
 
@@ -142,7 +142,7 @@ Required for all real executor requests:
 ```json
 {
   "runtime_session_uid": "session_87_uid",
-  "agentType": "project-executor",
+  "agentType": "code-repository-executor",
   "user_uid": "user_123_uid",
   "session": { "...full backend AgentSession serializer..." },
   "messages": [...],

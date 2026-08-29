@@ -308,7 +308,7 @@ Every Astro batch dependency event uses the existing `dependency.call.completed`
 
 - `event_id`, `request_id`, `trace_id`, `span_id`, and `parent_span_id`;
 - `operation_uid`, `causation_event_id`, and `origin_request_id` for detached persistence;
-- `organization_uid`, `project_uid`, and `organization_environment_uid`;
+- `organization_uid`, `code_repository_uid`, and `organization_environment_uid`;
 - `coding_agent_service_uid`, `agent_uid`, and `agent_session_uid`;
 - `agent_run_uid`, `turn_uid`, `runtime_revision`, `code_revision`, and
   `runtime_instance_uid`; and

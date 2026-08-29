@@ -89,7 +89,7 @@ Runtime credentials must be passed through unchanged to:
 
 - stream-spawned `pi` child processes
 - delegated specialist runtimes
-- project runtime bootstrap helpers
+- code repository runtime bootstrap helpers
 
 Any helper that strips token env vars must preserve:
 

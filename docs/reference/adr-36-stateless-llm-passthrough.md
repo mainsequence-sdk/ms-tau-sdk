@@ -26,7 +26,7 @@ Astro now has two different runtime concerns:
 
 The standard A2A `message:send` path is correct for session-backed agent work, but it is the wrong
 shape for "ask a model for a fast JSON answer." That request should not pay for checkpoint leases,
-session metadata validation, Pi runner startup, capability materialization, project attachment, or
+session metadata validation, Pi runner startup, capability materialization, code repository attachment, or
 session-history writes.
 
 ## Problem
@@ -66,7 +66,7 @@ The endpoint must not:
 - restore or write checkpoints
 - create, read, or write session history
 - materialize session capabilities or agent skills
-- attach a project workspace
+- attach a code repository workspace
 - queue behind a session-backed agent turn
 - write backend session metadata
 
@@ -321,7 +321,7 @@ Examples:
 ## Relationship To Other ADRs
 
 Use the standard A2A `message:send` contract when the caller needs agent continuity, checkpoint
-safety, capabilities, tools, project workspace state, or multiple turns against the same backend
+safety, capabilities, tools, code repository workspace state, or multiple turns against the same backend
 `AgentSession.uid`.
 
 ADR 36 is for stateless inference only. The caller owns all context by sending `messages` on every

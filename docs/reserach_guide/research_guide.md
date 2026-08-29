@@ -3,7 +3,7 @@
 > Historical note:
 > This guide started from experiments around the retired `mainsequence-project-coder` role.
 > `mainsequence-project-coder` is no longer a supported runtime path. Current implementation work
-> belongs on `project-executor`, invoked through the orchestrator/executor workflow
+> belongs on `code-repository-executor`, invoked through the orchestrator/executor workflow
 > rather than any direct child-launch surface.
 
 ## Research problem: cost-effective agent evaluation for code generation
@@ -31,7 +31,7 @@ The next prompt and project will be shared as public repos in:
 
 Each project will also include the prompt used to generate the project.
 
-The current Astro product flow is orchestrator plus project-executor. This document keeps the older
+The current Astro product flow is orchestrator plus code-repository-executor. This document keeps the older
 coder example only as research context for the evaluation shape.
 
 ## Historical example: `main-sequence-project-coder`
@@ -161,7 +161,7 @@ For current Astro flows:
 
 - use the normal parent flow when orchestration, project selection, or handoff preparation still
   belongs to `astro-orchestrator`
-- use the dedicated `project-executor` runtime once implementation work moves onto the
+- use the dedicated `code-repository-executor` runtime once implementation work moves onto the
   executor path
 
 The important architecture change is that project implementation is no longer modeled as a direct

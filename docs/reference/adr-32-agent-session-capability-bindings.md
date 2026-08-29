@@ -90,7 +90,7 @@ Current backend behavior:
 
 - `inline` means user/client-created inside the platform.
 - `registry` means from a future/shared registry.
-- `repository` means synced from repo agent card plus markdown `ProjectResource`.
+- `repository` means synced from repo agent card plus markdown `CodeRepositoryResource`.
 - `api` means API-provided capability.
 - `external` means external system reference.
 
@@ -456,7 +456,7 @@ The scaffolder should:
 
 - create `.agents/agent_card.json` for agent identity and discovery metadata
 - create `.agents/skills/` only when it is missing
-- preserve existing `.agents/skills/` content from the project image
+- preserve existing `.agents/skills/` content from the code repository image
 - sync repository skills into `AgentCapability` plus `AgentCapabilityBinding` rows through
   `/agents/{agent_uid}/capabilities/sync-from-card/`
 - set repository-synced capability and binding `source_type` to `repository`
@@ -472,9 +472,9 @@ The scaffolder should not:
 - create environment-variable or model-binding policy
 - mutate an existing project checkout during session launch
 
-If the prepared project image already contains `.agents/skills/`, Astro must leave those
-project-image files untouched. Session materialization happens in `/session-state`, and the Pi
-adapter layers session materialized skills alongside fixed project-image `.agents/skills` without
+If the prepared code repository image already contains `.agents/skills/`, Astro must leave those
+code-repository-image files untouched. Session materialization happens in `/session-state`, and the Pi
+adapter layers session materialized skills alongside fixed code-repository-image `.agents/skills` without
 writing back into the project checkout.
 
 ## Non-Goals
@@ -519,7 +519,7 @@ This ADR does not:
 - [x] Add tests that repository-sourced agent defaults are not duplicated into session
       capabilities or session materialization.
 - [x] Add tests that one session's capability materialization does not leak into another session.
-- [ ] Add tests that session materialization does not overwrite prepared project-image
+- [ ] Add tests that session materialization does not overwrite prepared code-repository-image
       `.agents/skills/`.
 - [ ] Add tests that rematerialization can only replace the current session's own skill root.
 - [ ] Add tests for invalid `capability_path` values and unsupported capability kinds.

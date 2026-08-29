@@ -45,7 +45,7 @@ These decisions are fixed for this implementation:
 1. There is no Pi session or checkpoint backward compatibility.
 2. The backend may change in the same release as Astro.
 3. Existing Pi sessions may be deleted, reset, or marked unusable during cutover.
-4. Every supported project image must provide Python 3.13 or newer.
+4. Every supported code repository image must provide Python 3.13 or newer.
 5. Astro, Tau, the Main Sequence SDK, and project dependencies run in the same Python environment.
 6. There is no separate `/opt/astro` interpreter or hidden Astro virtual environment.
 7. Tau is embedded through its Python APIs. Astro does not launch the `tau` CLI.
@@ -65,7 +65,7 @@ These decisions are fixed for this implementation:
 - Keeping the current local file checkpoint bundle format.
 - Running the Tau TUI inside the Astro service.
 - Loading untrusted Python extensions automatically from arbitrary cloned repositories.
-- Supporting project images with Python 3.12 or older.
+- Supporting code repository images with Python 3.12 or older.
 
 ## Current Architecture Being Removed
 
@@ -836,7 +836,7 @@ Implement only Astro-specific tools:
 - any project-specific tool currently exposed through Pi overlays
 
 `get_runtime_info` remains in Astro because it reports Astro release, Python runtime, execution
-mode, project image, workspace, and deployment paths. It is not a generic coding-agent primitive and
+mode, code repository image, workspace, and deployment paths. It is not a generic coding-agent primitive and
 does not belong in Tau core.
 
 Each tool must define:
@@ -930,7 +930,7 @@ is an implementation port, not a product or tool-contract redesign.
 Do not preserve Node merely for this feature. Publication of `tau-web-access` with contract tests is
 a prerequisite for deleting `pi-web-access`.
 
-### Skills and Project Context
+### Skills and CodeRepository Context
 
 Use Tau's native support for:
 
@@ -952,7 +952,7 @@ Do not copy JavaScript Pi extensions into the new runtime.
 
 ## Single Python Environment Contract
 
-The current remote-worker image overlays a Node Astro runtime onto an arbitrary project image. That
+The current remote-worker image overlays a Node Astro runtime onto an arbitrary code repository image. That
 split is removed.
 
 Every project base image must satisfy:
@@ -964,13 +964,13 @@ python can import project dependencies
 python is the interpreter used by Astro and Tau tools
 ```
 
-### Project Image Policy
+### CodeRepository Image Policy
 
-- project image templates are upgraded to Python 3.13 or newer
+- code repository image templates are upgraded to Python 3.13 or newer
 - image publication fails if `sys.version_info < (3, 13)`
-- Astro is installed into the project image's active Python environment
+- Astro is installed into the code repository image's active Python environment
 - Tau and Main Sequence dependencies resolve in that same environment
-- dependency conflicts fail the project image build
+- dependency conflicts fail the code repository image build
 - no second virtual environment is created to hide dependency conflicts
 - no `/opt/astro` interpreter is installed
 - `bash` and Python tool subprocesses inherit the same environment
@@ -1031,7 +1031,7 @@ The new remote worker build:
 2. Copies an Astro wheel and lock/exported constraint artifact from the Astro build stage.
 3. Installs Astro into the active project Python environment.
 4. Validates Python, Tau, Main Sequence, and project imports.
-5. Starts Uvicorn from the project cwd.
+5. Starts Uvicorn from the code repository cwd.
 
 Do not install Node.
 
@@ -1089,7 +1089,7 @@ Publish:
 - Python runtime tag
 - Tau version label
 - Main Sequence SDK version tag
-- project-executor wheel/bundle artifact
+- code-repository-executor wheel/bundle artifact
 
 ## Environment Variable Cleanup
 
@@ -1114,7 +1114,7 @@ Define a smaller Pydantic settings contract:
 
 - `ASTRO_HOST`
 - `ASTRO_PORT`
-- `ASTRO_PROJECT_CWD`
+- `ASTRO_CODE_REPOSITORY_CWD`
 - `ASTRO_HOME`
 - `ASTRO_SESSION_IDLE_TTL_SECONDS`
 - `ASTRO_SESSION_LEASE_TTL_SECONDS`
@@ -1479,7 +1479,7 @@ restore the database snapshot and the previous backend and Astro images together
 | Risk | Control |
 | --- | --- |
 | Tau API changes rapidly | Exact pin, lockfile, runtime contract tests |
-| One environment exposes dependency conflicts | Resolve at project-image build time and fail explicitly |
+| One environment exposes dependency conflicts | Resolve at code-repository-image build time and fail explicitly |
 | In-process extensions can crash the service | Load only trusted Astro extensions; isolate untrusted project commands through tools/container boundaries |
 | Backend entry writes increase request volume | Connection pooling, idempotent append API, optional bounded batching after correctness |
 | Provider behavior differs from Pi | Provider-by-provider contract and live smoke tests |
@@ -1508,7 +1508,7 @@ The migration is complete only when:
 - `tau-file-tools` provides Pi-compatible `grep`, `find`, and `ls` tools as an external dependency.
 - `tau-web-access` passes compatibility tests for the four existing web tools.
 - Docker Compose and Kubernetes run one Astro service container.
-- Project images enforce Python 3.13+.
+- CodeRepository images enforce Python 3.13+.
 - Node is absent from production images.
 - Pi, Pi overlays, Pi JSONL, Pi RPC, npm files, and the checkpoint sidecar are deleted.
 - Documentation describes only the Python/Tau architecture.

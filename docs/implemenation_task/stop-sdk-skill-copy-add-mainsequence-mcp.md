@@ -35,7 +35,7 @@ The final ownership model is:
 
 5. MCP is automatically enabled for every durable Tau `CodingSession`.
 6. There is no MCP feature flag.
-7. Project-owned `.agents` content is read directly from the project.
+7. CodeRepository-owned `.agents` content is read directly from the project.
 8. Platform MCP resources remain MCP resources. They are not copied or
    converted into local Tau skill files.
 9. `AgentCapability`, its bindings, APIs, and Astro materialization remain
@@ -148,7 +148,7 @@ Add it to Astro's root dependency and lock files so the existing image build:
 
 - downloads its locked wheels into `/opt/wheels`
 - installs it into `astro-runtime`
-- includes it in `project-executor-bundle`
+- includes it in `code-repository-executor-bundle`
 - installs it into the active Python 3.13 environment produced by
   `Dockerfile.remote-worker`
 
@@ -185,7 +185,7 @@ Update `SessionRuntimeManager._load`:
 ```text
 load backend session
   -> acquire runtime lease
-  -> resolve provider and project cwd
+  -> resolve provider and code repository cwd
   -> materialize backend session capabilities
   -> open Django MCP using existing Astro authentication
   -> list MCP tools and resources
@@ -363,7 +363,7 @@ Astro container
 No additional MCP configuration is required.
 
 Verify the built Astro and remote-worker images can import `mcp` before
-deployment. The Astro base image must not install `mainsequence`. Projects must
+deployment. The Astro base image must not install `mainsequence`. Code repositories must
 not declare or install the MCP SDK themselves.
 
 ## Delivery Order
@@ -383,7 +383,7 @@ not declare or install the MCP SDK themselves.
 - Astro uses one authentication mechanism for Django API and MCP traffic.
 - MCP requires no additional credentials or environment variables.
 - Every durable Tau session automatically includes Main Sequence MCP.
-- Project-owned resources are read from the project repository.
+- CodeRepository-owned resources are read from the project repository.
 - Platform knowledge and operations come only from Django MCP.
 - Astro does not copy SDK platform skills into the project.
 - Astro does not install the `mainsequence` package or expose its CLI.

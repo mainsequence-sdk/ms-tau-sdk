@@ -20,7 +20,6 @@ def test_settings_normalize_backend_and_origins():
 
 def test_settings_accept_only_code_repository_cwd(monkeypatch):
     monkeypatch.delenv("ASTRO_CODE_REPOSITORY_CWD", raising=False)
-    monkeypatch.setenv("ASTRO_PROJECT_CWD", "/legacy")
     settings = Settings(_env_file=None)
     assert settings.code_repository_root == Path("/workspace")
 

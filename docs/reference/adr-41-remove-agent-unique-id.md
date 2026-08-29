@@ -14,7 +14,7 @@ Astro currently handles several backend/session identity concepts:
 
 - `agent.uid`: backend Agent resource identity.
 - `agent_session.uid`: backend AgentSession resource identity.
-- `agent_type`: backend/product classification such as `astro-orchestrator` or `project-executor`.
+- `agent_type`: backend/product classification such as `astro-orchestrator` or `code-repository-executor`.
 - `agent_unique_id`: deterministic semantic identity historically used for lookup/reuse.
 
 The project has already moved the active runtime model toward backend-owned session attach:
@@ -37,7 +37,7 @@ Keeping `agent_unique_id` creates avoidable ambiguity:
 - Checkpoint/session metadata preserves a duplicate identity that can become stale.
 - The backend adapter still exposes `buildAgentUniqueId(...)`, which encourages new code to create
   semantic lookup keys instead of using backend `uid`.
-- Tests preserve `project-executor` unique-id special cases that no longer belong in the unified
+- Tests preserve `code-repository-executor` unique-id special cases that no longer belong in the unified
   runtime model.
 
 The right boundary is stricter:
@@ -70,7 +70,7 @@ Astro must not:
 - expose `X-Agent-Unique-Id`
 - expose `X-Agent-Uid`
 - keep `buildAgentUniqueId(...)`
-- keep `project-executor` unique-id override behavior
+- keep `code-repository-executor` unique-id override behavior
 
 The canonical public and internal fields become:
 
@@ -185,7 +185,7 @@ fallback. They must provide backend `uid` fields.
 - [x] Stop preserving `agentUniqueId` and `agent_unique_id` in the checkpoint sidecar.
 - [x] Remove `buildAgentUniqueId(...)` from `BackendIdentityCapability`.
 - [x] Remove Main Sequence `buildAgentUniqueId(...)` implementation and the
-      `project-executor` unique-id override map.
+      `code-repository-executor` unique-id override map.
 - [x] Remove tests that assert deterministic unique-id generation.
 - [x] Add tests asserting the stream response does not contain `X-Agent-Unique-Id` or
       `X-Agent-Uid`.

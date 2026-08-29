@@ -135,7 +135,7 @@ Agent prompt and capability content needed at execution time must also be packag
 locally. A manifest entry that points only to a backend capability is not usable by this endpoint.
 
 Request handling reads and validates this local snapshot. It must not fetch the agent, Agent Card,
-capability bindings, capability content, runtime configuration, model defaults, or project metadata
+capability bindings, capability content, runtime configuration, model defaults, or code repository metadata
 from the backend.
 
 The deployment snapshot uses the same control-plane default-resolution code that initializes a

@@ -12,7 +12,7 @@ session capabilities, and model catalog access now enter through that adapter. M
 CLI/config/shim bootstrap now enters through `adapter.bootstrap`. The Dockerfile now has a
 backend-neutral `astro-core` build stage and explicit `astro-mainsequence-*` deployment targets;
 current Compose and GCP deployment still intentionally select the Main Sequence target. The
-previous standalone external package cutover direction is superseded. Project attachment, A2A
+previous standalone external package cutover direction is superseded. CodeRepository attachment, A2A
 backend policy, a runnable null/custom backend, backend-neutral startup, and adapter-driven
 checkpoint sidecar behavior are still not complete.
 
@@ -53,7 +53,7 @@ recorded in the active reference set:
 - Backend sessions are created outside Astro. Astro attaches to existing backend sessions; chat and
   A2A do not create sessions.
 - Runtime identity is currently represented as `agentType` / `agent_type`, and the currently exposed
-  Main Sequence runtime/backend types are `astro-orchestrator` and `project-executor`. Per ADR 39,
+  Main Sequence runtime/backend types are `astro-orchestrator` and `code-repository-executor`. Per ADR 39,
   those names are backend/session metadata and package/adapter policy inputs, not separate Astro
   Core runtime architectures.
 - Backend resource lookup uses `uid`, not legacy numeric ids.
@@ -63,7 +63,7 @@ recorded in the active reference set:
 - Warm A2A runners are internal Astro execution machinery. They are not a public attach/status
   protocol.
 - Agent-targeted sessionless execution uses `POST /api/agents/{agent_uid}/responses` and must not
-  go through sessions, checkpoints, Pi runners, project attachment, queues, or persistence. ADR 44
+  go through sessions, checkpoints, Pi runners, code repository attachment, queues, or persistence. ADR 44
   supersedes the former unscoped model passthrough.
 - Main Sequence runtime credential auth remains the deployed-runtime auth mechanism.
 - Main Sequence session capabilities and injected skills remain current behavior until an adapter
@@ -202,21 +202,21 @@ identities:
 ```text
 same Astro stream server/image/code
   -> astro-orchestrator
-  -> project-executor
+  -> code-repository-executor
 ```
 
 That is current behavior, not the desired Astro Core boundary.
 
 `astro-orchestrator` currently means the Main Sequence control-plane agent runtime: user-facing
-project creation, workspace analysis, A2A coordination, session orchestration, and project-executor
+project creation, workspace analysis, A2A coordination, session orchestration, and code-repository-executor
 selection.
 
-`project-executor` currently means a Main Sequence project-attached runtime selected by environment,
+`code-repository-executor` currently means a Main Sequence code-repository-attached runtime selected by environment,
 for example:
 
 ```text
-ASTRO_FIXED_AGENT_TYPE=project-executor
-ASTRO_FIXED_PROJECT_CWD=/workspace/project
+ASTRO_FIXED_AGENT_TYPE=code-repository-executor
+ASTRO_FIXED_CODE_REPOSITORY_CWD=/workspace/project
 ```
 
 Astro Core should not permanently own those Main Sequence names or policies. The target split is:
@@ -224,43 +224,43 @@ Astro Core should not permanently own those Main Sequence names or policies. The
 ```text
 Astro Core runtime
   generic Pi session runtime
-  generic fixed-cwd/project-attached Pi runtime mechanics
+  generic fixed-cwd/code-repository-attached Pi runtime mechanics
 
 Main Sequence deployment composition
   configures one Astro runtime as the Main Sequence orchestrator
-  configures another Astro runtime as the Main Sequence project executor
+  configures another Astro runtime as the Main Sequence code repository executor
   supplies the Main Sequence adapter-owned Pi resource overlay
   supplies the Main Sequence backend adapter
 ```
 
 In other words, Astro Core may support generic runtime shapes such as "default session runtime" and
-"fixed workspace cwd runtime", but `astro-orchestrator`, `project-executor`, and their product
+"fixed workspace cwd runtime", but `astro-orchestrator`, `code-repository-executor`, and their product
 policies belong to the Main Sequence adapter/deployment composition.
 
-### Project-Executor Boundary
+### CodeRepository-Executor Boundary
 
-`project-executor` must not be treated as standalone portable Pi package content.
+`code-repository-executor` must not be treated as standalone portable Pi package content.
 
-In the current implementation, `project-executor` is a Main Sequence deployment composition made of:
+In the current implementation, `code-repository-executor` is a Main Sequence deployment composition made of:
 
-- a backend-owned session identity, currently `AgentSession.uid` with `agent_type=project-executor`
-- backend-owned model binding, checkpoint, provider credential, capability, and project attachment
+- a backend-owned session identity, currently `AgentSession.uid` with `agent_type=code-repository-executor`
+- backend-owned model binding, checkpoint, provider credential, capability, and code repository attachment
   policy
-- deployment env selecting the fixed runtime, currently `ASTRO_FIXED_AGENT_TYPE=project-executor`
-  and `ASTRO_FIXED_PROJECT_CWD`
-- a prepared project image/filesystem containing the selected project checkout, dependencies, and
-  project-local runtime state
-- project-local instructions, task/status files, and optional project-local Pi resources
+- deployment env selecting the fixed runtime, currently `ASTRO_FIXED_AGENT_TYPE=code-repository-executor`
+  and `ASTRO_FIXED_CODE_REPOSITORY_CWD`
+- a prepared code repository image/filesystem containing the selected project checkout, dependencies, and
+  code-repository-local runtime state
+- code-repository-local instructions, task/status files, and optional code-repository-local Pi resources
 - generic Astro Core mechanics for launching Pi in a fixed cwd, streaming output, preserving local
   state, and running a warm process
 
 Those pieces are not the same kind of artifact as portable Pi skills/prompts/extensions. Therefore
-the Main Sequence Pi resource overlay must not bundle a standalone project-executor prompt, project
+the Main Sequence Pi resource overlay must not bundle a standalone code-repository-executor prompt, project
 setup workflow, checkpoint policy, fixed-cwd policy, or backend session policy.
 
-The only project-executor behavior that may eventually become Pi resource overlay content is a small
-project-attached policy fragment or skill, and only after an inventory proves it is not already
-provided by project-local resources, backend materialization, or the prepared project image.
+The only code-repository-executor behavior that may eventually become Pi resource overlay content is a small
+code-repository-attached policy fragment or skill, and only after an inventory proves it is not already
+provided by code-repository-local resources, backend materialization, or the prepared code repository image.
 
 The target ownership is:
 
@@ -269,16 +269,16 @@ Astro Core
   generic fixed-cwd Pi runtime mechanics
 
 Main Sequence Astro adapter / deployment composition
-  project-executor identity, backend session authority, project attachment policy,
+  code-repository-executor identity, backend session authority, code repository attachment policy,
   checkpoint/credential/capability policy, and image/runtime wiring
 
-Prepared project image/filesystem
-  project source, dependencies, project-local instructions, task/status files,
-  and project-local Pi resources
+Prepared code repository image/filesystem
+  project source, dependencies, code-repository-local instructions, task/status files,
+  and code-repository-local Pi resources
 
 Main Sequence adapter Pi resource overlay
   Main Sequence runtime-facing prompts/extensions/tools that depend on this deployment composition;
-  project-executor overlay resources only after explicit inventory and acceptance
+  code-repository-executor overlay resources only after explicit inventory and acceptance
 ```
 
 ## Pi Terminology Used Here
@@ -328,7 +328,7 @@ Astro Core
   Backend-neutral Pi deployment runtime.
   Owns HTTP/SSE/REST routes, public protocol translation, Pi launch, warm runners,
   local runtime state, local session files, agent-targeted sessionless responses, generic
-  fixed-cwd/project-attached runtime mechanics, and adapter hooks.
+  fixed-cwd/code-repository-attached runtime mechanics, and adapter hooks.
 
 Main Sequence Astro Adapter
   Optional Main Sequence backend/runtime integration for Astro.
@@ -372,7 +372,7 @@ Astro Core should own backend-neutral runtime mechanics:
 
 Astro Core must not construct Main Sequence API URLs or import Main Sequence SDK/auth helpers
 directly once the adapter split is implemented. Astro Core must also not hardcode Main Sequence
-runtime identity names such as `astro-orchestrator` or `project-executor` as its generic runtime
+runtime identity names such as `astro-orchestrator` or `code-repository-executor` as its generic runtime
 model.
 
 ### Main Sequence Deployment Composition
@@ -382,7 +382,7 @@ that currently live inside Astro:
 
 ```text
 astro-orchestrator
-project-executor
+code-repository-executor
 ```
 
 It should assemble:
@@ -452,10 +452,10 @@ type BackendModelBinding = {
 
 type BackendProjectAttachment = {
   attached: boolean;
-  projectId: string | null;
+  codeRepositoryId: string | null;
   cwd: string | null;
   repoRoot: string | null;
-  projectImageRef: string | null;
+  codeRepositoryImageRef: string | null;
 };
 
 type AdapterFailure = {
@@ -635,7 +635,7 @@ type BackendModelCatalogAdapter = {
 #### `projects`
 
 The project adapter owns backend project/workspace attachment policy. Astro Core can prepare a cwd,
-but it should not decide Main Sequence project identity.
+but it should not decide Main Sequence code repository identity.
 
 ```ts
 type BackendProjectAdapter = {
@@ -709,7 +709,7 @@ does this endpoint require durable sessions?
 does this backend provide checkpoint leases?
 does this backend provide provider credentials?
 does this backend provide session capabilities?
-does this backend provide project attachment?
+does this backend provide code repository attachment?
 does this backend provide A2A session/task mapping?
 ```
 
@@ -928,7 +928,7 @@ state. Unchecked items are the remaining work.
 
 ### Completed Foundation
 
-- [x] Implement ADR 39 so `astro-orchestrator` and `project-executor` are backend/session metadata,
+- [x] Implement ADR 39 so `astro-orchestrator` and `code-repository-executor` are backend/session metadata,
   not separate Astro Core runtime architectures.
 - [x] Keep this ADR as the source of truth for the proposed Astro Core / backend adapter /
   adapter-owned Pi resource overlay split.
@@ -936,8 +936,8 @@ state. Unchecked items are the remaining work.
 - [x] Keep `adapters/mainsequence/pi-overlay` private and adapter-owned; do not treat it as an external
   production package source of truth.
 - [x] Wire Astro deployments to consume additional Pi packages through `ASTRO_PI_PACKAGE_PATHS`.
-- [x] Include `ASTRO_PI_PACKAGE_PATHS=/app/adapters/mainsequence/pi-overlay` in Astro-owned no-project and
-  project-attached Docker image/env examples.
+- [x] Include `ASTRO_PI_PACKAGE_PATHS=/app/adapters/mainsequence/pi-overlay` in Astro-owned repository-independent and
+  code-repository-attached Docker image/env examples.
 - [x] Keep root `pi/` limited to Astro Core Pi resources during the current overlay staging period.
 - [x] Move Main Sequence-facing prompts, system prompt content, and Pi tools/hooks out of root `pi/`
   and into `adapters/mainsequence/pi-overlay`.
@@ -948,7 +948,7 @@ state. Unchecked items are the remaining work.
   `adapters/mainsequence/pi-overlay/pi/extensions/hooks/scaffold-skill-discovery`.
 - [x] Keep SDK-owned skills source-of-truth in the Main Sequence SDK/CLI. The overlay calls
   `mainsequence skills path` instead of copying component maps or skill bodies into Astro.
-- [x] Do not add standalone `project-executor` package content to `adapters/mainsequence/pi-overlay`.
+- [x] Do not add standalone `code-repository-executor` package content to `adapters/mainsequence/pi-overlay`.
 - [x] Preserve public endpoints. This ADR does not add public runtime attachment endpoints.
 - [x] Keep public A2A on `POST /api/a2a/v1/message:send` and related standard A2A routes.
 - [x] Replace the unscoped model route with ADR 44 agent-targeted sessionless response endpoints,
@@ -1004,7 +1004,7 @@ adapter slice.
 | `PATCH /api/chat/session-config` | `sessions` when local session metadata is missing and backend hydration is needed | `modelCatalog` for context-window/runtime-limit policy if moved out of Core | `sessions` is already behind `backendAdapter.sessions`. Runtime-limit validation is still direct/Core. |
 | `POST /api/chat/session/cancel` | `checkpoints` | none | Server now calls `backendAdapter.checkpoints`. |
 | `GET /api/chat` | none | none | Core-only usage hint. |
-| `POST /api/chat` | `auth`, `identity`, `sessions`, `checkpoints` | `providerCredentials`, `capabilities`, `modelCatalog`, `projects`, `a2a` | `auth`, `identity`, `sessions`, `checkpoints`, `providerCredentials`, `capabilities`, and `modelCatalog` are now behind `backendAdapter`. Project attachment and A2A policy remain Core/direct pending later slices. |
+| `POST /api/chat` | `auth`, `identity`, `sessions`, `checkpoints` | `providerCredentials`, `capabilities`, `modelCatalog`, `projects`, `a2a` | `auth`, `identity`, `sessions`, `checkpoints`, `providerCredentials`, `capabilities`, and `modelCatalog` are now behind `backendAdapter`. CodeRepository attachment and A2A policy remain Core/direct pending later slices. |
 | `POST /api/a2a/v1/message:send` | Same as `POST /api/chat` for Pi-backed execution | `a2a` for backend-owned A2A routing/agent discovery policy | Public A2A wrapper routes into the same runtime execution path today. |
 | `POST /api/a2a/v1/message:stream` | Same as `POST /api/chat` for Pi-backed execution | `a2a` for backend-owned A2A routing/agent discovery policy | Public A2A streaming wrapper routes into the same runtime execution path today. |
 | `POST /api/a2a/v1` JSON-RPC `SendMessage` / `message/send` | Same as `POST /api/chat` for Pi-backed execution | `a2a` for backend-owned A2A routing/agent discovery policy | JSON-RPC wrapper routes into the same runtime execution path today. |
@@ -1094,7 +1094,7 @@ The immediate rule for implementation is:
   `ASTRO_PI_PACKAGE_PATHS` points at `/app/adapters/mainsequence/pi-overlay`.
 - [x] Rename package metadata/descriptions so the overlay is not described as a standalone external
   package.
-- [ ] Ensure adapter overlay loading remains behavior-compatible for local, GCP, and project-attached
+- [ ] Ensure adapter overlay loading remains behavior-compatible for local, GCP, and code-repository-attached
   Main Sequence deployments.
 
 ### Image And Deployment Split
@@ -1134,7 +1134,7 @@ The immediate rule for implementation is:
 - [x] Existing backend-backed sessions continue to use `AgentSession.uid`.
 - [x] Existing checkpoint, provider credential, capability, and model catalog behavior remains
   compatible through the adapter.
-- [ ] A2A backend policy and project attachment behavior move behind adapter capabilities.
+- [ ] A2A backend policy and code repository attachment behavior move behind adapter capabilities.
 - [x] Public endpoints remain unchanged.
 - [x] No public runtime attachment endpoints are reintroduced.
 - [ ] Main Sequence adapter-owned Pi resources load through the Main Sequence deployment without
@@ -1148,7 +1148,7 @@ The refactor must preserve current Main Sequence behavior during migration:
 - Existing A2A `message:send` behavior continues.
 - ADR 44 agent-targeted sessionless response behavior continues; the unscoped model route remains absent.
 - Existing checkpoint, provider credential, and capability behavior continues through the adapter.
-- Existing Main Sequence runtime identities remain `astro-orchestrator` and `project-executor`
+- Existing Main Sequence runtime identities remain `astro-orchestrator` and `code-repository-executor`
   during migration, but they are preserved by the Main Sequence composition/adapter rather than
   becoming permanent Astro Core concepts.
 

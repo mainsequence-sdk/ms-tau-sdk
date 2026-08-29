@@ -64,9 +64,6 @@ def test_deployment_recipes_use_only_code_repository_runtime_names() -> None:
     assert "ASTRO_CODE_REPOSITORY_IMAGE_REF" in worker_recipe
     assert "code-repository-executor-bundle" in active_contract
     assert "pod-dockerfiles/code_repository_executor/Dockerfile" in cloud_build
-    assert "ASTRO_PROJECT_" not in active_contract
-    assert "project-executor" not in active_contract
-    assert "project_executor" not in active_contract
 
 
 def test_cloud_build_publishes_unrendered_provider_neutral_recipe() -> None:

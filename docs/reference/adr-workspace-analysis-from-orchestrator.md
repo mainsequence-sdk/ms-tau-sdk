@@ -29,7 +29,7 @@ By workspace analysis, we mean a read-oriented flow where the orchestrator can:
 This is intentionally different from:
 
 - project creation
-- project-local implementation
+- code-repository-local implementation
 - project-scoped specialist handoff
 
 The current gap is not only prompt wording. It is also a startup/runtime concern.
@@ -81,7 +81,7 @@ This ADR is only about:
 
 This ADR is not about:
 
-- project-local implementation behavior
+- code-repository-local implementation behavior
 - specialist handoff rules
 - project-coder bootstrap
 - backend session ownership
@@ -130,7 +130,7 @@ That prompt contract should make the following clear:
 The prompt should also distinguish workspace analysis from:
 
 - creating a new Main Sequence project
-- switching into project-local implementation
+- switching into code-repository-local implementation
 - answering generic non-Main-Sequence repository questions
 
 ## Startup Placement

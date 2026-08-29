@@ -4,9 +4,9 @@
 
 ### CodeRepository Runtime Ontology
 
-- Replaced the Project Executor runtime contract with canonical-only CodeRepository settings,
+- Replaced the repository executor runtime contract with canonical-only CodeRepository settings,
   executor and bundle discriminators, MCP examples, structured log fields, and deployment
-  artifacts under ADR-046. Legacy Project runtime names are no longer accepted.
+  artifacts under ADR-046. Superseded repository runtime names are no longer accepted.
 
 ## 2.0.7 - 2026-06-19
 
@@ -47,11 +47,11 @@
 
 ### Runtime Identity Vocabulary
 
-- Changed Astro runtime profile values to use backend agent-type vocabulary: `astro-orchestrator` and `project-executor`.
+- Changed Astro runtime profile values to use backend agent-type vocabulary: `astro-orchestrator` and `code-repository-executor`.
 - Removed `project_worker` as a public runtime-profile name while keeping `ASTRO_EXECUTION_MODE=remote_project_worker` as legacy topology metadata.
-- Documented the two deployment identities, fixed `project-executor` request validation, and matching sidecar filesystem expectations.
+- Documented the two deployment identities, fixed `code-repository-executor` request validation, and matching sidecar filesystem expectations.
 - Expanded deployment identity docs across the README, interface request/error contract, quickstart, and persistent-state guidance so fixed-worker identity and sidecar path requirements are discoverable from operational docs.
-- Kept existing `ASTRO_EXECUTION_MODE=remote_project_worker` deployments backward compatible as topology metadata while preserving `ASTRO_FIXED_AGENT_TYPE=project-executor` as the fixed executor identity source.
+- Kept existing `ASTRO_EXECUTION_MODE=remote_project_worker` deployments backward compatible as topology metadata while preserving `ASTRO_FIXED_AGENT_TYPE=code-repository-executor` as the fixed executor identity source.
 
 ## 2.0.3 - 2026-06-14
 
@@ -81,30 +81,30 @@
 
 ## 1.0.2 - 2026-05-17
 
-### Strict Project Executor Identity
+### Strict CodeRepository Executor Identity
 
-- Cut the project executor runtime over to the canonical backend `agent_type` value `project-executor`.
-- Updated fixed-worker deployment env, runtime profile detection, request/session validation, A2A examples, and docs to use `project-executor` consistently.
-- Removed the obsolete standalone project executor prompt overlay from `.pi/agents`; project-attached behavior now comes from `.pi/APPEND_SYSTEM.md` plus `ASTRO_FIXED_AGENT_TYPE=project-executor`.
+- Cut the code repository executor runtime over to the canonical backend `agent_type` value `code-repository-executor`.
+- Updated fixed-worker deployment env, runtime profile detection, request/session validation, A2A examples, and docs to use `code-repository-executor` consistently.
+- Removed the obsolete standalone code repository executor prompt overlay from `.pi/agents`; code-repository-attached behavior now comes from `.pi/APPEND_SYSTEM.md` plus `ASTRO_FIXED_AGENT_TYPE=code-repository-executor`.
 - Verified the removed executor identity has no remaining code, docs, prompt, or filename references.
 
 ## 1.0.0 - 2026-05-17
 
 ### Major Runtime Contract Upgrade
 
-- Introduced Astro runtime profiles so local behavior is selected by the deployed runtime profile and project attachment, while backend identity remains keyed by `agent_type`.
-- Unified the base prompt contract into `.pi/APPEND_SYSTEM.md` and removed the standalone `project-executor` prompt overlay.
-- Removed project-worker behavior from generic specialist prompt discovery; fixed project workers now use deterministic shared-prompt plus project-attached context.
+- Introduced Astro runtime profiles so local behavior is selected by the deployed runtime profile and code repository attachment, while backend identity remains keyed by `agent_type`.
+- Unified the base prompt contract into `.pi/APPEND_SYSTEM.md` and removed the standalone `code-repository-executor` prompt overlay.
+- Removed project-worker behavior from generic specialist prompt discovery; fixed code repository workers now use deterministic shared-prompt plus code-repository-attached context.
 - Made fixed-worker model binding session-first: backend/session model authority is respected, and delegating sessions cannot override target worker model policy through unrelated request state.
 - Preserved durable A2A envelope and provenance metadata independently from prompt/runtime role, including target backend session identity.
 - Normalized checkpoint metadata, session metadata, history hydration metadata, and session insights around backend `agent_type` and backend `AgentSession` identity.
 - Converged repo-owned orchestrator and local project-worker runtime filesystem contracts on the `/home/jovyan` Astro data/config/Pi layout with shared `/session-state` sidecar paths.
-- Retained `Dockerfile.remote-worker` as the canonical external project-executor image reference while aligning local Compose, Kubernetes examples, and docs with the unified contract.
+- Retained `Dockerfile.remote-worker` as the canonical external code-repository-executor image reference while aligning local Compose, Kubernetes examples, and docs with the unified contract.
 - Removed Astro-owned project setup/finalize wrapper scripts in favor of the canonical Main Sequence project/runtime flow.
 - Updated image/version tagging docs to use `ms-sdk-<version>` for Main Sequence SDK version tags.
 
 ### Compatibility Notes
 
-- Backend-visible identities remain `astro-orchestrator` and `project-executor`.
+- Backend-visible identities remain `astro-orchestrator` and `code-repository-executor`.
 - Request/session identity remains `agentType` / `agent_type`; removed aliases such as `agentName` are not reintroduced.
 - Existing local metadata does not require a one-time migration; the runtime reads camel-case and snake-case backend identity fields and writes normalized forms going forward.

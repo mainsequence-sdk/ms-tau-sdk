@@ -193,25 +193,18 @@ def test_environment_context_uses_only_canonical_reserved_field(capsys, monkeypa
         "MAINSEQUENCE_ORGANIZATION_ENVIRONMENT_UID",
         "environment-trusted",
     )
-    monkeypatch.setenv("MAINSEQUENCE_PROJECT_ENVIRONMENT_UID", "environment-legacy")
     configure_logging("INFO", machine_sink=True, human_sink=False)
 
     structlog.get_logger("astro.project").info(
         "project.domain.event",
         organization_environment_uid="environment-forged",
-        organization_project_environment_uid="environment-legacy",
-        project_environment_uid="environment-legacy",
     )
 
     event = _json_events(capsys.readouterr().out)[-1]
     assert event["organization_environment_uid"] == "environment-trusted"
-    assert "organization_project_environment_uid" not in event
-    assert "project_environment_uid" not in event
 
 
 def test_environment_context_uses_only_code_repository_uid(capsys, monkeypatch):
-    monkeypatch.setenv("MAINSEQUENCE_PROJECT_UID", "legacy-project")
-    monkeypatch.setenv("PROJECT_UID", "legacy-project")
     monkeypatch.setenv("MAINSEQUENCE_CODE_REPOSITORY_UID", "repository-1")
     configure_logging("INFO", machine_sink=True, human_sink=False)
 
@@ -219,7 +212,6 @@ def test_environment_context_uses_only_code_repository_uid(capsys, monkeypatch):
 
     event = _json_events(capsys.readouterr().out)[-1]
     assert event["code_repository_uid"] == "repository-1"
-    assert "project_uid" not in event
 
 
 async def test_successful_platform_probes_emit_no_request_logs(

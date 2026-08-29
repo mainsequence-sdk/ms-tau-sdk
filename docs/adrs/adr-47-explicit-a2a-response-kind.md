@@ -178,7 +178,7 @@ Task support does not imply push-notification support. ADR 46 remains in force.
 The backend is the persisted-card and discovery authority. It must not leave the communication
 contract as an unvalidated JSON blob interpreted only by Astro.
 
-### Project Agent Card template
+### CodeRepository Agent Card template
 
 The generated `.agents/agent_card.json` template includes the response-kind extension under
 `capabilities.extensions`.
@@ -198,7 +198,7 @@ capabilities. It must never add `task` merely because the template mentions it.
 
 ### Card validation and persistence
 
-`ProjectExecutor` currently reads and persists the registered Agent Card as raw JSON. A shared
+`CodeRepositoryExecutor` currently reads and persists the registered Agent Card as raw JSON. A shared
 normalizer/validator must run before persistence and publication. It must:
 
 - validate `capabilities.extensions` and unique extension URIs;

@@ -107,7 +107,7 @@ The CLI returns search results like:
   {
     "orm_class": "AgentSemanticSearchResult",
     "uid": "agent-25",
-    "name": "project-executor",
+    "name": "code-repository-executor",
     "description": "A testing-only project that exposes two CLI-backed capabilities: return the current time and return the authenticated user.",
     "semantic_score": 0.7781205009695902,
     "text_score": 0.04040404,
@@ -125,7 +125,7 @@ To preserve Astro's existing A2A discovery shape, each CLI result should be norm
   "agent_uid": "agent-25",
   "agent_description": "A testing-only project that exposes two CLI-backed capabilities: return the current time and return the authenticated user.",
   "a2a_card": {
-    "name": "project-executor",
+    "name": "code-repository-executor",
     "semantic_score": 0.7781205009695902,
     "text_score": 0.04040404,
     "combined_score": 0.5199197397584775
@@ -197,9 +197,9 @@ Example response:
 {
   "orm_class": "AgentSessionRuntimeAccess",
   "coding_agent_service_id": "42",
-  "coding_agent_id": "project-executor-service-81",
+  "coding_agent_id": "code-repository-executor-service-81",
   "mode": "token",
-  "rpc_url": "https://project-executor-service-81.coding-agent-development.main-sequence.app/",
+  "rpc_url": "https://code-repository-executor-service-81.coding-agent-development.main-sequence.app/",
   "token": "..."
 }
 ```
@@ -267,7 +267,7 @@ The canonical non-debug A2A runtime payload is:
     "llm_provider": "openai-codex",
     "llm_model": "gpt-5.3-codex-spark",
     "session_metadata": {
-      "agent_type": "project-executor"
+      "agent_type": "code-repository-executor"
     }
   },
   "messages": [

@@ -5,20 +5,20 @@ Date: 2026-05-16
 Implementation Status: Complete for the Astro runtime repository
 
 Amended 2026-06-15: Astro runtime profiles now use the same public vocabulary as backend
-`agent_type`: `astro-orchestrator` and `project-executor`. The legacy
+`agent_type`: `astro-orchestrator` and `code-repository-executor`. The legacy
 `ASTRO_EXECUTION_MODE=remote_project_worker` env value remains supported as topology metadata, but
 `project_worker` is no longer a public runtime-profile name.
 
 Backward compatibility note: existing worker deployments may keep
 `ASTRO_EXECUTION_MODE=remote_project_worker` as topology metadata, but it is not an identity alias.
-Fixed executor deployments still require `ASTRO_FIXED_AGENT_TYPE=project-executor`.
+Fixed executor deployments still require `ASTRO_FIXED_AGENT_TYPE=code-repository-executor`.
 
 ## Context
 
 Astro currently uses backend-visible `agent_type` values such as:
 
 - `astro-orchestrator`
-- `project-executor`
+- `code-repository-executor`
 
 That distinction is important at the backend boundary. Backend session allocation, runtime access,
 registration identity, analytics, and session ownership all need a stable `agent_type`.
@@ -36,13 +36,13 @@ ways:
 That overlap makes the implementation heavier than necessary and has already created regressions.
 Examples include:
 
-- treating `project-executor` as a normal local specialist instead of a fixed worker
+- treating `code-repository-executor` as a normal local specialist instead of a fixed worker
   runtime
 - letting executor prompt loading fall through generic specialist discovery
 - scattering executor-only cwd, prompt, model, and image assumptions across request handling
 - mixing backend identity concerns with local runtime-behavior concerns
 
-ADR 23 established that `project-executor` is a backend-mediated runtime rather than a
+ADR 23 established that `code-repository-executor` is a backend-mediated runtime rather than a
 normal orchestrator specialist. ADR 29 established that backend and request identity should use
 `agent_type` / `agentType`. This ADR refines the implementation boundary inside Astro itself.
 
@@ -56,7 +56,7 @@ That causes several problems:
 1. The backend identity distinction leaks into too many local runtime decisions.
 2. Executor behavior is easy to accidentally route through generic orchestrator/specialist code
    paths.
-3. Fixed worker assumptions such as project cwd, prompt strategy, and runtime wiring are not owned
+3. Fixed worker assumptions such as code repository cwd, prompt strategy, and runtime wiring are not owned
    by one explicit concept.
 4. Sidecar and runtime contracts are easier to misconfigure because “executor” is represented both
    as an agent identity and as a deployment mode.
@@ -75,7 +75,7 @@ same public identity vocabulary instead of introducing a second name for the sam
 The backend-facing identities remain:
 
 - `astro-orchestrator`
-- `project-executor`
+- `code-repository-executor`
 
 These values continue to be used for:
 
@@ -97,7 +97,7 @@ repeated scattered checks. The runtime profile name should still be the active r
 The initial profiles are:
 
 - `astro-orchestrator`
-- `project-executor`
+- `code-repository-executor`
 
 The runtime profile is derived primarily from the deployed or fixed `agent_type`.
 
@@ -108,14 +108,14 @@ The runtime profile is therefore resolved from runtime configuration such as:
 
 - `ASTRO_FIXED_AGENT_TYPE`
 - `ASTRO_EXECUTION_MODE`
-- `ASTRO_FIXED_PROJECT_CWD`
+- `ASTRO_FIXED_CODE_REPOSITORY_CWD`
 
 ### Fixed worker rule
 
 When Astro is running in fixed worker mode:
 
-- the runtime profile is `project-executor`
-- `ASTRO_FIXED_AGENT_TYPE=project-executor` is the primary selector for local runtime behavior
+- the runtime profile is `code-repository-executor`
+- `ASTRO_FIXED_AGENT_TYPE=code-repository-executor` is the primary selector for local runtime behavior
 - request `agentType` is still validated against the fixed worker identity, but it is not the main
   local prompt/routing selector
 
@@ -132,7 +132,7 @@ Session ownership must not be treated as a separate runtime-profile boundary.
 Ownership is already determined by the backend session attached to the request:
 
 - `astro-orchestrator` sessions are orchestrator-owned sessions
-- `project-executor` sessions are executor-owned sessions
+- `code-repository-executor` sessions are executor-owned sessions
 
 The fact that an executor session may be delegated from an orchestrator flow does not create a new
 Astro-local ownership abstraction. It is simply a backend/session relationship expressed through
@@ -140,13 +140,13 @@ distinct `agent_type` and `AgentSession` records.
 
 ### Executor is not a generic local specialist
 
-`project-executor` must not be treated as a normal local specialist peer of
+`code-repository-executor` must not be treated as a normal local specialist peer of
 `astro-orchestrator`.
 
 For executor runtime behavior:
 
 - the base prompt comes from the executor runtime profile contract
-- project-local prompt overrides may still exist when explicitly supported
+- code-repository-local prompt overrides may still exist when explicitly supported
 - generic specialist discovery must not be the default base-prompt mechanism
 
 ### Canonical deployment contract
@@ -169,7 +169,7 @@ an entirely different Astro home-directory contract.
 In practice:
 
 - orchestrator uses its writable orchestrator runtime cwd
-- executor uses its fixed prepared project cwd
+- executor uses its fixed prepared code repository cwd
 
 Everything else should converge on the same Astro runtime contract unless a concrete external image
 constraint makes divergence unavoidable.
@@ -191,7 +191,7 @@ The target prompt structure is:
 
 1. one shared Main Sequence Astro instruction set
 2. one small context-sensitive rule for whether the session is already attached to a prepared
-   project cwd
+   code repository cwd
 
 The shared instruction set should own common behavior such as:
 
@@ -206,17 +206,17 @@ The shared instruction set should own common behavior such as:
 
 The main contextual switch is whether the runtime is already attached to a prepared project:
 
-- if project-attached:
+- if code-repository-attached:
   - treat the current cwd as the prepared project root
   - do not create/select/set up a different project
-  - prefer project-local instructions, status files, and task files when present
-  - perform work in-place inside that project runtime
-- if not project-attached:
+  - prefer code-repository-local instructions, status files, and task files when present
+  - perform work in-place inside that code repository runtime
+- if not code-repository-attached:
   - allow project selection, creation, and setup flows
   - allow broader platform/control-plane behavior
 
 This means backend/runtime identity and prompt capability should not be tightly coupled. The
-important local prompt distinction is project attachment, not a separate role-specific capability
+important local prompt distinction is code repository attachment, not a separate role-specific capability
 overlay.
 
 ### Profile-owned behavior
@@ -225,7 +225,7 @@ The following runtime behavior belongs to runtime profile, not to scattered `age
 
 - prompt loading strategy
 - cwd and project-root assumptions
-- fixed project image/runtime assumptions
+- fixed code repository image/runtime assumptions
 - worker-side model policy defaults
 - sidecar/main-container environment parity rules
 - project-worker-specific request validation
@@ -234,7 +234,7 @@ The following runtime behavior belongs to runtime profile, not to scattered `age
 
 This ADR does not:
 
-- remove `project-executor` as a backend `agent_type`
+- remove `code-repository-executor` as a backend `agent_type`
 - make executor a child-specialist of orchestrator
 - remove backend session ownership distinctions between orchestrator and executor sessions
 - change the frontend/backend request contract away from `agentType`
@@ -249,7 +249,7 @@ This ADR does not:
 Backend-facing identity remains explicit and distinct:
 
 - `agent_type = astro-orchestrator`
-- `agent_type = project-executor`
+- `agent_type = code-repository-executor`
 
 Session ownership follows those backend session identities directly. It is not a separate
 runtime-profile concept.
@@ -259,7 +259,7 @@ runtime-profile concept.
 Astro resolves one runtime profile for the active process:
 
 - `astro-orchestrator`
-- `project-executor`
+- `code-repository-executor`
 
 That profile owns runtime-local behavior.
 
@@ -274,7 +274,7 @@ Both profiles should share one canonical Astro runtime contract for:
 The main runtime-specific filesystem difference should be the working root:
 
 - orchestrator runtime cwd
-- `project-executor` fixed project cwd
+- `code-repository-executor` fixed code repository cwd
 
 ### 4. Request behavior
 
@@ -283,7 +283,7 @@ For `astro-orchestrator` runtime profile:
 - request `agentType` remains meaningful within the allowed orchestrator-facing surface
 - generic orchestrator routing and shared prompt behavior may still apply
 
-For `project-executor` runtime profile:
+For `code-repository-executor` runtime profile:
 
 - fixed runtime configuration is the primary selector
 - request `agentType` is used as an assertion against the fixed worker identity
@@ -301,7 +301,7 @@ Astro should move toward the following internal structure:
    local behavior.
 6. Treat session ownership as a backend-session concern, not as a runtime-profile concern.
 7. Converge orchestrator and executor deployments on one canonical Astro runtime env contract.
-8. Simplify prompts into one shared instruction set with project-attached conditional behavior.
+8. Simplify prompts into one shared instruction set with code-repository-attached conditional behavior.
 
 ## Tasks
 
@@ -311,7 +311,7 @@ Astro should move toward the following internal structure:
       each as backend identity, request validation, prompt behavior, cwd behavior, model behavior,
       deployment/env behavior, or historical compatibility.
 - [x] Inventory all prompt sources that shape runtime behavior, including `.pi/APPEND_SYSTEM.md`,
-      injected skills, and project-local `.pi/agents` extensions.
+      injected skills, and code-repository-local `.pi/agents` extensions.
 - [x] Inventory orchestrator and executor deployment env contracts in Dockerfiles, Compose, Cloud
       Build, Kubernetes/backend launch config, and docs.
 - [x] Identify persisted local/session metadata fields that must remain backend identity fields
@@ -322,7 +322,7 @@ Audit result:
 - Backend identity fields remain `agentType` / `agent_type`, backend `agentUid` / `agent_uid`,
   backend `agentSessionUid` / `agent_session_uid`, and backend session-derived `threadId` /
   `thread_id`.
-- Runtime behavior is now selected through runtime profile and project attachment helpers rather
+- Runtime behavior is now selected through runtime profile and code repository attachment helpers rather
   than scattered prompt-role conditionals.
 - Durable A2A metadata remains session metadata and checkpoint metadata, not prompt/runtime-role
   state.
@@ -333,11 +333,11 @@ Audit result:
 ### Runtime profile model
 
 - [x] Add a `RuntimeProfile` type to the stream runtime using `astro-orchestrator` and
-      `project-executor`.
+      `code-repository-executor`.
 - [x] Add a `resolveRuntimeProfile(...)` helper that derives the profile from fixed/deployed
       `agent_type` first and treats `ASTRO_EXECUTION_MODE` as topology metadata, not identity.
 - [x] Validate fixed-worker env combinations early: `ASTRO_FIXED_AGENT_TYPE`,
-      `ASTRO_EXECUTION_MODE`, `ASTRO_FIXED_PROJECT_CWD`, and any required project-image metadata.
+      `ASTRO_EXECUTION_MODE`, `ASTRO_FIXED_CODE_REPOSITORY_CWD`, and any required code-repository-image metadata.
 - [x] Expose the resolved runtime profile in structured startup/request logs and `get_runtime_info`
       output so deployment mistakes are visible.
 - [x] Keep backend `agentType` / `agent_type` unchanged in request parsing, session metadata,
@@ -348,9 +348,9 @@ Audit result:
 - [x] Make request `agentType` a backend/session assertion for fixed workers: allow it to match the
       fixed deployed `agent_type`, reject mismatches, and avoid using it as the local behavior
       selector.
-- [x] Derive project attachment from runtime/profile context and session metadata, not from a
+- [x] Derive code repository attachment from runtime/profile context and session metadata, not from a
       role-specific prompt assumption.
-- [x] Move cwd, repo-root, project-image, and project-id rules into project-attachment/profile
+- [x] Move cwd, repo-root, code-repository-image, and project-id rules into project-attachment/profile
       helpers.
 - [x] Remove project-worker behavior from generic specialist-routing branches.
 - [x] Remove any Astro-local session ownership abstraction beyond the backend `AgentSession` and its
@@ -363,11 +363,11 @@ Implemented in the first pass:
 
 - `interface/stream/server.ts` now resolves and validates a `RuntimeProfile` before launching chat
 - or A2A execution.
-- Runtime profile `kind` now uses `astro-orchestrator` / `project-executor`; the old
+- Runtime profile `kind` now uses `astro-orchestrator` / `code-repository-executor`; the old
   `project_worker` label was removed from runtime logs and `get_runtime_info`.
 - Fixed project-worker runtimes now treat request `agentType` as an assertion against
   `ASTRO_FIXED_AGENT_TYPE`; mismatches are rejected.
-- Project attachment now resolves cwd, repo root, project id, and project image from one helper
+- CodeRepository attachment now resolves cwd, repo root, project id, and code repository image from one helper
   instead of scattered role checks.
 - Fixed project-worker requests no longer use generic specialist discovery as their local behavior
   selector.
@@ -379,42 +379,42 @@ Implemented in the first pass:
 - [x] Define one shared Main Sequence Astro instruction contract that covers auth, CLI failure
       handling, A2A request shape, response discipline, platform interaction, project interaction,
       workspace analysis, and implementation behavior.
-- [x] Replace role-restricted prompt policy with a project-attached conditional rule:
-      if attached to a prepared project cwd, treat that cwd as canonical and work in place; if not
+- [x] Replace role-restricted prompt policy with a code-repository-attached conditional rule:
+      if attached to a prepared code repository cwd, treat that cwd as canonical and work in place; if not
       attached, project selection, creation, setup, platform, and workspace flows remain available.
 - [x] Remove wording that says executor must never do platform/control-plane work solely because it
       is executor, or orchestrator must never do implementation solely because it is orchestrator.
-- [x] Keep project-local instructions authoritative when project-attached, including project-local
+- [x] Keep code-repository-local instructions authoritative when code-repository-attached, including code-repository-local
       status files, task files, `.pi` instructions, and repository instructions.
 - [x] Decide the concrete prompt packaging path for the shared instruction contract, then update the
       prompt arrangement without changing backend `agent_type`.
-- [x] Ensure project-local prompt extensions, if still supported, extend the shared contract instead
+- [x] Ensure code-repository-local prompt extensions, if still supported, extend the shared contract instead
       of replacing it with a divergent role policy.
 
 Implemented in the prompt-contract pass:
 
 - `.pi/APPEND_SYSTEM.md` is the single bundled Astro prompt contract.
-- Project-attached behavior is selected by `ASTRO_FIXED_AGENT_TYPE=project-executor`
-  and the `project-executor` runtime profile, not by a separate executor prompt file.
+- CodeRepository-attached behavior is selected by `ASTRO_FIXED_AGENT_TYPE=code-repository-executor`
+  and the `code-repository-executor` runtime profile, not by a separate executor prompt file.
 - The standalone executor prompt file was deleted.
-- Project-local `.pi/agents` files, if present, are treated as optional specialist extensions
+- CodeRepository-local `.pi/agents` files, if present, are treated as optional specialist extensions
   rather than the core executor runtime contract.
 
 ### Prompt loading and tools
 
 - [x] Remove executor base-prompt loading from generic specialist discovery.
-- [x] Make fixed project workers load the shared instruction contract plus project-attached context
+- [x] Make fixed code repository workers load the shared instruction contract plus code-repository-attached context
       deterministically.
-- [x] Restrict generic specialist discovery to real project-local extensions, not core executor
+- [x] Restrict generic specialist discovery to real code-repository-local extensions, not core executor
       startup.
 - [x] Revisit `ASTRO_ACTIVE_SPECIALIST` and related env markers so they do not imply executor is a
       child specialist when it is the active fixed runtime.
-- [x] Make tool availability follow the shared instruction contract and runtime/project attachment,
+- [x] Make tool availability follow the shared instruction contract and runtime/code repository attachment,
       not duplicated role prompt files.
 
 ### Deployment and sidecar contract
 
-- `Dockerfile.remote-worker` is the canonical reference for the project-executor runtime filesystem
+- `Dockerfile.remote-worker` is the canonical reference for the code-repository-executor runtime filesystem
   contract and should not be changed as part of this convergence. Orchestrator deployment should be
   aligned toward that home-derived contract instead.
 
@@ -436,10 +436,10 @@ Canonical Astro runtime filesystem contract:
       base image permits it.
 - [x] Converge orchestrator and executor checkpoint sidecars on the same canonical env contract as
       their matching main containers.
-- [x] Fix the project-executor sidecar path mismatch so backend auth header resolution does not try
+- [x] Fix the code-repository-executor sidecar path mismatch so backend auth header resolution does not try
       to write under an unwritable home directory.
 - [x] Keep the effective working root as the intentional profile difference: orchestrator runtime
-      cwd for non-project-attached sessions, prepared project cwd for project-attached sessions.
+      cwd for repository-independent sessions, prepared code repository cwd for code-repository-attached sessions.
 - [x] Update `Dockerfile`, `docker-compose.yml`, sidecar deployment config, and deployment docs
       after the canonical contract is chosen. Remove the obsolete local mounted-project Dockerfile
       harness. Do not change `Dockerfile.remote-worker`.
@@ -458,7 +458,7 @@ Canonical Astro runtime filesystem contract:
 ### Compatibility and cleanup
 
 - [x] Remove stale terminology that implies two local peer agents where the intended model is one
-      Astro runtime with shared instructions and project-attached behavior.
+      Astro runtime with shared instructions and code-repository-attached behavior.
 - [x] Update ADR 23, ADR 26, ADR 29, interface docs, remote-worker docs, environment docs, and prompt
       docs to match this ADR.
 - [x] Decide whether older local metadata files need a one-time cleanup or migration before rollout.
@@ -470,7 +470,7 @@ Cleanup result:
 - No one-time local metadata migration is required. The runtime reads both camel-case and snake-case
   backend identity fields where persisted files may contain either, and writes normalized
   `agentType` / `agent_type` plus `agentSessionUid` / `agent_session_uid` going forward.
-- The standalone `project-executor` prompt file has been removed from the prompt
+- The standalone `code-repository-executor` prompt file has been removed from the prompt
   contract. The shared `.pi/APPEND_SYSTEM.md` contract now owns base behavior.
 - ADR 29 compatibility is preserved by keeping `agentType` / `agent_type` as the identity language
   and not reintroducing request/session aliases such as `agentName`.
@@ -478,19 +478,19 @@ Cleanup result:
 ### Tests and verification
 
 - [x] Verify runtime profile resolution from fixed `agent_type`, execution mode, and
-      fixed project cwd.
+      fixed code repository cwd.
 - [x] Verify fixed workers validate request `agentType` as an assertion and do not use
       it as the local behavior selector.
-- [x] Verify project-attached requests get cwd/project behavior without generic
+- [x] Verify code-repository-attached requests get cwd/project behavior without generic
       specialist discovery.
-- [x] Verify non-project-attached requests can still use platform, project setup,
+- [x] Verify repository-independent requests can still use platform, project setup,
       workspace analysis, and implementation guidance from the shared prompt contract.
 - [x] Verify A2A target sessions keep provenance/session metadata and do not rely on
       role-specific prompt overlays.
 - [x] Verify container config confirms executor main container and sidecar share writable
       home/config/Pi/session-state paths.
 - [x] Run TypeScript validation and targeted local contract smokes for non-project and
-      project-attached execution paths.
+      code-repository-attached execution paths.
 
 Verification completed:
 
@@ -499,7 +499,7 @@ Verification completed:
 - targeted `npx tsx` A2A envelope/provenance check confirming `targetAgentSessionId` survives into
   user-message provenance
 - static repo checks confirming no runtime dependency on the deleted
-  `.pi/agents/project-executor.md`
+  `.pi/agents/code-repository-executor.md`
 - static repo checks confirming repo-owned deployment files no longer reference `/home/appuser`
 - static repo checks confirming old `agentName` aliases are not reintroduced in runtime code
 
@@ -515,10 +515,10 @@ Verification completed:
   rules converge instead of drifting.
 - Prompt maintenance becomes easier because shared Main Sequence runtime rules live in one place
   instead of being duplicated across role-specific overlays.
-- Capability behavior becomes less arbitrary because project attachment, rather than runtime role
+- Capability behavior becomes less arbitrary because code repository attachment, rather than runtime role
   alone, explains the main user-visible difference.
 - Fixed worker deployment assumptions have one explicit home.
-- Prompt loading, project cwd behavior, model policy, and sidecar parity become cleaner to audit.
+- Prompt loading, code repository cwd behavior, model policy, and sidecar parity become cleaner to audit.
 
 ### Negative
 
