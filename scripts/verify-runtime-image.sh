@@ -54,8 +54,6 @@ if command -v node >/dev/null 2>&1; then
   echo "Node must not be installed in the Tau runtime image" >&2
   exit 1
 fi
-command -v ffmpeg
-command -v ffprobe
 command -v git
 command -v rg
 command -v yt-dlp

@@ -42,9 +42,9 @@ one environment. The overlay keeps its immutable source bundle root-owned at
 for mutable executor state. It does not install Node.js, a second interpreter,
 or a compatibility path for the retired notebook image ABI.
 
-CodeRepository base images must also provide `ffmpeg`, `ffprobe`, `git`, and
-`rg`; the remote worker build rejects images missing those web/file-tool
-runtime dependencies. The offline Astro install must also produce the
+CodeRepository base images must provide Git. The Astro overlay installs and
+owns `ripgrep` for its file tools; it does not require FFmpeg or FFprobe from
+the lean application base. The offline Astro install must also produce the
 `yt-dlp` executable.
 
 The published remote-worker recipe is provider-neutral. Its

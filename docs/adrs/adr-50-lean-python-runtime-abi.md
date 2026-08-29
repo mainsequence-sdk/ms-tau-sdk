@@ -34,9 +34,11 @@ The standalone image creates one venv and installs only builder-produced
 wheels into it. The remote-worker overlay installs those same wheels into the
 base image's `/opt/venv`; it never creates another interpreter or venv. Before
 installation it verifies the base ABI and the clean Git branch, ref, and exact
-commit at `/workspace`. It also rejects a base without the `ffmpeg`, `ffprobe`,
-`git`, and `rg` executables required by Astro's web and file tools. The final
-image ends as `USER 10000:10000` with `WORKDIR /workspace`.
+commit at `/workspace`. The base must provide Git, while the remote-worker
+overlay installs and owns `ripgrep` for Astro's file tools. FFmpeg and FFprobe
+are workload-specific media tools and are not part of either the lean base ABI
+or the Astro executor overlay. The final image ends as `USER 10000:10000` with
+`WORKDIR /workspace`.
 
 There is no compatibility user, symlink, path translation, or fallback for
 Jovyan, `NB_*`, `SKEL_APP_DIR`, `APP_DIR`, `/opt/conda`, or the former

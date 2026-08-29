@@ -102,9 +102,21 @@ def test_remote_worker_consumes_only_the_lean_python_runtime_abi() -> None:
     assert "chown 0:0 /app" in recipe
     assert "COPY --from=astro-executor-bundle /opt/wheels" not in recipe
     assert "python -m pip check" in recipe
+    assert "apt-get install -y --no-install-recommends ripgrep" in recipe
     assert "command -v rg" in recipe
+    assert "ffmpeg" not in recipe
+    assert "ffprobe" not in recipe
     assert "command -v yt-dlp" in recipe
     assert 'test "$(stat -c \'%u:%g\' /app)" = "0:0"' in recipe
+
+
+def test_runtime_verification_does_not_require_media_tools() -> None:
+    verification = (REPOSITORY_ROOT / "scripts/verify-runtime-image.sh").read_text()
+
+    assert "command -v rg" in verification
+    assert "command -v git" in verification
+    assert "ffmpeg" not in verification
+    assert "ffprobe" not in verification
 
 
 def test_active_deployment_examples_use_the_non_root_runtime_contract() -> None:

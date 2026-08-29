@@ -16,6 +16,10 @@ ARG SOURCE_REPOSITORY_REF
 
 USER root
 
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ripgrep \
+ && rm -rf /var/lib/apt/lists/*
+
 COPY --chown=0:0 --from=astro-executor-bundle /app /app
 
 # Astro and code repository dependencies intentionally share the base image's Python
@@ -32,8 +36,6 @@ RUN chown 0:0 /app \
  && test "${VIRTUAL_ENV}" = "/opt/venv" \
  && test "$(command -v python)" = "/opt/venv/bin/python" \
  && python -c "import sys; assert sys.version_info >= (3, 13), 'BASE_IMAGE must provide Python >=3.13'; assert sys.prefix == '/opt/venv', sys.prefix" \
- && command -v ffmpeg \
- && command -v ffprobe \
  && command -v git \
  && command -v rg \
  && test -d /workspace/.git
