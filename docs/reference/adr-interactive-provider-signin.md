@@ -1,6 +1,8 @@
 # ADR: Interactive Provider Signin Attempts
 
-Status: accepted
+Status: superseded by ADR 51
+
+Superseded by [ADR 51: Consume Django Provider Control for Tau Execution](../adrs/adr-51-consume-django-provider-control-for-tau-execution.md).
 
 Date: 2026-04-15
 
