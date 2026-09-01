@@ -29,17 +29,16 @@ from astro.backend.client import MainSequenceClient
 from astro.backend.mcp import MainSequenceMCPClient
 from astro.backend.models import (
     AgentRuntimeActivity,
+    ProviderExecutionEvidence,
     RuntimeActivityPatch,
     RuntimeLeaseReleaseRequest,
     RuntimeLeaseRenewRequest,
-    RuntimeLeaseRequest,
     TauRuntimeBootstrapRequest,
     TauTurnCommit,
 )
 from astro.capabilities import (
     known_capability_hashes,
     materialize_bootstrap_capabilities,
-    materialize_session_capabilities,
 )
 from astro.errors import BackendConflictError, ConfigurationError, LeaseLostError
 from astro.logging import conversation_log_fields
@@ -66,7 +65,7 @@ from .session import ActiveSessionRuntime
 
 logger = structlog.get_logger(__name__)
 ADR49_RUNTIME_CAPABILITIES = {
-    "tau_runtime_bootstrap": "v1",
+    "tau_runtime_bootstrap": "v2",
     "tau_resume_snapshot": "v1",
     "tau_activity_sequence": "v1",
     "tau_turn_commit": "v1",
@@ -171,185 +170,14 @@ class SessionRuntimeManager:
         self,
         session_uid: str,
     ) -> ActiveSessionRuntime:
-        if self.settings.tau_runtime_contract == "v1":
-            return await self._load_v1(session_uid)
-        load_started_at = time.monotonic()
-        logger.info(
-            "runtime.session.load.started",
-            message="Loading Tau session runtime",
-            session_uid=session_uid,
-            holder_id=self.holder_id,
-        )
-        session = await self.backend.get_session(session_uid)
-        if session.harness != "tau":
-            raise ConfigurationError(
-                f"Session {session_uid} uses harness {session.harness!r}; "
-                "this Tau runtime can only resume Tau sessions"
-            )
-        lease = await self.backend.acquire_runtime_lease(
-            session_uid,
-            RuntimeLeaseRequest(
-                holder_id=self.holder_id,
-                ttl_seconds=self.settings.runtime_lease_ttl_seconds,
-            ),
-        )
-        logger.info(
-            "runtime.lease.acquired",
-            message="Acquired backend runtime lease",
-            session_uid=session_uid,
-            holder_id=self.holder_id,
-            checkpoint_version=lease.checkpoint_version,
-            lease_expires_at=lease.lease_expires_at,
-        )
-        storage = BackendSessionStorage(
-            backend=self.backend,
-            session_uid=session_uid,
-            lease_token=lease.lease_token,
-        )
-        mcp_client: MainSequenceMCPClient | None = None
-        try:
-            cwd = self._resolve_cwd()
-            try:
-                async with asyncio.TaskGroup() as startup_tasks:
-                    provider_runtime_task = startup_tasks.create_task(
-                        self.providers.for_session(
-                            session,
-                            holder_id=self.holder_id,
-                        ),
-                        name=f"astro-provider-load-{session_uid}",
-                    )
-                    capability_task = startup_tasks.create_task(
-                        materialize_session_capabilities(
-                            backend=self.backend,
-                            session_uid=session_uid,
-                            asset_root=self.settings.session_asset_root,
-                        ),
-                        name=f"astro-capabilities-load-{session_uid}",
-                    )
+        return await self._load_v2(session_uid)
 
-                    mcp_task = startup_tasks.create_task(
-                        self._get_mcp_client(),
-                        name=f"astro-mcp-load-{session_uid}",
-                    )
-                    startup_tasks.create_task(
-                        storage.read_all(),
-                        name=f"astro-history-load-{session_uid}",
-                    )
-            except ExceptionGroup as errors:
-                raise errors.exceptions[0] from errors
-            provider_runtime = provider_runtime_task.result()
-            session_agents_root = capability_task.result()
-            mcp_client = mcp_task.result()
-            mcp_tools = create_mainsequence_mcp_tools(mcp_client)
-            mcp_resource_prompt = mainsequence_mcp_resource_prompt(mcp_client)
-            web_store = MemorySearchResultStore()
-            tools = [
-                *create_coding_tools(cwd=cwd),
-                *create_file_tools(cwd=cwd),
-                *build_web_tools(cwd=cwd, store=web_store, client=self._web_client),
-                *mcp_tools,
-                create_runtime_info_tool(
-                    session_uid=session_uid,
-                    cwd=cwd,
-                    provider=provider_runtime.name,
-                    model=provider_runtime.model,
-                ),
-            ]
-            coding_session = await CodingSession.load(
-                CodingSessionConfig(
-                    provider=provider_runtime.provider,
-                    provider_name=provider_runtime.name,
-                    model=provider_runtime.model,
-                    thinking_level=provider_runtime.thinking_level,
-                    storage=storage,
-                    cwd=cwd,
-                    tools=tools,
-                    session_id=session_uid,
-                    append_system_prompt=append_system_prompt(
-                        extra_context=mcp_resource_prompt,
-                    ),
-                    resource_paths=TauResourcePaths(
-                        root=resource_root(),
-                        cwd=cwd,
-                        agents_root=session_agents_root,
-                    ),
-                    project_extensions_enabled=False,
-                )
-            )
-            runtime = ActiveSessionRuntime(
-                session_uid=session_uid,
-                holder_id=self.holder_id,
-                coding_session=coding_session,
-                storage=storage,
-                provider=provider_runtime.provider,
-                provider_name=provider_runtime.name,
-                model=provider_runtime.model,
-                mcp_client=mcp_client,
-            )
-            runtime.runtime_activity = lease.runtime_activity or "loading"
-            runtime.activity_revision = lease.activity_revision or 0
-            runtime.active_turn_uid = lease.active_turn_uid
-            await storage.flush()
-            await self._transition_runtime_activity(
-                runtime,
-                runtime_activity="idle",
-                active_turn_uid=None,
-            )
-            runtime.lease_renew_task = asyncio.create_task(
-                self._renew_lease(runtime),
-                name=f"astro-lease-{session_uid}",
-            )
-            self._runtimes[session_uid] = runtime
-            logger.info(
-                "runtime.session.load.completed",
-                message="Loaded Tau session runtime",
-                session_uid=session_uid,
-                provider=provider_runtime.name,
-                model=provider_runtime.model,
-                mcp_tool_count=len(mcp_client.tools),
-                mcp_resource_count=len(mcp_client.resources),
-                duration_ms=round(
-                    (time.monotonic() - load_started_at) * 1000,
-                    3,
-                ),
-            )
-            return runtime
-        except BaseException as error:
-            with contextlib.suppress(Exception):
-                await self.backend.release_runtime_lease(
-                    session_uid,
-                    RuntimeLeaseReleaseRequest(
-                        lease_token=lease.lease_token,
-                        holder_id=self.holder_id,
-                        reason="runtime_load_failed",
-                    ),
-                )
-            if isinstance(error, asyncio.CancelledError):
-                logger.warning(
-                    "runtime.session.load.cancelled",
-                    message="Tau session runtime load was cancelled",
-                    session_uid=session_uid,
-                )
-            else:
-                logger.exception(
-                    "runtime.session.load.failed",
-                    message="Failed to load Tau session runtime",
-                    session_uid=session_uid,
-                    error_type=type(error).__name__,
-                    error_message=str(error),
-                    duration_ms=round(
-                        (time.monotonic() - load_started_at) * 1000,
-                        3,
-                    ),
-                )
-            raise
-
-    async def _load_v1(self, session_uid: str) -> ActiveSessionRuntime:
+    async def _load_v2(self, session_uid: str) -> ActiveSessionRuntime:
         load_started_at = time.monotonic()
         bootstrap_request_uid = str(uuid.uuid4())
         logger.info(
             "runtime.session.load.started",
-            message="Loading Tau session runtime through bootstrap v1",
+            message="Loading Tau session runtime through bootstrap v2",
             session_uid=session_uid,
             holder_id=self.holder_id,
             bootstrap_request_uid=bootstrap_request_uid,
@@ -362,6 +190,7 @@ class SessionRuntimeManager:
                 bootstrap_request_uid=bootstrap_request_uid,
                 known_capability_hashes=known_capability_hashes(self.settings.session_asset_root),
                 supported_snapshot_schema_versions=[SNAPSHOT_SCHEMA_VERSION],
+                supported_provider_control_schema_versions=[1],
                 tau_runtime_version=TAU_RUNTIME_VERSION,
             ),
         )
@@ -372,7 +201,7 @@ class SessionRuntimeManager:
         }
         if missing_capabilities:
             raise ConfigurationError(
-                "Backend does not advertise the complete Tau bootstrap v1 contract: "
+                "Backend does not advertise the complete Tau bootstrap v2 contract: "
                 + ", ".join(sorted(missing_capabilities))
             )
         session = bootstrap.session
@@ -454,14 +283,18 @@ class SessionRuntimeManager:
                 initial_entries=initial_entries,
                 initial_next_sequence=initial_next_sequence,
             )
+            provider_name = session.active_provider or ""
             credential = self.backend.provider_credential_from_hydration(
-                session.active_provider or "",
+                provider_name,
                 bootstrap.provider_credentials,
             )
             provider_runtime = self.providers.for_session_credential(
                 session,
                 holder_id=self.holder_id,
-                credential=credential,
+                evidence=ProviderExecutionEvidence(
+                    credential=credential,
+                    provider_control=bootstrap.provider_control,
+                ),
             )
             async with asyncio.TaskGroup() as startup_tasks:
                 capability_task = startup_tasks.create_task(
@@ -524,6 +357,8 @@ class SessionRuntimeManager:
                 mcp_client=mcp_client,
                 runtime_config_sha256=str(session_extra.get("runtime_config_sha256", "")),
                 capability_set_sha256=str(session_extra.get("capability_set_sha256", "")),
+                provider_control_schema=bootstrap.provider_control.schema_version,
+                catalog_digest=bootstrap.provider_control.catalog_digest,
             )
             state = bootstrap.runtime_state
             runtime.runtime_activity = state.runtime_activity or "loading"
@@ -542,7 +377,7 @@ class SessionRuntimeManager:
             self._runtimes[session_uid] = runtime
             logger.info(
                 "runtime.session.load.completed",
-                message="Loaded Tau session runtime through bootstrap v1",
+                message="Loaded Tau session runtime through bootstrap v2",
                 session_uid=session_uid,
                 provider=provider_runtime.name,
                 model=provider_runtime.model,
@@ -551,7 +386,9 @@ class SessionRuntimeManager:
                 history_entry_count=len(initial_entries),
                 mcp_tool_count=len(mcp_client.tools),
                 mcp_resource_count=len(mcp_client.resources),
-                contract="tau-bootstrap-v1",
+                provider_control_schema=bootstrap.provider_control.schema_version,
+                catalog_digest=bootstrap.provider_control.catalog_digest,
+                contract="tau-bootstrap-v2",
                 duration_ms=round((time.monotonic() - load_started_at) * 1000, 3),
             )
             return runtime
@@ -618,21 +455,13 @@ class SessionRuntimeManager:
             raise LeaseLostError(f"Runtime cancellation was requested for session {session_uid}")
         context = get_contextvars()
         turn_uid = str(context.get("turn_uid") or uuid.uuid4())
-        if self.settings.tau_runtime_contract == "v1":
-            runtime.activity_sequence += 1
-            runtime.runtime_activity = "working"
-            runtime.active_turn_uid = turn_uid
-            await runtime.storage.begin_turn(
-                turn_uid=turn_uid,
-                activity_sequence=runtime.activity_sequence,
-            )
-        else:
-            await self._transition_runtime_activity(
-                runtime,
-                runtime_activity="working",
-                active_turn_uid=turn_uid,
-            )
+        runtime = await self._begin_turn_with_one_reload(
+            session_uid=session_uid,
+            runtime=runtime,
+            turn_uid=turn_uid,
+        )
         yield AstroRuntimeEvent(type="lifecycle", data={"phase": "generating"})
+
         started_at = time.monotonic()
         terminal_status = "completed"
         error_type: str | None = None
@@ -674,11 +503,7 @@ class SessionRuntimeManager:
                         if event.type == "agent_settled":
                             output_complete = True
                         yield event
-                    if (
-                        self.settings.tau_runtime_contract == "v1"
-                        and output_complete
-                        and runtime.persistence_task is not None
-                    ):
+                    if output_complete and runtime.persistence_task is not None:
                         commit = runtime.persistence_task.result()
                         if not isinstance(commit, TauTurnCommit):
                             raise RuntimeError("Tau durability task omitted its turn commit")
@@ -700,19 +525,11 @@ class SessionRuntimeManager:
             raise
         finally:
             if not output_complete and runtime.runtime_activity == "working":
-                if self.settings.tau_runtime_contract == "v1":
-                    self._schedule_activity(
-                        runtime,
-                        runtime_activity="idle",
-                        active_turn_uid=None,
-                    )
-                else:
-                    with contextlib.suppress(Exception):
-                        await self._transition_runtime_activity(
-                            runtime,
-                            runtime_activity="idle",
-                            active_turn_uid=None,
-                        )
+                self._schedule_activity(
+                    runtime,
+                    runtime_activity="idle",
+                    active_turn_uid=None,
+                )
             log = logger.info if terminal_status == "completed" else logger.warning
             outcome = (
                 "success"
@@ -752,6 +569,33 @@ class SessionRuntimeManager:
                 message="Finished Tau agent run",
                 **terminal_fields,
             )
+
+    async def _begin_turn_with_one_reload(
+        self,
+        *,
+        session_uid: str,
+        runtime: ActiveSessionRuntime,
+        turn_uid: str,
+    ) -> ActiveSessionRuntime:
+        for begin_attempt in range(2):
+            runtime.activity_sequence += 1
+            try:
+                state = await runtime.storage.begin_turn(
+                    turn_uid=turn_uid,
+                    activity_sequence=runtime.activity_sequence,
+                )
+            except BackendConflictError:
+                if begin_attempt:
+                    raise
+                runtime.storage.invalidate_lease()
+                await self.evict(session_uid)
+                runtime = await self.get(session_uid)
+                continue
+            runtime.runtime_activity = state.runtime_activity or "working"
+            runtime.active_turn_uid = state.active_turn_uid
+            runtime.activity_sequence = state.activity_sequence or runtime.activity_sequence
+            return runtime
+        raise AssertionError("Tau turn reload loop did not terminate")
 
     async def _transition_runtime_activity(
         self,
@@ -834,19 +678,6 @@ class SessionRuntimeManager:
         runtime: ActiveSessionRuntime,
         turn_uid: str,
     ) -> object:
-        if self.settings.tau_runtime_contract == "adr48":
-            await self._transition_runtime_activity(
-                runtime,
-                runtime_activity="persisting",
-                active_turn_uid=turn_uid,
-            )
-            await runtime.storage.flush()
-            await self._transition_runtime_activity(
-                runtime,
-                runtime_activity="idle",
-                active_turn_uid=None,
-            )
-            return None
         runtime.activity_sequence += 1
         commit_sequence = runtime.activity_sequence
         try:

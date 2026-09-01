@@ -1,12 +1,9 @@
 import json
-from unittest.mock import AsyncMock
 
 import httpx
 from tau_web_access import MemorySearchResultStore
 
 from astro import __version__
-from astro.backend.models import ProviderStatus
-from astro.providers.catalog import collect_model_catalog
 from astro.tools.runtime_info import create_runtime_info_tool
 from astro.tools.web_access import build_web_tools
 
@@ -45,25 +42,3 @@ async def test_astro_web_adapter_reuses_the_caller_owned_http_client(tmp_path):
         "fetch_content",
         "get_search_content",
     ]
-
-
-async def test_model_catalog_combines_tau_models_with_backend_credential_status():
-    client = AsyncMock()
-    client.list_provider_statuses.return_value = [
-        ProviderStatus(provider="openai", status="active", credential_kind="api_key")
-    ]
-
-    catalog = await collect_model_catalog(client, session_uid="session-1")
-    without_session = await collect_model_catalog(client, session_uid=None)
-
-    openai = next(provider for provider in catalog["providers"] if provider["provider"] == "openai")
-    openai_without_session = next(
-        provider for provider in without_session["providers"] if provider["provider"] == "openai"
-    )
-    assert catalog["runtime"] == "tau"
-    assert openai["available"] is True
-    assert openai["credential_status"] == "active"
-    assert openai["models"]
-    assert openai_without_session["available"] is False
-    assert openai_without_session["credential_status"] == "missing"
-    client.list_provider_statuses.assert_awaited_once_with(session_uid="session-1")

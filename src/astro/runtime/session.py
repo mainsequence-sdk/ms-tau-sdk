@@ -39,6 +39,8 @@ class ActiveSessionRuntime:
     active_turn_uid: str | None = None
     runtime_config_sha256: str = ""
     capability_set_sha256: str = ""
+    provider_control_schema: int = 0
+    catalog_digest: str = ""
 
     async def prompt(
         self,

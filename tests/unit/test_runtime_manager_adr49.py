@@ -8,6 +8,7 @@ from tau_agent.session import SessionInfoEntry
 
 from astro.backend.models import (
     AgentSession,
+    ProviderControl,
     ProviderCredential,
     RuntimeLease,
     RuntimeState,
@@ -18,6 +19,7 @@ from astro.backend.models import (
     TauRuntimeBootstrap,
     TauTurnCommit,
 )
+from astro.errors import BackendConflictError
 from astro.runtime.manager import ADR49_RUNTIME_CAPABILITIES, SessionRuntimeManager
 from astro.runtime.session import ActiveSessionRuntime
 from astro.runtime.snapshots import build_snapshot_upload
@@ -31,7 +33,6 @@ def _settings(tmp_path):
         runtime_credential_id="credential-id",
         runtime_credential_secret="credential-secret",
         code_repository_root=tmp_path,
-        tau_runtime_contract="v1",
         startup_dependencies_enabled=False,
     )
 
@@ -84,6 +85,18 @@ def _bootstrap(
         resume_snapshot=snapshot,
         capabilities=[],
         provider_credentials={},
+        provider_control=ProviderControl(
+            schema_version=1,
+            catalog_digest=f"sha256:{'0' * 64}",
+            provider="test-provider",
+            model={
+                "model": "test-model",
+                "api": "openai-completions",
+                "input": ["text"],
+                "reasoning": False,
+                "thinking_levels": [],
+            },
+        ),
         runtime_capabilities=ADR49_RUNTIME_CAPABILITIES,
     )
 
@@ -126,6 +139,52 @@ def _manager_dependencies(tmp_path, bootstraps):
 
 def _mcp_client():
     return SimpleNamespace(tools=(), resources=(), aclose=AsyncMock())
+
+
+@pytest.mark.asyncio
+async def test_stale_pre_provider_lease_reloads_once_before_execution(tmp_path):
+    manager, _backend, _providers = _manager_dependencies(tmp_path, [])
+    stale_storage = SimpleNamespace(
+        begin_turn=AsyncMock(side_effect=BackendConflictError("stale lease")),
+        invalidate_lease=Mock(),
+    )
+    fresh_storage = SimpleNamespace(
+        begin_turn=AsyncMock(
+            return_value=RuntimeState(
+                harness="tau",
+                harness_protocol="tau-session-v1",
+                harness_version="1",
+                runtime_activity="working",
+                active_turn_uid="turn-1",
+                activity_sequence=1,
+            )
+        )
+    )
+    stale = SimpleNamespace(storage=stale_storage, activity_sequence=0)
+    fresh = SimpleNamespace(
+        storage=fresh_storage,
+        activity_sequence=0,
+        runtime_activity="idle",
+        active_turn_uid=None,
+    )
+    manager.evict = AsyncMock()
+    manager.get = AsyncMock(return_value=fresh)
+
+    selected = await manager._begin_turn_with_one_reload(
+        session_uid="session-1",
+        runtime=stale,
+        turn_uid="turn-1",
+    )
+
+    assert selected is fresh
+    stale_storage.invalidate_lease.assert_called_once_with()
+    manager.evict.assert_awaited_once_with("session-1")
+    manager.get.assert_awaited_once_with("session-1")
+    fresh_storage.begin_turn.assert_awaited_once_with(
+        turn_uid="turn-1",
+        activity_sequence=1,
+    )
+    await manager.aclose()
 
 
 @pytest.mark.asyncio

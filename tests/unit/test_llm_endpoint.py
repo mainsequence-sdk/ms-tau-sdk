@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, Mock, call
 
 from fastapi import FastAPI
@@ -105,11 +106,12 @@ async def test_agent_response_uses_snapshot_defaults_without_persistence(
 ):
     instances = _fake_harness(monkeypatch, [_assistant("Final answer")])
     client = AsyncMock()
-    client.hydrate_provider_credential.return_value = object()
+    evidence = SimpleNamespace(credential=object(), provider_control=object())
+    client.hydrate_provider_credential.return_value = evidence
     provider = Mock()
     provider.aclose = AsyncMock()
     providers = Mock()
-    providers.validate_selection.return_value = "high"
+    providers.validate_execution.return_value = "high"
     providers.build.return_value = provider
 
     async with asgi_client(_app(client, providers, _settings(tmp_path))) as http:
@@ -138,18 +140,21 @@ async def test_agent_response_uses_snapshot_defaults_without_persistence(
     }
     client.hydrate_provider_credential.assert_awaited_once_with(
         "openai",
+        model="gpt-5.1",
         agent_uid=AGENT_UID,
         holder_id=ANY,
     )
     assert client.method_calls == [
         call.hydrate_provider_credential(
             "openai",
+            model="gpt-5.1",
             agent_uid=AGENT_UID,
             holder_id=ANY,
         )
     ]
     providers.build.assert_called_once_with(
-        client.hydrate_provider_credential.return_value,
+        evidence.credential,
+        provider_control=evidence.provider_control,
         model="gpt-5.1",
         credential_resolver=ANY,
         thinking_level="high",
@@ -174,7 +179,7 @@ async def test_agent_response_applies_overrides_and_repairs_json(
     provider = Mock()
     provider.aclose = AsyncMock()
     providers = Mock()
-    providers.validate_selection.return_value = "medium"
+    providers.validate_execution.return_value = "medium"
     providers.build.return_value = provider
     body = _body(
         strict=True,
@@ -198,10 +203,12 @@ async def test_agent_response_applies_overrides_and_repairs_json(
     assert response.json()["message"]["parts"] == [
         {"data": {"answer": 42}, "mediaType": "application/json"}
     ]
-    providers.validate_selection.assert_called_once_with(
-        "anthropic",
-        "claude-sonnet-4-5",
-        "medium",
+    providers.validate_execution.assert_called_once_with(
+        client.hydrate_provider_credential.return_value.provider_control,
+        provider_name="anthropic",
+        model="claude-sonnet-4-5",
+        thinking_level="medium",
+        media_types=set(),
     )
     assert "Return only valid JSON" in instances[0].config.system
     assert "Repair this assistant response" in instances[0].prompts[1]
@@ -213,7 +220,7 @@ async def test_agent_response_rejects_session_identity_before_hydration(
 ):
     client = AsyncMock()
     providers = Mock()
-    providers.validate_selection.return_value = "high"
+    providers.validate_execution.return_value = "high"
     body = _body()
     body["message"]["contextId"] = "session-1"
 
@@ -234,7 +241,7 @@ async def test_agent_response_rejects_second_agent_identity_before_hydration(
 ):
     client = AsyncMock()
     providers = Mock()
-    providers.validate_selection.return_value = "high"
+    providers.validate_execution.return_value = "high"
     body = _body()
     body["agent_uid"] = "22222222-2222-4222-8222-222222222222"
 
@@ -260,7 +267,7 @@ async def test_agent_response_stream_emits_only_final_a2a_message(
     provider = Mock()
     provider.aclose = AsyncMock()
     providers = Mock()
-    providers.validate_selection.return_value = "high"
+    providers.validate_execution.return_value = "high"
     providers.build.return_value = provider
 
     async with asgi_client(_app(client, providers, _settings(tmp_path))) as http:
@@ -287,7 +294,7 @@ async def test_agent_response_accepts_allowed_native_image_and_cleans_it_up(
     provider = Mock()
     provider.aclose = AsyncMock()
     providers = Mock()
-    providers.validate_selection.return_value = "high"
+    providers.validate_execution.return_value = "high"
     providers.build.return_value = provider
     body = _body()
     body["message"]["parts"].append(
@@ -310,10 +317,12 @@ async def test_agent_response_accepts_allowed_native_image_and_cleans_it_up(
         )
 
     assert response.status_code == 200
-    providers.validate_input_media.assert_called_once_with(
-        "openai",
-        "gpt-5.1",
-        {"image/png"},
+    providers.validate_execution.assert_called_once_with(
+        client.hydrate_provider_credential.return_value.provider_control,
+        provider_name="openai",
+        model="gpt-5.1",
+        thinking_level="high",
+        media_types={"image/png"},
     )
     prompt = instances[0].prompts[0]
     assert prompt.content[0].text == "Answer this."

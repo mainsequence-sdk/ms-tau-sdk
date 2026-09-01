@@ -93,8 +93,7 @@ def _inference_controls(body: dict[str, Any]) -> dict[str, Any]:
 def _selection(
     snapshot: AgentExecutionSnapshot,
     controls: dict[str, Any],
-    providers: ProviderFactory,
-) -> tuple[str, str, str, dict[str, str]]:
+) -> tuple[str, str, str | None, dict[str, str]]:
     def optional_string(key: str) -> str:
         if key not in controls:
             return ""
@@ -121,10 +120,6 @@ def _selection(
         raise HTTPException(status_code=409, detail="agent_model_not_configured")
     inherited_thinking = snapshot.default_thinking
     thinking_input = requested_thinking if "thinking" in controls else inherited_thinking or None
-    try:
-        thinking = providers.validate_selection(provider_name, model, thinking_input)
-    except Exception as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
     sources = {
         "provider": "request" if requested_provider else "agent_default",
         "model": "request" if requested_model else "agent_default",
@@ -133,10 +128,10 @@ def _selection(
             if "thinking" in controls
             else "agent_default"
             if inherited_thinking
-            else "provider_catalog_default"
+            else "tau_execution_default"
         ),
     }
-    return provider_name, model, thinking, sources
+    return provider_name, model, thinking_input, sources
 
 
 def _bounded_control(
@@ -312,7 +307,7 @@ async def _execute(
 ) -> dict[str, Any]:
     snapshot = _snapshot(config, agent_uid)
     controls = _inference_controls(body)
-    provider_name, model, thinking, sources = _selection(snapshot, controls, providers)
+    provider_name, model, thinking_input, sources = _selection(snapshot, controls)
     timeout_seconds = float(
         _bounded_control(
             controls,
@@ -335,15 +330,6 @@ async def _execute(
         context_policy="forbidden",
         allowed_media_types=set(snapshot.allowed_input_media_types),
     )
-    try:
-        providers.validate_input_media(
-            provider_name,
-            model,
-            {item.media_type for item in prepared.files},
-        )
-    except Exception as error:
-        prepared.cleanup()
-        raise HTTPException(status_code=415, detail=str(error)) from error
     run_uid = str(uuid.uuid4())
     bind_request_log_fields(
         request.scope,
@@ -357,12 +343,25 @@ async def _execute(
     provider = None
     started_at = time.monotonic()
     try:
-        credential = await client.hydrate_provider_credential(
+        evidence = await client.hydrate_provider_credential(
             provider_name,
+            model=model,
             agent_uid=agent_uid,
             holder_id=f"agent-response/{run_uid}",
         )
+        try:
+            thinking = providers.validate_execution(
+                evidence.provider_control,
+                provider_name=provider_name,
+                model=model,
+                thinking_level=thinking_input,
+                media_types={item.media_type for item in prepared.files},
+            )
+        except Exception as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+        credential = evidence.credential
         cached_credential = credential
+        cached_provider_control = evidence.provider_control
         credential_refresh_lock = asyncio.Lock()
 
         async def resolve_credential() -> ProviderCredential:
@@ -371,15 +370,29 @@ async def _execute(
                 return cached_credential
             async with credential_refresh_lock:
                 if ProviderFactory._credential_expires_soon(cached_credential):
-                    cached_credential = await client.hydrate_provider_credential(
+                    refreshed = await client.hydrate_provider_credential(
                         provider_name,
+                        model=model,
                         agent_uid=agent_uid,
                         holder_id=f"agent-response/{run_uid}",
                     )
+                    providers.validate_execution(
+                        refreshed.provider_control,
+                        provider_name=provider_name,
+                        model=model,
+                        thinking_level=thinking,
+                    )
+                    if refreshed.provider_control.model != cached_provider_control.model:
+                        raise RuntimeError(
+                            "Provider-control execution capability changed during "
+                            "credential refresh"
+                        )
+                    cached_credential = refreshed.credential
                 return cached_credential
 
         provider = providers.build(
             credential,
+            provider_control=evidence.provider_control,
             model=model,
             credential_resolver=resolve_credential,
             thinking_level=thinking,

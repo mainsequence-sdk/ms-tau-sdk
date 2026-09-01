@@ -22,8 +22,3 @@ PROVIDER_DEFINITIONS: dict[str, ProviderDefinition] = {
     )
     for provider in BUILTIN_PROVIDER_CATALOG
 }
-PROVIDER_DEFINITIONS["ollama"] = ProviderDefinition(
-    name="ollama",
-    api="openai-completions",
-    base_url="http://127.0.0.1:11434/v1",
-)

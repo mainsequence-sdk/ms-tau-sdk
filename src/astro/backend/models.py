@@ -293,7 +293,27 @@ class TauRuntimeBootstrapRequest(BackendRequestModel):
     history_after_sequence: int | None = Field(default=None, ge=0)
     known_capability_hashes: list[str] = Field(default_factory=list)
     supported_snapshot_schema_versions: list[int] = Field(default_factory=lambda: [1])
+    supported_provider_control_schema_versions: list[int] = Field(default_factory=lambda: [1])
     tau_runtime_version: str
+
+
+class ProviderControlModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    model: str
+    api: str
+    input: list[str]
+    reasoning: bool
+    thinking_levels: list[TauThinkingLevel]
+
+
+class ProviderControl(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    schema_version: Literal[1]
+    catalog_digest: str = Field(pattern=r"^sha256:[0-9a-f]{64}$")
+    provider: str
+    model: ProviderControlModel
 
 
 class TauResumeSnapshot(BackendModel):
@@ -316,6 +336,7 @@ class TauRuntimeBootstrap(BackendModel):
     resume_snapshot: TauResumeSnapshot | None = None
     capabilities: list[SessionCapabilityBinding] = Field(default_factory=list)
     provider_credentials: dict[str, Any]
+    provider_control: ProviderControl
     runtime_capabilities: dict[str, str]
     bootstrap_replayed: bool = False
 
@@ -366,18 +387,11 @@ class ProviderCredential(BackendModel):
         return ""
 
 
-class ProviderStatus(BackendModel):
-    provider: str
-    status: Literal[
-        "active",
-        "configured",
-        "missing",
-        "expired",
-        "revoked",
-        "error",
-    ]
-    credential_kind: str | None = None
-    message: str | None = None
+class ProviderExecutionEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    credential: ProviderCredential
+    provider_control: ProviderControl
 
 
 class AgentTask(BackendModel):

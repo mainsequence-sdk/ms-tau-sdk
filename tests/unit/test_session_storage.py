@@ -6,6 +6,7 @@ import pytest
 from tau_agent.session import SessionInfoEntry
 
 from astro.backend.models import (
+    RuntimeState,
     SessionEntryBatchAppendResponse,
     SessionEntryList,
     SessionEntryRecord,
@@ -31,6 +32,18 @@ class FakeBackend:
         return SessionEntryList(
             entries=list(self.records),
             next_sequence=len(self.records),
+        )
+
+    async def patch_runtime_activity(self, session_uid, request):
+        assert session_uid == "session-1"
+        return RuntimeState(
+            harness="tau",
+            harness_protocol="tau-session-v1",
+            harness_version="0.3.1",
+            runtime_activity=request.runtime_activity,
+            active_turn_uid=request.active_turn_uid,
+            activity_sequence=request.activity_sequence,
+            applied=True,
         )
 
     async def append_entries(self, session_uid, request):

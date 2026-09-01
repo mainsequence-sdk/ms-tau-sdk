@@ -28,15 +28,29 @@ from tau_coding.thinking import (
 )
 
 from astro.backend.client import MainSequenceClient
-from astro.backend.models import AgentSession, ProviderCredential
+from astro.backend.models import (
+    AgentSession,
+    ProviderControl,
+    ProviderCredential,
+    ProviderExecutionEvidence,
+)
 from astro.errors import ConfigurationError
 
 from .definitions import PROVIDER_DEFINITIONS
 
-CustomProviderBuilder = Callable[[ProviderCredential], ModelProvider]
 CredentialResolver = Callable[[], Awaitable[ProviderCredential]]
 CATALOG_BY_NAME = {provider.name: provider for provider in BUILTIN_PROVIDER_CATALOG}
 PROVIDER_CREDENTIAL_REFRESH_SKEW = timedelta(seconds=60)
+SUPPORTED_API_TRANSPORTS = frozenset(
+    {
+        "anthropic-messages",
+        "google-generative-ai",
+        "mistral-conversations",
+        "openai-codex",
+        "openai-completions",
+        "openai-responses",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,16 +60,12 @@ class ProviderRuntime:
     thinking_level: ThinkingLevel
     provider: ModelProvider
     credential: ProviderCredential
+    provider_control: ProviderControl
 
 
 class ProviderFactory:
     def __init__(self, backend: MainSequenceClient) -> None:
         self.backend = backend
-        self._custom: dict[str, CustomProviderBuilder] = {}
-
-    def register(self, provider_name: str, builder: CustomProviderBuilder) -> None:
-        """Register an Astro-specific provider using Tau's public protocol."""
-        self._custom[provider_name] = builder
 
     @staticmethod
     def _thinking_levels(
@@ -77,18 +87,27 @@ class ProviderFactory:
             )
         )
 
-    def validate_selection(
+    def validate_execution(
         self,
+        provider_control: ProviderControl,
+        *,
         provider_name: str,
         model: str,
         thinking_level: str | None = None,
+        media_types: set[str] | None = None,
     ) -> ThinkingLevel:
+        if provider_control.provider != provider_name:
+            raise ConfigurationError(
+                "Django provider-control evidence does not match the selected provider"
+            )
+        if provider_control.model.model != model:
+            raise ConfigurationError(
+                "Django provider-control evidence does not match the selected model"
+            )
         try:
             normalized_thinking = normalize_thinking_level(thinking_level)
         except ValueError as error:
             raise ConfigurationError(str(error)) from error
-        if provider_name in self._custom or provider_name == "ollama":
-            return normalized_thinking
         provider = CATALOG_BY_NAME.get(provider_name)
         if provider is None:
             raise ConfigurationError(f"Provider is not supported by Tau: {provider_name}")
@@ -96,13 +115,43 @@ class ProviderFactory:
             raise ConfigurationError(
                 f"Model is not configured for provider {provider_name}: {model}"
             )
-        available = self._thinking_levels(provider, model)
+        metadata = provider.model_metadata.get(model)
+        tau_api = (
+            metadata.api if metadata is not None and metadata.api else provider.api or provider.kind
+        )
+        projected_api = provider_control.model.api
+        if projected_api not in SUPPORTED_API_TRANSPORTS or projected_api != tau_api:
+            raise ConfigurationError(
+                f"Provider {provider_name} uses unsupported or contradictory "
+                f"Tau API transport {projected_api}"
+            )
+        tau_inputs = set(metadata.input if metadata is not None else ()) or {"text"}
+        projected_inputs = set(provider_control.model.input)
+        if not projected_inputs or not projected_inputs.issubset(tau_inputs):
+            raise ConfigurationError(
+                "Django provider-control input capabilities exceed Tau execution support"
+            )
+        tau_thinking = set(self._thinking_levels(provider, model))
+        projected_thinking = set(provider_control.model.thinking_levels)
+        if not projected_thinking.issubset(tau_thinking):
+            raise ConfigurationError(
+                "Django provider-control thinking levels exceed Tau execution support"
+            )
+        if provider_control.model.reasoning and not tau_thinking:
+            raise ConfigurationError(
+                "Django provider-control reasoning capability exceeds Tau execution support"
+            )
+        available = tau_thinking.intersection(projected_thinking)
         if thinking_level and normalized_thinking not in available:
-            supported = ", ".join(available) or "none"
+            supported = ", ".join(sorted(available)) or "none"
             raise ConfigurationError(
                 f"Thinking level {normalized_thinking!r} is not supported by "
                 f"{provider_name}:{model}; available levels: {supported}"
             )
+        self.validate_input_media(
+            provider_control,
+            media_types=media_types or set(),
+        )
         if thinking_level:
             return normalized_thinking
         default = provider.thinking_default
@@ -110,46 +159,29 @@ class ProviderFactory:
 
     def validate_input_media(
         self,
-        provider_name: str,
-        model: str,
+        provider_control: ProviderControl,
+        *,
         media_types: set[str],
     ) -> None:
         if not any(media_type.startswith("image/") for media_type in media_types):
             return
+        provider_name = provider_control.provider
+        model = provider_control.model.model
+        if "image" not in provider_control.model.input:
+            raise ConfigurationError(
+                f"Model {provider_name}:{model} is not enabled for image input"
+            )
         provider = CATALOG_BY_NAME.get(provider_name)
         metadata = provider.model_metadata.get(model) if provider is not None else None
         if metadata is None or "image" not in metadata.input:
             raise ConfigurationError(f"Model {provider_name}:{model} does not support image input")
-
-    async def for_session(
-        self,
-        session: AgentSession,
-        *,
-        holder_id: str,
-    ) -> ProviderRuntime:
-        provider_name = session.active_provider
-        model = session.active_model
-        if not provider_name or not model:
-            raise ConfigurationError(
-                f"Session {session.uid} does not have an active provider and model"
-            )
-        credential = await self.backend.hydrate_provider_credential(
-            provider_name,
-            session_uid=session.uid,
-            holder_id=holder_id,
-        )
-        return self.for_session_credential(
-            session,
-            holder_id=holder_id,
-            credential=credential,
-        )
 
     def for_session_credential(
         self,
         session: AgentSession,
         *,
         holder_id: str,
-        credential: ProviderCredential,
+        evidence: ProviderExecutionEvidence,
     ) -> ProviderRuntime:
         provider_name = session.active_provider
         model = session.active_model
@@ -157,12 +189,17 @@ class ProviderFactory:
             raise ConfigurationError(
                 f"Session {session.uid} does not have an active provider and model"
             )
-        thinking_level = self.validate_selection(
-            provider_name,
-            model,
-            session.active_thinking,
+        credential = evidence.credential
+        if credential.provider != provider_name:
+            raise ConfigurationError("Backend credential does not match the selected provider")
+        thinking_level = self.validate_execution(
+            evidence.provider_control,
+            provider_name=provider_name,
+            model=model,
+            thinking_level=session.active_thinking,
         )
         cached_credential = credential
+        cached_provider_control = evidence.provider_control
         credential_refresh_lock = asyncio.Lock()
 
         async def resolve_credential() -> ProviderCredential:
@@ -171,11 +208,24 @@ class ProviderFactory:
                 return cached_credential
             async with credential_refresh_lock:
                 if self._credential_expires_soon(cached_credential):
-                    cached_credential = await self.backend.hydrate_provider_credential(
+                    refreshed = await self.backend.hydrate_provider_credential(
                         provider_name,
+                        model=model,
                         session_uid=session.uid,
                         holder_id=holder_id,
                     )
+                    self.validate_execution(
+                        refreshed.provider_control,
+                        provider_name=provider_name,
+                        model=model,
+                        thinking_level=session.active_thinking,
+                    )
+                    if refreshed.provider_control.model != cached_provider_control.model:
+                        raise ConfigurationError(
+                            "Provider-control execution capability changed during "
+                            "credential refresh"
+                        )
+                    cached_credential = refreshed.credential
                 return cached_credential
 
         return ProviderRuntime(
@@ -184,11 +234,13 @@ class ProviderFactory:
             thinking_level=thinking_level,
             provider=self.build(
                 credential,
+                provider_control=evidence.provider_control,
                 model=model,
                 thinking_level=thinking_level,
                 credential_resolver=resolve_credential,
             ),
             credential=credential,
+            provider_control=evidence.provider_control,
         )
 
     @staticmethod
@@ -204,16 +256,13 @@ class ProviderFactory:
         self,
         credential: ProviderCredential,
         *,
+        provider_control: ProviderControl,
         model: str | None = None,
         credential_resolver: CredentialResolver | None = None,
         thinking_level: str | None = None,
         max_tokens: int | None = None,
         timeout_seconds: float = 60,
     ) -> ModelProvider:
-        custom = self._custom.get(credential.provider)
-        if custom is not None:
-            return custom(credential)
-
         definition = PROVIDER_DEFINITIONS.get(credential.provider)
         catalog_provider = CATALOG_BY_NAME.get(credential.provider)
         model_metadata = (
@@ -232,13 +281,7 @@ class ProviderFactory:
                 and normalized_thinking in model_metadata.thinking_level_map
             ):
                 mapped_thinking = model_metadata.thinking_level_map[normalized_thinking]
-        api = credential.api or (
-            model_metadata.api
-            if model_metadata is not None and model_metadata.api
-            else definition.api
-            if definition
-            else "openai-completions"
-        )
+        api = provider_control.model.api
         base_url = credential.base_url or (
             model_metadata.base_url
             if model_metadata is not None and model_metadata.base_url
@@ -252,7 +295,7 @@ class ProviderFactory:
             **credential.headers,
         }
         secret = credential.secret()
-        if not secret and credential.provider != "ollama":
+        if not secret:
             raise ConfigurationError(
                 f"Backend returned no usable credential for {credential.provider}"
             )
@@ -305,12 +348,12 @@ class ProviderFactory:
             )
 
         config = OpenAICompatibleConfig(
-            api_key=secret or "ollama",
+            api_key=secret,
             base_url=base_url,
             headers=headers,
             api=api,
             provider_name=credential.provider,
-            omit_authorization_header=credential.provider == "ollama" and not secret,
+            omit_authorization_header=False,
             max_tokens=max_tokens,
             timeout_seconds=timeout_seconds,
             reasoning_effort=mapped_thinking,

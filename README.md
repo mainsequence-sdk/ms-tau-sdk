@@ -106,15 +106,10 @@ with `ASTRO_REAL_CONVERSATION_REPORT_PATH`.
 - `GET /ready`
 - `GET /version`
 - `POST /api/chat`
+- `GET /api/chat/session-model`
+- `POST /api/chat/session/cancel`
 - `POST /api/agents/{agent_uid}/responses`
 - `POST /api/agents/{agent_uid}/responses/stream`
-- `GET /api/models/catalog`
-- `GET /api/model-providers`
-- `POST /api/model-providers/{provider}/signin`
-- `GET /api/model-providers/{provider}/signin/{attempt_id}`
-- `POST /api/model-providers/{provider}/signin/{attempt_id}/manual`
-- `POST /api/model-providers/{provider}/signin/{attempt_id}/cancel`
-- `POST /api/model-providers/{provider}/signoff`
 - `POST /api/a2a/v1/message:send`
 - `POST /api/a2a/v1/message:stream`
 - `GET /api/a2a/v1/tasks`
@@ -122,6 +117,10 @@ with `ASTRO_REAL_CONVERSATION_REPORT_PATH`.
 
 The unscoped LLM chat surface is not exposed. Agent identity is mandatory for
 all one-shot model execution.
+
+Provider catalog, sign-in, attempt, revoke, credential-status, and session
+model-selection operations are canonical Django APIs. Astro exposes no proxy
+or compatibility routes for those control-plane operations.
 
 FastAPI publishes the full schema at `/docs` and `/openapi.json`.
 

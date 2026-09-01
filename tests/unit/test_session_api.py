@@ -1,11 +1,11 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 from pydantic import ValidationError
 
-from astro.api.models import CancelRequest, SessionConfigPatch
-from astro.api.sessions import cancel_session, patch_session_config, session_model
+from astro.api.models import CancelRequest
+from astro.api.sessions import cancel_session, session_model
 from astro.backend.models import AgentSession, RuntimeState, RuntimeStatePatch
 
 
@@ -43,51 +43,6 @@ async def test_session_model_reads_provider_selection_from_session():
         },
     }
     client.get_session.assert_awaited_once_with("session-1")
-
-
-@pytest.mark.asyncio
-async def test_session_config_updates_canonical_session_fields():
-    client = AsyncMock()
-    client.get_session.return_value = AgentSession(
-        uid="session-1",
-        harness="tau",
-        harness_protocol="tau-session-v1",
-        harness_version="0.3.1",
-        llm_provider="openai",
-        llm_model="gpt-5.4",
-        llm_thinking="medium",
-    )
-    manager = SimpleNamespace(
-        providers=SimpleNamespace(validate_selection=Mock()),
-        evict=AsyncMock(),
-    )
-
-    result = await patch_session_config(
-        SessionConfigPatch(
-            sessionUid="session-1",
-            provider="anthropic",
-            model="claude-sonnet-4-20250514",
-            thinkingLevel="high",
-        ),
-        client,
-        manager,
-    )
-
-    manager.providers.validate_selection.assert_called_once_with(
-        "anthropic",
-        "claude-sonnet-4-20250514",
-        "high",
-    )
-    manager.evict.assert_awaited_once_with("session-1")
-    client.patch_runtime_state.assert_awaited_once_with(
-        "session-1",
-        RuntimeStatePatch(
-            active_provider="anthropic",
-            active_model="claude-sonnet-4-20250514",
-            active_thinking="high",
-        ),
-    )
-    assert result["updatedFields"] == ["provider", "model", "thinkingLevel"]
 
 
 @pytest.mark.asyncio

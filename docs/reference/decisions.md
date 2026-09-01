@@ -70,8 +70,8 @@ pre-UID API sketches have been removed from the active reference set.
 - [`adr-checkpoint-reasoning-annotations.md`](./adr-checkpoint-reasoning-annotations.md)
   - Reasoning presence is checkpoint metadata without duplicating raw reasoning text.
 - [`adr-editable-session-config.md`](./adr-editable-session-config.md)
-  - Session config editability is advertised through session-insights metadata and patched through
-    a narrow config endpoint.
+  - Historical session-config editability contract; ADR 51 removes Astro's write endpoint and
+    makes Django's AgentSession service the canonical mutation owner.
 
 ## Auth And Model Control
 

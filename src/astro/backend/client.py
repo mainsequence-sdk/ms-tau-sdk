@@ -25,8 +25,9 @@ from .models import (
     AgentTask,
     AgentTaskCreateResult,
     CapabilityContent,
+    ProviderControl,
     ProviderCredential,
-    ProviderStatus,
+    ProviderExecutionEvidence,
     RuntimeActivityPatch,
     RuntimeLease,
     RuntimeLeaseReleaseRequest,
@@ -503,10 +504,11 @@ class MainSequenceClient:
         self,
         provider: str,
         *,
+        model: str,
         session_uid: str | None = None,
         agent_uid: str | None = None,
         holder_id: str,
-    ) -> ProviderCredential:
+    ) -> ProviderExecutionEvidence:
         if bool(session_uid) == bool(agent_uid):
             raise BackendError(
                 "Provider hydration requires exactly one of AgentSession UID or Agent UID"
@@ -519,10 +521,26 @@ class MainSequenceClient:
                 **identity,
                 "providers": [provider],
                 "holder_id": holder_id,
+                "supported_provider_control_schema_versions": [1],
+                "execution_selection": {
+                    "provider": provider,
+                    "model": model,
+                },
             },
             idempotent=True,
         )
-        return self.provider_credential_from_hydration(provider, data)
+        if not isinstance(data, dict):
+            raise BackendError("Backend provider hydration response is invalid")
+        try:
+            provider_control = ProviderControl.model_validate(data.get("provider_control"))
+        except ValidationError as error:
+            raise BackendError(
+                "Backend provider hydration omitted valid provider-control evidence"
+            ) from error
+        return ProviderExecutionEvidence(
+            credential=self.provider_credential_from_hydration(provider, data),
+            provider_control=provider_control,
+        )
 
     @staticmethod
     def provider_credential_from_hydration(
@@ -558,72 +576,6 @@ class MainSequenceClient:
                 },
             }
         )
-
-    async def list_provider_statuses(
-        self,
-        *,
-        session_uid: str,
-    ) -> list[ProviderStatus]:
-        query = urlencode({"agent_session_uid": session_uid})
-        data = await self._request(
-            "GET",
-            model_provider_credentials("status") + f"?{query}",
-            idempotent=True,
-        )
-        values = data.get("providers", {}) if isinstance(data, dict) else {}
-        if not isinstance(values, dict):
-            raise BackendError("Backend provider status response is invalid")
-        return [
-            ProviderStatus.model_validate({"provider": name, **value})
-            for name, value in values.items()
-            if isinstance(value, dict)
-        ]
-
-    async def flush_provider_credential(
-        self,
-        *,
-        provider: str,
-        session_uid: str,
-        credential: Mapping[str, Any],
-        base_version: int = 0,
-        reason: str = "signin_completed",
-    ) -> dict[str, Any]:
-        data = await self._request(
-            "POST",
-            model_provider_credentials("flush"),
-            json={
-                "agent_session_uid": session_uid,
-                "provider": provider,
-                "base_version": base_version,
-                "reason": reason,
-                "credential": dict(credential),
-            },
-            idempotent=True,
-        )
-        if not isinstance(data, dict):
-            raise BackendError("Backend credential flush response is invalid")
-        return data
-
-    async def revoke_provider_credential(
-        self,
-        *,
-        provider: str,
-        session_uid: str,
-        reason: str = "user_signoff",
-    ) -> dict[str, Any]:
-        data = await self._request(
-            "POST",
-            model_provider_credentials("revoke"),
-            json={
-                "agent_session_uid": session_uid,
-                "provider": provider,
-                "reason": reason,
-            },
-            idempotent=True,
-        )
-        if not isinstance(data, dict):
-            raise BackendError("Backend credential revoke response is invalid")
-        return data
 
     async def create_task(self, payload: Mapping[str, Any]) -> AgentTaskCreateResult:
         data, status_code = await self._request(

@@ -389,25 +389,27 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
                             "credential_kind": "api_key",
                             "credential": {"api_key": "provider-secret"},
                         }
-                    }
+                    },
+                    "provider_control": {
+                        "schema_version": 1,
+                        "catalog_digest": f"sha256:{'0' * 64}",
+                        "provider": "openai",
+                        "model": {
+                            "model": "gpt-5.4",
+                            "api": "openai-responses",
+                            "input": ["text", "image"],
+                            "reasoning": True,
+                            "thinking_levels": [
+                                "off",
+                                "low",
+                                "medium",
+                                "high",
+                                "xhigh",
+                            ],
+                        },
+                    },
                 },
             )
-        if path == "/api/v1/model-provider-credentials/status/":
-            return httpx.Response(
-                200,
-                json={
-                    "providers": {
-                        "openai": {
-                            "status": "active",
-                            "credential_kind": "api_key",
-                        }
-                    }
-                },
-            )
-        if path == "/api/v1/model-provider-credentials/flush/":
-            return httpx.Response(200, json={"accepted": True})
-        if path == "/api/v1/model-provider-credentials/revoke/":
-            return httpx.Response(200, json={"revoked": True})
         if path == "/api/v1/agent-tasks/" and request.method == "POST":
             return httpx.Response(201, json=task)
         if path == "/api/v1/agent-tasks/" and request.method == "GET":
@@ -435,22 +437,11 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
             RuntimeCredentialAuth(settings, exchange_client=http),
             client=http,
         )
-        credential = await client.hydrate_provider_credential(
+        evidence = await client.hydrate_provider_credential(
             "openai",
+            model="gpt-5.4",
             session_uid="session-1",
             holder_id="astro-1",
-        )
-        statuses = await client.list_provider_statuses(
-            session_uid="session-1",
-        )
-        flushed = await client.flush_provider_credential(
-            provider="openai",
-            session_uid="session-1",
-            credential={"type": "api_key", "api_key": "provider-secret"},
-        )
-        revoked = await client.revoke_provider_credential(
-            provider="openai",
-            session_uid="session-1",
         )
         created = await client.create_task({"task_id": "task-1"})
         found = await client.get_task_by_protocol_id("task-1")
@@ -464,11 +455,8 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
         )
         cancelled = await client.cancel_task("task-uid-1")
 
-    assert credential.secret() == "provider-secret"
-    assert statuses[0].status == "active"
-    assert flushed == {"accepted": True}
-    assert revoked == {"revoked": True}
-    assert requests[2][2] == "agent_session_uid=session-1"
+    assert evidence.credential.secret() == "provider-secret"
+    assert evidence.provider_control.model.model == "gpt-5.4"
     assert created.created is True
     assert created.task.uid == found.uid == "task-uid-1"
     assert updated.status == "working"
@@ -477,13 +465,6 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
     assert requests == [
         ("POST", "/api/v1/runtime-credentials/token/", ""),
         ("POST", "/api/v1/model-provider-credentials/hydrate/", ""),
-        (
-            "GET",
-            "/api/v1/model-provider-credentials/status/",
-            "agent_session_uid=session-1",
-        ),
-        ("POST", "/api/v1/model-provider-credentials/flush/", ""),
-        ("POST", "/api/v1/model-provider-credentials/revoke/", ""),
         ("POST", "/api/v1/agent-tasks/", ""),
         ("GET", "/api/v1/agent-tasks/", "task_id=task-1"),
         ("POST", "/api/v1/agent-tasks/task-uid-1/status/", ""),

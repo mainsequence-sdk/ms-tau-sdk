@@ -1,15 +1,21 @@
 # Session Configuration
 
-`PATCH /api/chat/session-config` changes the backend-owned provider and model
-used by subsequent turns:
+Astro does not expose a session-selection mutation route. Callers change the
+Django-owned selection directly:
+
+```http
+PATCH /api/v1/agent-sessions/{agent_session_uid}/runtime-state/
+```
 
 ```json
 {
-  "sessionUid": "8fbc7a53-32e6-4eb8-9995-3b8040e2e314",
-  "provider": "anthropic",
-  "model": "claude-sonnet-4-5"
+  "active_provider": "anthropic",
+  "active_model": "claude-sonnet-4-6",
+  "active_thinking": "high"
 }
 ```
 
-Astro evicts any loaded runtime before updating backend state so the next turn
-constructs a new Tau session with the new provider.
+Django validates and persists the complete canonical selection atomically. It
+rejects changes while a turn is working or persisting and invalidates a loaded
+idle runtime lease. Astro reloads that session once before inference if a turn
+races with the mutation; the caller sends only the one Django mutation.

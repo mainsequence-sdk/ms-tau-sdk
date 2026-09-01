@@ -2,7 +2,12 @@
 
 ## Status
 
-Accepted
+Superseded by ADR 51
+
+ADR 51 removes the Astro-owned `PATCH /api/chat/session-config` write
+contract. Canonical session configuration mutations now belong to Django. The
+historical read-shape and editability context below is retained only as prior
+design context; none of its Astro mutation routes remain implemented.
 
 ## Context
 

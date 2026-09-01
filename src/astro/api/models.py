@@ -6,8 +6,6 @@ from typing import Any
 
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
-from astro.backend.models import TauThinkingLevel
-
 
 class ApiModel(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
@@ -55,23 +53,3 @@ class CancelRequest(ApiModel):
         )
     )
     message: str | None = None
-
-
-class SessionConfigPatch(ApiModel):
-    session_uid: str = Field(
-        validation_alias=AliasChoices(
-            "sessionUid",
-            "runtime_session_uid",
-            "runtimeSessionUid",
-        )
-    )
-    provider: str | None = None
-    model: str | None = None
-    thinking_level: TauThinkingLevel | None = Field(
-        default=None,
-        validation_alias=AliasChoices(
-            "thinking_level",
-            "thinkingLevel",
-            "reasoningEffort",
-        ),
-    )

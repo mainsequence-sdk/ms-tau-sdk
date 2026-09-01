@@ -4,15 +4,13 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 
 from astro.backend.client import MainSequenceClient
-from astro.backend.models import RuntimeStatePatch
-from astro.errors import ConfigurationError
 from astro.runtime.manager import SessionRuntimeManager
 
 from .dependencies import backend, runtime_manager
-from .models import CancelRequest, SessionConfigPatch
+from .models import CancelRequest
 
 router = APIRouter(prefix="/api/chat")
 BackendDep = Annotated[MainSequenceClient, Depends(backend)]
@@ -32,50 +30,6 @@ async def session_model(
             "model": session.active_model,
             "thinkingLevel": session.active_thinking,
         },
-    }
-
-
-@router.patch("/session-config")
-async def patch_session_config(
-    body: SessionConfigPatch,
-    client: BackendDep,
-    manager: RuntimeManagerDep,
-) -> dict[str, object]:
-    current = await client.get_session(body.session_uid)
-    provider = body.provider or current.active_provider
-    model = body.model or current.active_model
-    thinking_level = body.thinking_level or current.active_thinking
-    if not provider or not model:
-        raise HTTPException(
-            status_code=409,
-            detail="Session requires an active provider and model",
-        )
-    try:
-        manager.providers.validate_selection(provider, model, thinking_level)
-    except ConfigurationError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-    await manager.evict(body.session_uid)
-    await client.patch_runtime_state(
-        body.session_uid,
-        RuntimeStatePatch(
-            active_provider=provider,
-            active_model=model,
-            active_thinking=thinking_level,
-        ),
-    )
-    fields = [
-        name
-        for name, value in (
-            ("provider", body.provider),
-            ("model", body.model),
-            ("thinkingLevel", body.thinking_level),
-        )
-        if value is not None
-    ]
-    return {
-        "ok": True,
-        "sessionUid": body.session_uid,
-        "updatedFields": fields,
     }
 
 

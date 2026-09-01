@@ -13,6 +13,8 @@ from tau_agent.session import SessionEntry, SessionStorage
 
 from astro.backend.client import MainSequenceClient
 from astro.backend.models import (
+    RuntimeActivityPatch,
+    RuntimeState,
     SessionEntryBatchAppendRequest,
     SessionEntryBatchAppendResponse,
     SessionEntryBatchItem,
@@ -58,15 +60,35 @@ class BackendSessionStorage(SessionStorage):
         self._last_turn_commit: TauTurnCommit | None = None
         self._defer_pending_until_commit = False
 
-    async def begin_turn(self, *, turn_uid: str, activity_sequence: int) -> None:
+    async def begin_turn(
+        self,
+        *,
+        turn_uid: str,
+        activity_sequence: int,
+    ) -> RuntimeState:
         async with self._state_lock:
             self._raise_persistence_error()
+            if not self._lease_valid:
+                raise LeaseLostError(f"Runtime lease was lost for session {self.session_uid}")
+            if not self.holder_id:
+                raise RuntimeError("Tau turn start requires a runtime lease holder")
+            state = await self.backend.patch_runtime_activity(
+                self.session_uid,
+                RuntimeActivityPatch(
+                    holder_id=self.holder_id,
+                    lease_token=self.lease_token,
+                    activity_sequence=activity_sequence,
+                    runtime_activity="working",
+                    active_turn_uid=turn_uid,
+                ),
+            )
             self._defer_pending_until_commit = False
             self._turn_lifecycle = TauTurnLifecycle(
                 turn_uid=turn_uid,
                 phase="started",
                 activity_sequence=activity_sequence,
             )
+            return state
 
     async def commit_turn(
         self,

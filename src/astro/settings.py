@@ -131,10 +131,6 @@ class Settings(BaseSettings):
         default=True,
         validation_alias="ASTRO_STARTUP_DEPENDENCIES_ENABLED",
     )
-    tau_runtime_contract: Literal["v1", "adr48"] = Field(
-        default="v1",
-        validation_alias="ASTRO_TAU_RUNTIME_CONTRACT",
-    )
     session_entry_batch_max_entries: int = Field(
         default=100,
         ge=1,
