@@ -46,7 +46,7 @@ SUPPORTED_API_TRANSPORTS = frozenset(
         "anthropic-messages",
         "google-generative-ai",
         "mistral-conversations",
-        "openai-codex",
+        "openai-codex-responses",
         "openai-completions",
         "openai-responses",
     }
@@ -117,7 +117,11 @@ class ProviderFactory:
             )
         metadata = provider.model_metadata.get(model)
         tau_api = (
-            metadata.api if metadata is not None and metadata.api else provider.api or provider.kind
+            "openai-codex-responses"
+            if provider.kind == "openai-codex"
+            else metadata.api
+            if metadata is not None and metadata.api
+            else provider.api or provider.kind
         )
         projected_api = provider_control.model.api
         if projected_api not in SUPPORTED_API_TRANSPORTS or projected_api != tau_api:
@@ -300,7 +304,7 @@ class ProviderFactory:
                 f"Backend returned no usable credential for {credential.provider}"
             )
 
-        if api == "openai-codex":
+        if api == "openai-codex-responses":
             if not credential.access_token or not credential.account_id:
                 raise ConfigurationError(
                     "OpenAI Codex requires backend-managed access_token and account_id"

@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from astro.api.chat import router
 from astro.api.dependencies import runtime_manager
+from astro.errors import BackendConflictError
 from astro.runtime.events import AstroRuntimeEvent
 from astro.settings import Settings
 
@@ -29,6 +30,23 @@ class _ChatManager:
     def mark_response_delivered(self, session_uid: str) -> bool:
         self.delivered_sessions.append(session_uid)
         return True
+
+
+class _ProviderCredentialUnavailableManager(_ChatManager):
+    async def prompt(self, session_uid: str, prompt: str):
+        self.prompts.append((session_uid, prompt))
+        raise BackendConflictError(
+            "Backend conflict",
+            status_code=409,
+            detail={
+                "error_code": "model_provider_credential_unavailable",
+                "error_detail": (
+                    "The selected provider credential is expired, invalid, "
+                    "or cannot be refreshed."
+                ),
+            },
+        )
+        yield
 
 
 def _app(manager: _ChatManager) -> FastAPI:
@@ -76,3 +94,27 @@ async def test_chat_rejects_missing_user_prompt_before_runtime_execution(asgi_cl
     assert response.status_code == 400
     assert response.json()["detail"] == "Request does not contain a user message"
     assert manager.prompts == []
+
+
+async def test_chat_streams_provider_credential_conflict_as_assistant_message(asgi_client):
+    manager = _ProviderCredentialUnavailableManager()
+
+    async with asgi_client(_app(manager)) as http:
+        response = await http.post(
+            "/api/chat",
+            json={
+                "sessionUid": "session-1",
+                "messages": [{"role": "user", "content": "Answer this."}],
+            },
+        )
+
+    assert response.status_code == 200
+    assert '"type":"text-start"' in response.text
+    assert (
+        '"textDelta":"The selected provider credential is expired, invalid, '
+        'or cannot be refreshed."' in response.text
+    )
+    assert '"type":"text-end"' in response.text
+    assert '"type":"finish"' in response.text
+    assert '"type":"error"' not in response.text
+    assert response.text.endswith("data: [DONE]\n\n")

@@ -193,7 +193,7 @@ class MainSequenceClient:
                     raise BackendError("Backend response exceeded configured size limit")
                 data = response.json() if response.content else None
                 return (data, response.status_code) if include_status else data
-            except (httpx.TimeoutException, httpx.NetworkError) as error:
+            except httpx.TransportError as error:
                 logger.warning(
                     "dependency.call.failed",
                     message="Backend dependency call failed",

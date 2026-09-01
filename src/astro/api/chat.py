@@ -10,6 +10,7 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from astro.errors import BackendConflictError
 from astro.logging import bind_request_log_fields, conversation_log_fields
 from astro.protocols.assistant_ui import AssistantUiEncoder
 from astro.runtime.manager import SessionRuntimeManager
@@ -20,6 +21,16 @@ from .models import ChatRequest
 router = APIRouter(prefix="/api")
 RuntimeManagerDep = Annotated[SessionRuntimeManager, Depends(runtime_manager)]
 logger = structlog.get_logger(__name__)
+MODEL_PROVIDER_CREDENTIAL_UNAVAILABLE = "model_provider_credential_unavailable"
+
+
+def _backend_user_message(error: Exception) -> str | None:
+    if not isinstance(error, BackendConflictError) or not isinstance(error.detail, dict):
+        return None
+    if error.detail.get("error_code") != MODEL_PROVIDER_CREDENTIAL_UNAVAILABLE:
+        return None
+    detail = str(error.detail.get("error_detail") or "").strip()
+    return detail or "The selected provider credential is unavailable."
 
 
 @router.get("/chat")
@@ -78,16 +89,29 @@ async def chat(
                 agent_session_uid=body.session_uid,
                 error_type=type(error).__name__,
             )
-            yield encoder.sse(
-                {
-                    "type": "error",
-                    "errorText": (
-                        f"Conversation output completed, but saving failed: {error}"
-                        if encoder.finished
-                        else str(error)
-                    ),
-                }
-            )
+            user_message = _backend_user_message(error) if not encoder.finished else None
+            if user_message is not None:
+                yield encoder.sse({"type": "text-start", "id": "text-error"})
+                yield encoder.sse(
+                    {
+                        "type": "text-delta",
+                        "id": "text-error",
+                        "textDelta": user_message,
+                    }
+                )
+                yield encoder.sse({"type": "text-end", "id": "text-error"})
+                yield encoder.sse({"type": "finish", "finishReason": "stop"})
+            else:
+                yield encoder.sse(
+                    {
+                        "type": "error",
+                        "errorText": (
+                            f"Conversation output completed, but saving failed: {error}"
+                            if encoder.finished
+                            else str(error)
+                        ),
+                    }
+                )
             yield encoder.done()
 
     return StreamingResponse(
