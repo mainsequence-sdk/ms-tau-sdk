@@ -27,6 +27,8 @@ jobs:
         run: uv python install 3.13
       - name: Sync locked workspace
         run: uv sync --frozen
+      - name: Install runtime tool dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep
       - name: Check formatting
         run: uv run ruff format --check src tests packages
       - name: Lint
