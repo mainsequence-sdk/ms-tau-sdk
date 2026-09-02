@@ -49,8 +49,10 @@ class _TauEventManager:
     def __init__(self, *events: object) -> None:
         self.events = events
         self.delivered_sessions: list[str] = []
+        self.provenances: list[object] = []
 
-    async def prompt(self, _context_id: str, _prompt: str):
+    async def prompt(self, _context_id: str, _prompt: str, *, provenance=None):
+        self.provenances.append(provenance)
         for event in self.events:
             yield translate_tau_event(event)
 
@@ -544,3 +546,26 @@ async def test_message_send_rejects_task_when_agent_card_is_message_only():
     assert response.status_code == 400
     assert "not advertised" in response.json()["detail"]
     client.create_task.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_direct_message_send_stamps_the_turn_as_agent_a2a_provenance():
+    partial = _assistant_message(" ")
+    final = _assistant_message("Done.")
+    manager = _TauEventManager(
+        MessageUpdateEvent(
+            message=partial,
+            assistant_message_event=TextDeltaEvent(
+                content_index=0,
+                delta=" ",
+                partial=partial,
+            ),
+        ),
+        MessageEndEvent(message=final),
+        SessionAgentEndEvent(messages=[final], will_retry=False),
+    )
+
+    response, _client = await _direct_message_response(manager)
+
+    assert response.status_code == 200
+    assert manager.provenances == [{"channel": "a2a", "origin": "agent"}]

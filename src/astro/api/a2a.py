@@ -38,6 +38,7 @@ from astro.protocols.strict_json import (
     validate_strict_json,
 )
 from astro.runtime.manager import SessionRuntimeManager
+from astro.runtime.provenance import build_turn_provenance
 from astro.settings import Settings
 
 from .dependencies import backend, runtime_manager, settings
@@ -562,7 +563,7 @@ async def _collect_turn(
     max_output_bytes: int,
 ) -> str:
     accumulator = _TurnAccumulator(max_output_bytes=max_output_bytes)
-    async for event in manager.prompt(context_id, prompt):
+    async for event in manager.prompt(context_id, prompt, provenance=build_turn_provenance("a2a")):
         accumulator.consume(event)
     try:
         return accumulator.result()
@@ -781,7 +782,9 @@ async def _stream_task_events(
                 )
                 emitted = True
         else:
-            async for event in manager.prompt(task.context_id, prompt):
+            async for event in manager.prompt(
+                task.context_id, prompt, provenance=build_turn_provenance("a2a")
+            ):
                 value = _event_text(event.type, event.data, has_chunks=bool(chunks))
                 if not value:
                     continue

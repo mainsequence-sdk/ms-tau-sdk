@@ -46,6 +46,7 @@ from astro.providers.factory import ProviderFactory
 from astro.resources.loader import append_system_prompt, resource_root
 from astro.runtime.events import AstroRuntimeEvent
 from astro.runtime.observability import TauTurnObserver
+from astro.runtime.provenance import TurnProvenance
 from astro.runtime.snapshots import (
     SNAPSHOT_SCHEMA_VERSION,
     TAU_RUNTIME_VERSION,
@@ -414,6 +415,8 @@ class SessionRuntimeManager:
         self,
         session_uid: str,
         content: str,
+        *,
+        provenance: TurnProvenance | None = None,
     ) -> AsyncIterator[AstroRuntimeEvent]:
         agent_run_uid = str(uuid.uuid4())
         turn_uid = str(uuid.uuid4())
@@ -424,13 +427,17 @@ class SessionRuntimeManager:
             turn_uid=turn_uid,
             agent_uid="astro-tau",
         ):
-            async for event in self._prompt_with_context(session_uid, content):
+            async for event in self._prompt_with_context(
+                session_uid, content, provenance=provenance
+            ):
                 yield event
 
     async def _prompt_with_context(
         self,
         session_uid: str,
         content: str,
+        *,
+        provenance: TurnProvenance | None = None,
     ) -> AsyncIterator[AstroRuntimeEvent]:
         logger.info(
             "agent.run.accepted",
@@ -494,6 +501,7 @@ class SessionRuntimeManager:
                 async with asyncio.timeout(self.settings.turn_timeout_seconds):
                     async for event in runtime.prompt(
                         content,
+                        provenance=provenance,
                         durability_task=lambda: self.create_background_task(
                             self._settle_turn_durability(runtime, turn_uid),
                             name=f"astro-turn-persist-{session_uid}-{turn_uid}",

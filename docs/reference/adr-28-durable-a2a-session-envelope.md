@@ -229,6 +229,33 @@ This ADR does not:
 - [x] Update the Astro-facing A2A docs to describe the durable provenance rule for agent-originated
       `user` turns.
 
+## Amendment 2026-09-02: Tau implementation
+
+The Pi harness met the implementation tasks above through its durable A2A envelope. The Tau harness
+persisted nothing per turn: `/api/chat` and the A2A routes both reached
+`manager.prompt(session_uid, text)` and stored byte-identical `UserMessage` entries, so backend
+history could not tell a human turn from an agent turn on a Tau session.
+
+Tau now stamps every bounded `user` turn with a tau-native `CustomEntry`, appended inside the turn
+immediately before the user message:
+
+- namespace `io.mainsequence.provenance`
+- data `{"channel": "chat" | "a2a" | "responses", "origin": "user" | "agent"}`
+- `channel` is derived from the route that received the request; `origin` follows the channel
+  (`chat` is human-facing, the A2A and sessionless routes are agent-facing). Nothing from the
+  request body is trusted for the stamp. Caller identity fields arrive in a later phase from
+  gateway-verified headers only.
+
+Why a custom entry: it is already part of the canonical Tau entry contract, the Tau session state
+keeps custom entries out of the model context, it reloads as a first-class entry, and it rides the
+turn's commit batch, so the send path gains no request. The backend (tdag-django ADR-008,
+amendment of the same date) attaches the most recent stamp on the active branch to the next
+projected `user` message as message-level `provenance`. The `user` / `assistant` role model stays
+intact, as decided above.
+
+Implementation: `astro.runtime.provenance`, `ActiveSessionRuntime.prompt(provenance=...)`,
+`SessionRuntimeManager.prompt(provenance=...)`, and the chat and A2A routes.
+
 ## Related
 
 - [`adr-25-production-a2a-discovery-and-runtime-access.md`](./adr-25-production-a2a-discovery-and-runtime-access.md)

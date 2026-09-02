@@ -14,6 +14,7 @@ from astro.errors import BackendConflictError
 from astro.logging import bind_request_log_fields, conversation_log_fields
 from astro.protocols.assistant_ui import AssistantUiEncoder
 from astro.runtime.manager import SessionRuntimeManager
+from astro.runtime.provenance import build_turn_provenance
 
 from .dependencies import runtime_manager
 from .models import ChatRequest
@@ -68,7 +69,9 @@ async def chat(
     async def stream() -> AsyncIterator[bytes]:
         encoder = AssistantUiEncoder()
         try:
-            async for event in manager.prompt(body.session_uid, prompt):
+            async for event in manager.prompt(
+                body.session_uid, prompt, provenance=build_turn_provenance("chat")
+            ):
                 for payload in encoder.encode(event):
                     yield encoder.sse(payload)
             if not encoder.finished:

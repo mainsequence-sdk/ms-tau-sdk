@@ -208,7 +208,7 @@ async def test_a2a_stream_emits_incremental_artifact_and_final_task():
     client.update_task_status.side_effect = [working, completed]
 
     class Manager:
-        async def prompt(self, _context_id, _prompt):
+        async def prompt(self, _context_id, _prompt, *, provenance=None):
             yield AstroRuntimeEvent(
                 type="text_delta",
                 data={"contentIndex": 0, "delta": "hel"},

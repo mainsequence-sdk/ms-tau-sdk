@@ -12,6 +12,7 @@ from tau_coding import CodingSession
 from astro.backend.mcp import MainSequenceMCPClient
 from astro.backend.models import TauTurnCommit
 from astro.runtime.events import AstroRuntimeEvent, translate_tau_event
+from astro.runtime.provenance import PROVENANCE_NAMESPACE, TurnProvenance
 from astro.sessions.storage import BackendSessionStorage
 
 
@@ -47,6 +48,7 @@ class ActiveSessionRuntime:
         content: str,
         *,
         durability_task: Callable[[], asyncio.Task[object]],
+        provenance: TurnProvenance | None = None,
     ) -> AsyncIterator[AstroRuntimeEvent]:
         if self.evicting:
             raise RuntimeError("Session runtime is being evicted")
@@ -57,6 +59,14 @@ class ActiveSessionRuntime:
         async with self.lock:
             self.last_used_at = time.monotonic()
             settled_event: AstroRuntimeEvent | None = None
+            if provenance:
+                # Stamp the turn with a tau-native custom entry: it is part of
+                # the canonical entry contract, stays out of the model context,
+                # reloads as a first-class entry, and rides the turn's commit
+                # batch, so the send path gains no request.
+                await self.coding_session.append_custom_entry(
+                    PROVENANCE_NAMESPACE, dict(provenance)
+                )
             async for event in self.coding_session.prompt(content):
                 translated = translate_tau_event(event)
                 if settled_event is not None and translated.type != "agent_settled":

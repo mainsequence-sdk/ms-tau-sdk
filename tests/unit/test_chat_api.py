@@ -12,10 +12,12 @@ class _ChatManager:
 
     def __init__(self) -> None:
         self.prompts: list[tuple[str, str]] = []
+        self.provenances: list[object] = []
         self.delivered_sessions: list[str] = []
 
-    async def prompt(self, session_uid: str, prompt: str):
+    async def prompt(self, session_uid: str, prompt: str, *, provenance=None):
         self.prompts.append((session_uid, prompt))
+        self.provenances.append(provenance)
         yield AstroRuntimeEvent(type="text_start", data={"contentIndex": 0})
         yield AstroRuntimeEvent(
             type="text_delta",
@@ -33,16 +35,16 @@ class _ChatManager:
 
 
 class _ProviderCredentialUnavailableManager(_ChatManager):
-    async def prompt(self, session_uid: str, prompt: str):
+    async def prompt(self, session_uid: str, prompt: str, *, provenance=None):
         self.prompts.append((session_uid, prompt))
+        self.provenances.append(provenance)
         raise BackendConflictError(
             "Backend conflict",
             status_code=409,
             detail={
                 "error_code": "model_provider_credential_unavailable",
                 "error_detail": (
-                    "The selected provider credential is expired, invalid, "
-                    "or cannot be refreshed."
+                    "The selected provider credential is expired, invalid, or cannot be refreshed."
                 ),
             },
         )
@@ -118,3 +120,18 @@ async def test_chat_streams_provider_credential_conflict_as_assistant_message(as
     assert '"type":"finish"' in response.text
     assert '"type":"error"' not in response.text
     assert response.text.endswith("data: [DONE]\n\n")
+
+
+async def test_chat_stamps_each_user_turn_as_human_chat_provenance(asgi_client):
+    manager = _ChatManager()
+    async with asgi_client(_app(manager)) as http:
+        response = await http.post(
+            "/api/chat",
+            json={
+                "sessionUid": "session-1",
+                "messages": [{"role": "user", "content": "Answer this."}],
+            },
+        )
+
+    assert response.status_code == 200
+    assert manager.provenances == [{"channel": "chat", "origin": "user"}]

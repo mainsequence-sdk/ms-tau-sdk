@@ -36,7 +36,7 @@ class _DirectManager:
     def __init__(self) -> None:
         self.delivered_sessions: list[str] = []
 
-    async def prompt(self, _context_id: str, _prompt: str):
+    async def prompt(self, _context_id: str, _prompt: str, *, provenance=None):
         yield AstroRuntimeEvent(
             type="message_end",
             data={
