@@ -530,6 +530,47 @@ def test_tau_model_rate_limit_retry_preserves_safe_correlated_attempts(capsys):
     assert "private prompt" not in json.dumps(model_events)
 
 
+def test_tau_terminal_provider_failure_is_observed_as_failed_without_payloads(capsys):
+    configure_logging("INFO", machine_sink=True, human_sink=False)
+    observer = TauTurnObserver(provider="openrouter", model="controlled-model")
+
+    observer.observe(AstroRuntimeEvent(type="message_start"))
+    observer.observe(
+        AstroRuntimeEvent(
+            type="message_end",
+            data={
+                "message": {
+                    "role": "assistant",
+                    "stopReason": "error",
+                    "errorMessage": "private provider response",
+                    "diagnostics": [
+                        {
+                            "type": "provider_error",
+                            "details": {
+                                "status_code": 402,
+                                "body": "private raw response body",
+                            },
+                        }
+                    ],
+                }
+            },
+        )
+    )
+
+    events = _json_events(capsys.readouterr().out)
+    model_events = [event for event in events if event["event"].startswith("agent.model.")]
+    assert [event["event"] for event in model_events] == [
+        "agent.model.started",
+        "agent.model.failed",
+    ]
+    assert model_events[1]["model_error_type"] == "ProviderError"
+    assert model_events[1]["retryable"] is False
+    assert observer.terminal_failure is not None
+    assert observer.terminal_failure.message == "private provider response"
+    assert "private provider response" not in json.dumps(model_events)
+    assert "private raw response body" not in json.dumps(model_events)
+
+
 def test_tau_tool_timeout_retry_preserves_safe_canonical_approval_outcome(capsys):
     configure_logging("INFO", machine_sink=True, human_sink=False)
     observer = TauTurnObserver(provider="openai", model="controlled-model")

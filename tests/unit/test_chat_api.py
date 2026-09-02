@@ -51,6 +51,23 @@ class _ProviderCredentialUnavailableManager(_ChatManager):
         yield
 
 
+class _ProviderErrorManager(_ChatManager):
+    async def prompt(self, session_uid: str, prompt: str, *, provenance=None):
+        self.prompts.append((session_uid, prompt))
+        self.provenances.append(provenance)
+        yield AstroRuntimeEvent(
+            type="message_end",
+            data={
+                "message": {
+                    "role": "assistant",
+                    "stopReason": "error",
+                    "errorMessage": "Provider supplied billing message",
+                }
+            },
+        )
+        yield AstroRuntimeEvent(type="agent_settled")
+
+
 def _app(manager: _ChatManager) -> FastAPI:
     app = FastAPI()
     app.include_router(router)
@@ -120,6 +137,29 @@ async def test_chat_streams_provider_credential_conflict_as_assistant_message(as
     assert '"type":"finish"' in response.text
     assert '"type":"error"' not in response.text
     assert response.text.endswith("data: [DONE]\n\n")
+
+
+async def test_chat_streams_terminal_provider_message_as_error_text(asgi_client):
+    manager = _ProviderErrorManager()
+
+    async with asgi_client(_app(manager)) as http:
+        response = await http.post(
+            "/api/chat",
+            json={
+                "sessionUid": "session-1",
+                "messages": [{"role": "user", "content": "Answer this."}],
+            },
+        )
+
+    assert response.status_code == 200
+    assert (
+        'data: {"type":"error","errorText":"Provider supplied billing message"}\n\n'
+        in response.text
+    )
+    assert '"type":"finish"' not in response.text
+    assert "body" not in response.text
+    assert response.text.endswith("data: [DONE]\n\n")
+    assert manager.delivered_sessions == ["session-1"]
 
 
 async def test_chat_stamps_each_user_turn_as_human_chat_provenance(asgi_client):

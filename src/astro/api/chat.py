@@ -74,9 +74,9 @@ async def chat(
             ):
                 for payload in encoder.encode(event):
                     yield encoder.sse(payload)
-            if not encoder.finished:
-                yield encoder.sse({"type": "finish", "finishReason": "stop"})
             try:
+                for payload in encoder.finalize():
+                    yield encoder.sse(payload)
                 yield encoder.done()
             finally:
                 manager.mark_response_delivered(body.session_uid)

@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from astro.runtime.events import AstroRuntimeEvent
+from astro.runtime.failures import is_terminal_assistant_message, terminal_assistant_failure
 
 
 @dataclass(slots=True)
@@ -15,6 +16,7 @@ class AssistantUiEncoder:
     reasoning_ids: dict[int, str] = field(default_factory=dict)
     tool_names: dict[str, str] = field(default_factory=dict)
     finished: bool = False
+    terminal_error_text: str | None = None
 
     def encode(self, event: AstroRuntimeEvent) -> list[dict[str, Any]]:
         event_type = event.type
@@ -97,17 +99,34 @@ class AssistantUiEncoder:
                     "isError": bool(data.get("isError", False)),
                 }
             ]
+        if event_type == "message_end":
+            failure = terminal_assistant_failure(data)
+            if failure is not None:
+                self.terminal_error_text = failure.message
+            elif is_terminal_assistant_message(data):
+                # A later successful terminal message means Tau recovered from
+                # an earlier error, for example through overflow compaction.
+                self.terminal_error_text = None
+            return []
         if event_type == "error":
-            return [
-                {
-                    "type": "error",
-                    "errorText": _assistant_error_message(data),
-                }
-            ]
+            if self.terminal_error_text is None:
+                self.terminal_error_text = _assistant_error_message(data)
+            return []
         if event_type == "agent_settled" and not self.finished:
+            if self.terminal_error_text is not None:
+                return []
             self.finished = True
             return [{"type": "finish", "finishReason": "stop"}]
         return []
+
+    def finalize(self) -> list[dict[str, Any]]:
+        """Emit the one terminal frame after the runtime has finished settling."""
+        if self.finished:
+            return []
+        self.finished = True
+        if self.terminal_error_text is not None:
+            return [{"type": "error", "errorText": self.terminal_error_text}]
+        return [{"type": "finish", "finishReason": "stop"}]
 
     @staticmethod
     def sse(payload: dict[str, Any]) -> bytes:

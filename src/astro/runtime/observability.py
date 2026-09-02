@@ -13,6 +13,11 @@ import structlog
 from astro.logging import safe_log
 
 from .events import AstroRuntimeEvent
+from .failures import (
+    TerminalAssistantFailure,
+    is_terminal_assistant_message,
+    terminal_assistant_failure,
+)
 
 
 def _bounded(value: object, *, limit: int = 128) -> str | None:
@@ -83,6 +88,7 @@ class TauTurnObserver:
         self.tool_calls = 0
         self.handoffs = 0
         self.usage: dict[str, int] = {}
+        self.terminal_failure: TerminalAssistantFailure | None = None
         self._model: tuple[str, float, int] | None = None
         self._next_model_attempt = 1
         self._tools: dict[
@@ -102,7 +108,18 @@ class TauTurnObserver:
         if event_type in {"message_start", "model_start", "model_request_start"}:
             self._start_model()
         elif event_type in {"message_end", "model_end", "model_response_end"}:
-            self._finish_model(data)
+            failure = terminal_assistant_failure(data) if event_type == "message_end" else None
+            if failure is None:
+                self._finish_model(data)
+                if event_type == "message_end" and is_terminal_assistant_message(data):
+                    self.terminal_failure = None
+            else:
+                self.terminal_failure = failure
+                failure_data = dict(data)
+                failure_data["error_type"] = failure.error_type
+                if failure.status_code is not None:
+                    failure_data["status_code"] = failure.status_code
+                self._fail_model(failure_data, event_type="message_error")
         elif event_type in {
             "message_error",
             "model_error",

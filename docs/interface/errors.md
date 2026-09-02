@@ -21,4 +21,15 @@ Common status codes:
 - `503`: backend authentication or service dependency unavailable.
 
 Once an assistant-ui SSE response has started, execution failures are emitted as
-an `error` chunk followed by `[DONE]`.
+an `error` chunk followed by `[DONE]`:
+
+```json
+{"type": "error", "errorText": "provider-supplied failure message"}
+```
+
+For model-provider failures, `errorText` is copied from Tau's terminal assistant
+`errorMessage`. Tau's provider adapters derive that value generically from the
+provider response; Astro does not maintain provider- or status-specific error
+mappings. The raw provider response body and diagnostic payload are not copied
+into the assistant-ui frame. A failed terminal assistant message does not also
+emit a successful `finishReason: "stop"` frame.

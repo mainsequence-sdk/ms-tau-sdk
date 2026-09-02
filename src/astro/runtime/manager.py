@@ -532,6 +532,10 @@ class SessionRuntimeManager:
             error_type = type(error).__name__
             raise
         finally:
+            if terminal_status == "completed" and observer.terminal_failure is not None:
+                failure = observer.terminal_failure
+                terminal_status = "cancelled" if failure.reason == "aborted" else "failed"
+                error_type = failure.error_type
             if not output_complete and runtime.runtime_activity == "working":
                 self._schedule_activity(
                     runtime,
