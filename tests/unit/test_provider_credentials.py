@@ -44,7 +44,9 @@ def _provider_control(provider_name: str, model: str) -> ProviderControl:
         model={
             "model": model,
             "api": (
-                metadata.api
+                "openai-codex-responses"
+                if provider.kind == "openai-codex"
+                else metadata.api
                 if metadata is not None and metadata.api
                 else provider.api or provider.kind
             ),
