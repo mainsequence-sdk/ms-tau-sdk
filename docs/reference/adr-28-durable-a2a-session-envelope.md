@@ -369,12 +369,12 @@ extra keys are a few bytes in the existing custom entry.
 
 ### Implementation Tasks
 
-- [ ] `validate_caller_identity` and `turn_provenance_from_request`, with the structured 403.
-- [ ] Chat and A2A message routes validate before session work; `_collect_turn` takes the built
+- [x] `validate_caller_identity` and `turn_provenance_from_request`, with the structured 403.
+- [x] Chat and A2A message routes validate before session work; `_collect_turn` takes the built
       provenance; JSON-RPC maps the rejection to a JSON-RPC error.
-- [ ] Request log context binds `caller_kind` and `caller_agent_uid`; rejection event.
-- [ ] Tests listed above.
-- [ ] Release note marking the image as ADR-0043 cutover-bound.
+- [x] Request log context binds `caller_kind` and `caller_agent_uid`; rejection event.
+- [x] Tests listed above.
+- [x] Release note marking the image as ADR-0043 cutover-bound.
 
 ## Related
 

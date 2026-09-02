@@ -508,6 +508,8 @@ class RequestContextMiddleware:
 
         user_uid = _bounded_identifier(_request_field(scope, b"x-user-uid"))
         service_uid = _bounded_identifier(_request_field(scope, b"x-coding-agent-service-uid"))
+        caller_kind = _bounded_identifier(_request_field(scope, b"x-caller-kind"))
+        caller_agent_uid = _bounded_identifier(_request_field(scope, b"x-caller-agent-uid"))
         environment_uid = _bounded_identifier(
             _request_field(
                 scope,
@@ -539,6 +541,10 @@ class RequestContextMiddleware:
             base_fields["user_uid"] = user_uid
         if service_uid is not None:
             base_fields["coding_agent_service_uid"] = service_uid
+        if caller_kind is not None:
+            base_fields["caller_kind"] = caller_kind
+        if caller_agent_uid is not None:
+            base_fields["caller_agent_uid"] = caller_agent_uid
         if environment_uid is not None:
             base_fields["organization_environment_uid"] = environment_uid
             state["organization_environment_uid"] = environment_uid

@@ -14,6 +14,12 @@ from astro.backend.models import (
 )
 from astro.settings import Settings
 
+USER_CALLER_HEADERS = {
+    "X-Caller-Kind": "user",
+    "X-User-UID": "2b7f1c48-3d1e-4a5b-9c6d-0e1f2a3b4c5d",
+    "X-Username": "jose",
+}
+
 
 class _BackgroundManager:
     def __init__(self) -> None:
@@ -101,7 +107,7 @@ async def test_message_send_returns_replayed_task_without_scheduling_execution(
     client = _client(task)
     manager = _BackgroundManager()
 
-    async with asgi_client(_app(client, manager)) as http:
+    async with asgi_client(_app(client, manager), headers=USER_CALLER_HEADERS) as http:
         response = await http.post(
             f"{REST_BASE}/message:send",
             headers={"A2A-Extensions": RESPONSE_KIND_EXTENSION_URI},
@@ -124,7 +130,7 @@ async def test_message_stream_returns_replayed_terminal_task_without_execution(
     body = _body()
     body["configuration"] = {}
 
-    async with asgi_client(_app(client, manager)) as http:
+    async with asgi_client(_app(client, manager), headers=USER_CALLER_HEADERS) as http:
         response = await http.post(f"{REST_BASE}/message:stream", json=body)
 
     assert response.status_code == 200

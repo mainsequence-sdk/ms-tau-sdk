@@ -187,6 +187,15 @@ def _assert_response_came_from_container(
     )
 
 
+# Gateway-verified caller identity (ADR-28 amendment 2); the chat route rejects
+# a turn without it.
+_CALLER_HEADERS = {
+    "X-Caller-Kind": "user",
+    "X-User-UID": "2b7f1c48-3d1e-4a5b-9c6d-0e1f2a3b4c5d",
+    "X-Username": "e2e",
+}
+
+
 def _stream_turn(
     client: httpx.Client,
     prompt: str,
@@ -211,6 +220,7 @@ def _stream_turn(
     with client.stream(
         "POST",
         "/api/chat",
+        headers=_CALLER_HEADERS,
         json={"sessionUid": session_uid, "message": prompt},
     ) as response:
         response_headers_at = time.monotonic()

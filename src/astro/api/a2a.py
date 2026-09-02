@@ -38,7 +38,11 @@ from astro.protocols.strict_json import (
     validate_strict_json,
 )
 from astro.runtime.manager import SessionRuntimeManager
-from astro.runtime.provenance import build_turn_provenance
+from astro.runtime.provenance import (
+    CallerIdentityError,
+    TurnProvenance,
+    turn_provenance_from_request,
+)
 from astro.settings import Settings
 
 from .dependencies import backend, runtime_manager, settings
@@ -221,6 +225,40 @@ def _with_effective_response_kind_capability(
     capabilities["extensions"] = preserved
     normalized["capabilities"] = capabilities
     return normalized
+
+
+PROTECTED_MESSAGE_RPC_METHODS = frozenset(
+    {"SendMessage", "message/send", "SendStreamingMessage", "message/stream"}
+)
+
+
+def _log_caller_identity_rejection(request: Request, error: CallerIdentityError) -> None:
+    logger.warning(
+        "turn.caller_identity_rejected",
+        message="Protected message route rejected a request without a valid caller identity",
+        route=request.url.path,
+        failing_headers=list(error.failing_headers),
+    )
+
+
+def _caller_identity_rejection(request: Request, error: CallerIdentityError) -> JSONResponse:
+    _log_caller_identity_rejection(request, error)
+    return JSONResponse(status_code=error.status_code, content=error.body())
+
+
+def _caller_identity_json_rpc_error(
+    request: Request, request_id: object, error: CallerIdentityError
+) -> dict[str, Any]:
+    _log_caller_identity_rejection(request, error)
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": {
+            "code": -32000,
+            "message": error.detail,
+            "data": {"code": error.code},
+        },
+    }
 
 
 def _push_notification_error_info() -> dict[str, str]:
@@ -561,9 +599,10 @@ async def _collect_turn(
     prompt: str,
     *,
     max_output_bytes: int,
+    provenance: TurnProvenance,
 ) -> str:
     accumulator = _TurnAccumulator(max_output_bytes=max_output_bytes)
-    async for event in manager.prompt(context_id, prompt, provenance=build_turn_provenance("a2a")):
+    async for event in manager.prompt(context_id, prompt, provenance=provenance):
         accumulator.consume(event)
     try:
         return accumulator.result()
@@ -585,12 +624,14 @@ async def _collect_validated_turn(
     contract: StrictJsonContract,
     *,
     max_output_bytes: int,
+    provenance: TurnProvenance,
 ) -> str:
     text = await _collect_turn(
         manager,
         context_id,
         prompt,
         max_output_bytes=max_output_bytes,
+        provenance=provenance,
     )
     if not contract.enabled:
         return text
@@ -618,6 +659,7 @@ async def _collect_validated_turn(
                     attempt=attempt + 1,
                 ),
                 max_output_bytes=max_output_bytes,
+                provenance=provenance,
             )
     raise AssertionError("strict JSON repair loop did not terminate")
 
@@ -659,6 +701,7 @@ async def _execute_task(
     prompt: str,
     output_contract: StrictJsonContract,
     max_output_bytes: int,
+    provenance: TurnProvenance,
 ) -> dict[str, Any]:
     await client.update_task_status(task.uid, status="working")
     try:
@@ -668,6 +711,7 @@ async def _execute_task(
             prompt,
             output_contract,
             max_output_bytes=max_output_bytes,
+            provenance=provenance,
         )
         message = _agent_message(
             context_id=task.context_id,
@@ -705,6 +749,7 @@ async def _execute_message(
     prompt: str,
     output_contract: StrictJsonContract,
     max_output_bytes: int,
+    provenance: TurnProvenance,
 ) -> dict[str, Any]:
     text = await _collect_validated_turn(
         manager,
@@ -712,6 +757,7 @@ async def _execute_message(
         prompt,
         output_contract,
         max_output_bytes=max_output_bytes,
+        provenance=provenance,
     )
     message = _agent_message(
         context_id=context_id,
@@ -752,6 +798,7 @@ async def _stream_task_events(
     prompt: str,
     output_contract: StrictJsonContract,
     max_output_bytes: int,
+    provenance: TurnProvenance,
 ) -> AsyncIterator[dict[str, Any]]:
     working = await client.update_task_status(task.uid, status="working")
     yield {"task": _task_payload(working)}
@@ -767,6 +814,7 @@ async def _stream_task_events(
                 prompt,
                 output_contract,
                 max_output_bytes=max_output_bytes,
+                provenance=provenance,
             )
             chunks.append(text)
             if text:
@@ -782,9 +830,7 @@ async def _stream_task_events(
                 )
                 emitted = True
         else:
-            async for event in manager.prompt(
-                task.context_id, prompt, provenance=build_turn_provenance("a2a")
-            ):
+            async for event in manager.prompt(task.context_id, prompt, provenance=provenance):
                 value = _event_text(event.type, event.data, has_chunks=bool(chunks))
                 if not value:
                     continue
@@ -863,6 +909,7 @@ def _message_stream_response(
     prompt: str,
     output_contract: StrictJsonContract,
     max_output_bytes: int,
+    provenance: TurnProvenance,
     json_rpc: bool = False,
     request_id: object = None,
 ) -> StreamingResponse:
@@ -875,6 +922,7 @@ def _message_stream_response(
                 prompt=prompt,
                 output_contract=output_contract,
                 max_output_bytes=max_output_bytes,
+                provenance=provenance,
             ):
                 yield _sse(
                     _stream_payload(
@@ -969,6 +1017,10 @@ async def message_send(
         Header(alias="A2A-Extensions"),
     ] = None,
 ) -> dict[str, Any]:
+    try:
+        provenance = turn_provenance_from_request("a2a", request.headers)
+    except CallerIdentityError as error:
+        return _caller_identity_rejection(request, error)  # type: ignore[return-value]
     message, prompt = _request_parts(body, config)
     _bind_a2a_context(
         request,
@@ -1003,6 +1055,7 @@ async def message_send(
                     prompt=prompt,
                     output_contract=output_contract,
                     max_output_bytes=config.max_turn_output_bytes,
+                    provenance=provenance,
                 ),
                 name=f"a2a-task-{task.task_id}",
                 operation_uid=task.uid,
@@ -1014,6 +1067,7 @@ async def message_send(
         prompt=prompt,
         output_contract=output_contract,
         max_output_bytes=config.max_turn_output_bytes,
+        provenance=provenance,
     )
     return {"message": result}
 
@@ -1030,6 +1084,10 @@ async def message_stream(
         Header(alias="A2A-Extensions"),
     ] = None,
 ) -> StreamingResponse:
+    try:
+        provenance = turn_provenance_from_request("a2a", request.headers)
+    except CallerIdentityError as error:
+        return _caller_identity_rejection(request, error)  # type: ignore[return-value]
     _response_kind(
         body,
         a2a_extensions=a2a_extensions,
@@ -1059,6 +1117,7 @@ async def message_stream(
         prompt=prompt,
         output_contract=output_contract,
         max_output_bytes=config.max_turn_output_bytes,
+        provenance=provenance,
     )
 
 
@@ -1185,6 +1244,13 @@ async def json_rpc(
             raise HTTPException(status_code=400, detail="task id is required")
         return value
 
+    provenance: TurnProvenance | None = None
+    if method in PROTECTED_MESSAGE_RPC_METHODS:
+        try:
+            provenance = turn_provenance_from_request("a2a", request.headers)
+        except CallerIdentityError as error:
+            return _caller_identity_json_rpc_error(request, request_id, error)
+
     try:
         if method in {"SendMessage", "message/send"}:
             result = await message_send(
@@ -1224,6 +1290,7 @@ async def json_rpc(
                     json_rpc=True,
                     request_id=request_id,
                 )
+            assert provenance is not None
             return _message_stream_response(
                 client=client,
                 manager=manager,
@@ -1231,6 +1298,7 @@ async def json_rpc(
                 prompt=prompt,
                 output_contract=output_contract,
                 max_output_bytes=config.max_turn_output_bytes,
+                provenance=provenance,
                 json_rpc=True,
                 request_id=request_id,
             )

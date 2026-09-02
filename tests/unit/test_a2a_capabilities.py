@@ -32,7 +32,10 @@ def _request() -> Request:
             "type": "http",
             "method": "POST",
             "path": "/api/a2a/rpc",
-            "headers": [],
+            "headers": [
+                (b"x-caller-kind", b"user"),
+                (b"x-user-uid", b"2b7f1c48-3d1e-4a5b-9c6d-0e1f2a3b4c5d"),
+            ],
             "query_string": b"",
         }
     )
@@ -230,6 +233,7 @@ async def test_a2a_stream_emits_incremental_artifact_and_final_task():
             prompt="hello",
             output_contract=_output_contract({}),
             max_output_bytes=1024,
+            provenance={"channel": "a2a", "origin": "agent", "actorKind": "agent"},
         )
     ]
 

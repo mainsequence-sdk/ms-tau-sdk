@@ -9,6 +9,12 @@ from astro.backend.models import AgentTask
 from astro.runtime.events import AstroRuntimeEvent
 from astro.settings import Settings
 
+USER_CALLER_HEADERS = {
+    "X-Caller-Kind": "user",
+    "X-User-UID": "2b7f1c48-3d1e-4a5b-9c6d-0e1f2a3b4c5d",
+    "X-Username": "jose",
+}
+
 
 def _task(status: str = "submitted") -> AgentTask:
     return AgentTask(
@@ -66,7 +72,7 @@ async def test_rest_task_list_get_cancel_and_subscribe_contract(asgi_client):
     client.cancel_task.return_value = canceled
     manager = AsyncMock()
 
-    async with asgi_client(_app(client, manager)) as http:
+    async with asgi_client(_app(client, manager), headers=USER_CALLER_HEADERS) as http:
         listed = await http.get(f"{REST_BASE}/tasks", params={"contextId": "session-1"})
         fetched = await http.get(f"{REST_BASE}/tasks/task-1")
         cancelled = await http.post(f"{REST_BASE}/tasks/task-1:cancel")
@@ -86,7 +92,7 @@ async def test_json_rpc_direct_message_does_not_create_a_task(asgi_client):
     client = AsyncMock()
     manager = _DirectManager()
 
-    async with asgi_client(_app(client, manager)) as http:
+    async with asgi_client(_app(client, manager), headers=USER_CALLER_HEADERS) as http:
         response = await http.post(
             "/api/a2a/rpc",
             json={
@@ -122,7 +128,7 @@ async def test_json_rpc_task_operations_use_the_canonical_rest_implementation(as
     manager = AsyncMock()
     app = _app(client, manager)
 
-    async with asgi_client(app) as http:
+    async with asgi_client(app, headers=USER_CALLER_HEADERS) as http:
         listed = await http.post(
             "/api/a2a/rpc",
             json={
@@ -170,7 +176,7 @@ async def test_response_kind_requires_extension_and_is_rejected_for_streaming(as
         },
         "configuration": {"responseKind": "message"},
     }
-    async with asgi_client(_app(client, manager)) as http:
+    async with asgi_client(_app(client, manager), headers=USER_CALLER_HEADERS) as http:
         missing_extension = await http.post(f"{REST_BASE}/message:send", json=body)
         streaming = await http.post(
             f"{REST_BASE}/message:stream",

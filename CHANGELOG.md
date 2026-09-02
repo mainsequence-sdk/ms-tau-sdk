@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Gateway-verified caller identity (ADR-0043 cutover-bound)
+
+- Protected message routes (`POST /api/chat`, A2A `message:send`, `message:stream`, the JSON-RPC
+  message methods, and task turns) require the gateway's `X-Caller-Kind` and matching
+  `X-User-UID` / `X-Caller-Agent-UID` / `X-Caller-Coding-Agent-Service-UID` /
+  `X-Caller-Agent-Session-UID` headers, and reject a request before any session work with
+  HTTP 403 `{"detail": "Missing or invalid caller identity headers.", "code":
+  "runtime_caller_identity_invalid"}` (a JSON-RPC error carrying the same code on `/api/a2a/rpc`).
+- Each user turn's provenance custom entry now carries `actorKind`, `actorUid`, `actorName`
+  (humans only), and `callerAgentSessionUid`, with `origin` taken from `X-Caller-Kind` instead of
+  the route. Request logs bind `caller_kind` and `caller_agent_uid`.
+- This image is bound to the tdag-django ADR-0043 coordinated hard cutover: deploy it only as
+  step 4 of that cutover, after Django and both coding-agent gateways forward the headers.
+  Deployed alone it rejects every message request by design.
+
 ### Lean Python Runtime ABI
 
 - Replaced the standalone Tau image's floating slim/Jovyan layout with the

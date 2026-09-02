@@ -653,3 +653,20 @@ def test_tau_handoff_carries_session_correlation_and_allowlisted_reason(capsys):
         assert handoff["handoff_reason_code"] == "specialist"
     assert handoffs[1]["outcome"] == "failed"
     assert "private handoff instructions" not in json.dumps(handoffs)
+
+
+async def test_request_context_binds_gateway_caller_identity(test_settings, asgi_client, capsys):
+    app = create_app(test_settings)
+    async with asgi_client(app, lifespan=True) as client:
+        await client.get(
+            "/version",
+            headers={
+                "X-User-UID": "user-1",
+                "X-Caller-Kind": "agent",
+                "X-Caller-Agent-UID": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+            },
+        )
+    events = _json_events(capsys.readouterr().out)
+    completed = next(event for event in events if event["event"] == "http.request.completed")
+    assert completed["caller_kind"] == "agent"
+    assert completed["caller_agent_uid"] == "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"

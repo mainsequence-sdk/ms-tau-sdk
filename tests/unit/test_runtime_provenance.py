@@ -7,7 +7,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from astro.runtime.provenance import PROVENANCE_NAMESPACE, build_turn_provenance
+from astro.runtime.provenance import (
+    PROVENANCE_NAMESPACE,
+    CallerIdentityError,
+    build_turn_provenance,
+    turn_provenance_from_request,
+    validate_caller_identity,
+)
 from astro.runtime.session import ActiveSessionRuntime
 
 
@@ -84,3 +90,114 @@ async def test_prompt_without_provenance_writes_no_custom_entry():
     await _run(runtime, None)
 
     assert coding_session.calls == [("prompt", "hello")]
+
+
+_USER_UID = "2b7f1c48-3d1e-4a5b-9c6d-0e1f2a3b4c5d"
+_AGENT_UID = "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+_SERVICE_UID = "f0e1d2c3-b4a5-4968-8776-655443322110"
+_SESSION_UID = "11111111-2222-4333-8444-555555555555"
+
+
+def test_turn_provenance_from_request_for_a_human_caller():
+    stamp = turn_provenance_from_request(
+        "chat",
+        {"x-caller-kind": "user", "x-user-uid": _USER_UID, "x-username": "jose"},
+    )
+    assert stamp == {
+        "channel": "chat",
+        "origin": "user",
+        "actorKind": "user",
+        "actorUid": _USER_UID,
+        "actorName": "jose",
+    }
+
+
+def test_turn_provenance_from_request_for_an_agent_caller_on_the_a2a_route():
+    stamp = turn_provenance_from_request(
+        "a2a",
+        {
+            "X-Caller-Kind": "agent",
+            "X-User-UID": _USER_UID,
+            "X-Username": "jose",
+            "X-Caller-Agent-UID": _AGENT_UID,
+            "X-Caller-Coding-Agent-Service-UID": _SERVICE_UID,
+            "X-Caller-Agent-Session-UID": _SESSION_UID,
+        },
+    )
+    # Agent names are never stamped; the backend resolves them at projection.
+    assert stamp == {
+        "channel": "a2a",
+        "origin": "agent",
+        "actorKind": "agent",
+        "actorUid": _AGENT_UID,
+        "callerAgentSessionUid": _SESSION_UID,
+    }
+
+
+def test_origin_follows_the_caller_kind_not_the_route():
+    stamp = turn_provenance_from_request("a2a", {"X-Caller-Kind": "user", "X-User-UID": _USER_UID})
+    assert (stamp["channel"], stamp["origin"]) == ("a2a", "user")
+
+
+@pytest.mark.parametrize(
+    ("headers", "failing"),
+    [
+        ({}, ("X-Caller-Kind",)),
+        ({"X-Caller-Kind": "system"}, ("X-Caller-Kind",)),
+        ({"X-Caller-Kind": "user"}, ("X-User-UID",)),
+        ({"X-Caller-Kind": "user", "X-User-UID": _USER_UID.upper()}, ("X-User-UID",)),
+        (
+            {"X-Caller-Kind": "user", "X-User-UID": _USER_UID, "X-Caller-Agent-UID": _AGENT_UID},
+            ("X-Caller-Agent-UID",),
+        ),
+        (
+            {"X-Caller-Kind": "user", "X-User-UID": _USER_UID, "X-Username": "x" * 256},
+            ("X-Username",),
+        ),
+        (
+            {"X-Caller-Kind": "agent"},
+            ("X-Caller-Agent-UID", "X-Caller-Coding-Agent-Service-UID"),
+        ),
+        (
+            {
+                "X-Caller-Kind": "agent",
+                "X-Caller-Agent-UID": _AGENT_UID,
+                "X-Caller-Coding-Agent-Service-UID": _SERVICE_UID,
+                "X-Caller-Agent-Session-UID": "nope",
+            },
+            ("X-Caller-Agent-Session-UID",),
+        ),
+    ],
+    ids=[
+        "absent",
+        "unknown-kind",
+        "user-without-uid",
+        "user-non-canonical-uid",
+        "user-with-agent-header",
+        "username-too-long",
+        "agent-missing-required",
+        "agent-bad-session-uid",
+    ],
+)
+def test_validate_caller_identity_rejects_each_violation(headers, failing):
+    with pytest.raises(CallerIdentityError) as excinfo:
+        validate_caller_identity(headers)
+    assert excinfo.value.failing_headers == failing
+    assert excinfo.value.status_code == 403
+    assert excinfo.value.body() == {
+        "detail": "Missing or invalid caller identity headers.",
+        "code": "runtime_caller_identity_invalid",
+    }
+
+
+def test_validate_caller_identity_accepts_an_agent_without_a_delegation_parent():
+    identity = validate_caller_identity(
+        {
+            "X-Caller-Kind": "agent",
+            "X-Caller-Agent-UID": _AGENT_UID,
+            "X-Caller-Coding-Agent-Service-UID": _SERVICE_UID,
+        }
+    )
+    assert identity.kind == "agent"
+    assert identity.caller_agent_session_uid is None
+    assert identity.actor_uid == _AGENT_UID

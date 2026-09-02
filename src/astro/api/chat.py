@@ -8,13 +8,13 @@ from typing import Annotated
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from astro.errors import BackendConflictError
 from astro.logging import bind_request_log_fields, conversation_log_fields
 from astro.protocols.assistant_ui import AssistantUiEncoder
 from astro.runtime.manager import SessionRuntimeManager
-from astro.runtime.provenance import build_turn_provenance
+from astro.runtime.provenance import CallerIdentityError, turn_provenance_from_request
 
 from .dependencies import runtime_manager
 from .models import ChatRequest
@@ -50,6 +50,16 @@ async def chat(
     manager: RuntimeManagerDep,
 ) -> StreamingResponse:
     try:
+        provenance = turn_provenance_from_request("chat", request.headers)
+    except CallerIdentityError as error:
+        logger.warning(
+            "turn.caller_identity_rejected",
+            message="Chat route rejected a request without a valid caller identity",
+            route=request.url.path,
+            failing_headers=list(error.failing_headers),
+        )
+        return JSONResponse(status_code=error.status_code, content=error.body())  # type: ignore[return-value]
+    try:
         prompt = body.prompt_text()
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
@@ -69,9 +79,7 @@ async def chat(
     async def stream() -> AsyncIterator[bytes]:
         encoder = AssistantUiEncoder()
         try:
-            async for event in manager.prompt(
-                body.session_uid, prompt, provenance=build_turn_provenance("chat")
-            ):
+            async for event in manager.prompt(body.session_uid, prompt, provenance=provenance):
                 for payload in encoder.encode(event):
                     yield encoder.sse(payload)
             try:
