@@ -261,87 +261,120 @@ Implementation: `astro.runtime.provenance`, `ActiveSessionRuntime.prompt(provena
 The Tau implementation above records the channel a turn arrived on. This amendment records who
 sent it, using identity that the platform verified, so a name and later an avatar can be drawn on
 the turn. It implements the runtime side of tdag-django
-`docs/platform/adr/adr-0043-caller-identity-in-coding-agent-runtime-access-tokens.md`, which is
-Proposed; this amendment takes effect only when that ADR is accepted and the gateways forward the
-headers below.
+`docs/platform/adr/adr-0043-caller-identity-in-coding-agent-runtime-access-tokens.md` as amended
+on 2026-09-02 to a coordinated hard cutover: that ADR is Proposed, and this amendment takes effect
+only through the cutover it describes. There is no compatibility mode and no mixed-version
+operation.
 
 ### Inputs
 
 The coding-agent gateway sets these request headers from Django's validation verdict and blanks
-any client-supplied copies, so inside the runtime they are trustworthy:
+any client-supplied copies, so inside the runtime they are trustworthy. After the cutover every
+validated request carries `X-Caller-Kind`, because Django rejects tokens without `caller_kind`.
 
 | Header | Meaning |
 |---|---|
 | `X-User-UID` | responsible User for the request (unchanged) |
 | `X-Username` | that User's username (unchanged) |
-| `X-Caller-Kind` | `user` when the token was minted for a user request, `agent` when it was minted for a runtime credential; absent for tokens minted before ADR-0043 |
-| `X-Caller-Agent-UID` | calling Agent UID, present only when `X-Caller-Kind` is `agent` |
-| `X-Caller-Coding-Agent-Service-UID` | calling CodingAgentService UID, present only for `agent` |
-| `X-Caller-Agent-Session-UID` | the authorized delegation-parent AgentSession UID, present only for a delegated target; the bearer credential authenticates the calling Agent, not a specific request session, so treat it as "authorized delegation parent" |
+| `X-Caller-Kind` | `user` when the token was minted for a user request or by the explicit Django admin helper, `agent` when it was minted for a runtime credential; mandatory |
+| `X-Caller-Agent-UID` | calling Agent UID; present if and only if `X-Caller-Kind` is `agent` |
+| `X-Caller-Coding-Agent-Service-UID` | calling CodingAgentService UID; present if and only if `X-Caller-Kind` is `agent` |
+| `X-Caller-Agent-Session-UID` | the authorized delegation-parent AgentSession UID; present only for a cross-Agent delegated target (a same-Agent session with a parent carries none); the bearer credential authenticates the calling Agent, not a specific request session, so treat it as "authorized delegation parent" |
 
 Nothing else is an identity source. A2A `message.metadata`, request bodies, the Pi
 `context.a2a.caller` envelope, and any `caller_*` field a client sends are ignored for identity;
-when they disagree with headers, the headers win. Values are validated before use: UIDs must parse
-as canonical lowercase UUIDs, `X-Username` is bounded to 255 characters, `X-Caller-Kind` must be
-exactly `user` or `agent`; an invalid value is treated as absent.
+when they disagree with headers, the headers win.
+
+### Validation and rejection
+
+Every protected message route validates the headers before any session work and before any
+entry is persisted:
+
+- `X-Caller-Kind` must be present and exactly `user` or `agent`.
+- For `user`: `X-User-UID` must be present and a canonical lowercase UUID
+  (`str(uuid.UUID(v)) == v`); the Agent-specific caller headers must be absent or empty.
+- For `agent`: `X-Caller-Agent-UID` and `X-Caller-Coding-Agent-Service-UID` must be present and
+  canonical; `X-Caller-Agent-Session-UID`, when present, must be canonical.
+- `X-Username`, when present, is bounded to 255 characters.
+
+Any violation rejects the request with HTTP 403 and body
+`{"detail": "Missing or invalid caller identity headers.", "code": "runtime_caller_identity_invalid"}`.
+The chat route returns that JSON response instead of opening the event stream; the A2A REST
+routes return it as their HTTP response; the JSON-RPC handler returns a JSON-RPC error carrying
+the same `code`. No turn is started, so nothing is stamped and nothing is persisted. The former
+route-derived `origin` fallback of the first amendment does not apply after the cutover.
+
+Protected message routes are the ones that persist a user turn: `POST /api/chat`, the A2A
+session routes (`message:send`, `message:stream`, the task turn, and the JSON-RPC message
+methods). `/health`, `/ready`, `/version`, `GET /api/chat`, and `/api/chat/session-model` are
+not message routes and are unchanged. The sessionless `/api/agents/{uid}/responses` routes persist
+no entries and are outside this amendment.
 
 ### Stamp
 
 `astro.runtime.provenance.turn_provenance_from_request(channel, headers)` builds the custom-entry
 data (namespace `io.mainsequence.provenance`, appended inside the turn before the user message as
-in the first amendment):
+in the first amendment). It is called only after validation succeeded:
 
 | Key | Value |
 |---|---|
-| `channel` | the route, as today: `chat`, `a2a`, `responses` |
-| `origin` | `agent` if and only if `X-Caller-Kind` is `agent`; `user` if and only if it is `user`; when the header is absent, the route rule of the first amendment (`chat` → `user`, A2A and sessionless → `agent`) |
-| `actorKind` | `X-Caller-Kind`, omitted when absent |
-| `actorUid` | `X-Caller-Agent-UID` for `agent`; `X-User-UID` for `user`; omitted when the source header is absent |
+| `channel` | the route, as today: `chat` or `a2a` |
+| `origin` | `agent` if and only if `X-Caller-Kind` is `agent`; `user` if and only if it is `user`; never derived from the route after the cutover |
+| `actorKind` | `X-Caller-Kind` |
+| `actorUid` | `X-Caller-Agent-UID` for `agent`; `X-User-UID` for `user` |
 | `actorName` | `X-Username`, for `user` only (agent names are resolved by the backend at projection time) |
 | `callerAgentSessionUid` | `X-Caller-Agent-Session-UID` (authorized delegation parent), omitted when absent |
 
 `targetAgentUid` is not stamped; the backend projection fills it from the session's Agent.
+`build_turn_provenance(channel)` remains only as the unit that maps a route to its `channel`; it
+no longer decides `origin` on protected routes.
 
 ### Where
 
-- `astro/runtime/provenance.py`: `turn_provenance_from_request` plus the header validators;
-  `build_turn_provenance(channel)` remains the fallback and the unit of the route rule.
+- `astro/runtime/provenance.py`: `validate_caller_identity(headers)` returning the parsed identity
+  or raising the structured 403, and `turn_provenance_from_request(channel, headers)`.
 - `astro/api/chat.py` (`chat`), `astro/api/a2a.py` (`message_send`, `message_stream`, the JSON-RPC
-  handler, and the task turn), all of which already receive the FastAPI `Request`: they pass
-  `request.headers` to the builder instead of calling `build_turn_provenance` directly.
-  `_collect_turn` receives the built provenance from its caller.
+  handler, and the task turn), all of which already receive the FastAPI `Request`: they validate
+  first, then pass the built provenance down. `_collect_turn` receives the built provenance from
+  its caller.
 - `astro/logging.py`: the request middleware binds `caller_kind` and `caller_agent_uid` next to
-  `user_uid` (UIDs only; ADR-38 sinks unchanged).
+  `user_uid` (UIDs only; ADR-38 sinks unchanged), and the rejection path emits
+  `turn.caller_identity_rejected` with the failing header names and no values.
 
 ### Trust boundary
 
 Public runtime traffic reaches the runtime only through the gateway (ADR-25: the runtime URL is
-the brokered public URL). A request that bypasses the gateway carries no `X-User-UID` and no
-`X-Caller-*`, so it is stamped by the route rule and never as a verified actor.
+the brokered public URL). A request that bypasses the gateway carries no `X-Caller-Kind` and is
+rejected before persistence; it is never stamped by route.
 
-### Compatibility
+### Cutover
 
-- Headers absent (gateway not yet updated, local runs): the stamp is exactly the first
-  amendment's, so this change can ship before or after the gateway change.
-- Headers present with `X-Caller-Kind: user` on an A2A route (an SDK or other client acting for a
-  User): `channel: a2a`, `origin: user`. This refines the route rule on purpose.
-- The hot path gains nothing: the middleware already parses identity headers per request, and
-  the extra keys are a few bytes in the existing custom entry.
+This behavior ships in an astro-tau release that is deployed only as step 4 of the ADR-0043
+cutover, after Django and both gateways and under stopped traffic, and is rolled back with them.
+Deployed alone it rejects every message request, because no verdict would carry
+`X-Caller-Kind`; that is by design, not a fallback to be added. The hot path gains nothing: the
+middleware already parses identity headers per request, validation is string checks, and the
+extra keys are a few bytes in the existing custom entry.
 
 ### Tests
 
-- header-to-stamp mapping for `user`, `agent`, and absent `X-Caller-Kind`;
-- invalid header values (bad UUID, unknown kind) fall back to absent;
+- header-to-stamp mapping for `user` and `agent`, including `origin` following `X-Caller-Kind` on
+  an A2A route with a `user` caller;
+- rejection before persistence for each violation: absent `X-Caller-Kind`, unknown kind, `user`
+  with Agent caller headers, `agent` without its required headers, non-canonical UUIDs; assert no
+  entry was appended and the exact 403 body, on the chat route and on each A2A route;
 - an A2A body or metadata carrying an agent identity does not change the stamp;
-- route tests assert the stamp for a request with and without caller headers;
-- the logging middleware binds `caller_kind` and `caller_agent_uid` when present.
+- the logging middleware binds `caller_kind` and `caller_agent_uid` and emits the rejection event;
+- non-message routes still answer without caller headers.
 
 ### Implementation Tasks
 
-- [ ] `turn_provenance_from_request` with validators and the fallback to the route rule.
-- [ ] Chat and A2A handlers pass request headers; `_collect_turn` takes the built provenance.
-- [ ] Request log context binds `caller_kind` and `caller_agent_uid`.
+- [ ] `validate_caller_identity` and `turn_provenance_from_request`, with the structured 403.
+- [ ] Chat and A2A message routes validate before session work; `_collect_turn` takes the built
+      provenance; JSON-RPC maps the rejection to a JSON-RPC error.
+- [ ] Request log context binds `caller_kind` and `caller_agent_uid`; rejection event.
 - [ ] Tests listed above.
+- [ ] Release note marking the image as ADR-0043 cutover-bound.
 
 ## Related
 
