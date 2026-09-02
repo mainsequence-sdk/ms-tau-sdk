@@ -261,7 +261,9 @@ Implementation: `astro.runtime.provenance`, `ActiveSessionRuntime.prompt(provena
 The Tau implementation above records the channel a turn arrived on. This amendment records who
 sent it, using identity that the platform verified, so a name and later an avatar can be drawn on
 the turn. It implements the runtime side of tdag-django
-`docs/platform/adr/adr-0043-caller-identity-in-coding-agent-runtime-access-tokens.md`.
+`docs/platform/adr/adr-0043-caller-identity-in-coding-agent-runtime-access-tokens.md`, which is
+Proposed; this amendment takes effect only when that ADR is accepted and the gateways forward the
+headers below.
 
 ### Inputs
 
@@ -275,7 +277,7 @@ any client-supplied copies, so inside the runtime they are trustworthy:
 | `X-Caller-Kind` | `user` when the token was minted for a user request, `agent` when it was minted for a runtime credential; absent for tokens minted before ADR-0043 |
 | `X-Caller-Agent-UID` | calling Agent UID, present only when `X-Caller-Kind` is `agent` |
 | `X-Caller-Coding-Agent-Service-UID` | calling CodingAgentService UID, present only for `agent` |
-| `X-Caller-Agent-Session-UID` | calling AgentSession UID, present only for a delegated target |
+| `X-Caller-Agent-Session-UID` | the authorized delegation-parent AgentSession UID, present only for a delegated target; the bearer credential authenticates the calling Agent, not a specific request session, so treat it as "authorized delegation parent" |
 
 Nothing else is an identity source. A2A `message.metadata`, request bodies, the Pi
 `context.a2a.caller` envelope, and any `caller_*` field a client sends are ignored for identity;
@@ -296,7 +298,7 @@ in the first amendment):
 | `actorKind` | `X-Caller-Kind`, omitted when absent |
 | `actorUid` | `X-Caller-Agent-UID` for `agent`; `X-User-UID` for `user`; omitted when the source header is absent |
 | `actorName` | `X-Username`, for `user` only (agent names are resolved by the backend at projection time) |
-| `callerAgentSessionUid` | `X-Caller-Agent-Session-UID`, omitted when absent |
+| `callerAgentSessionUid` | `X-Caller-Agent-Session-UID` (authorized delegation parent), omitted when absent |
 
 `targetAgentUid` is not stamped; the backend projection fills it from the session's Agent.
 
