@@ -39,9 +39,10 @@ Django service.
 
 The ASGI request middleware accepts a bounded, syntactically valid
 `X-Request-ID` from the platform gateway or creates a UUID. It binds that ID,
-trace/span IDs, and trusted `X-User-UID` and
-`X-Coding-Agent-Service-UID` and
-`X-Organization-Environment-UID` values through Structlog contextvars,
+trace/span IDs, and trusted `X-User-UID`,
+`X-Coding-Agent-Service-UID`, `X-Organization-Environment-UID`,
+`X-Caller-Kind` (`caller_kind`), and `X-Caller-Agent-UID`
+(`caller_agent_uid`) values through Structlog contextvars,
 exposes the selected request ID as `request.state.request_id`, and returns it
 as `X-Request-ID`. Runtime, backend, MCP, and provider logs emitted in the
 request inherit the same correlation context.
@@ -54,8 +55,11 @@ http.request.completed
 
 Terminal events include the normalized route template, method/protocol, status
 class, duration, first-byte time, safe request/response sizes, streaming and
-disconnect state, authentication outcome, and actor/service/session IDs when
-known. Successful platform-owned `/health` and `/ready` probes emit no request
+disconnect state, authentication outcome, caller kind, and
+actor/service/session IDs when known. A message request rejected for missing
+or invalid caller identity headers emits `turn.caller_identity_rejected`
+before the terminal event; it names the failing header names only, never
+their values. Successful platform-owned `/health` and `/ready` probes emit no request
 logs; probe failures and recoveries emit rate-limited operational events that
 retain their canonical Organization Environment, runtime, and service identity.
 Cancelled and disconnected requests also produce exactly one terminal event and

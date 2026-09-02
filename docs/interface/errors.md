@@ -15,6 +15,12 @@ backend errors use:
 Common status codes:
 
 - `400`: missing user identity, missing user message, or invalid stateless JSON controls.
+- `403`: missing or invalid gateway caller identity headers on a message route.
+  This response does not use the envelope above; its body is
+  `{"detail": "Missing or invalid caller identity headers.", "code": "runtime_caller_identity_invalid"}`,
+  and on `/api/a2a/rpc` it is a JSON-RPC error with code `-32000` and
+  `data.code` set to the same value. See
+  [request.md](request.md#caller-identity-headers).
 - `404`: backend session, task, or provider credential not found.
 - `409`: runtime lease or append sequence conflict.
 - `502`: backend or model provider returned an unusable response.

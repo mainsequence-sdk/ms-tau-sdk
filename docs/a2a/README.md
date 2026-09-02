@@ -50,3 +50,15 @@ supported.
 `GET /api/a2a/v1/extendedAgentCard` requires `agent_session_uid`,
 `session_uid`, or `contextId`. The response is loaded from Django's persisted
 agent card rather than from a static Astro definition.
+
+## Caller identity
+
+`message:send`, `message:stream`, the JSON-RPC message methods, and task
+turns require the gateway-verified caller identity headers described in
+[request.md](../interface/request.md#caller-identity-headers). An A2A caller
+is identified only by those headers; `metadata`, `message.metadata`, and the
+Pi envelope are never an identity source. A missing or invalid set is
+rejected before any session work with HTTP `403` on the REST routes and a
+JSON-RPC error (code `-32000`, `data.code` `runtime_caller_identity_invalid`)
+on `/api/a2a/rpc`. Task read, cancel, and subscribe methods do not require the
+headers.
