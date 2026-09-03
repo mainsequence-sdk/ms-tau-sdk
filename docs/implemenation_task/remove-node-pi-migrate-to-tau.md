@@ -350,8 +350,7 @@ class ModelProvider(Protocol):
         messages: list[AgentMessage],
         tools: list[AgentTool],
         signal: CancellationToken | None = None,
-    ) -> AsyncIterator[AssistantMessageEvent]:
-        ...
+    ) -> AsyncIterator[AssistantMessageEvent]: ...
 ```
 
 `CodingSessionConfig` and `AgentHarnessConfig` accept any object implementing this protocol.
@@ -385,8 +384,7 @@ class AstroProviderFactory:
         credential: ProviderCredential | None,
         model: str,
         thinking_level: str | None,
-    ) -> ModelProvider:
-        ...
+    ) -> ModelProvider: ...
 ```
 
 The factory must:
@@ -496,11 +494,9 @@ Implement Tau's `SessionStorage` protocol directly against backend session-entry
 
 ```python
 class BackendSessionStorage(SessionStorage):
-    async def append(self, entry: SessionEntry) -> None:
-        ...
+    async def append(self, entry: SessionEntry) -> None: ...
 
-    async def read_all(self) -> list[SessionEntry]:
-        ...
+    async def read_all(self) -> list[SessionEntry]: ...
 ```
 
 ### Backend Data Model

@@ -70,9 +70,7 @@ def _mcp_client(*, access: dict | list[dict] | None = None) -> AsyncMock:
             return _result(_session_payload())
         if name == "agent_session.resolve_runtime_access":
             return _result(
-                next(access_results)
-                if access_results is not None
-                else access or _access_payload()
+                next(access_results) if access_results is not None else access or _access_payload()
             )
         raise AssertionError(f"unexpected MCP tool: {name}")
 
@@ -291,12 +289,15 @@ async def test_a2a_send_message_polls_only_backend_transient_runtime_state():
 
     assert result.text == "Awake answer."
     sleep.assert_awaited_once_with(2.0)
-    assert mcp_client.call_tool.await_args_list.count(
-        call(
-            "agent_session.resolve_runtime_access",
-            {"agent_session_uid": TARGET_SESSION_UID},
+    assert (
+        mcp_client.call_tool.await_args_list.count(
+            call(
+                "agent_session.resolve_runtime_access",
+                {"agent_session_uid": TARGET_SESSION_UID},
+            )
         )
-    ) == 2
+        == 2
+    )
     assert any(update.details.get("state") == "waking" for update in updates)
 
 

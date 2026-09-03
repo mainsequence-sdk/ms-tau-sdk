@@ -218,23 +218,13 @@ async def _resolve_runtime_access(
             return access
 
         operation = interaction.get("operation")
-        operation_uid = (
-            str(operation.get("uid") or "") if isinstance(operation, dict) else ""
-        )
+        operation_uid = str(operation.get("uid") or "") if isinstance(operation, dict) else ""
         if on_update is not None and operation_uid != last_operation_uid:
             notice = interaction.get("notice")
-            detail = (
-                str(notice.get("message") or "")
-                if isinstance(notice, dict)
-                else ""
-            )
+            detail = str(notice.get("message") or "") if isinstance(notice, dict) else ""
             on_update(
                 AgentToolResult(
-                    content=[
-                        TextContent(
-                            text=detail or "Waiting for the target runtime..."
-                        )
-                    ],
+                    content=[TextContent(text=detail or "Waiting for the target runtime...")],
                     details={
                         "phase": "runtime_access",
                         "state": state,

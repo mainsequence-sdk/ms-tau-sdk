@@ -15,6 +15,8 @@
 - Corrected the outbound and inbound A2A v1 role codec, modelled roles internally as requester and
   responder directions rather than principal identity, and removed obsolete v0.3 `kind`
   discriminators from v1 Message and Task responses.
+- Follow backend-declared transient runtime interaction states during an active A2A call, honoring
+  `retry_after_ms` until submission is allowed while stopping immediately on terminal states.
 
 ### Gateway-verified caller identity (ADR-0043 cutover-bound)
 
