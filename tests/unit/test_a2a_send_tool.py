@@ -1,5 +1,5 @@
 import json
-from unittest.mock import AsyncMock, call
+from unittest.mock import AsyncMock, call, patch
 
 import httpx
 import pytest
@@ -59,8 +59,9 @@ def _access_payload() -> dict:
     }
 
 
-def _mcp_client(*, access: dict | None = None) -> AsyncMock:
+def _mcp_client(*, access: dict | list[dict] | None = None) -> AsyncMock:
     client = AsyncMock()
+    access_results = iter(access) if isinstance(access, list) else None
 
     async def call_tool(name, _arguments):
         if name == "agent.get":
@@ -68,7 +69,11 @@ def _mcp_client(*, access: dict | None = None) -> AsyncMock:
         if name == "agent.get_or_create_session":
             return _result(_session_payload())
         if name == "agent_session.resolve_runtime_access":
-            return _result(access or _access_payload())
+            return _result(
+                next(access_results)
+                if access_results is not None
+                else access or _access_payload()
+            )
         raise AssertionError(f"unexpected MCP tool: {name}")
 
     client.call_tool.side_effect = call_tool
@@ -229,6 +234,70 @@ async def test_a2a_send_message_honors_backend_submission_block_without_http():
     assert result.details["is_error"] is True
     assert result.details["code"] == "a2a_runtime_submission_blocked"
     assert "Update the target runtime" in result.text
+
+
+@pytest.mark.asyncio
+async def test_a2a_send_message_polls_only_backend_transient_runtime_state():
+    waking = _access_payload()
+    waking.update({"mode": "unavailable", "rpc_url": None, "token": None})
+    waking["runtime_interaction"] = {
+        "state": "waking",
+        "can_submit": False,
+        "notice": {
+            "code": "agent_runtime_waking",
+            "severity": "info",
+            "title": "Waking the agent runtime",
+            "message": "The runtime is starting.",
+        },
+        "action": None,
+        "operation": {
+            "uid": "55555555-5555-4555-8555-555555555555",
+            "status": "running",
+        },
+        "retry_after_ms": 2_000,
+    }
+
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "message": agent_message(
+                    text="Awake answer.",
+                    strict_json=False,
+                    context_id=TARGET_SESSION_UID,
+                )
+            },
+        )
+
+    mcp_client = _mcp_client(access=[waking, _access_payload()])
+    updates = []
+    with patch("astro.tools.a2a.anyio.sleep", new_callable=AsyncMock) as sleep:
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+            tool = create_a2a_send_message_tool(
+                mcp_client=mcp_client,
+                http_client=http,
+                caller_session_uid=CALLER_SESSION_UID,
+                max_response_bytes=1024 * 1024,
+            )
+            result = await tool.execute(
+                "call-waking",
+                {
+                    "agent_uid": AGENT_UID,
+                    "handle_unique_id": "waking_runtime",
+                    "message": "Wait for the runtime.",
+                },
+                on_update=updates.append,
+            )
+
+    assert result.text == "Awake answer."
+    sleep.assert_awaited_once_with(2.0)
+    assert mcp_client.call_tool.await_args_list.count(
+        call(
+            "agent_session.resolve_runtime_access",
+            {"agent_session_uid": TARGET_SESSION_UID},
+        )
+    ) == 2
+    assert any(update.details.get("state") == "waking" for update in updates)
 
 
 @pytest.mark.asyncio

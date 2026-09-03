@@ -9,6 +9,7 @@ from collections.abc import Mapping
 from typing import Any, cast
 from urllib.parse import urlsplit
 
+import anyio
 import httpx
 import structlog
 from mcp import types
@@ -33,6 +34,12 @@ logger = structlog.get_logger(__name__)
 A2A_SEND_MESSAGE_TOOL_NAME = "mainsequence__a2a_send_message"
 RESPONSE_KIND_EXTENSION_URI = "https://mainsequence.ai/a2a/extensions/response-kind/v1"
 TAU_A2A_PATH = "/api/a2a/v1"
+TRANSIENT_RUNTIME_INTERACTION_STATES = {
+    "checking",
+    "starting",
+    "waking",
+    "updating",
+}
 
 _INPUT_SCHEMA: Mapping[str, JSONValue] = {
     "type": "object",
@@ -179,6 +186,65 @@ def _runtime_endpoint(access: dict[str, Any]) -> tuple[str, str]:
         )
     endpoint = f"{rpc_url.rstrip('/')}{TAU_A2A_PATH}/message:send"
     return endpoint, token
+
+
+async def _resolve_runtime_access(
+    *,
+    mcp_client: MainSequenceMCPClient,
+    target_session_uid: str,
+    signal: ToolCancellationToken | None,
+    on_update: ToolUpdateCallback | None,
+) -> dict[str, Any]:
+    """Follow only backend-declared transient access states."""
+
+    last_operation_uid = ""
+    while True:
+        _cancelled(signal)
+        access = _mcp_payload(
+            await mcp_client.call_tool(
+                "agent_session.resolve_runtime_access",
+                {"agent_session_uid": target_session_uid},
+            ),
+            operation="agent_session.resolve_runtime_access",
+        )
+        interaction = access.get("runtime_interaction")
+        if not isinstance(interaction, dict) or interaction.get("can_submit") is True:
+            return access
+        state = str(interaction.get("state") or "")
+        retry_after_ms = interaction.get("retry_after_ms")
+        if state not in TRANSIENT_RUNTIME_INTERACTION_STATES or not isinstance(
+            retry_after_ms, (int, float)
+        ):
+            return access
+
+        operation = interaction.get("operation")
+        operation_uid = (
+            str(operation.get("uid") or "") if isinstance(operation, dict) else ""
+        )
+        if on_update is not None and operation_uid != last_operation_uid:
+            notice = interaction.get("notice")
+            detail = (
+                str(notice.get("message") or "")
+                if isinstance(notice, dict)
+                else ""
+            )
+            on_update(
+                AgentToolResult(
+                    content=[
+                        TextContent(
+                            text=detail or "Waiting for the target runtime..."
+                        )
+                    ],
+                    details={
+                        "phase": "runtime_access",
+                        "state": state,
+                        "agent_session_uid": target_session_uid,
+                        "operation_uid": operation_uid or None,
+                    },
+                )
+            )
+            last_operation_uid = operation_uid
+        await anyio.sleep(min(30.0, max(0.5, float(retry_after_ms) / 1000)))
 
 
 async def _bounded_json_response(
@@ -343,12 +409,11 @@ def create_a2a_send_message_tool(
                 )
             _cancelled(signal)
 
-            access = _mcp_payload(
-                await mcp_client.call_tool(
-                    "agent_session.resolve_runtime_access",
-                    {"agent_session_uid": target_session_uid},
-                ),
-                operation="agent_session.resolve_runtime_access",
+            access = await _resolve_runtime_access(
+                mcp_client=mcp_client,
+                target_session_uid=target_session_uid,
+                signal=signal,
+                on_update=on_update,
             )
             endpoint, token = _runtime_endpoint(access)
             _cancelled(signal)

@@ -20,6 +20,12 @@ bundle. It then sends `message:send` to the exact Tau A2A path returned by Djang
 supplies a runtime URL or bearer token, and the token is not included in the tool result. Generic
 shell and content-fetch tools are not the outbound A2A transport.
 
+If Django reports a transient runtime interaction (`checking`, `starting`, `waking`, or
+`updating`), the host tool re-resolves the same target session only after the backend-provided
+`retry_after_ms`. It stops immediately when submission is permitted or the state becomes terminal;
+it never retries a terminal action and never derives readiness from `runtime_presence`. This is an
+active-call wait, not a permanent runtime poller.
+
 The outbound host tool currently supports the direct `message` result kind. It preserves the
 target session UID for continuation and reports its generated message ID when a timeout or
 disconnect leaves the delivery outcome ambiguous.
