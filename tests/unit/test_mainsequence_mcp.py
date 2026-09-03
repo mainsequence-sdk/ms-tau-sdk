@@ -17,6 +17,8 @@ from astro.backend.mcp import (
 )
 from astro.settings import Settings
 from astro.tools.mainsequence_mcp import (
+    A2A_CALLER_SESSION_META_KEY,
+    A2A_MCP_TOOL_NAME,
     create_mainsequence_mcp_tools,
     mainsequence_mcp_resource_prompt,
 )
@@ -68,6 +70,39 @@ def test_mcp_url_is_derived_from_backend_url():
 
 
 @pytest.mark.asyncio
+async def test_mcp_client_forwards_private_tool_metadata_only_to_that_call():
+    client = MainSequenceMCPClient(
+        settings=_settings(),
+        auth=AsyncMock(),
+    )
+    client._commands = asyncio.Queue()
+    observed = []
+
+    class FakeSession:
+        async def call_tool(self, name, arguments, *, meta=None):
+            observed.append((name, arguments, meta))
+            return types.CallToolResult(content=[])
+
+    client._owner_task = asyncio.create_task(client._serve(FakeSession()))
+    proof = {
+        "mainsequence.ai/a2a-caller-session/v1": {
+            "caller_agent_session_uid": "session-1",
+            "lease_holder_id": "holder-1",
+            "lease_token": "lease-1",
+        }
+    }
+
+    await client.call_tool("a2a.send_message", {"message": "hello"}, meta=proof)
+    await client.call_tool("agent.list", {})
+    await client.aclose()
+
+    assert observed == [
+        ("a2a.send_message", {"message": "hello"}, proof),
+        ("agent.list", {}, None),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_mcp_transport_does_not_leak_cancel_scope_into_streaming_response():
     transport_tasks: list[asyncio.Task[object] | None] = []
     transport_exit_tasks: list[asyncio.Task[object] | None] = []
@@ -102,7 +137,8 @@ async def test_mcp_transport_does_not_leak_cancel_scope_into_streaming_response(
         async def list_resources(self):
             return types.ListResourcesResult(resources=[])
 
-        async def call_tool(self, name, arguments):
+        async def call_tool(self, name, arguments, *, meta=None):
+            del meta
             operation_tasks.append(asyncio.current_task())
             return types.CallToolResult(content=[])
 
@@ -297,13 +333,45 @@ def test_normalized_mcp_tool_name_collisions_fail_session_setup():
         create_mainsequence_mcp_tools(client)
 
 
-def test_host_owned_a2a_tool_name_collision_fails_session_setup():
+@pytest.mark.asyncio
+async def test_canonical_mcp_a2a_tool_uses_generic_projection_with_private_context():
     client = AsyncMock()
-    client.tools = (types.Tool(name="a2a.send_message", inputSchema={"type": "object"}),)
+    client.tools = (
+        types.Tool(
+            name=A2A_MCP_TOOL_NAME,
+            inputSchema={
+                "type": "object",
+                "properties": {"message": {"type": "string"}},
+                "required": ["message"],
+            },
+        ),
+    )
     client.resources = ()
+    client.call_tool.return_value = types.CallToolResult(
+        content=[types.TextContent(type="text", text="sent")],
+        isError=False,
+    )
+    proof = {
+        A2A_CALLER_SESSION_META_KEY: {
+            "caller_agent_session_uid": "session-1",
+            "lease_holder_id": "holder-1",
+            "lease_token": "lease-1",
+        }
+    }
 
-    with pytest.raises(ValueError, match="tool name collision"):
-        create_mainsequence_mcp_tools(client)
+    tools = create_mainsequence_mcp_tools(
+        client,
+        private_tool_meta={A2A_MCP_TOOL_NAME: proof},
+    )
+    result = await tools[0].execute("call-1", {"message": "hello"})
+
+    assert tools[0].name == "mainsequence__a2a_send_message"
+    assert result.text == "sent"
+    client.call_tool.assert_awaited_once_with(
+        A2A_MCP_TOOL_NAME,
+        {"message": "hello"},
+        meta=proof,
+    )
 
 
 def test_only_read_only_idempotent_mcp_tools_are_parallel():
@@ -354,7 +422,8 @@ async def test_process_mcp_runs_safe_reads_concurrently_and_orders_mutations():
     maximum_reads = 0
 
     class FakeSession:
-        async def call_tool(self, name, _arguments):
+        async def call_tool(self, name, _arguments, *, meta=None):
+            del meta
             nonlocal active_reads, maximum_reads
             if name == "code_repository.get":
                 active_reads += 1

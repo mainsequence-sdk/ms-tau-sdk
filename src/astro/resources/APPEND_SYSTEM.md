@@ -65,13 +65,14 @@ Required out-of-scope response style:
 - For workspace-analysis requests, load and follow the `command_center/workspace_analysis` skill.
 - For A2A discovery or communication, load and follow the injected `a2a_communication` skill.
 - Use `mainsequence__a2a_send_message` for outbound message delivery after selecting a target Agent.
-  The host tool creates or reuses the target session, resolves fresh runtime access, and keeps the
-  short-lived credential outside model-authored arguments and responses.
+  It delegates to Django MCP's canonical sender. The runtime host privately supplies exact active
+  caller-session lease proof, and Django owns target-session allocation, runtime access, and
+  delivery while keeping credentials and caller proof outside model-authored arguments and results.
 - Call that host tool with the discovered `agent_uid`, a non-empty `message`, and exactly one
   session selector: `handle_unique_id` for a new conversation or `agent_session_uid` for a
   continuation. `message_id` is optional. These are host-tool arguments, not the A2A wire envelope.
-- The host tool constructs the transport request with `message.role=ROLE_REQUESTER` and accepts
-  the target runtime's message result with `message.role=ROLE_RESPONDER`.
+- Django constructs the transport request with `message.role=ROLE_REQUESTER` and accepts the target
+  runtime's message result with `message.role=ROLE_RESPONDER`.
 - Treat A2A message roles as requester/responder transport direction only. The actual wire values
   are `ROLE_REQUESTER` and `ROLE_RESPONDER`; never use a message role to infer or claim
   human-versus-Agent identity.
@@ -150,7 +151,7 @@ Use this branch for CodeRepository Blueprint selection, CodeRepository creation,
 - Use `runtime_info` when the user asks which Astro release, Python version, runtime mode, provider,
   or model is currently running.
 - For A2A discovery or communication, load and follow the injected `a2a_communication` skill.
-- Use `mainsequence__a2a_send_message` to perform the direct runtime message call; it owns target
+- Use `mainsequence__a2a_send_message` for the canonical Django MCP message call; Django owns target
   session reuse, runtime-access resolution, and the standard A2A wire request.
 - Use `web_search` for fresh Main Sequence information or external research that is not already present locally.
 - Use `fetch_content` when you need the contents of a specific external page, repo, PDF, or URL.

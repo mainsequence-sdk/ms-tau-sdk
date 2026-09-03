@@ -51,6 +51,7 @@ class _RuntimeCredentialHTTPXAuth(httpx.Auth):
 class _CallToolCommand:
     name: str
     arguments: dict[str, object]
+    meta: dict[str, object] | None
     log_context: dict[str, object]
     result: asyncio.Future[types.CallToolResult]
 
@@ -197,6 +198,7 @@ class MainSequenceMCPClient:
                         tool_result = await session.call_tool(
                             command.name,
                             command.arguments,
+                            meta=command.meta,
                         )
                         if not command.result.done():
                             command.result.set_result(tool_result)
@@ -262,6 +264,8 @@ class MainSequenceMCPClient:
         self,
         name: str,
         arguments: dict[str, object],
+        *,
+        meta: dict[str, object] | None = None,
     ) -> types.CallToolResult:
         commands = self._require_commands()
         result: asyncio.Future[types.CallToolResult] = asyncio.get_running_loop().create_future()
@@ -269,6 +273,7 @@ class MainSequenceMCPClient:
             _CallToolCommand(
                 name=name,
                 arguments=arguments,
+                meta=meta,
                 log_context=dict(get_contextvars()),
                 result=result,
             )

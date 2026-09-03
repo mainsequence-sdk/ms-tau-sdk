@@ -23,10 +23,11 @@ from astro.backend.mcp import (
     ENVIRONMENT_UID_ARGUMENT,
     MainSequenceMCPClient,
 )
-from astro.tools.a2a import A2A_SEND_MESSAGE_TOOL_NAME
 
 _INVALID_TOOL_NAME = re.compile(r"[^A-Za-z0-9_-]")
 _RESOURCE_TOOL_NAME = "mainsequence__read_resource"
+A2A_MCP_TOOL_NAME = "a2a.send_message"
+A2A_CALLER_SESSION_META_KEY = "mainsequence.ai/a2a-caller-session/v1"
 
 
 def _tau_tool_name(mcp_name: str) -> str:
@@ -100,6 +101,7 @@ def _create_mcp_tool(
     client: MainSequenceMCPClient,
     tool: types.Tool,
     tau_name: str,
+    private_meta: Mapping[str, JSONValue] | None = None,
 ) -> AgentTool:
     canonical_name = tool.name
     annotations = tool.annotations
@@ -123,7 +125,14 @@ def _create_mcp_tool(
                 content=[TextContent(text="Main Sequence MCP tool call was cancelled.")],
                 details={"mcp_tool": canonical_name, "cancelled": True},
             )
-        result = await client.call_tool(canonical_name, dict(arguments))
+        if private_meta is None:
+            result = await client.call_tool(canonical_name, dict(arguments))
+        else:
+            result = await client.call_tool(
+                canonical_name,
+                dict(arguments),
+                meta=dict(private_meta),
+            )
         return _tool_result(canonical_name=canonical_name, result=result)
 
     return AgentTool(
@@ -196,15 +205,18 @@ def _create_resource_tool(client: MainSequenceMCPClient) -> AgentTool:
 
 def create_mainsequence_mcp_tools(
     client: MainSequenceMCPClient,
+    *,
+    private_tool_meta: Mapping[
+        str,
+        Mapping[str, JSONValue],
+    ]
+    | None = None,
 ) -> list[AgentTool]:
     tools: list[AgentTool] = []
     names: set[str] = set()
     for tool in client.tools:
         tau_name = _tau_tool_name(tool.name)
-        if tau_name in names or tau_name in {
-            _RESOURCE_TOOL_NAME,
-            A2A_SEND_MESSAGE_TOOL_NAME,
-        }:
+        if tau_name in names or tau_name == _RESOURCE_TOOL_NAME:
             raise ValueError(f"Main Sequence MCP tool name collision: {tool.name}")
         names.add(tau_name)
         tools.append(
@@ -212,6 +224,7 @@ def create_mainsequence_mcp_tools(
                 client=client,
                 tool=tool,
                 tau_name=tau_name,
+                private_meta=(private_tool_meta or {}).get(tool.name),
             )
         )
     if client.resources:

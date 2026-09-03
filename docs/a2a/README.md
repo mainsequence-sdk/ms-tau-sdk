@@ -13,12 +13,14 @@ Astro implements the standard A2A surface directly in FastAPI:
 - `GET /api/a2a/v1/extendedAgentCard`
 - `POST /api/a2a/rpc`
 
-For outbound message delivery from a Tau session, Astro injects the constrained
-`mainsequence__a2a_send_message` host tool. The tool uses Django MCP to inspect the target Agent,
-create or reuse its backend-owned child `AgentSession`, and resolve a fresh direct-runtime access
-bundle. It then sends `message:send` to the exact Tau A2A path returned by Django. The model never
-supplies a runtime URL or bearer token, and the token is not included in the tool result. Generic
-shell and content-fetch tools are not the outbound A2A transport.
+For outbound message delivery from a Tau session, Astro's generic MCP projection exposes Django's
+canonical `a2a.send_message` operation to the model as the constrained
+`mainsequence__a2a_send_message` host tool. Astro has no separate outbound A2A tool implementation.
+Django inspects the target Agent, creates or reuses its backend-owned child `AgentSession`, resolves
+fresh runtime access, constructs the standard envelope, sends `message:send`, validates the
+response, and records the send audit event. The model never supplies a caller session, runtime URL,
+bearer token, or wire role, and none is included in the tool result. Generic shell and content-fetch
+tools are not the outbound A2A transport.
 
 ## Outbound host-tool contract
 
@@ -38,7 +40,26 @@ For a continuation, `agent_session_uid` replaces `handle_unique_id`. The require
 `agent_uid` always identifies the selected discovery result. This object is the host-tool input;
 it is not sent to the target runtime.
 
-The host tool turns those arguments into the transport request:
+Astro's generic MCP call plumbing privately adds this caller-session proof to MCP `tools/call`
+`_meta` for `a2a.send_message`:
+
+```json
+{
+  "mainsequence.ai/a2a-caller-session/v1": {
+    "caller_agent_session_uid": "<active-caller-AgentSession.uid>",
+    "lease_holder_id": "<active-runtime-holder>",
+    "lease_token": "<active-runtime-lease-token>"
+  }
+}
+```
+
+These values come from the runtime host after it acquires the caller session's lease; they are not
+part of the model-visible tool schema. Django binds the proof to the authenticated coding-agent
+service, its Agent and Environment, and the exact unexpired `runtime_run` lease. It also requires
+the target child session's immediate parent to be that exact caller session, including
+continuations.
+
+Django turns the semantic arguments into the transport request:
 
 ```json
 {
@@ -57,11 +78,10 @@ The returned message must use `ROLE_RESPONDER` and the same target `AgentSession
 `agent_uid` selects the target for the host tool, while `message.role` carries requester/responder
 direction on the runtime wire.
 
-If Django reports a transient runtime interaction (`checking`, `starting`, `waking`, or
-`updating`), the host tool re-resolves the same target session only after the backend-provided
-`retry_after_ms`. It stops immediately when submission is permitted or the state becomes terminal;
-it never retries a terminal action and never derives readiness from `runtime_presence`. This is an
-active-call wait, not a permanent runtime poller.
+Django follows only backend-declared transient runtime-interaction states within a bounded
+readiness window and requires `runtime_interaction.can_submit=true` before delivery. When
+submission remains blocked, the tool returns the backend-owned notice; neither Astro nor the model
+derives readiness from `runtime_presence`.
 
 The outbound host tool currently supports the direct `message` result kind. It preserves the
 target session UID for continuation and reports its generated message ID when a timeout or

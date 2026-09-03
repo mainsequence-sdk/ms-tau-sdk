@@ -25,6 +25,10 @@ from astro.runtime.session import ActiveSessionRuntime
 from astro.runtime.snapshots import build_snapshot_upload
 from astro.sessions.storage import SESSION_ENTRY_ADAPTER
 from astro.settings import Settings
+from astro.tools.mainsequence_mcp import (
+    A2A_CALLER_SESSION_META_KEY,
+    A2A_MCP_TOOL_NAME,
+)
 
 
 def _settings(tmp_path):
@@ -205,7 +209,10 @@ async def test_v1_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
             "astro.runtime.manager.MainSequenceMCPClient.connect",
             AsyncMock(return_value=mcp_client),
         ) as connect,
-        patch("astro.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
+        patch(
+            "astro.runtime.manager.create_mainsequence_mcp_tools",
+            return_value=[],
+        ) as create_mcp_tools,
         patch("astro.runtime.manager.create_coding_tools", return_value=[]),
         patch("astro.runtime.manager.create_file_tools", return_value=[]),
         patch("astro.runtime.manager.build_web_tools", return_value=[]),
@@ -230,10 +237,24 @@ async def test_v1_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
     assert materialize.await_count == 2
     connect.assert_awaited_once_with(settings=manager.settings, auth=backend.auth)
     for load_call in load_coding_session.await_args_list:
-        assert [tool.name for tool in load_call.args[0].tools] == [
-            "mainsequence__a2a_send_message",
-            "runtime_info",
-        ]
+        assert [tool.name for tool in load_call.args[0].tools] == ["runtime_info"]
+    assert create_mcp_tools.call_args_list == [
+        (
+            (mcp_client,),
+            {
+                "private_tool_meta": {
+                    A2A_MCP_TOOL_NAME: {
+                        A2A_CALLER_SESSION_META_KEY: {
+                            "caller_agent_session_uid": session_uid,
+                            "lease_holder_id": "holder",
+                            "lease_token": f"lease-{session_uid}",
+                        }
+                    }
+                }
+            },
+        )
+        for session_uid in ("session-1", "session-2")
+    ]
     assert first.storage.next_sequence == 0
     assert second.storage.next_sequence == 0
 

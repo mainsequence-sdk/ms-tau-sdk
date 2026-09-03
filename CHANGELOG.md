@@ -4,25 +4,32 @@
 
 ### Outbound A2A message delivery
 
-- Added the `mainsequence__a2a_send_message` Tau host tool so an Astro session can turn MCP Agent
-  discovery into an actual direct-runtime A2A message instead of stopping after runtime-access
-  resolution for lack of a supported HTTP operation.
-- The tool creates or reuses the backend-owned child session, resolves fresh runtime access,
-  enforces `runtime_interaction.can_submit`, accepts only Django's canonical Tau A2A path, and keeps
-  the short-lived bearer token out of model-authored arguments and tool results.
-- Added structured outbound A2A lifecycle fields for caller session, target Agent/session, message
-  ID, result kind, outcome, duration, and safe error code.
+- Removed Astro's dedicated outbound A2A tool implementation. The existing generic MCP projection
+  now exposes Django MCP's canonical `a2a.send_message` operation as
+  `mainsequence__a2a_send_message`; Django owns target-session allocation, runtime access, the
+  `ROLE_REQUESTER` envelope, response validation, and send auditing in one place.
+- Generic host plumbing injects the active caller `AgentSession.uid`, runtime lease holder, and
+  lease token as private MCP request metadata for that operation. None is model-selectable; Django
+  validates the proof against the authenticated coding-agent service and exact active lease before
+  allocating a target session.
+- Runtime URLs, runtime bearer credentials, and caller lease proof stay out of model-authored
+  arguments, target messages, tool results, and logs.
+- Django's canonical sender records each attempt against the authenticated User, with verified
+  caller Agent/session/service/harness provenance for Agent sends, tracked MCP client metadata for
+  User sends, the target Agent/session, message and correlation IDs, and a safe terminal or
+  ambiguous outcome. Message content and credentials are not persisted.
 - Corrected the outbound and inbound A2A v1 role codec, modelled roles internally as requester and
   responder directions rather than principal identity, and removed obsolete v0.3 `kind`
   discriminators from v1 Message and Task responses.
-- Follow backend-declared transient runtime interaction states during an active A2A call, honoring
-  `retry_after_ms` until submission is allowed while stopping immediately on terminal states.
+- Django follows backend-declared transient runtime-interaction states within its bounded MCP
+  execution budget, enforces `runtime_interaction.can_submit` before delivery, and returns the
+  backend notice when submission is blocked.
 - Replaced the identity-oriented A2A role values with the canonical Main Sequence wire directions
   `ROLE_REQUESTER` and `ROLE_RESPONDER`; sender and receiver no longer translate through
   `ROLE_USER` or `ROLE_AGENT`.
-- Documented the model-visible host-tool contract separately from the runtime wire envelope:
-  callers supply `agent_uid`, `message`, and exactly one session selector; the host resolves the
-  target context and constructs the `ROLE_REQUESTER` request itself.
+- Documented the model-visible host-tool contract separately from the private caller proof and
+  runtime wire envelope: callers supply `agent_uid`, `message`, and exactly one session selector;
+  Django constructs the `ROLE_REQUESTER` request itself.
 
 ### Gateway-verified caller identity (ADR-0043 cutover-bound)
 

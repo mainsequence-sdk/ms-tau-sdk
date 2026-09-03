@@ -7,10 +7,12 @@ Accepted
 ## Note
 
 The Tau runtime supersedes this ADR's historical CLI sender implementation. Django MCP now owns
-Agent discovery, child-session creation/reuse, and runtime-access resolution. Astro's constrained
-`mainsequence__a2a_send_message` host tool owns the direct standard-A2A HTTP call and keeps the
-short-lived runtime token out of model-authored tool arguments and results. Django remains outside
-the live message path.
+Agent discovery, child-session creation/reuse, runtime-access resolution, and the canonical
+message-only `a2a.send_message` operation. Astro's generic MCP projection exposes that operation as
+the constrained `mainsequence__a2a_send_message` host tool and privately injects the active caller
+session's lease proof; there is no dedicated outbound A2A tool implementation in Astro. Django owns
+the direct standard-A2A HTTP call and keeps both the short-lived runtime token and caller proof out
+of model-authored tool arguments and results.
 
 The runtime-access and discovery portions of this ADR remain valid.
 
