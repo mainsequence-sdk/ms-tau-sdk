@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Outbound A2A message delivery
+
+- Added the `mainsequence__a2a_send_message` Tau host tool so an Astro session can turn MCP Agent
+  discovery into an actual direct-runtime A2A message instead of stopping after runtime-access
+  resolution for lack of a supported HTTP operation.
+- The tool creates or reuses the backend-owned child session, resolves fresh runtime access,
+  enforces `runtime_interaction.can_submit`, accepts only Django's canonical Tau A2A path, and keeps
+  the short-lived bearer token out of model-authored arguments and tool results.
+- Added structured outbound A2A lifecycle fields for caller session, target Agent/session, message
+  ID, result kind, outcome, duration, and safe error code.
+
 ### Gateway-verified caller identity (ADR-0043 cutover-bound)
 
 - Protected message routes (`POST /api/chat`, A2A `message:send`, `message:stream`, the JSON-RPC

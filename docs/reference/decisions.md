@@ -25,7 +25,8 @@ pre-UID API sketches have been removed from the active reference set.
 - [`adr-27-backend-only-session-initiation.md`](./adr-27-backend-only-session-initiation.md)
   - Astro attaches to existing backend sessions; chat and A2A do not create sessions.
 - [`adr-25-production-a2a-discovery-and-runtime-access.md`](./adr-25-production-a2a-discovery-and-runtime-access.md)
-  - Production A2A uses backend/CLI runtime access resolution.
+  - Production Tau A2A uses Django MCP for discovery/session/access and Astro's constrained host
+    tool for the direct runtime message.
 - [`adr-28-durable-a2a-session-envelope.md`](./adr-28-durable-a2a-session-envelope.md)
   - A2A caller/linkage metadata is durable session state, not prompt-only scaffolding.
 - [`adr-33-warm-a2a-session-runtime.md`](./adr-33-warm-a2a-session-runtime.md)

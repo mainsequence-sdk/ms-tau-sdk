@@ -297,6 +297,15 @@ def test_normalized_mcp_tool_name_collisions_fail_session_setup():
         create_mainsequence_mcp_tools(client)
 
 
+def test_host_owned_a2a_tool_name_collision_fails_session_setup():
+    client = AsyncMock()
+    client.tools = (types.Tool(name="a2a.send_message", inputSchema={"type": "object"}),)
+    client.resources = ()
+
+    with pytest.raises(ValueError, match="tool name collision"):
+        create_mainsequence_mcp_tools(client)
+
+
 def test_only_read_only_idempotent_mcp_tools_are_parallel():
     client = AsyncMock()
     client.tools = (

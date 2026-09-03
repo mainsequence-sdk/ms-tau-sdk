@@ -212,7 +212,7 @@ async def test_v1_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
         patch(
             "astro.runtime.manager.CodingSession.load",
             AsyncMock(side_effect=coding_sessions),
-        ),
+        ) as load_coding_session,
     ):
         first = await manager.get("session-1")
         same = await manager.get("session-1")
@@ -229,6 +229,11 @@ async def test_v1_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
     assert providers.for_session_credential.call_count == 2
     assert materialize.await_count == 2
     connect.assert_awaited_once_with(settings=manager.settings, auth=backend.auth)
+    for load_call in load_coding_session.await_args_list:
+        assert [tool.name for tool in load_call.args[0].tools] == [
+            "mainsequence__a2a_send_message",
+            "runtime_info",
+        ]
     assert first.storage.next_sequence == 0
     assert second.storage.next_sequence == 0
 

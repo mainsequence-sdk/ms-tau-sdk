@@ -13,6 +13,17 @@ Astro implements the standard A2A surface directly in FastAPI:
 - `GET /api/a2a/v1/extendedAgentCard`
 - `POST /api/a2a/rpc`
 
+For outbound message delivery from a Tau session, Astro injects the constrained
+`mainsequence__a2a_send_message` host tool. The tool uses Django MCP to inspect the target Agent,
+create or reuse its backend-owned child `AgentSession`, and resolve a fresh direct-runtime access
+bundle. It then sends `message:send` to the exact Tau A2A path returned by Django. The model never
+supplies a runtime URL or bearer token, and the token is not included in the tool result. Generic
+shell and content-fetch tools are not the outbound A2A transport.
+
+The outbound host tool currently supports the direct `message` result kind. It preserves the
+target session UID for continuation and reports its generated message ID when a timeout or
+disconnect leaves the delivery outcome ambiguous.
+
 `message.contextId` is the backend `AgentSession.uid`. Astro loads that Tau
 session, acquires its runtime lease, and persists task/message/status state in
 the Django `AgentTask` models only when the caller selects a Task result.

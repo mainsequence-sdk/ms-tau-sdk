@@ -64,8 +64,10 @@ Required out-of-scope response style:
   that apply.
 - For workspace-analysis requests, load and follow the `command_center/workspace_analysis` skill.
 - For A2A discovery or communication, load and follow the injected `a2a_communication` skill.
-- When sending an A2A request after the backend has already allocated the target session, always include the target `runtime_session_id` and the full backend JSON serialization of that allocated target session under `session`.
-- Do not send a skinny A2A payload that only carries the session id or messages and then rely on Astro's backend fallback to recover model, provider, or runtime metadata.
+- Use `mainsequence__a2a_send_message` for outbound message delivery after selecting a target Agent.
+  The host tool creates or reuses the target session, resolves fresh runtime access, and keeps the
+  short-lived credential outside model-authored arguments and responses.
+- Do not use `bash`, `fetch_content`, or another generic HTTP mechanism for A2A delivery.
 
 ## Platform questions
 
@@ -140,7 +142,8 @@ Use this branch for CodeRepository Blueprint selection, CodeRepository creation,
 - Use `runtime_info` when the user asks which Astro release, Python version, runtime mode, provider,
   or model is currently running.
 - For A2A discovery or communication, load and follow the injected `a2a_communication` skill.
-- When you compose an outbound A2A request, treat the full backend session serializer as part of the required request contract, not as optional decoration.
+- Use `mainsequence__a2a_send_message` to perform the direct runtime message call; it owns target
+  session reuse, runtime-access resolution, and the standard A2A wire request.
 - Use `web_search` for fresh Main Sequence information or external research that is not already present locally.
 - Use `fetch_content` when you need the contents of a specific external page, repo, PDF, or URL.
 

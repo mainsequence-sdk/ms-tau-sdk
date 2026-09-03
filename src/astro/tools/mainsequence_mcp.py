@@ -23,6 +23,7 @@ from astro.backend.mcp import (
     ENVIRONMENT_UID_ARGUMENT,
     MainSequenceMCPClient,
 )
+from astro.tools.a2a import A2A_SEND_MESSAGE_TOOL_NAME
 
 _INVALID_TOOL_NAME = re.compile(r"[^A-Za-z0-9_-]")
 _RESOURCE_TOOL_NAME = "mainsequence__read_resource"
@@ -200,7 +201,10 @@ def create_mainsequence_mcp_tools(
     names: set[str] = set()
     for tool in client.tools:
         tau_name = _tau_tool_name(tool.name)
-        if tau_name in names or tau_name == _RESOURCE_TOOL_NAME:
+        if tau_name in names or tau_name in {
+            _RESOURCE_TOOL_NAME,
+            A2A_SEND_MESSAGE_TOOL_NAME,
+        }:
             raise ValueError(f"Main Sequence MCP tool name collision: {tool.name}")
         names.add(tau_name)
         tools.append(

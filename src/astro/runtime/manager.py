@@ -55,6 +55,7 @@ from astro.runtime.snapshots import (
 )
 from astro.sessions.storage import SESSION_ENTRY_ADAPTER, BackendSessionStorage
 from astro.settings import Settings
+from astro.tools.a2a import create_a2a_send_message_tool
 from astro.tools.mainsequence_mcp import (
     create_mainsequence_mcp_tools,
     mainsequence_mcp_resource_prompt,
@@ -91,6 +92,15 @@ class SessionRuntimeManager:
         self._eviction_task: asyncio.Task[None] | None = None
         self._background_tasks: set[asyncio.Task[object]] = set()
         self._web_client = httpx.AsyncClient(timeout=60)
+        self._a2a_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(
+                connect=self.settings.backend_connect_timeout_seconds,
+                read=self.settings.turn_timeout_seconds,
+                write=self.settings.backend_write_timeout_seconds,
+                pool=self.settings.backend_pool_timeout_seconds,
+            ),
+            follow_redirects=False,
+        )
         self._mcp_client: MainSequenceMCPClient | None = None
         self._mcp_lock = asyncio.Lock()
         self._startup_ready = False
@@ -319,6 +329,12 @@ class SessionRuntimeManager:
                 *create_file_tools(cwd=cwd),
                 *build_web_tools(cwd=cwd, store=web_store, client=self._web_client),
                 *create_mainsequence_mcp_tools(mcp_client),
+                create_a2a_send_message_tool(
+                    mcp_client=mcp_client,
+                    http_client=self._a2a_client,
+                    caller_session_uid=session_uid,
+                    max_response_bytes=self.settings.max_turn_output_bytes,
+                ),
                 create_runtime_info_tool(
                     session_uid=session_uid,
                     cwd=cwd,
@@ -1022,4 +1038,7 @@ class SessionRuntimeManager:
         if self._mcp_client is not None:
             with contextlib.suppress(Exception):
                 await self._mcp_client.aclose()
-        await self._web_client.aclose()
+        await asyncio.gather(
+            self._web_client.aclose(),
+            self._a2a_client.aclose(),
+        )
