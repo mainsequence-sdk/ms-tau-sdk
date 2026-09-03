@@ -4,6 +4,10 @@ Status: Accepted
 Date: 2026-08-23
 Implementation Status: Implemented across Astro Tau, `tdag-django`, and `mainsequence-sdk`
 
+The Main Sequence A2A profile uses `ROLE_REQUESTER` for request Messages and
+`ROLE_RESPONDER` for response Messages. These values describe direction directly and are not
+aliases for identity-oriented role names.
+
 ## Context
 
 Astro's non-streaming A2A message-send contract currently accepts
@@ -98,7 +102,7 @@ For `responseKind: "message"`, Astro waits for execution and returns:
 ```json
 {
   "message": {
-    "role": "ROLE_AGENT",
+    "role": "ROLE_RESPONDER",
     "messageId": "01JRESULT",
     "parts": [{"text": "The result ..."}]
   }

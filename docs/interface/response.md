@@ -17,7 +17,7 @@ Tau implementation objects and raw provider events are never exposed.
   "message": {
     "kind": "message",
     "messageId": "msg-agent-1",
-    "role": "ROLE_AGENT",
+    "role": "ROLE_RESPONDER",
     "parts": [{"text": "Ready."}],
     "metadata": {
       "https://mainsequence.ai/a2a/extensions/agent-inference/v1": {

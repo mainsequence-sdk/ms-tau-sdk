@@ -129,7 +129,7 @@ async def _direct_message_response(
         body = {
             "message": {
                 "messageId": "message-1",
-                "role": "ROLE_USER",
+                "role": "ROLE_REQUESTER",
                 "contextId": "session-1",
                 "parts": [{"text": "What do the two DataNodes do?"}],
             },
@@ -222,7 +222,7 @@ def test_strict_json_message_uses_data_part():
         strict_json=True,
     )
 
-    assert message["role"] == "ROLE_AGENT"
+    assert message["role"] == "ROLE_RESPONDER"
     assert message["parts"] == [{"data": {"ok": True}, "mediaType": "application/json"}]
 
 
@@ -231,7 +231,11 @@ def test_strict_json_message_uses_data_part():
     [
         (
             {"role": "user"},
-            "message.role must identify the requester (A2A v1 wire value ROLE_USER)",
+            "message.role must identify the requester (wire value ROLE_REQUESTER)",
+        ),
+        (
+            {"role": "ROLE_USER"},
+            "message.role must identify the requester (wire value ROLE_REQUESTER)",
         ),
         ({"kind": "message"}, "message.kind is not part of the A2A v1 Message envelope"),
         (
@@ -247,7 +251,7 @@ def test_request_parts_rejects_obsolete_v03_envelope(
     body = {
         "message": {
             "messageId": "message-1",
-            "role": "ROLE_USER",
+            "role": "ROLE_REQUESTER",
             "contextId": "session-1",
             "parts": [{"text": "Current part."}],
             **message_update,
@@ -426,7 +430,7 @@ async def test_omitted_response_kind_defaults_to_direct_message_without_task():
     )
 
     assert response.status_code == 200
-    assert response.json()["message"]["role"] == "ROLE_AGENT"
+    assert response.json()["message"]["role"] == "ROLE_RESPONDER"
     assert "kind" not in response.json()["message"]
     client.get_agent_card.assert_not_awaited()
     client.get_session.assert_not_awaited()
@@ -490,7 +494,7 @@ async def test_message_send_rejects_legacy_return_immediately():
             json={
                 "message": {
                     "messageId": "message-1",
-                    "role": "ROLE_USER",
+                    "role": "ROLE_REQUESTER",
                     "contextId": "session-1",
                     "parts": [{"text": "Do this."}],
                 },
@@ -554,7 +558,7 @@ async def test_message_send_task_requires_advertised_task_and_returns_task():
             json={
                 "message": {
                     "messageId": "message-1",
-                    "role": "ROLE_USER",
+                    "role": "ROLE_REQUESTER",
                     "contextId": "session-1",
                     "parts": [{"text": "Run this asynchronously."}],
                 },
@@ -592,7 +596,7 @@ async def test_message_send_rejects_task_when_agent_card_is_message_only():
             json={
                 "message": {
                     "messageId": "message-1",
-                    "role": "ROLE_USER",
+                    "role": "ROLE_REQUESTER",
                     "contextId": "session-1",
                     "parts": [{"text": "Run this asynchronously."}],
                 },
@@ -658,7 +662,7 @@ async def test_direct_message_send_stamps_an_agent_caller_from_gateway_headers()
             json={
                 "message": {
                     "messageId": "message-1",
-                    "role": "ROLE_USER",
+                    "role": "ROLE_REQUESTER",
                     "contextId": "session-1",
                     "parts": [{"text": "Do this."}],
                     # Identity in the body must never win over the headers.
@@ -711,7 +715,7 @@ async def test_message_routes_reject_invalid_caller_identity_before_any_turn(hea
     body = {
         "message": {
             "messageId": "message-1",
-            "role": "ROLE_USER",
+            "role": "ROLE_REQUESTER",
             "contextId": "session-1",
             "parts": [{"text": "Do this."}],
         },

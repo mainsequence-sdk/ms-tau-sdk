@@ -123,7 +123,7 @@ Accept: application/a2a+json
 {
   "message": {
     "messageId": "msg-001",
-    "role": "ROLE_USER",
+    "role": "ROLE_REQUESTER",
     "contextId": "agent-session-uid",
     "parts": [
       {
@@ -149,7 +149,7 @@ Accept: application/a2a+json
 {
   "message": {
     "messageId": "msg-002",
-    "role": "ROLE_USER",
+    "role": "ROLE_REQUESTER",
     "contextId": "agent-session-uid",
     "parts": [
       {

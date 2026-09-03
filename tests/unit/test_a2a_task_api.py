@@ -103,7 +103,7 @@ async def test_json_rpc_direct_message_does_not_create_a_task(asgi_client):
                     "message": {
                         "messageId": "message-1",
                         "contextId": "session-1",
-                        "role": "ROLE_USER",
+                        "role": "ROLE_REQUESTER",
                         "parts": [{"text": "Answer directly."}],
                     }
                 },
@@ -171,7 +171,7 @@ async def test_response_kind_requires_extension_and_is_rejected_for_streaming(as
         "message": {
             "messageId": "message-1",
             "contextId": "session-1",
-            "role": "ROLE_USER",
+            "role": "ROLE_REQUESTER",
             "parts": [{"text": "Hello"}],
         },
         "configuration": {"responseKind": "message"},

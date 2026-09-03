@@ -187,7 +187,7 @@ example:
 ```json
 {
   "message": {
-    "role": "ROLE_AGENT",
+    "role": "ROLE_RESPONDER",
     "messageId": "msg-agent-1",
     "contextId": "agent-session-uid",
     "parts": [

@@ -19,8 +19,7 @@ from fastapi import HTTPException
 
 from astro.protocols.a2a_roles import (
     A2AMessageDirection,
-    a2a_v1_wire_role,
-    has_a2a_v1_direction,
+    has_a2a_direction,
 )
 from astro.protocols.strict_json import StrictJsonContract, build_strict_json_contract
 from astro.settings import Settings
@@ -169,11 +168,11 @@ def prepare_a2a_input(
             status_code=400,
             detail="message.kind is not part of the A2A v1 Message envelope",
         )
-    if not has_a2a_v1_direction(message, A2AMessageDirection.REQUESTER):
-        wire_role = a2a_v1_wire_role(A2AMessageDirection.REQUESTER)
+    if not has_a2a_direction(message, A2AMessageDirection.REQUESTER):
+        wire_role = A2AMessageDirection.REQUESTER.value
         raise HTTPException(
             status_code=400,
-            detail=(f"message.role must identify the requester (A2A v1 wire value {wire_role})"),
+            detail=(f"message.role must identify the requester (wire value {wire_role})"),
         )
     message_id = str(message.get("messageId") or "").strip()
     if not message_id:
@@ -385,7 +384,7 @@ def agent_message(
         parts = [{"text": text}]
     message: dict[str, Any] = {
         "messageId": f"msg-agent-{uuid.uuid4()}",
-        "role": a2a_v1_wire_role(A2AMessageDirection.RESPONDER),
+        "role": A2AMessageDirection.RESPONDER.value,
         "parts": parts,
     }
     if context_id is not None:

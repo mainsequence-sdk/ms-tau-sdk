@@ -51,7 +51,7 @@ def _body(*, strict: bool = False, controls: dict | None = None) -> dict:
     body = {
         "message": {
             "messageId": "message-1",
-            "role": "ROLE_USER",
+            "role": "ROLE_REQUESTER",
             "parts": [{"text": "Answer this."}],
         },
         "configuration": {
@@ -124,7 +124,7 @@ async def test_agent_response_uses_snapshot_defaults_without_persistence(
     assert response.status_code == 200
     assert response.headers["content-type"].startswith("application/a2a+json")
     message = response.json()["message"]
-    assert message["role"] == "ROLE_AGENT"
+    assert message["role"] == "ROLE_RESPONDER"
     assert message["parts"] == [{"text": "Final answer"}]
     assert "contextId" not in message
     resolved = message["metadata"][INFERENCE_EXTENSION_URI]["resolved"]

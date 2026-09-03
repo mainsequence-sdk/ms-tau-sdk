@@ -90,7 +90,7 @@ def _body() -> dict:
         "taskId": "task-1",
         "message": {
             "messageId": "message-1",
-            "role": "ROLE_USER",
+            "role": "ROLE_REQUESTER",
             "contextId": "session-1",
             "parts": [{"text": "Run this once."}],
         },

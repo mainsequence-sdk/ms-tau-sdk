@@ -20,6 +20,43 @@ bundle. It then sends `message:send` to the exact Tau A2A path returned by Djang
 supplies a runtime URL or bearer token, and the token is not included in the tool result. Generic
 shell and content-fetch tools are not the outbound A2A transport.
 
+## Outbound host-tool contract
+
+After selecting an Agent from fresh bounded discovery, the model calls the host tool with
+orchestration arguments. For a new target conversation:
+
+```json
+{
+  "agent_uid": "<selected-Agent.uid>",
+  "handle_unique_id": "<stable-task-handle>",
+  "message": "<bounded request>",
+  "message_id": "<stable-message-id>"
+}
+```
+
+For a continuation, `agent_session_uid` replaces `handle_unique_id`. The required
+`agent_uid` always identifies the selected discovery result. This object is the host-tool input;
+it is not sent to the target runtime.
+
+The host tool turns those arguments into the transport request:
+
+```json
+{
+  "message": {
+    "messageId": "<stable-message-id>",
+    "role": "ROLE_REQUESTER",
+    "contextId": "<target-AgentSession.uid>",
+    "parts": [{"text": "<bounded request>"}]
+  },
+  "configuration": {"responseKind": "message"}
+}
+```
+
+The returned message must use `ROLE_RESPONDER` and the same target `AgentSession.uid` as its
+`contextId`. Target selection and transport construction are therefore separate contracts:
+`agent_uid` selects the target for the host tool, while `message.role` carries requester/responder
+direction on the runtime wire.
+
 If Django reports a transient runtime interaction (`checking`, `starting`, `waking`, or
 `updating`), the host tool re-resolves the same target session only after the backend-provided
 `retry_after_ms`. It stops immediately when submission is permitted or the state becomes terminal;
@@ -30,12 +67,12 @@ The outbound host tool currently supports the direct `message` result kind. It p
 target session UID for continuation and reports its generated message ID when a timeout or
 disconnect leaves the delivery outcome ambiguous.
 
-Astro models A2A message authorship as the transport directions `requester` and `responder`.
-The A2A v1 codec maps those directions to the protocol's required ProtoJSON values `ROLE_USER`
-and `ROLE_AGENT`; those wire names never determine whether the authenticated principal is a human
-or an Agent. Principal identity comes only from the gateway-verified caller headers described
-below. An Agent calling another Agent is the requester for that exchange and is still authenticated
-and recorded as an Agent.
+Astro models A2A message authorship directly as the transport directions `requester` and
+`responder`. The Main Sequence A2A wire values are `ROLE_REQUESTER` and `ROLE_RESPONDER`; there is
+no compatibility translation to identity-oriented role names. These wire values never determine
+whether the authenticated principal is a human or an Agent. Principal identity comes only from the
+gateway-verified caller headers described below. An Agent calling another Agent is the requester
+for that exchange and is still authenticated and recorded as an Agent.
 
 `message.contextId` is the backend `AgentSession.uid`. Astro loads that Tau
 session, acquires its runtime lease, and persists task/message/status state in

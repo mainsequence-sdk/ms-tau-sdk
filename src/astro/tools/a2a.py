@@ -25,8 +25,7 @@ from tau_agent.types import JSONValue
 from astro.backend.mcp import MainSequenceMCPClient
 from astro.protocols.a2a_roles import (
     A2AMessageDirection,
-    a2a_v1_wire_role,
-    has_a2a_v1_direction,
+    has_a2a_direction,
 )
 
 logger = structlog.get_logger(__name__)
@@ -43,10 +42,18 @@ TRANSIENT_RUNTIME_INTERACTION_STATES = {
 
 _INPUT_SCHEMA: Mapping[str, JSONValue] = {
     "type": "object",
+    "description": (
+        "Host-tool arguments for one outbound A2A message, not the wire envelope. "
+        "Provide the selected agent_uid, the message, and exactly one of "
+        "handle_unique_id or agent_session_uid. The host constructs a request with "
+        "ROLE_REQUESTER and validates a response with ROLE_RESPONDER."
+    ),
     "properties": {
         "agent_uid": {
             "type": "string",
-            "description": "Public UID of the selected target Agent.",
+            "description": (
+                "Required public UID of the selected target Agent returned by discovery."
+            ),
         },
         "message": {
             "type": "string",
@@ -278,9 +285,9 @@ def _message_text(payload: dict[str, Any], *, session_uid: str) -> str:
     if "kind" in message or not isinstance(message_id, str) or not message_id.strip():
         raise _A2ACommunicationError(
             "a2a_response_invalid",
-            "The target runtime returned an invalid A2A v1 Message envelope.",
+            "The target runtime returned an invalid Main Sequence A2A Message envelope.",
         )
-    if message.get("contextId") != session_uid or not has_a2a_v1_direction(
+    if message.get("contextId") != session_uid or not has_a2a_direction(
         message,
         A2AMessageDirection.RESPONDER,
     ):
@@ -440,7 +447,7 @@ def create_a2a_send_message_tool(
                 json={
                     "message": {
                         "messageId": message_id,
-                        "role": a2a_v1_wire_role(A2AMessageDirection.REQUESTER),
+                        "role": A2AMessageDirection.REQUESTER.value,
                         "contextId": target_session_uid,
                         "parts": [{"text": outbound_message}],
                     },
@@ -523,10 +530,11 @@ def create_a2a_send_message_tool(
         name=A2A_SEND_MESSAGE_TOOL_NAME,
         label="Send A2A Message",
         description=(
-            "Send one message directly to a selected Main Sequence Agent. This host tool "
-            "creates or reuses the target AgentSession, resolves fresh runtime access, "
-            "keeps the short-lived credential internal, and calls the standard A2A "
-            "message endpoint. Use it after agent.search instead of a generic HTTP tool."
+            "Send one message to a selected Main Sequence Agent. Supply agent_uid, message, "
+            "and exactly one of handle_unique_id or agent_session_uid. These are host-tool "
+            "arguments, not an A2A wire envelope. The tool creates or reuses the target "
+            "AgentSession, resolves fresh runtime access, serializes ROLE_REQUESTER, validates "
+            "ROLE_RESPONDER, and keeps the short-lived credential internal."
         ),
         parameters=_INPUT_SCHEMA,
         execute_fn=execute,

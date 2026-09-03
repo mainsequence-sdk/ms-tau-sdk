@@ -6,7 +6,7 @@ import pytest
 from mcp import types
 
 from astro.protocols.a2a_message import agent_message
-from astro.protocols.a2a_roles import A2AMessageDirection, a2a_v1_wire_role
+from astro.protocols.a2a_roles import A2AMessageDirection
 from astro.tools.a2a import (
     A2A_SEND_MESSAGE_TOOL_NAME,
     RESPONSE_KIND_EXTENSION_URI,
@@ -114,6 +114,10 @@ async def test_a2a_send_message_uses_backend_access_and_standard_wire_request():
         )
 
     assert tool.name == A2A_SEND_MESSAGE_TOOL_NAME
+    assert tool.parameters["required"] == ["agent_uid", "message"]
+    assert "exactly one of handle_unique_id or agent_session_uid" in tool.description
+    assert "ROLE_REQUESTER" in tool.description
+    assert "ROLE_RESPONDER" in tool.description
     assert result.text == "Tutorial answer."
     assert result.details == {
         "is_error": False,
@@ -146,7 +150,7 @@ async def test_a2a_send_message_uses_backend_access_and_standard_wire_request():
     assert json.loads(request.content) == {
         "message": {
             "messageId": "message-1",
-            "role": "ROLE_USER",
+            "role": "ROLE_REQUESTER",
             "contextId": TARGET_SESSION_UID,
             "parts": [{"text": "Explain checkpoint behavior."}],
         },
@@ -330,14 +334,15 @@ async def test_a2a_send_message_rejects_noncanonical_backend_a2a_path():
 
 
 @pytest.mark.asyncio
-async def test_a2a_send_message_rejects_obsolete_responder_role():
+@pytest.mark.parametrize("obsolete_role", ["agent", "ROLE_AGENT"])
+async def test_a2a_send_message_rejects_obsolete_responder_role(obsolete_role: str):
     def handler(_request: httpx.Request) -> httpx.Response:
         return httpx.Response(
             200,
             json={
                 "message": {
                     "messageId": "response-old-role",
-                    "role": "agent",
+                    "role": obsolete_role,
                     "contextId": TARGET_SESSION_UID,
                     "parts": [{"text": "Obsolete envelope."}],
                 }
@@ -364,6 +369,6 @@ async def test_a2a_send_message_rejects_obsolete_responder_role():
     assert result.details["code"] == "a2a_response_invalid"
 
 
-def test_a2a_wire_roles_map_transport_direction_not_principal_identity():
-    assert a2a_v1_wire_role(A2AMessageDirection.REQUESTER) == "ROLE_USER"
-    assert a2a_v1_wire_role(A2AMessageDirection.RESPONDER) == "ROLE_AGENT"
+def test_a2a_wire_roles_are_requester_and_responder():
+    assert A2AMessageDirection.REQUESTER.value == "ROLE_REQUESTER"
+    assert A2AMessageDirection.RESPONDER.value == "ROLE_RESPONDER"

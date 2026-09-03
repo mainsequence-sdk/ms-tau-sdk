@@ -24,7 +24,7 @@ curl -sS \
   -d '{
     "message": {
       "messageId": "msg-client-1",
-      "role": "ROLE_USER",
+      "role": "ROLE_REQUESTER",
       "contextId": "'"$AGENT_SESSION_UID"'",
       "parts": [
         {
@@ -54,7 +54,7 @@ Successful responses contain exactly one top-level result branch:
 {
   "message": {
     "messageId": "msg-agent-1",
-    "role": "ROLE_AGENT",
+    "role": "ROLE_RESPONDER",
     "contextId": "agent-session-uid",
     "parts": [
       {
@@ -77,7 +77,7 @@ Send the response-kind extension URI in `A2A-Extensions` as shown in the direct 
 {
   "message": {
     "messageId": "msg-client-2",
-    "role": "ROLE_USER",
+    "role": "ROLE_REQUESTER",
     "contextId": "agent-session-uid",
     "parts": [
       {
@@ -112,7 +112,7 @@ curl -N -sS \
   -d '{
     "message": {
       "messageId": "msg-client-stream-1",
-      "role": "ROLE_USER",
+      "role": "ROLE_REQUESTER",
       "contextId": "'"$AGENT_SESSION_UID"'",
       "parts": [
         {
@@ -145,7 +145,7 @@ curl -sS \
     "params": {
       "message": {
         "messageId": "msg-client-rpc-1",
-        "role": "ROLE_USER",
+        "role": "ROLE_REQUESTER",
         "contextId": "'"$AGENT_SESSION_UID"'",
         "parts": [
           {

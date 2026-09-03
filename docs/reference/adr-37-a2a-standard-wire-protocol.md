@@ -4,6 +4,11 @@ Status: Proposed
 Date: 2026-06-17
 Implementation Status: Partially implemented
 
+Amended 2026-09-03: Main Sequence uses explicit directional wire roles
+`ROLE_REQUESTER` and `ROLE_RESPONDER`. It does not translate those directions through the
+identity-oriented A2A ProtoJSON role names. This is a deliberate Main Sequence profile decision;
+principal identity remains an authenticated gateway/session concern.
+
 ## Context
 
 Astro previously exposed endpoints and payloads that we called "A2A", but the public wire shape was
@@ -246,7 +251,7 @@ Authorization: Bearer <token>
 {
   "message": {
     "messageId": "msg-8f6c3b38-8c13-4c7b-9b7a-98370c1889db",
-    "role": "ROLE_USER",
+    "role": "ROLE_REQUESTER",
     "contextId": "agent-session-uid",
     "parts": [
       {
@@ -276,7 +281,7 @@ Rules:
 - `message` is required.
 - `message.messageId` is client-provided request identity. Durable send idempotency applies only to
   the Task path; direct Message execution creates no hidden Task receipt.
-- `message.role` must use A2A role enum values such as `ROLE_USER`.
+- `message.role` must use the Main Sequence directional role value `ROLE_REQUESTER`.
 - `message.parts` must use A2A part objects such as `{ "text": "..." }`,
   `{ "data": {...}, "mediaType": "application/json" }`, or standard PDF file parts such as
   `{ "raw": "BASE64", "filename": "report.pdf", "mediaType": "application/pdf" }`.
@@ -305,7 +310,7 @@ Content-Type: application/a2a+json
 {
   "message": {
     "messageId": "msg-agent-33841969-c7a4-48be-94c1-5a18d2bbef84",
-    "role": "ROLE_AGENT",
+    "role": "ROLE_RESPONDER",
     "contextId": "ctx-a6a1cb44-3df5-4bc3-9d82-49260dd25752",
     "parts": [
       {
@@ -341,7 +346,7 @@ communication about the task state, but generated task results belong in `artifa
       "timestamp": "2026-06-17T10:30:00.000Z",
       "message": {
         "messageId": "msg-agent-33841969-c7a4-48be-94c1-5a18d2bbef84",
-        "role": "ROLE_AGENT",
+        "role": "ROLE_RESPONDER",
         "parts": [
           {
             "text": "The task completed successfully."
@@ -472,7 +477,7 @@ logical `SendMessageResponse` object: exactly one of `message` or `task`.
   "params": {
     "message": {
       "messageId": "msg-8f6c3b38-8c13-4c7b-9b7a-98370c1889db",
-      "role": "ROLE_USER",
+      "role": "ROLE_REQUESTER",
       "contextId": "agent-session-uid",
       "parts": [
         {
@@ -497,7 +502,7 @@ Response:
   "result": {
     "message": {
       "messageId": "msg-agent-33841969-c7a4-48be-94c1-5a18d2bbef84",
-      "role": "ROLE_AGENT",
+      "role": "ROLE_RESPONDER",
       "contextId": "ctx-a6a1cb44-3df5-4bc3-9d82-49260dd25752",
       "parts": [
         {
@@ -548,7 +553,7 @@ Task response:
   "params": {
     "message": {
       "messageId": "msg-0e262e72-79fd-4792-8d06-9479d60ea53d",
-      "role": "ROLE_USER",
+      "role": "ROLE_REQUESTER",
       "contextId": "agent-session-uid",
       "parts": [
         {
@@ -636,7 +641,7 @@ Example request for a dictionary:
 {
   "message": {
     "messageId": "msg-dictionary-request",
-    "role": "ROLE_USER",
+    "role": "ROLE_REQUESTER",
     "contextId": "agent-session-uid",
     "parts": [
       {
@@ -675,7 +680,7 @@ Example response:
 {
   "message": {
     "messageId": "msg-dictionary-response",
-    "role": "ROLE_AGENT",
+    "role": "ROLE_RESPONDER",
     "contextId": "ctx-a6a1cb44-3df5-4bc3-9d82-49260dd25752",
     "parts": [
       {

@@ -63,7 +63,7 @@ envelope without `contextId` or any other session identity:
 {
   "message": {
     "messageId": "msg-1",
-    "role": "ROLE_USER",
+    "role": "ROLE_REQUESTER",
     "parts": [{"text": "Return a short status."}]
   },
   "configuration": {

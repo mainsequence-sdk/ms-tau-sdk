@@ -220,7 +220,7 @@ Accept: application/a2a+json
 {
   "message": {
     "messageId": "msg-8f6c3b38-8c13-4c7b-9b7a-98370c1889db",
-    "role": "ROLE_USER",
+    "role": "ROLE_REQUESTER",
     "parts": [
       {
         "text": "Summarize the risks in this report."
@@ -255,7 +255,7 @@ used by durable A2A when that surface elects to allow per-turn inference overrid
 Rules:
 
 - `message`, `message.messageId`, `message.role`, and `message.parts` follow ADR 37.
-- `message.role` must be `ROLE_USER`.
+- `message.role` must be `ROLE_REQUESTER`.
 - At least one non-empty text, data, or supported file part is required.
 - `message.contextId` and `message.taskId` are rejected because their presence requests durable
   continuity.
@@ -283,7 +283,7 @@ returns a `Task`:
 {
   "message": {
     "messageId": "msg-agent-33841969-c7a4-48be-94c1-5a18d2bbef84",
-    "role": "ROLE_AGENT",
+    "role": "ROLE_RESPONDER",
     "parts": [
       {
         "text": "The primary risks are..."

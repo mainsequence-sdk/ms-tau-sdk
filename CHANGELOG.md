@@ -17,6 +17,12 @@
   discriminators from v1 Message and Task responses.
 - Follow backend-declared transient runtime interaction states during an active A2A call, honoring
   `retry_after_ms` until submission is allowed while stopping immediately on terminal states.
+- Replaced the identity-oriented A2A role values with the canonical Main Sequence wire directions
+  `ROLE_REQUESTER` and `ROLE_RESPONDER`; sender and receiver no longer translate through
+  `ROLE_USER` or `ROLE_AGENT`.
+- Documented the model-visible host-tool contract separately from the runtime wire envelope:
+  callers supply `agent_uid`, `message`, and exactly one session selector; the host resolves the
+  target context and constructs the `ROLE_REQUESTER` request itself.
 
 ### Gateway-verified caller identity (ADR-0043 cutover-bound)
 
