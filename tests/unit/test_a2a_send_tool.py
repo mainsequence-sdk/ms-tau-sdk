@@ -5,6 +5,8 @@ import httpx
 import pytest
 from mcp import types
 
+from astro.protocols.a2a_message import agent_message
+from astro.protocols.a2a_roles import A2AMessageDirection, a2a_v1_wire_role
 from astro.tools.a2a import (
     A2A_SEND_MESSAGE_TOOL_NAME,
     RESPONSE_KIND_EXTENSION_URI,
@@ -82,12 +84,11 @@ async def test_a2a_send_message_uses_backend_access_and_standard_wire_request():
         return httpx.Response(
             200,
             json={
-                "message": {
-                    "messageId": "response-1",
-                    "role": "agent",
-                    "contextId": TARGET_SESSION_UID,
-                    "parts": [{"text": "Tutorial answer."}],
-                }
+                "message": agent_message(
+                    text="Tutorial answer.",
+                    strict_json=False,
+                    context_id=TARGET_SESSION_UID,
+                )
             },
         )
 
@@ -142,7 +143,7 @@ async def test_a2a_send_message_uses_backend_access_and_standard_wire_request():
     assert json.loads(request.content) == {
         "message": {
             "messageId": "message-1",
-            "role": "user",
+            "role": "ROLE_USER",
             "contextId": TARGET_SESSION_UID,
             "parts": [{"text": "Explain checkpoint behavior."}],
         },
@@ -156,12 +157,11 @@ async def test_a2a_send_message_reuses_an_existing_target_session():
         return httpx.Response(
             200,
             json={
-                "message": {
-                    "messageId": "response-2",
-                    "role": "agent",
-                    "contextId": TARGET_SESSION_UID,
-                    "parts": [{"text": "Continued answer."}],
-                }
+                "message": agent_message(
+                    text="Continued answer.",
+                    strict_json=False,
+                    context_id=TARGET_SESSION_UID,
+                )
             },
         )
 
@@ -257,3 +257,43 @@ async def test_a2a_send_message_rejects_noncanonical_backend_a2a_path():
 
     assert result.details["is_error"] is True
     assert result.details["code"] == "a2a_runtime_contract_unsupported"
+
+
+@pytest.mark.asyncio
+async def test_a2a_send_message_rejects_obsolete_responder_role():
+    def handler(_request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "message": {
+                    "messageId": "response-old-role",
+                    "role": "agent",
+                    "contextId": TARGET_SESSION_UID,
+                    "parts": [{"text": "Obsolete envelope."}],
+                }
+            },
+        )
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        tool = create_a2a_send_message_tool(
+            mcp_client=_mcp_client(),
+            http_client=http,
+            caller_session_uid=CALLER_SESSION_UID,
+            max_response_bytes=1024 * 1024,
+        )
+        result = await tool.execute(
+            "call-old-role",
+            {
+                "agent_uid": AGENT_UID,
+                "handle_unique_id": "obsolete_role",
+                "message": "Do not accept the old response role.",
+            },
+        )
+
+    assert result.details["is_error"] is True
+    assert result.details["code"] == "a2a_response_invalid"
+
+
+def test_a2a_wire_roles_map_transport_direction_not_principal_identity():
+    assert a2a_v1_wire_role(A2AMessageDirection.REQUESTER) == "ROLE_USER"
+    assert a2a_v1_wire_role(A2AMessageDirection.RESPONDER) == "ROLE_AGENT"

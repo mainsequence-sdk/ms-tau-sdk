@@ -67,6 +67,8 @@ Required out-of-scope response style:
 - Use `mainsequence__a2a_send_message` for outbound message delivery after selecting a target Agent.
   The host tool creates or reuses the target session, resolves fresh runtime access, and keeps the
   short-lived credential outside model-authored arguments and responses.
+- Treat A2A message roles as requester/responder transport direction only. The host maps them to the
+  protocol's wire enum; never use a message role to infer or claim human-versus-Agent identity.
 - Do not use `bash`, `fetch_content`, or another generic HTTP mechanism for A2A delivery.
 
 ## Platform questions

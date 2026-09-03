@@ -22,6 +22,11 @@ from tau_agent.tools import (
 from tau_agent.types import JSONValue
 
 from astro.backend.mcp import MainSequenceMCPClient
+from astro.protocols.a2a_roles import (
+    A2AMessageDirection,
+    a2a_v1_wire_role,
+    has_a2a_v1_direction,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -213,7 +218,16 @@ def _message_text(payload: dict[str, Any], *, session_uid: str) -> str:
             "a2a_response_kind_mismatch",
             "The target runtime did not return the requested message result.",
         )
-    if message.get("contextId") != session_uid or message.get("role") != "agent":
+    message_id = message.get("messageId")
+    if "kind" in message or not isinstance(message_id, str) or not message_id.strip():
+        raise _A2ACommunicationError(
+            "a2a_response_invalid",
+            "The target runtime returned an invalid A2A v1 Message envelope.",
+        )
+    if message.get("contextId") != session_uid or not has_a2a_v1_direction(
+        message,
+        A2AMessageDirection.RESPONDER,
+    ):
         raise _A2ACommunicationError(
             "a2a_response_invalid",
             "The target runtime returned a message for the wrong context or role.",
@@ -371,7 +385,7 @@ def create_a2a_send_message_tool(
                 json={
                     "message": {
                         "messageId": message_id,
-                        "role": "user",
+                        "role": a2a_v1_wire_role(A2AMessageDirection.REQUESTER),
                         "contextId": target_session_uid,
                         "parts": [{"text": outbound_message}],
                     },

@@ -16,6 +16,7 @@ from astro.api.a2a import (
     _collect_turn,
     _materialize_pdfs,
     _output_contract,
+    _request_parts,
     router,
 )
 from astro.api.dependencies import backend, runtime_manager, settings
@@ -225,6 +226,39 @@ def test_strict_json_message_uses_data_part():
     assert message["parts"] == [{"data": {"ok": True}, "mediaType": "application/json"}]
 
 
+@pytest.mark.parametrize(
+    ("message_update", "expected_detail"),
+    [
+        (
+            {"role": "user"},
+            "message.role must identify the requester (A2A v1 wire value ROLE_USER)",
+        ),
+        ({"kind": "message"}, "message.kind is not part of the A2A v1 Message envelope"),
+        (
+            {"parts": [{"kind": "text", "text": "Old part."}]},
+            "message.parts[0].kind is not part of the A2A v1 Part envelope",
+        ),
+    ],
+)
+def test_request_parts_rejects_obsolete_v03_envelope(
+    message_update: dict,
+    expected_detail: str,
+):
+    body = {
+        "message": {
+            "messageId": "message-1",
+            "role": "ROLE_USER",
+            "contextId": "session-1",
+            "parts": [{"text": "Current part."}],
+            **message_update,
+        }
+    }
+
+    with pytest.raises(HTTPException) as error:
+        _request_parts(body, Settings(_env_file=None))
+    assert error.value.detail == expected_detail
+
+
 def test_output_contract_reads_schema_and_bounds_repair_attempts():
     contract = _output_contract(
         {
@@ -392,7 +426,8 @@ async def test_omitted_response_kind_defaults_to_direct_message_without_task():
     )
 
     assert response.status_code == 200
-    assert response.json()["message"]["kind"] == "message"
+    assert response.json()["message"]["role"] == "ROLE_AGENT"
+    assert "kind" not in response.json()["message"]
     client.get_agent_card.assert_not_awaited()
     client.get_session.assert_not_awaited()
     client.create_task.assert_not_awaited()
@@ -528,7 +563,8 @@ async def test_message_send_task_requires_advertised_task_and_returns_task():
         )
 
     assert response.status_code == 200
-    assert response.json()["task"]["kind"] == "task"
+    assert response.json()["task"]["status"]["state"] == "TASK_STATE_SUBMITTED"
+    assert "kind" not in response.json()["task"]
     assert response.json()["task"]["id"] == task.task_id
     assert manager.background is not None
     await manager.background

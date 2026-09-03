@@ -24,6 +24,13 @@ The outbound host tool currently supports the direct `message` result kind. It p
 target session UID for continuation and reports its generated message ID when a timeout or
 disconnect leaves the delivery outcome ambiguous.
 
+Astro models A2A message authorship as the transport directions `requester` and `responder`.
+The A2A v1 codec maps those directions to the protocol's required ProtoJSON values `ROLE_USER`
+and `ROLE_AGENT`; those wire names never determine whether the authenticated principal is a human
+or an Agent. Principal identity comes only from the gateway-verified caller headers described
+below. An Agent calling another Agent is the requester for that exchange and is still authenticated
+and recorded as an Agent.
+
 `message.contextId` is the backend `AgentSession.uid`. Astro loads that Tau
 session, acquires its runtime lease, and persists task/message/status state in
 the Django `AgentTask` models only when the caller selects a Task result.

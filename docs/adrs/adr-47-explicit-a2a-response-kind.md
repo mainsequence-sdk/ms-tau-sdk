@@ -98,10 +98,9 @@ For `responseKind: "message"`, Astro waits for execution and returns:
 ```json
 {
   "message": {
-    "kind": "message",
-    "role": "agent",
+    "role": "ROLE_AGENT",
     "messageId": "01JRESULT",
-    "parts": [{"kind": "text", "text": "The result ..."}]
+    "parts": [{"text": "The result ..."}]
   }
 }
 ```
@@ -115,10 +114,9 @@ For `responseKind: "task"`, Astro creates durable asynchronous work and returns:
 ```json
 {
   "task": {
-    "kind": "task",
     "id": "01JTASK",
     "contextId": "01JCONTEXT",
-    "status": {"state": "submitted"}
+    "status": {"state": "TASK_STATE_SUBMITTED"}
   }
 }
 ```

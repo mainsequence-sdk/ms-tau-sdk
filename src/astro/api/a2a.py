@@ -31,6 +31,7 @@ from astro.protocols.a2a_message import (
 from astro.protocols.a2a_message import (
     sse as encode_sse,
 )
+from astro.protocols.a2a_roles import A2AMessageDirection, a2a_v1_wire_role
 from astro.protocols.strict_json import (
     StrictJsonContract,
     StrictJsonError,
@@ -349,7 +350,7 @@ def _materialize_pdfs(
             "message": {
                 "messageId": message_id,
                 "contextId": context_id,
-                "role": "ROLE_USER",
+                "role": a2a_v1_wire_role(A2AMessageDirection.REQUESTER),
                 "parts": parts,
             }
         },
@@ -366,7 +367,7 @@ def _request_parts(body: dict[str, Any], config: Settings) -> tuple[dict[str, An
         normalized_body = dict(body)
         normalized_body["message"] = {
             **body["message"],
-            "role": "ROLE_USER",
+            "role": a2a_v1_wire_role(A2AMessageDirection.REQUESTER),
         }
     prepared = prepare_a2a_input(
         normalized_body,
@@ -419,7 +420,6 @@ def _task_payload(task: AgentTask) -> dict[str, Any]:
     if task.status_message:
         status["message"] = task.status_message
     return {
-        "kind": "task",
         "id": task.task_id,
         "contextId": task.context_id,
         "status": status,

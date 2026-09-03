@@ -12,6 +12,9 @@
   the short-lived bearer token out of model-authored arguments and tool results.
 - Added structured outbound A2A lifecycle fields for caller session, target Agent/session, message
   ID, result kind, outcome, duration, and safe error code.
+- Corrected the outbound and inbound A2A v1 role codec, modelled roles internally as requester and
+  responder directions rather than principal identity, and removed obsolete v0.3 `kind`
+  discriminators from v1 Message and Task responses.
 
 ### Gateway-verified caller identity (ADR-0043 cutover-bound)
 

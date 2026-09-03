@@ -17,6 +17,11 @@ from typing import Any, Literal
 
 from fastapi import HTTPException
 
+from astro.protocols.a2a_roles import (
+    A2AMessageDirection,
+    a2a_v1_wire_role,
+    has_a2a_v1_direction,
+)
 from astro.protocols.strict_json import StrictJsonContract, build_strict_json_contract
 from astro.settings import Settings
 
@@ -159,8 +164,17 @@ def prepare_a2a_input(
     message = body.get("message")
     if not isinstance(message, dict):
         raise HTTPException(status_code=400, detail="message must be an object")
-    if message.get("role") != "ROLE_USER":
-        raise HTTPException(status_code=400, detail="message.role must be ROLE_USER")
+    if "kind" in message:
+        raise HTTPException(
+            status_code=400,
+            detail="message.kind is not part of the A2A v1 Message envelope",
+        )
+    if not has_a2a_v1_direction(message, A2AMessageDirection.REQUESTER):
+        wire_role = a2a_v1_wire_role(A2AMessageDirection.REQUESTER)
+        raise HTTPException(
+            status_code=400,
+            detail=(f"message.role must identify the requester (A2A v1 wire value {wire_role})"),
+        )
     message_id = str(message.get("messageId") or "").strip()
     if not message_id:
         raise HTTPException(status_code=400, detail="message.messageId is required")
@@ -210,6 +224,11 @@ def prepare_a2a_input(
                 raise HTTPException(
                     status_code=400,
                     detail=f"message.parts[{index}] must be an object",
+                )
+            if "kind" in part:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(f"message.parts[{index}].kind is not part of the A2A v1 Part envelope"),
                 )
             variants = [key for key in ("text", "data", "raw", "url") if key in part]
             if len(variants) != 1:
@@ -365,9 +384,8 @@ def agent_message(
     else:
         parts = [{"text": text}]
     message: dict[str, Any] = {
-        "kind": "message",
         "messageId": f"msg-agent-{uuid.uuid4()}",
-        "role": "ROLE_AGENT",
+        "role": a2a_v1_wire_role(A2AMessageDirection.RESPONDER),
         "parts": parts,
     }
     if context_id is not None:
