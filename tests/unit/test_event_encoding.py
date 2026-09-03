@@ -91,9 +91,7 @@ def test_tool_events_use_assistant_stream_names_and_preserve_call_identity():
                 "isError": False,
             },
         )
-    ) == [
-        {"type": "tool-result", "toolCallId": "call-1", "result": result, "isError": False}
-    ]
+    ) == [{"type": "tool-result", "toolCallId": "call-1", "result": result, "isError": False}]
 
 
 def test_tool_result_for_an_unannounced_call_announces_it_first():
@@ -155,7 +153,14 @@ def test_execution_start_announces_a_call_missed_by_toolcall_end():
 
 @pytest.mark.parametrize(
     ("stop_reason", "finish_reason"),
-    [("stop", "stop"), ("toolUse", "tool-calls"), ("length", "length"), ("error", "error"), ("aborted", "other"), (None, "stop")],
+    [
+        ("stop", "stop"),
+        ("toolUse", "tool-calls"),
+        ("length", "length"),
+        ("error", "error"),
+        ("aborted", "other"),
+        (None, "stop"),
+    ],
 )
 def test_turn_boundaries_become_step_markers(stop_reason, finish_reason):
     encoder = AssistantUiEncoder()
@@ -164,9 +169,9 @@ def test_turn_boundaries_become_step_markers(stop_reason, finish_reason):
     message = {"role": "assistant"}
     if stop_reason is not None:
         message["stopReason"] = stop_reason
-    assert encoder.encode(
-        AstroRuntimeEvent(type="turn_end", data={"message": message})
-    ) == [{"type": "finish-step", "finishReason": finish_reason}]
+    assert encoder.encode(AstroRuntimeEvent(type="turn_end", data={"message": message})) == [
+        {"type": "finish-step", "finishReason": finish_reason}
+    ]
 
 
 @pytest.mark.parametrize("status_code", [401, 402, 429, 503])
