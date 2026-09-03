@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Chat stream speaks the assistant-stream tool vocabulary
+
+- `POST /api/chat` now emits `tool-call-start` / `tool-call-delta` / `tool-call-end` when the model
+  finishes a tool call and `tool-result` when the tool has run, instead of the
+  `tool-input-available` / `tool-output-delta` / `tool-output-available` names that no consumer
+  decoded. Tool cards, including which Main Sequence MCP tool ran, can now render in the Command
+  Center chat.
+- Tau `turn_start` / `turn_end` become `start-step` / `finish-step` (with the turn's finish reason),
+  so clients can count and label the steps of a run.
+- A `tool-result` for a call the stream never announced is preceded by a synthesized announcement,
+  and `tool_execution_update` is no longer forwarded (the final result carries everything).
+
 ### Outbound A2A message delivery
 
 - Removed Astro's dedicated outbound A2A tool implementation. The existing generic MCP projection

@@ -1,4 +1,21 @@
-"""Assistant UI/Vercel data-stream encoder."""
+"""Assistant UI/Vercel data-stream encoder.
+
+Chunk vocabulary (what a ``ui-message-stream`` consumer receives):
+
+- ``start-step`` / ``finish-step`` at Tau ``turn_start`` / ``turn_end``;
+- ``text-start`` / ``text-delta`` (``textDelta``) / ``text-end``;
+- ``reasoning-start`` / ``reasoning-delta`` (``delta``) / ``reasoning-end``;
+- ``tool-call-start`` / ``tool-call-delta`` (``argsText``) / ``tool-call-end``
+  when the model has finished a tool call, then ``tool-result`` (``result``,
+  ``isError``) when the tool has run;
+- ``data-runtime-lifecycle``, ``error`` and ``finish``.
+
+The tool chunk names are the ones assistant-stream's ``UIMessageStreamDecoder``
+understands; the earlier ``tool-input-available`` / ``tool-output-available``
+names were ignored by every consumer. A ``tool-result`` is only valid after its
+``tool-call-start``, so the encoder announces a call it has not seen before
+emitting the result.
+"""
 
 from __future__ import annotations
 
@@ -18,9 +35,37 @@ class AssistantUiEncoder:
     finished: bool = False
     terminal_error_text: str | None = None
 
+    def _tool_call_chunks(
+        self,
+        *,
+        tool_call_id: str,
+        name: str,
+        arguments: Any,
+    ) -> list[dict[str, Any]]:
+        self.tool_names[tool_call_id] = name
+        args = arguments if isinstance(arguments, dict) else {}
+        return [
+            {"type": "tool-call-start", "toolCallId": tool_call_id, "toolName": name},
+            {
+                "type": "tool-call-delta",
+                "toolCallId": tool_call_id,
+                "argsText": json.dumps(args, separators=(",", ":"), default=str),
+            },
+            {"type": "tool-call-end", "toolCallId": tool_call_id},
+        ]
+
     def encode(self, event: AstroRuntimeEvent) -> list[dict[str, Any]]:
         event_type = event.type
         data = event.data
+        if event_type == "turn_start":
+            return [{"type": "start-step"}]
+        if event_type == "turn_end":
+            return [
+                {
+                    "type": "finish-step",
+                    "finishReason": _step_finish_reason(data),
+                }
+            ]
         if event_type == "lifecycle":
             return [
                 {
@@ -69,36 +114,50 @@ class AssistantUiEncoder:
             if not isinstance(tool_call, dict):
                 return []
             tool_call_id = str(tool_call.get("id", ""))
-            name = str(tool_call.get("name", "unknown"))
-            self.tool_names[tool_call_id] = name
-            return [
-                {
-                    "type": "tool-input-available",
-                    "toolCallId": tool_call_id,
-                    "toolName": name,
-                    "input": tool_call.get("arguments", {}),
-                }
-            ]
-        if event_type == "tool_execution_update":
+            if not tool_call_id or tool_call_id in self.tool_names:
+                return []
+            return self._tool_call_chunks(
+                tool_call_id=tool_call_id,
+                name=str(tool_call.get("name") or "unknown"),
+                arguments=tool_call.get("arguments", {}),
+            )
+        if event_type == "tool_execution_start":
+            # Normally announced already by ``toolcall_end``; a call that
+            # reaches execution without it (a resumed turn) is announced here.
             tool_call_id = str(data.get("toolCallId", ""))
-            result = data.get("partialResult", {})
-            return [
-                {
-                    "type": "tool-output-delta",
-                    "toolCallId": tool_call_id,
-                    "output": result,
-                }
-            ]
+            if not tool_call_id or tool_call_id in self.tool_names:
+                return []
+            return self._tool_call_chunks(
+                tool_call_id=tool_call_id,
+                name=str(data.get("toolName") or "unknown"),
+                arguments=data.get("args", {}),
+            )
+        if event_type == "tool_execution_update":
+            # Partial tool output has no assistant-stream chunk; the final
+            # ``tool-result`` carries the complete result.
+            return []
         if event_type == "tool_execution_end":
             tool_call_id = str(data.get("toolCallId", ""))
-            return [
+            if not tool_call_id:
+                return []
+            chunks: list[dict[str, Any]] = []
+            if tool_call_id not in self.tool_names:
+                chunks.extend(
+                    self._tool_call_chunks(
+                        tool_call_id=tool_call_id,
+                        name=str(data.get("toolName") or "unknown"),
+                        arguments={},
+                    )
+                )
+            chunks.append(
                 {
-                    "type": "tool-output-available",
+                    "type": "tool-result",
                     "toolCallId": tool_call_id,
-                    "output": data.get("result"),
+                    "result": data.get("result"),
                     "isError": bool(data.get("isError", False)),
                 }
-            ]
+            )
+            return chunks
         if event_type == "message_end":
             failure = terminal_assistant_failure(data)
             if failure is not None:
@@ -135,6 +194,21 @@ class AssistantUiEncoder:
     @staticmethod
     def done() -> bytes:
         return b"data: [DONE]\n\n"
+
+
+_STEP_FINISH_REASONS = {
+    "stop": "stop",
+    "toolUse": "tool-calls",
+    "length": "length",
+    "error": "error",
+    "aborted": "other",
+}
+
+
+def _step_finish_reason(data: dict[str, Any]) -> str:
+    message = data.get("message", {})
+    stop_reason = message.get("stopReason") if isinstance(message, dict) else None
+    return _STEP_FINISH_REASONS.get(str(stop_reason or ""), "stop")
 
 
 def _assistant_error_message(data: dict[str, Any]) -> str:
