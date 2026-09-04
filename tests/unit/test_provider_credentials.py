@@ -57,6 +57,29 @@ def _provider_control(provider_name: str, model: str) -> ProviderControl:
     )
 
 
+def _custom_provider_control(
+    provider_name: str = "acme-gateway",
+    model: str = "acme-model",
+    *,
+    api: str = "openai-completions",
+    inputs: list[str] | None = None,
+    reasoning: bool = False,
+    thinking_levels: list[str] | None = None,
+) -> ProviderControl:
+    return ProviderControl(
+        schema_version=1,
+        catalog_digest=f"sha256:{'0' * 64}",
+        provider=provider_name,
+        model={
+            "model": model,
+            "api": api,
+            "input": inputs or ["text"],
+            "reasoning": reasoning,
+            "thinking_levels": thinking_levels or [],
+        },
+    )
+
+
 @pytest.mark.asyncio
 async def test_hydration_uses_django_tau_credential_contract():
     requests: list[dict[str, object]] = []
@@ -191,6 +214,32 @@ async def test_hydration_derives_openai_codex_account_id_from_access_token():
     assert evidence.credential.secret() == access_token
     assert evidence.credential.account_id == "account-id"
     assert evidence.credential.expires_at == datetime.fromtimestamp(1_770_000_000, UTC)
+
+
+def test_hydration_parses_organization_custom_credential_without_user_lifecycle_fields():
+    credential = MainSequenceClient.provider_credential_from_hydration(
+        "acme-gateway",
+        {
+            "credentials": {
+                "acme-gateway": {
+                    "credential_kind": "organization_custom",
+                    "credential": {
+                        "type": "organization_custom",
+                        "base_url": "https://models.example.test/v1",
+                        "api": "openai-completions",
+                        "headers": {"x-api-key": "header-secret"},
+                    },
+                }
+            }
+        },
+    )
+
+    assert credential.provider == "acme-gateway"
+    assert credential.credential_kind == "organization_custom"
+    assert credential.base_url == "https://models.example.test/v1"
+    assert credential.api == "openai-completions"
+    assert credential.headers == {"x-api-key": "header-secret"}
+    assert credential.secret() == ""
 
 
 def test_provider_defaults_cover_tau_catalog():
@@ -362,15 +411,6 @@ def test_factory_rejects_all_noncanonical_execution_evidence():
             thinking_level="impossible",
         )
 
-    removed_ollama_bypass = _provider_control("openai", "gpt-5.4")
-    removed_ollama_bypass.provider = "ollama"
-    with pytest.raises(ConfigurationError, match="not supported by Tau: ollama"):
-        factory.validate_execution(
-            removed_ollama_bypass,
-            provider_name="ollama",
-            model="gpt-5.4",
-        )
-
     unknown_model = _provider_control("openai", "gpt-5.4")
     unknown_model.model.model = "unknown-model"
     with pytest.raises(ConfigurationError, match="not configured"):
@@ -475,6 +515,154 @@ def test_provider_control_rejects_malformed_digest_and_custom_registry_is_absent
             },
         )
     assert not hasattr(ProviderFactory, "register")
+
+
+@pytest.mark.parametrize(
+    "credential",
+    [
+        ProviderCredential(
+            provider="acme-gateway",
+            credential_kind="organization_custom",
+            api="openai-completions",
+            api_key="api-secret",
+            base_url="https://models.example.test/v1",
+        ),
+        ProviderCredential(
+            provider="acme-gateway",
+            credential_kind="organization_custom",
+            api="openai-completions",
+            headers={"Authorization": "Bearer header-secret"},
+            base_url="https://models.example.test/v1",
+        ),
+        ProviderCredential(
+            provider="acme-gateway",
+            credential_kind="organization_custom",
+            api="openai-completions",
+            api_key="api-secret",
+            headers={"Authorization": "Bearer header-secret"},
+            base_url="https://models.example.test/v1",
+        ),
+        ProviderCredential(
+            provider="acme-gateway",
+            credential_kind="organization_custom",
+            api="openai-completions",
+            base_url="https://models.example.test/v1",
+        ),
+    ],
+)
+def test_factory_reuses_openai_compatible_constructor_for_custom_auth_modes(credential):
+    factory = ProviderFactory(backend=None)  # type: ignore[arg-type]
+    control = _custom_provider_control()
+
+    assert (
+        factory.validate_execution(
+            control,
+            provider_name="acme-gateway",
+            model="acme-model",
+        )
+        == "medium"
+    )
+    provider = factory.build(
+        credential,
+        provider_control=control,
+        model="acme-model",
+    )
+
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider._config.base_url == "https://models.example.test/v1"
+    assert provider._config.headers == credential.headers
+    assert provider._config.omit_authorization_header is (not bool(credential.secret()))
+
+
+def test_factory_rejects_invalid_custom_provider_evidence_before_construction():
+    factory = ProviderFactory(backend=None)  # type: ignore[arg-type]
+    unsupported = _custom_provider_control(api="anthropic-messages")
+    with pytest.raises(ConfigurationError, match="unsupported Tau API transport"):
+        factory.validate_execution(
+            unsupported,
+            provider_name="acme-gateway",
+            model="acme-model",
+        )
+
+    control = _custom_provider_control(
+        reasoning=True,
+        thinking_levels=["low", "high"],
+        inputs=["text", "image"],
+    )
+    assert (
+        factory.validate_execution(
+            control,
+            provider_name="acme-gateway",
+            model="acme-model",
+        )
+        == "low"
+    )
+    assert (
+        factory.validate_execution(
+            control,
+            provider_name="acme-gateway",
+            model="acme-model",
+            thinking_level="high",
+            media_types={"image/png"},
+        )
+        == "high"
+    )
+
+    with pytest.raises(ConfigurationError, match="organization_custom credential"):
+        factory.build(
+            ProviderCredential(
+                provider="acme-gateway",
+                credential_kind="api_key",
+                api="openai-completions",
+                api_key="api-secret",
+                base_url="https://models.example.test/v1",
+            ),
+            provider_control=_custom_provider_control(),
+            model="acme-model",
+        )
+    with pytest.raises(ConfigurationError, match="explicit base_url"):
+        factory.build(
+            ProviderCredential(
+                provider="acme-gateway",
+                credential_kind="organization_custom",
+                api="openai-completions",
+            ),
+            provider_control=_custom_provider_control(),
+            model="acme-model",
+        )
+    with pytest.raises(ConfigurationError, match="transport does not match"):
+        factory.build(
+            ProviderCredential(
+                provider="acme-gateway",
+                credential_kind="organization_custom",
+                api="openai-responses",
+                base_url="https://models.example.test/v1",
+            ),
+            provider_control=_custom_provider_control(),
+            model="acme-model",
+        )
+    with pytest.raises(ConfigurationError, match="prohibited"):
+        factory.build(
+            ProviderCredential(
+                provider="acme-gateway",
+                credential_kind="organization_custom",
+                api="openai-completions",
+                base_url="http://169.254.169.254/latest",
+            ),
+            provider_control=_custom_provider_control(),
+            model="acme-model",
+        )
+    with pytest.raises(ConfigurationError, match="invalid base_url"):
+        factory.build(
+            ProviderCredential(
+                provider="acme-gateway",
+                credential_kind="organization_custom",
+                api="openai-completions",
+                base_url="https://models.example.test/v1?api_key=secret",
+            ),
+            provider_control=_custom_provider_control(),
+            model="acme-model",
+        )
 
 
 def test_factory_applies_model_specific_transport_override():

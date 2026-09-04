@@ -6,6 +6,13 @@ Date: 2026-08-31
 
 Related decision: `tdag-django/docs/agents/adr/adr-024-django-owned-model-provider-control-plane.md`
 
+Amended: 2026-09-04 by
+`tdag-django/docs/agents/adr/adr-029-organization-owned-custom-model-providers.md`.
+Organization-owned custom providers reuse provider-control schema version
+`1`, the existing bootstrap and hydration routes, and Astro's installed
+OpenAI-compatible constructor. Astro still has no custom registry or runtime
+registration API.
+
 Supersedes:
 
 - `docs/reference/adr-interactive-provider-signin.md`; and
@@ -66,16 +73,21 @@ authenticated HTTP only.
 
 ### Product catalog versus execution registry
 
-Tau's built-in provider catalog remains available inside Astro only as an
-execution-capability registry. It can supply transport details that belong to
-the engine, including API adapters, base URLs, compatibility flags, reasoning
-parameter mappings, and provider-specific headers.
+Tau's built-in provider catalog remains available inside Astro only as the
+execution-capability registry for built-in providers. It can supply transport
+details that belong to the engine, including API adapters, base URLs,
+compatibility flags, reasoning parameter mappings, and provider-specific
+headers.
 
 It must not be returned as the Main Sequence catalog or used to decide what
-the product publishes. A provider/model appearing in Tau means only that this
-Astro release knows how to execute it. A provider/model appearing in Django
-means the platform may select it. Execution requires both statements to be
-true.
+the product publishes. For a built-in provider, appearance in Tau means only
+that this Astro release knows how to execute it, while appearance in Django
+means the platform may select it; execution requires both statements to be
+true. For an Organization custom provider, exact Django provider-control
+evidence and exact auth hydration replace built-in catalog membership. Astro
+accepts only its fixed installed `openai-completions` and
+`openai-responses` transports, requires an explicit hydrated base URL, and
+loads no configurable adapter code.
 
 Astro will not add a local JSON/TOML copy of Django's catalog, synchronize a
 catalog at process startup, or read `~/.tau/catalog.toml` in managed runtime
@@ -90,11 +102,10 @@ construction, and the corresponding test-only registration coverage.
 
 After cutover, Astro has no custom-provider registry, builder hook, runtime
 registration API, or provider-specific execution bypass. `ProviderFactory`
-constructs providers only from the pinned Tau execution implementations and
-registry after validating Django's exact projection. Django remains the
-authority for the published provider/model selection and credential; Tau's
-registry remains the required execution capability. Both must accept the
-selection.
+uses pinned Tau implementations after validating Django's exact projection.
+Built-ins must also match Tau's pinned built-in registry. Organization custom
+providers take one constrained branch through the already installed
+`OpenAICompatibleProvider`; they cannot register or select executable code.
 
 ### Bootstrap contract
 
@@ -258,7 +269,9 @@ Before constructing a Tau provider, Astro validates all of the following:
 1. the provider-control schema is supported and its digest is well formed;
 2. the projected provider and model exactly match the session selection;
 3. the credential envelope is for that exact provider;
-4. the selected provider/model exists in Tau's execution registry;
+4. a built-in selection exists in Tau's execution registry, or a custom
+   selection is explicitly marked `organization_custom`, uses one of the two
+   fixed OpenAI-compatible transports, and has an explicit hydrated base URL;
 5. Tau supports the selected `api` transport; and
 6. the selected thinking level and requested input media are allowed by both
    the Django projection and the Tau engine.
@@ -279,6 +292,11 @@ Astro uses only the credential returned by bootstrap or by exact
 `agent_session_uid`/`agent_uid` hydration. Credentials remain in memory and
 are never written to an Astro file, environment overlay, database, session
 entry, snapshot, log, or error payload.
+
+Organization custom credentials use the same envelope and may contain an API
+key, explicit headers, both, or neither. When no API key is present, Astro
+omits its generated bearer header; an explicit `Authorization` header remains
+authoritative. The envelope has no User-credential status, revision, or digest.
 
 When a credential is near expiry, Astro rehydrates through Django. Django owns
 refresh and returns the current canonical envelope. Astro must not refresh a

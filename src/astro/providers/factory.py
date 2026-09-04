@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlsplit
 
 from tau_agent.provider import ModelProvider
 from tau_ai.anthropic import AnthropicProvider
@@ -51,6 +53,20 @@ SUPPORTED_API_TRANSPORTS = frozenset(
         "openai-responses",
     }
 )
+CUSTOM_API_TRANSPORTS = frozenset(
+    {
+        "openai-completions",
+        "openai-responses",
+    }
+)
+CUSTOM_INPUT_KINDS = frozenset({"text", "image"})
+BLOCKED_CUSTOM_PROVIDER_HOSTS = frozenset(
+    {
+        "instance-data",
+        "metadata",
+        "metadata.google.internal",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +82,38 @@ class ProviderRuntime:
 class ProviderFactory:
     def __init__(self, backend: MainSequenceClient) -> None:
         self.backend = backend
+
+    @staticmethod
+    def _validate_custom_base_url(base_url: str) -> None:
+        parsed = urlsplit(base_url)
+        hostname = str(parsed.hostname or "").casefold()
+        if (
+            parsed.scheme not in {"http", "https"}
+            or not hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ConfigurationError("Custom provider credential contains an invalid base_url")
+        if (
+            hostname in BLOCKED_CUSTOM_PROVIDER_HOSTS
+            or hostname == "localhost"
+            or hostname.endswith(".localhost")
+        ):
+            raise ConfigurationError("Custom provider base_url targets a prohibited host")
+        try:
+            address = ipaddress.ip_address(hostname)
+        except ValueError:
+            return
+        if (
+            address.is_loopback
+            or address.is_link_local
+            or address.is_multicast
+            or address.is_reserved
+            or address.is_unspecified
+        ):
+            raise ConfigurationError("Custom provider base_url targets a prohibited address")
 
     @staticmethod
     def _thinking_levels(
@@ -110,7 +158,42 @@ class ProviderFactory:
             raise ConfigurationError(str(error)) from error
         provider = CATALOG_BY_NAME.get(provider_name)
         if provider is None:
-            raise ConfigurationError(f"Provider is not supported by Tau: {provider_name}")
+            projected_api = provider_control.model.api
+            if projected_api not in CUSTOM_API_TRANSPORTS:
+                raise ConfigurationError(
+                    f"Custom provider {provider_name} uses unsupported Tau API "
+                    f"transport {projected_api}"
+                )
+            projected_inputs = set(provider_control.model.input)
+            if not projected_inputs or not projected_inputs.issubset(CUSTOM_INPUT_KINDS):
+                raise ConfigurationError(
+                    "Django provider-control input capabilities are invalid for a custom provider"
+                )
+            projected_thinking = set(provider_control.model.thinking_levels)
+            if not provider_control.model.reasoning and projected_thinking:
+                raise ConfigurationError(
+                    "Django provider-control thinking levels contradict the "
+                    "custom model reasoning capability"
+                )
+            if thinking_level and normalized_thinking not in projected_thinking:
+                supported = ", ".join(sorted(projected_thinking)) or "none"
+                raise ConfigurationError(
+                    f"Thinking level {normalized_thinking!r} is not supported by "
+                    f"{provider_name}:{model}; available levels: {supported}"
+                )
+            self.validate_input_media(
+                provider_control,
+                media_types=media_types or set(),
+            )
+            if thinking_level:
+                return normalized_thinking
+            if not projected_thinking or not provider_control.model.reasoning:
+                return DEFAULT_THINKING_LEVEL
+            if DEFAULT_THINKING_LEVEL in projected_thinking:
+                return DEFAULT_THINKING_LEVEL
+            if "off" in projected_thinking:
+                return "off"
+            return provider_control.model.thinking_levels[0]
         if model not in provider.models:
             raise ConfigurationError(
                 f"Model is not configured for provider {provider_name}: {model}"
@@ -176,6 +259,8 @@ class ProviderFactory:
                 f"Model {provider_name}:{model} is not enabled for image input"
             )
         provider = CATALOG_BY_NAME.get(provider_name)
+        if provider is None:
+            return
         metadata = provider.model_metadata.get(model) if provider is not None else None
         if metadata is None or "image" not in metadata.input:
             raise ConfigurationError(f"Model {provider_name}:{model} does not support image input")
@@ -269,6 +354,7 @@ class ProviderFactory:
     ) -> ModelProvider:
         definition = PROVIDER_DEFINITIONS.get(credential.provider)
         catalog_provider = CATALOG_BY_NAME.get(credential.provider)
+        is_custom_provider = catalog_provider is None
         model_metadata = (
             catalog_provider.model_metadata.get(model)
             if catalog_provider is not None and model is not None
@@ -277,6 +363,10 @@ class ProviderFactory:
         normalized_thinking = (
             normalize_thinking_level(thinking_level) if thinking_level is not None else None
         )
+        if not provider_control.model.reasoning or (
+            is_custom_provider and normalized_thinking not in provider_control.model.thinking_levels
+        ):
+            normalized_thinking = None
         mapped_thinking: str | None = None
         if normalized_thinking is not None:
             mapped_thinking = reasoning_effort_for_level(normalized_thinking)
@@ -286,6 +376,25 @@ class ProviderFactory:
             ):
                 mapped_thinking = model_metadata.thinking_level_map[normalized_thinking]
         api = provider_control.model.api
+        if is_custom_provider:
+            if credential.credential_kind != "organization_custom":
+                raise ConfigurationError(
+                    "A provider absent from Tau's built-in catalog requires an "
+                    "organization_custom credential"
+                )
+            if api not in CUSTOM_API_TRANSPORTS:
+                raise ConfigurationError(
+                    f"Custom provider {credential.provider} uses unsupported Tau "
+                    f"API transport {api}"
+                )
+            if credential.api != api:
+                raise ConfigurationError(
+                    "Custom provider credential transport does not match "
+                    "Django provider-control evidence"
+                )
+            if not credential.base_url:
+                raise ConfigurationError("Custom provider credential requires an explicit base_url")
+            self._validate_custom_base_url(credential.base_url)
         base_url = credential.base_url or (
             model_metadata.base_url
             if model_metadata is not None and model_metadata.base_url
@@ -299,7 +408,7 @@ class ProviderFactory:
             **credential.headers,
         }
         secret = credential.secret()
-        if not secret:
+        if not secret and not is_custom_provider:
             raise ConfigurationError(
                 f"Backend returned no usable credential for {credential.provider}"
             )
@@ -357,7 +466,7 @@ class ProviderFactory:
             headers=headers,
             api=api,
             provider_name=credential.provider,
-            omit_authorization_header=False,
+            omit_authorization_header=is_custom_provider and not bool(secret),
             max_tokens=max_tokens,
             timeout_seconds=timeout_seconds,
             reasoning_effort=mapped_thinking,

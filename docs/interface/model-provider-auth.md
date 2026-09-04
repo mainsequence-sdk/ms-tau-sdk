@@ -12,8 +12,14 @@ Astro receives only execution-scoped evidence:
 - agent-targeted sessionless execution gets the same projection and exact
   credential in one existing `agent_uid` hydration response.
 
-Astro intersects that evidence with the pinned Tau execution registry before
-constructing an in-memory provider. It never fetches the general catalog while
-executing and never persists or logs provider secrets.
+For built-ins, Astro intersects that evidence with the pinned Tau execution
+registry before constructing an in-memory provider. For Organization custom
+providers, the same schema-version-1 evidence and hydration endpoint feed the
+existing OpenAI-compatible constructor. Astro requires an explicit base URL,
+an `organization_custom` credential kind, and either `openai-completions` or
+`openai-responses`; it permits API-key, header-only, combined, or intentionally
+unauthenticated configuration. It adds no custom registry, provider endpoint,
+schema version, or second hydration call. Astro never fetches the general
+catalog while executing and never persists or logs provider secrets.
 
 See [ADR 51](../adrs/adr-51-consume-django-provider-control-for-tau-execution.md).
