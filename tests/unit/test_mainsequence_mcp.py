@@ -17,8 +17,8 @@ from astro.backend.mcp import (
 )
 from astro.settings import Settings
 from astro.tools.mainsequence_mcp import (
-    A2A_CALLER_SESSION_META_KEY,
-    A2A_MCP_TOOL_NAME,
+    CALLER_SESSION_PROOF_META_KEY,
+    CALLER_SESSION_PROOF_REQUIRED_META_KEY,
     create_mainsequence_mcp_tools,
     mainsequence_mcp_resource_prompt,
 )
@@ -85,7 +85,7 @@ async def test_mcp_client_forwards_private_tool_metadata_only_to_that_call():
 
     client._owner_task = asyncio.create_task(client._serve(FakeSession()))
     proof = {
-        "mainsequence.ai/a2a-caller-session/v1": {
+        CALLER_SESSION_PROOF_META_KEY: {
             "caller_agent_session_uid": "session-1",
             "lease_holder_id": "holder-1",
             "lease_token": "lease-1",
@@ -334,16 +334,20 @@ def test_normalized_mcp_tool_name_collisions_fail_session_setup():
 
 
 @pytest.mark.asyncio
-async def test_canonical_mcp_a2a_tool_uses_generic_projection_with_private_context():
+@pytest.mark.parametrize("canonical_name", ["a2a.send_message", "agent.update_runtime"])
+async def test_marked_mcp_tool_uses_generic_projection_with_private_context(
+    canonical_name,
+):
     client = AsyncMock()
     client.tools = (
         types.Tool(
-            name=A2A_MCP_TOOL_NAME,
+            name=canonical_name,
             inputSchema={
                 "type": "object",
                 "properties": {"message": {"type": "string"}},
                 "required": ["message"],
             },
+            _meta={CALLER_SESSION_PROOF_REQUIRED_META_KEY: True},
         ),
     )
     client.resources = ()
@@ -352,26 +356,59 @@ async def test_canonical_mcp_a2a_tool_uses_generic_projection_with_private_conte
         isError=False,
     )
     proof = {
-        A2A_CALLER_SESSION_META_KEY: {
-            "caller_agent_session_uid": "session-1",
-            "lease_holder_id": "holder-1",
-            "lease_token": "lease-1",
-        }
+        "caller_agent_session_uid": "session-1",
+        "lease_holder_id": "holder-1",
+        "lease_token": "lease-1",
     }
 
     tools = create_mainsequence_mcp_tools(
         client,
-        private_tool_meta={A2A_MCP_TOOL_NAME: proof},
+        caller_session_proof=proof,
     )
     result = await tools[0].execute("call-1", {"message": "hello"})
 
-    assert tools[0].name == "mainsequence__a2a_send_message"
+    assert tools[0].name == f"mainsequence__{canonical_name.replace('.', '_')}"
     assert result.text == "sent"
     client.call_tool.assert_awaited_once_with(
-        A2A_MCP_TOOL_NAME,
+        canonical_name,
         {"message": "hello"},
-        meta=proof,
+        meta={CALLER_SESSION_PROOF_META_KEY: proof},
     )
+
+
+def test_marked_mcp_tool_fails_closed_without_caller_session_proof():
+    client = AsyncMock()
+    client.tools = (
+        types.Tool(
+            name="agent.update_runtime",
+            inputSchema={"type": "object"},
+            _meta={CALLER_SESSION_PROOF_REQUIRED_META_KEY: True},
+        ),
+    )
+    client.resources = ()
+
+    with pytest.raises(ValueError, match="requires caller-session proof"):
+        create_mainsequence_mcp_tools(client)
+
+
+@pytest.mark.asyncio
+async def test_unmarked_mcp_tool_does_not_receive_caller_session_proof():
+    client = AsyncMock()
+    client.tools = (types.Tool(name="agent.get", inputSchema={"type": "object"}),)
+    client.resources = ()
+    client.call_tool.return_value = types.CallToolResult(content=[])
+
+    tools = create_mainsequence_mcp_tools(
+        client,
+        caller_session_proof={
+            "caller_agent_session_uid": "session-1",
+            "lease_holder_id": "holder-1",
+            "lease_token": "lease-1",
+        },
+    )
+    await tools[0].execute("call-1", {})
+
+    client.call_tool.assert_awaited_once_with("agent.get", {})
 
 
 def test_only_read_only_idempotent_mcp_tools_are_parallel():

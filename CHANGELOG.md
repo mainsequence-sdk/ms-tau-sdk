@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Catalog-driven caller-session provenance
+
+- Main Sequence MCP Tool `_meta` is now the source of truth for private caller-session proof:
+  every operation advertising `mainsequence.ai/requires-caller-session-proof/v1: true` receives
+  the active runtime session lease proof under `mainsequence.ai/caller-session-proof/v1`.
+- Removed Astro's hard-coded A2A-only metadata mapping. Both `a2a.send_message` and
+  `agent.update_runtime` now use the same generic projection path, and marked tools fail closed at
+  session setup if trusted host proof is unavailable.
+
 ### Chat stream speaks the assistant-stream tool vocabulary
 
 - `POST /api/chat` now emits `tool-call-start` / `tool-call-delta` / `tool-call-end` when the model

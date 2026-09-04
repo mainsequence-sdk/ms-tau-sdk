@@ -25,10 +25,6 @@ from astro.runtime.session import ActiveSessionRuntime
 from astro.runtime.snapshots import build_snapshot_upload
 from astro.sessions.storage import SESSION_ENTRY_ADAPTER
 from astro.settings import Settings
-from astro.tools.mainsequence_mcp import (
-    A2A_CALLER_SESSION_META_KEY,
-    A2A_MCP_TOOL_NAME,
-)
 
 
 def _settings(tmp_path):
@@ -242,14 +238,10 @@ async def test_v1_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
         (
             (mcp_client,),
             {
-                "private_tool_meta": {
-                    A2A_MCP_TOOL_NAME: {
-                        A2A_CALLER_SESSION_META_KEY: {
-                            "caller_agent_session_uid": session_uid,
-                            "lease_holder_id": "holder",
-                            "lease_token": f"lease-{session_uid}",
-                        }
-                    }
+                "caller_session_proof": {
+                    "caller_agent_session_uid": session_uid,
+                    "lease_holder_id": "holder",
+                    "lease_token": f"lease-{session_uid}",
                 }
             },
         )

@@ -26,8 +26,8 @@ from astro.backend.mcp import (
 
 _INVALID_TOOL_NAME = re.compile(r"[^A-Za-z0-9_-]")
 _RESOURCE_TOOL_NAME = "mainsequence__read_resource"
-A2A_MCP_TOOL_NAME = "a2a.send_message"
-A2A_CALLER_SESSION_META_KEY = "mainsequence.ai/a2a-caller-session/v1"
+CALLER_SESSION_PROOF_META_KEY = "mainsequence.ai/caller-session-proof/v1"
+CALLER_SESSION_PROOF_REQUIRED_META_KEY = "mainsequence.ai/requires-caller-session-proof/v1"
 
 
 def _tau_tool_name(mcp_name: str) -> str:
@@ -94,6 +94,18 @@ def _tau_tool_input_schema(tool: types.Tool) -> Mapping[str, JSONValue]:
             field_name for field_name in required if field_name != ENVIRONMENT_UID_ARGUMENT
         ]
     return cast(Mapping[str, JSONValue], schema)
+
+
+def _caller_session_meta(
+    tool: types.Tool,
+    proof: Mapping[str, JSONValue] | None,
+) -> Mapping[str, JSONValue] | None:
+    tool_meta = tool.meta or {}
+    if tool_meta.get(CALLER_SESSION_PROOF_REQUIRED_META_KEY) is not True:
+        return None
+    if proof is None:
+        raise ValueError(f"Main Sequence MCP tool requires caller-session proof: {tool.name}")
+    return {CALLER_SESSION_PROOF_META_KEY: dict(proof)}
 
 
 def _create_mcp_tool(
@@ -206,11 +218,7 @@ def _create_resource_tool(client: MainSequenceMCPClient) -> AgentTool:
 def create_mainsequence_mcp_tools(
     client: MainSequenceMCPClient,
     *,
-    private_tool_meta: Mapping[
-        str,
-        Mapping[str, JSONValue],
-    ]
-    | None = None,
+    caller_session_proof: Mapping[str, JSONValue] | None = None,
 ) -> list[AgentTool]:
     tools: list[AgentTool] = []
     names: set[str] = set()
@@ -224,7 +232,7 @@ def create_mainsequence_mcp_tools(
                 client=client,
                 tool=tool,
                 tau_name=tau_name,
-                private_meta=(private_tool_meta or {}).get(tool.name),
+                private_meta=_caller_session_meta(tool, caller_session_proof),
             )
         )
     if client.resources:

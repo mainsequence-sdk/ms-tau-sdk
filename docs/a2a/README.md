@@ -40,12 +40,13 @@ For a continuation, `agent_session_uid` replaces `handle_unique_id`. The require
 `agent_uid` always identifies the selected discovery result. This object is the host-tool input;
 it is not sent to the target runtime.
 
-Astro's generic MCP call plumbing privately adds this caller-session proof to MCP `tools/call`
-`_meta` for `a2a.send_message`:
+The MCP catalog marks every protected operation with Tool `_meta`
+`mainsequence.ai/requires-caller-session-proof/v1: true`. Astro's generic MCP projection reads
+that marker and privately adds this caller-session proof to MCP `tools/call` `_meta`:
 
 ```json
 {
-  "mainsequence.ai/a2a-caller-session/v1": {
+  "mainsequence.ai/caller-session-proof/v1": {
     "caller_agent_session_uid": "<active-caller-AgentSession.uid>",
     "lease_holder_id": "<active-runtime-holder>",
     "lease_token": "<active-runtime-lease-token>"
@@ -57,7 +58,9 @@ These values come from the runtime host after it acquires the caller session's l
 part of the model-visible tool schema. Django binds the proof to the authenticated coding-agent
 service, its Agent and Environment, and the exact unexpired `runtime_run` lease. It also requires
 the target child session's immediate parent to be that exact caller session, including
-continuations.
+continuations. The same marker-driven injection protects `agent.update_runtime`; Astro does not
+maintain a tool-name allowlist. If a marked tool is projected without host proof, session setup
+fails instead of exposing a tool that can only return a misleading 403.
 
 Django turns the semantic arguments into the transport request:
 

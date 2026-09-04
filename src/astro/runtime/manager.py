@@ -56,8 +56,6 @@ from astro.runtime.snapshots import (
 from astro.sessions.storage import SESSION_ENTRY_ADAPTER, BackendSessionStorage
 from astro.settings import Settings
 from astro.tools.mainsequence_mcp import (
-    A2A_CALLER_SESSION_META_KEY,
-    A2A_MCP_TOOL_NAME,
     create_mainsequence_mcp_tools,
     mainsequence_mcp_resource_prompt,
 )
@@ -322,14 +320,10 @@ class SessionRuntimeManager:
                 *build_web_tools(cwd=cwd, store=web_store, client=self._web_client),
                 *create_mainsequence_mcp_tools(
                     mcp_client,
-                    private_tool_meta={
-                        A2A_MCP_TOOL_NAME: {
-                            A2A_CALLER_SESSION_META_KEY: {
-                                "caller_agent_session_uid": session_uid,
-                                "lease_holder_id": lease.holder_id,
-                                "lease_token": lease.lease_token,
-                            }
-                        }
+                    caller_session_proof={
+                        "caller_agent_session_uid": session_uid,
+                        "lease_holder_id": lease.holder_id,
+                        "lease_token": lease.lease_token,
                     },
                 ),
                 create_runtime_info_tool(
