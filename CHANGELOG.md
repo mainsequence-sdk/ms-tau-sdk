@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Current-turn platform action discipline
+
+- Explicit requests for supported actions now require a fresh tool attempt in the current turn.
+  Astro may not reuse an earlier failure, stale lookup, or prior runtime state as a present blocker,
+  and may report a blocker only from the current tool result.
+- Explicit action requests count as authorization when the underlying workflow does not require a
+  separate confirmation. Astro refreshes required state before executing and does not invent
+  missing permissions or alternate execution-context requirements.
+
 ### Catalog-driven caller-session provenance
 
 - Main Sequence MCP Tool `_meta` is now the source of truth for private caller-session proof:
