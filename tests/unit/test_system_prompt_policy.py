@@ -16,6 +16,5 @@ def test_system_prompt_requires_fresh_current_turn_action_attempts() -> None:
     )
     assert "Report a blocker only after a current-turn tool call fails" in prompt
     assert (
-        "Do not infer missing user permissions or recommend a different execution context"
-        in prompt
+        "Do not infer missing user permissions or recommend a different execution context" in prompt
     )
