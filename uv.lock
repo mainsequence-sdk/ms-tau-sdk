@@ -611,7 +611,7 @@ wheels = [
 
 [[package]]
 name = "mainsequence-astro"
-version = "4.0.21"
+version = "4.0.22"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
