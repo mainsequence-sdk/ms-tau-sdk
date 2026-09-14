@@ -36,10 +36,6 @@ from astro.backend.models import (
     TauRuntimeBootstrapRequest,
     TauTurnCommit,
 )
-from astro.capabilities import (
-    known_capability_hashes,
-    materialize_bootstrap_capabilities,
-)
 from astro.errors import BackendConflictError, ConfigurationError, LeaseLostError
 from astro.logging import conversation_log_fields
 from astro.providers.factory import ProviderFactory
@@ -244,7 +240,6 @@ class SessionRuntimeManager:
                 holder_id=self.holder_id,
                 ttl_seconds=self.settings.runtime_lease_ttl_seconds,
                 bootstrap_request_uid=bootstrap_request_uid,
-                known_capability_hashes=known_capability_hashes(self.settings.session_asset_root),
                 supported_snapshot_schema_versions=[SNAPSHOT_SCHEMA_VERSION],
                 supported_provider_control_schema_versions=[1],
                 tau_runtime_version=TAU_RUNTIME_VERSION,
@@ -282,7 +277,6 @@ class SessionRuntimeManager:
                         snapshot=bootstrap.resume_snapshot,
                         history_delta=bootstrap.history,
                         runtime_config_sha256=str(session_extra.get("runtime_config_sha256", "")),
-                        capability_set_sha256=str(session_extra.get("capability_set_sha256", "")),
                     )
                     initial_entries = restored.entries
                     initial_next_sequence = restored.next_sequence
@@ -352,21 +346,7 @@ class SessionRuntimeManager:
                     provider_control=bootstrap.provider_control,
                 ),
             )
-            async with asyncio.TaskGroup() as startup_tasks:
-                capability_task = startup_tasks.create_task(
-                    materialize_bootstrap_capabilities(
-                        bindings=bootstrap.capabilities,
-                        session_uid=session_uid,
-                        asset_root=self.settings.session_asset_root,
-                    ),
-                    name=f"astro-capabilities-bootstrap-{session_uid}",
-                )
-                mcp_task = startup_tasks.create_task(
-                    self._get_mcp_client(),
-                    name=f"astro-mcp-shared-{session_uid}",
-                )
-            session_agents_root = capability_task.result()
-            mcp_client = mcp_task.result()
+            mcp_client = await self._get_mcp_client()
             cwd = self._resolve_cwd()
             web_store = MemorySearchResultStore()
             project_extension_state = ProjectExtensionState(
@@ -408,7 +388,7 @@ class SessionRuntimeManager:
                     resource_paths=TauResourcePaths(
                         root=resource_root(),
                         cwd=cwd,
-                        agents_root=session_agents_root,
+                        agents_root=None,
                     ),
                     project_extensions_enabled=(self.settings.code_repository_extensions_enabled),
                 )
@@ -430,7 +410,6 @@ class SessionRuntimeManager:
                 model=provider_runtime.model,
                 mcp_client=mcp_client,
                 runtime_config_sha256=str(session_extra.get("runtime_config_sha256", "")),
-                capability_set_sha256=str(session_extra.get("capability_set_sha256", "")),
                 provider_control_schema=bootstrap.provider_control.schema_version,
                 catalog_digest=bootstrap.provider_control.catalog_digest,
                 project_extension_state=project_extension_state,
@@ -845,7 +824,6 @@ class SessionRuntimeManager:
             base_sequence=commit.next_sequence,
             last_committed_turn_uid=commit.turn_uid,
             runtime_config_sha256=runtime.runtime_config_sha256,
-            capability_set_sha256=runtime.capability_set_sha256,
         )
         result = await self.backend.upload_tau_resume_snapshot(
             runtime.session_uid,

@@ -56,7 +56,6 @@ def _bootstrap(
     history=None,
     snapshot=None,
     runtime_config_sha256="sha256:runtime",
-    capability_set_sha256="sha256:capabilities",
 ):
     return TauRuntimeBootstrap(
         session=AgentSession(
@@ -68,7 +67,7 @@ def _bootstrap(
             active_provider="test-provider",
             active_model="test-model",
             runtime_config_sha256=runtime_config_sha256,
-            capability_set_sha256=capability_set_sha256,
+            capability_set_sha256="sha256:legacy-capabilities",
         ),
         lease=RuntimeLease(
             lease_token=f"lease-{session_uid}",
@@ -86,7 +85,7 @@ def _bootstrap(
         ),
         history=history or SessionEntryList(entries=[], next_sequence=0),
         resume_snapshot=snapshot,
-        capabilities=[],
+        capabilities=[{"legacy": "ignored"}],
         provider_credentials={},
         provider_control=ProviderControl(
             schema_version=1,
@@ -215,10 +214,6 @@ async def test_v1_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
 
     with (
         patch(
-            "astro.runtime.manager.materialize_bootstrap_capabilities",
-            AsyncMock(return_value=tmp_path / ".agents"),
-        ) as materialize,
-        patch(
             "astro.runtime.manager.MainSequenceMCPClient.connect",
             AsyncMock(return_value=mcp_client),
         ) as connect,
@@ -246,12 +241,17 @@ async def test_v1_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
     backend.acquire_runtime_lease.assert_not_awaited()
     backend.get_entries.assert_not_awaited()
     backend.hydrate_provider_credential.assert_not_awaited()
+    backend.list_session_capabilities.assert_not_awaited()
+    backend.get_capability_content.assert_not_awaited()
     assert providers.for_session_credential.call_count == 2
-    assert materialize.await_count == 2
     connect.assert_awaited_once_with(settings=manager.settings, auth=backend.auth)
+    for call in backend.bootstrap_tau_runtime.await_args_list:
+        request = call.args[1]
+        assert "known_capability_hashes" not in request.model_dump()
     for load_call in load_coding_session.await_args_list:
         assert [tool.name for tool in load_call.args[0].tools] == ["runtime_info"]
         assert load_call.args[0].project_extensions_enabled is False
+        assert load_call.args[0].resource_paths.agents_root is None
     assert create_mcp_tools.call_args_list == [
         (
             (mcp_client,),
@@ -298,10 +298,6 @@ async def test_executor_setting_enables_tau_extensions_and_reports_effective_cat
         return loaded_session
 
     with (
-        patch(
-            "astro.runtime.manager.materialize_bootstrap_capabilities",
-            AsyncMock(return_value=tmp_path / ".agents"),
-        ),
         patch(
             "astro.runtime.manager.MainSequenceMCPClient.connect",
             AsyncMock(return_value=_mcp_client()),
@@ -401,11 +397,11 @@ async def test_v1_restores_compatible_snapshot_and_applies_only_delta(tmp_path):
         base_sequence=1,
         last_committed_turn_uid="turn-1",
         runtime_config_sha256="sha256:runtime",
-        capability_set_sha256="sha256:capabilities",
     )
     snapshot = TauResumeSnapshot(
         **upload.model_dump(exclude={"holder_id", "lease_token"}),
         canonical_size=1,
+        capability_set_sha256="sha256:legacy-capabilities",
     )
     history = SessionEntryList(
         entries=[_entry_record(second, 1)],
@@ -417,10 +413,6 @@ async def test_v1_restores_compatible_snapshot_and_applies_only_delta(tmp_path):
     )
 
     with (
-        patch(
-            "astro.runtime.manager.materialize_bootstrap_capabilities",
-            AsyncMock(return_value=tmp_path / ".agents"),
-        ),
         patch(
             "astro.runtime.manager.MainSequenceMCPClient.connect",
             AsyncMock(return_value=_mcp_client()),
@@ -453,7 +445,6 @@ async def test_v1_corrupt_snapshot_falls_back_to_canonical_history(tmp_path):
         base_sequence=1,
         last_committed_turn_uid="turn-1",
         runtime_config_sha256="sha256:runtime",
-        capability_set_sha256="sha256:capabilities",
     )
     snapshot_payload = upload.model_dump(exclude={"holder_id", "lease_token"})
     snapshot_payload["payload_sha256"] = "sha256:corrupt"
@@ -469,10 +460,6 @@ async def test_v1_corrupt_snapshot_falls_back_to_canonical_history(tmp_path):
     backend.get_entries.return_value = durable
 
     with (
-        patch(
-            "astro.runtime.manager.materialize_bootstrap_capabilities",
-            AsyncMock(return_value=tmp_path / ".agents"),
-        ),
         patch(
             "astro.runtime.manager.MainSequenceMCPClient.connect",
             AsyncMock(return_value=_mcp_client()),
@@ -567,6 +554,7 @@ async def test_v1_turn_commit_blocks_done_but_snapshot_upload_does_not(tmp_path)
 
     async def upload_snapshot(_session_uid, request):
         snapshot_started.set()
+        assert "capability_set_sha256" not in request.model_dump()
         await release_snapshot.wait()
         return TauResumeSnapshotUploadResponse(
             applied=True,
@@ -576,7 +564,7 @@ async def test_v1_turn_commit_blocks_done_but_snapshot_upload_does_not(tmp_path)
             snapshot_schema_version=request.snapshot_schema_version,
             tau_runtime_version=request.tau_runtime_version,
             runtime_config_sha256=request.runtime_config_sha256,
-            capability_set_sha256=request.capability_set_sha256,
+            capability_set_sha256="sha256:legacy-capabilities",
             payload_sha256=request.payload_sha256,
             canonical_size=1,
         )
@@ -599,7 +587,6 @@ async def test_v1_turn_commit_blocks_done_but_snapshot_upload_does_not(tmp_path)
         provider_name="test-provider",
         model="test-model",
         runtime_config_sha256="sha256:runtime",
-        capability_set_sha256="sha256:capabilities",
     )
     received = []
 

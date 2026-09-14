@@ -10,6 +10,10 @@ capability and credential preparation concurrently behind strict launch barriers
 eligible A2A `message:send` turns through a session-keyed warm Pi RPC runner with cold durable
 fallback.
 
+Capability materialization and its cache were later removed by
+[ADR 53](../adrs/adr-53-retire-agent-capability-registry.md). The remaining warm-runtime and
+provider-cache history is retained for context.
+
 ## Context
 
 The A2A `message:send` route can enter the same durable stream execution path as a normal cold

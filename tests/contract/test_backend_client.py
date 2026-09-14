@@ -70,32 +70,6 @@ async def test_python_client_matches_existing_django_session_contract():
                     "agent_card": {"name": "Astro"},
                 },
             )
-        if path == f"/api/v1/agent-sessions/{session_uid}/capabilities/":
-            return httpx.Response(
-                200,
-                json=[
-                    {
-                        "uid": "binding-1",
-                        "capability_uid": "capability-1",
-                        "source_type": "repository",
-                        "capability": {
-                            "uid": "capability-1",
-                            "kind": "skill",
-                            "source_type": "repository",
-                        },
-                    }
-                ],
-            )
-        if path == "/api/v1/agent-capabilities/capability-1/content/":
-            return httpx.Response(
-                200,
-                json={
-                    "content": "# Skill",
-                    "content_sha256": "sha256:test",
-                    "content_mime_type": "text/markdown",
-                    "content_size": 7,
-                },
-            )
         if path == f"/api/v1/agent-sessions/{session_uid}/entries/" and request.method == "GET":
             return httpx.Response(
                 200,
@@ -272,8 +246,6 @@ async def test_python_client_matches_existing_django_session_contract():
 
         session = await client.get_session(session_uid)
         card = await client.get_agent_card(session_uid)
-        capabilities = await client.list_session_capabilities(session_uid)
-        content = await client.get_capability_content("capability-1")
         entries = await client.get_entries(session_uid)
         updated = await client.update_session_config(
             session_uid,
@@ -334,8 +306,6 @@ async def test_python_client_matches_existing_django_session_contract():
     assert session.active_model == "gpt-5.4"
     assert session.active_thinking == "high"
     assert card.agent_card == {"name": "Astro"}
-    assert capabilities[0].capability.uid == "capability-1"
-    assert content.content == "# Skill"
     assert entries.next_sequence == 1
     assert entries.entries[0].entry_json["label"] == "Session label"
     assert appended.sequence == 1
@@ -349,8 +319,6 @@ async def test_python_client_matches_existing_django_session_contract():
         "/api/v1/runtime-credentials/token/",
         f"/api/v1/agent-sessions/{session_uid}/",
         f"/api/v1/agent-sessions/{session_uid}/agent-card/",
-        f"/api/v1/agent-sessions/{session_uid}/capabilities/",
-        "/api/v1/agent-capabilities/capability-1/content/",
         f"/api/v1/agent-sessions/{session_uid}/entries/",
         f"/api/v1/agent-sessions/{session_uid}/",
         f"/api/v1/agent-sessions/{session_uid}/checkpoint-lease/acquire/",

@@ -29,14 +29,6 @@ type TauEntryType = Literal[
 ]
 type TauThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh"]
 type AgentRuntimeActivity = Literal["loading", "idle", "working", "persisting"]
-type AgentCapabilityKind = Literal["skill", "prompt", "extension"]
-type AgentCapabilitySourceType = Literal[
-    "inline",
-    "registry",
-    "repository",
-    "api",
-    "external",
-]
 type AgentTaskStatus = Literal[
     "submitted",
     "working",
@@ -94,35 +86,6 @@ class AgentCardEnvelope(BackendModel):
     agent_session_uid: str
     agent_uid: str
     agent_card: dict[str, Any] | None = None
-
-
-class AgentCapability(BackendModel):
-    uid: str
-    kind: AgentCapabilityKind
-    source_type: AgentCapabilitySourceType
-    capability_path: str = ""
-    has_content: bool = False
-    content_sha256: str = ""
-    content: str | None = None
-    name: str = ""
-    description: str = ""
-    content_mime_type: str = ""
-    content_size: int = 0
-
-
-class SessionCapabilityBinding(BackendModel):
-    uid: str
-    capability_uid: str
-    capability: AgentCapability
-    is_enabled: bool = True
-    source_type: AgentCapabilitySourceType
-
-
-class CapabilityContent(BackendModel):
-    content: str
-    content_sha256: str = ""
-    content_mime_type: str = ""
-    content_size: int = 0
 
 
 class SessionEntryRecord(BackendModel):
@@ -291,7 +254,6 @@ class TauRuntimeBootstrapRequest(BackendRequestModel):
     ttl_seconds: int = Field(ge=1)
     bootstrap_request_uid: str
     history_after_sequence: int | None = Field(default=None, ge=0)
-    known_capability_hashes: list[str] = Field(default_factory=list)
     supported_snapshot_schema_versions: list[int] = Field(default_factory=lambda: [1])
     supported_provider_control_schema_versions: list[int] = Field(default_factory=lambda: [1])
     tau_runtime_version: str
@@ -322,7 +284,6 @@ class TauResumeSnapshot(BackendModel):
     snapshot_schema_version: int = Field(ge=1)
     tau_runtime_version: str
     runtime_config_sha256: str
-    capability_set_sha256: str
     payload_sha256: str
     canonical_size: int = Field(ge=0)
     snapshot: dict[str, Any]
@@ -334,7 +295,6 @@ class TauRuntimeBootstrap(BackendModel):
     runtime_state: RuntimeState
     history: SessionEntryList
     resume_snapshot: TauResumeSnapshot | None = None
-    capabilities: list[SessionCapabilityBinding] = Field(default_factory=list)
     provider_credentials: dict[str, Any]
     provider_control: ProviderControl
     runtime_capabilities: dict[str, str]
@@ -349,7 +309,6 @@ class TauResumeSnapshotUploadRequest(BackendRequestModel):
     snapshot_schema_version: int = Field(ge=1)
     tau_runtime_version: str
     runtime_config_sha256: str
-    capability_set_sha256: str
     payload_sha256: str
     snapshot: dict[str, Any]
 
@@ -362,7 +321,6 @@ class TauResumeSnapshotUploadResponse(BackendModel):
     snapshot_schema_version: int = Field(ge=1)
     tau_runtime_version: str
     runtime_config_sha256: str
-    capability_set_sha256: str
     payload_sha256: str
     canonical_size: int = Field(ge=0)
 

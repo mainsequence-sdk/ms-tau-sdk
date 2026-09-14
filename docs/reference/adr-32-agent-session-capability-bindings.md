@@ -1,9 +1,10 @@
 # ADR 32: Agent and Session Capability Bindings
 
-Status: Accepted
+Status: Superseded by [ADR 53](../adrs/adr-53-retire-agent-capability-registry.md)
 Date: 2026-06-14
-Implementation Status: Astro runtime skill materialization implemented in 2.0.3. Backend
-capability management and frontend editing flows are external contracts.
+Implementation Status: Historical. Astro runtime materialization, client contracts, DTOs, and
+session capability hashes were removed in 4.0.22. This record is retained only to explain the
+retired design.
 
 ## Context
 

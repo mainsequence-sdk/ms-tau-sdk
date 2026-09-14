@@ -12,7 +12,7 @@ Owners: Astro Tau, tdag-django CodeRepository Executor deployment, and Runtime I
 Related decisions:
 
 - `docs/adrs/adr-50-lean-python-runtime-abi.md`
-- `docs/reference/adr-32-agent-session-capability-bindings.md`
+- `docs/adrs/adr-53-retire-agent-capability-registry.md`
 - `docs/reference/adr-39-unified-pi-runtime-context.md`
 - `docs/implemenation_task/remove-node-pi-migrate-to-tau.md`
 - [`tdag-django ADR-047: Unified Lean Python Runtime ABI And Destructive Image Cutover`](../../../tdag-django/docs/tdag/pod_manager/adr/adr-047-unified-lean-python-runtime-abi-cutover.md)
@@ -396,9 +396,9 @@ behavior.
 
 ### Materialize backend `AgentCapability(kind="extension")` into Python
 
-Rejected by this decision. Session capability materialization currently handles declarative skill
-content. Repository extensions are already delivered by the CodeRepository image; executable
-capability distribution from the backend is a different feature.
+Rejected. ADR 53 retires that centralized registry and all Astro materialization. Repository
+extensions are delivered by the CodeRepository image and loaded through Tau's native extension
+contract.
 
 ## Consequences
 

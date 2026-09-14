@@ -5,6 +5,11 @@ Date: 2026-08-27
 Implementation Status: Implemented in Astro Tau and tdag-django; deployment percentile validation pending
 Owners: Astro Tau and tdag-django
 
+Capability registry amendment: [ADR 53](./adr-53-retire-agent-capability-registry.md) supersedes
+this record's capability payload, cache, materialization, timing phase, and capability-set hash
+requirements. The bootstrap, snapshot, activity, durability, and MCP latency decisions otherwise
+remain in force.
+
 ## Context
 
 ADR 48 introduced atomic Tau entry batches, lease-owned runtime activity, and two-phase turn
@@ -180,7 +185,6 @@ Request:
   "ttl_seconds": 300,
   "bootstrap_request_uid": "c7deff96-f9b3-4d20-a7a6-cd4d85736546",
   "history_after_sequence": null,
-  "known_capability_hashes": [],
   "supported_snapshot_schema_versions": [1],
   "tau_runtime_version": "..."
 }
@@ -196,24 +200,21 @@ The response contains:
 - loading activity, server revision, and client activity sequence;
 - the latest compatible Tau resume snapshot plus entries after its base sequence, or bounded full
   history with next-sequence pagination when no compatible snapshot exists;
-- capability bindings plus uncached immutable capability bodies; and
 - the existing model-provider hydration result for the exact session.
 
 The bootstrap is an orchestration boundary, not duplicate domain logic. It calls the existing
 canonical services for AgentSession resolution, runtime authorization, lease acquisition, Tau
-history, capabilities, provider credential ownership/hydration, and Tau runtime-state initialization.
+history, provider credential ownership/hydration, and Tau runtime-state initialization.
 
 Provider credentials never appear in logs, traces, timing headers, exception bodies, or the
 real-conversation report.
 
-Lease acquisition and activity reset occur in a short transaction. Large history and capability
-serialization must not hold the lease lock. bootstrap_request_uid is stored on the Tau child
+Lease acquisition and activity reset occur in a short transaction. Large history serialization
+must not hold the lease lock. bootstrap_request_uid is stored on the Tau child
 runtime-state row and makes retries idempotent. Repeating the same request for the same session and
 holder returns the same live lease; a different holder continues to receive the canonical conflict.
 
 History remains bounded and paginated. A compacted ordinary session should fit in the first response.
-Capability content uses existing content hashes; Astro sends cached hashes and Django omits those
-immutable bodies.
 
 ### 4. Persist an Astro-produced Tau resume snapshot
 
@@ -232,7 +233,7 @@ The snapshot contains only the state needed to restore the local Tau session:
 - the durable next sequence immediately following the entries represented by the snapshot;
 - compaction summary/state required by Tau;
 - provider, model, and thinking identifiers, but no provider credential;
-- the runtime configuration hash and capability-set hash;
+- the runtime configuration hash;
 - the Tau runtime version and snapshot schema version;
 - the last committed turn UID; and
 - a SHA-256 digest of the canonical snapshot payload.
@@ -260,7 +261,6 @@ Request:
   "snapshot_schema_version": 1,
   "tau_runtime_version": "...",
   "runtime_config_sha256": "sha256:...",
-  "capability_set_sha256": "sha256:...",
   "payload_sha256": "sha256:...",
   "snapshot": {}
 }
@@ -269,7 +269,7 @@ Request:
 Django stores snapshots in a Tau-only TauAgentSessionResumeSnapshot model linked one-to-one to the
 AgentSession and linked to its durable TauAgentSessionTurnCommit. It is independent of the ephemeral
 runtime lease. Required fields are base_sequence, turn commit, schema/runtime versions,
-configuration/capability hashes, payload hash, canonical byte size, typed JSON payload, and
+configuration hash, payload hash, canonical byte size, typed JSON payload, and
 timestamps.
 
 The upload service:
@@ -297,8 +297,7 @@ Bootstrap selects a snapshot only when:
 
 - its snapshot schema appears in supported_snapshot_schema_versions;
 - its Tau runtime version is compatible with the requesting Astro runtime;
-- its runtime configuration hash matches the current session configuration;
-- its capability-set hash matches the current capability bindings; and
+- its runtime configuration hash matches the current session configuration; and
 - its base sequence is not ahead of durable history.
 
 When compatible, bootstrap returns the snapshot and only entries whose sequence is at or after its
@@ -328,9 +327,6 @@ Astro introduces a process-scoped Main Sequence MCP runtime that:
 It must not introduce global head-of-line blocking. Mutations remain ordered. Calls advertised as
 both read-only and idempotent may use bounded concurrency, consistent with ADR 48. Catalog reuse does
 not remove session/environment authorization from individual tool calls.
-
-Astro caches immutable capability bodies by content hash. Session-specific bindings are still
-loaded for every cold session.
 
 ### 6. Runtime activity is monotonic telemetry, not a provider barrier
 
@@ -470,7 +466,6 @@ Required phase events include:
 - runtime.auth.exchange.completed;
 - runtime.bootstrap.completed;
 - runtime.bootstrap.history.completed;
-- runtime.bootstrap.capabilities.completed;
 - runtime.bootstrap.provider.completed;
 - runtime.snapshot.restore.completed;
 - runtime.snapshot.upload.completed;
@@ -479,8 +474,8 @@ Required phase events include:
 - runtime.turn.commit.completed; and
 - runtime.persistence.durable.
 
-Credentials, lease tokens, prompts, assistant text, tool arguments/results, capability bodies, and
-MCP resource bodies remain excluded.
+Credentials, lease tokens, prompts, assistant text, tool arguments/results, and MCP resource bodies
+remain excluded.
 
 ## tdag-django implementation map
 
@@ -490,8 +485,8 @@ MCP resource bodies remain excluded.
 | timeseries_orm/tdag/pod_manager/services/runtime/knative/request_auth.py | Add the dedicated authorization query and reusable runtime context. |
 | timeseries_orm/timeseries_orm/settings_base/base.py | Add configurable persistent DB connections and health checks. |
 | timeseries_orm/agents/models.py and new migrations | Add Tau-only bootstrap/activity fields, TauAgentSessionTurnCommit, and TauAgentSessionResumeSnapshot. |
-| timeseries_orm/agents/serializers.py | Add bootstrap, snapshot upload/metadata, capability advertisement, monotonic activity, turn lifecycle, responses, and errors while preserving strict activity requests. |
-| timeseries_orm/agents/services/tau_bootstrap.py | Orchestrate existing lease, compatible snapshot/delta or full history, capability, provider, and state services. |
+| timeseries_orm/agents/serializers.py | Add bootstrap, snapshot upload/metadata, monotonic activity, turn lifecycle, responses, and errors while preserving strict activity requests. |
+| timeseries_orm/agents/services/tau_bootstrap.py | Orchestrate existing lease, compatible snapshot/delta or full history, provider, and state services. |
 | timeseries_orm/agents/services/tau_snapshots.py | Validate, hash, bound, store, supersede, and project opaque Tau resume snapshots. |
 | timeseries_orm/agents/services/tau_runtime.py | Apply monotonic publication and revised cancellation acceptance. |
 | timeseries_orm/agents/services/tau_entries.py | Apply started/progress/committed atomically and create/replay the durable Tau turn-commit boundary. |
@@ -508,7 +503,7 @@ All Django test commands use --keepdb --noinput.
 | --- | --- |
 | src/astro/backend/auth.py | Add startup prefetch/background refresh while retaining single-flight exchange. |
 | src/astro/backend/routes.py | Add the canonical Tau bootstrap route. |
-| src/astro/backend/models.py | Add typed capability advertisement, bootstrap, resume snapshot, monotonic activity, and turn lifecycle contracts. |
+| src/astro/backend/models.py | Add typed bootstrap, resume snapshot, monotonic activity, and turn lifecycle contracts. |
 | src/astro/backend/client.py | Consume bootstrap/snapshot/timing metadata and send snapshot, extended batch, and commit requests. |
 | src/astro/backend/mcp.py | Move MCP connection/catalog ownership to process scope with safe bounded concurrency. |
 | src/astro/runtime/manager.py | Use snapshot-aware bootstrap and remove awaited activity from provider/settlement paths. |
@@ -523,10 +518,11 @@ file, test, branch, or deployment is modified.
 
 ## API compatibility
 
-This decision is additive:
+The original decision was additive. ADR 53 later removed Astro's capability client/materialization
+surface and capability fields from bootstrap and snapshots while retaining transition-tolerant
+response parsing:
 
-- existing AgentSession, lease, entries, capabilities, provider credential, and activity routes
-  remain;
+- existing AgentSession, lease, entries, provider credential, and activity routes remain;
 - append-batch requests without turn preserve ADR 48 behavior;
 - expected_activity_revision remains valid;
 - bootstrap is Tau-only;
@@ -601,7 +597,7 @@ Focused tests prove:
 
 1. readiness waits for startup auth and MCP catalog initialization;
 2. concurrent token requests use one exchange;
-3. one bootstrap replaces session/lease/provider/capability/history fan-out;
+3. one bootstrap replaces session/lease/provider/history fan-out;
 4. a compatible snapshot restores Tau and applies only its ordered delta;
 5. hash/version/configuration mismatch falls back to canonical entries;
 6. snapshot generation/upload starts only after durability and never delays [DONE];
@@ -731,7 +727,7 @@ Costs:
   asynchronous refresh behavior;
 - monotonic activity requires a Tau-only migration and compatibility mode;
 - process-scoped MCP requires bounded concurrency and robust reconnect;
-- history/capabilities require strict size and pagination limits;
+- history requires strict size and pagination limits;
 - readiness performs more useful startup work; and
 - deployment spans two repositories.
 

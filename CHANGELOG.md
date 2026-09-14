@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Retired centralized AgentCapability registry
+
+- Removed Astro's AgentCapability/session-binding DTOs, client routes, materializer, cache scan,
+  session asset root, and related deployment plumbing.
+- Removed capability hashes and capability payloads from Tau bootstrap, resume snapshot restore,
+  and snapshot upload behavior. Transition-era Django responses may still include the retired
+  fields; Astro ignores them.
+- Kept repository-native `.agents/skills` and `.tau/extensions`, process-scoped Main Sequence MCP
+  platform skills/tools, A2A Agent Card capabilities, and backend `runtime_capabilities` protocol
+  negotiation as separate authoritative concepts.
+
 ### CodeRepository Tau extensions
 
 - CodeRepository Executor images now enable Tau-native project extensions from

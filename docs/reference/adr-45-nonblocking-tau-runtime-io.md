@@ -60,8 +60,8 @@ Resolver calls return the cached credential without contacting Django. A credent
 again only when its declared expiration is within 60 seconds. Concurrent refresh attempts share
 one refresh lock.
 
-Runtime startup performs provider hydration, Tau history loading, session capability
-materialization, and MCP discovery concurrently after the runtime lease is acquired.
+Runtime startup performs provider hydration and Tau history loading through the bootstrap contract,
+then reuses the process-scoped MCP catalog. ADR 53 removed session capability materialization.
 
 ## Consequences
 

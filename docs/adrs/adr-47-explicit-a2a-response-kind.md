@@ -210,8 +210,8 @@ normalizer/validator must run before persistence and publication. It must:
 - keep protocol extensions separate from Markdown capability-path synchronization; and
 - report actionable project-registration errors.
 
-The existing `AgentCapability` kind named `extension` models executable platform capabilities. It
-is not an A2A protocol extension and must not be conflated with one.
+The retired backend `AgentCapability` kind named `extension` was never an A2A protocol extension.
+A2A `capabilities.extensions` remains protocol metadata and is unaffected by ADR 53.
 
 ### Agent discoverability
 

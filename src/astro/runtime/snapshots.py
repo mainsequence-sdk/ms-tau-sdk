@@ -45,7 +45,6 @@ def restore_snapshot(
     snapshot: TauResumeSnapshot,
     history_delta: SessionEntryList,
     runtime_config_sha256: str,
-    capability_set_sha256: str,
 ) -> RestoredSnapshot:
     if snapshot.snapshot_schema_version != SNAPSHOT_SCHEMA_VERSION:
         raise BackendConflictError("Tau resume snapshot schema is unsupported")
@@ -53,8 +52,6 @@ def restore_snapshot(
         raise BackendConflictError("Tau resume snapshot runtime version is incompatible")
     if snapshot.runtime_config_sha256 != runtime_config_sha256:
         raise BackendConflictError("Tau resume snapshot runtime configuration changed")
-    if snapshot.capability_set_sha256 != capability_set_sha256:
-        raise BackendConflictError("Tau resume snapshot capability set changed")
     if sha256_json(snapshot.snapshot) != snapshot.payload_sha256:
         raise BackendConflictError("Tau resume snapshot payload hash is invalid")
     if snapshot.snapshot.get("schema_version") != SNAPSHOT_SCHEMA_VERSION:
@@ -84,7 +81,6 @@ def build_snapshot_upload(
     base_sequence: int,
     last_committed_turn_uid: str,
     runtime_config_sha256: str,
-    capability_set_sha256: str,
 ) -> TauResumeSnapshotUploadRequest:
     if len(entries) != base_sequence:
         raise BackendConflictError("Local Tau entries do not match the durable snapshot boundary")
@@ -100,7 +96,6 @@ def build_snapshot_upload(
         snapshot_schema_version=SNAPSHOT_SCHEMA_VERSION,
         tau_runtime_version=TAU_RUNTIME_VERSION,
         runtime_config_sha256=runtime_config_sha256,
-        capability_set_sha256=capability_set_sha256,
         payload_sha256=sha256_json(payload),
         snapshot=payload,
     )

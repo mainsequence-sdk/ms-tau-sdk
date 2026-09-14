@@ -119,7 +119,6 @@ the exact provider-control schema understood by the runtime:
   "ttl_seconds": 300,
   "bootstrap_request_uid": "<request-uid>",
   "history_after_sequence": null,
-  "known_capability_hashes": [],
   "supported_snapshot_schema_versions": [1],
   "tau_runtime_version": "<astro-version>",
   "supported_provider_control_schema_versions": [1]

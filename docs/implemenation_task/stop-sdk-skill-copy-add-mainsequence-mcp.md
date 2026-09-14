@@ -1,5 +1,8 @@
 # Use Main Sequence MCP Without SDK Runtime Coupling
 
+> Historical implementation plan: its requirement to preserve backend AgentCapability/session
+> materialization was superseded by [ADR 53](../adrs/adr-53-retire-agent-capability-registry.md).
+
 Status: Implemented
 Date: 2026-07-25
 Repositories: `astro`, `tdag-django`

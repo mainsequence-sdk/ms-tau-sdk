@@ -8,7 +8,6 @@ API_V1_PREFIX = "/api/v1"
 
 RUNTIME_CREDENTIAL_TOKEN = f"{API_V1_PREFIX}/runtime-credentials/token/"
 AGENT_SESSIONS = f"{API_V1_PREFIX}/agent-sessions/"
-AGENT_CAPABILITIES = f"{API_V1_PREFIX}/agent-capabilities/"
 MODEL_PROVIDER_CREDENTIALS = f"{API_V1_PREFIX}/model-provider-credentials/"
 AGENT_TASKS = f"{API_V1_PREFIX}/agent-tasks/"
 
@@ -23,10 +22,6 @@ def agent_session(session_uid: str) -> str:
 
 def agent_session_agent_card(session_uid: str) -> str:
     return f"{agent_session(session_uid)}agent-card/"
-
-
-def agent_session_capabilities(session_uid: str) -> str:
-    return f"{agent_session(session_uid)}capabilities/"
 
 
 def agent_session_entries(session_uid: str) -> str:
@@ -66,10 +61,6 @@ def agent_session_tau_resume_snapshot(session_uid: str) -> str:
 
 def agent_session_runtime_cancel_request(session_uid: str) -> str:
     return f"{agent_session(session_uid)}runtime-cancel-request/"
-
-
-def agent_capability_content(capability_uid: str) -> str:
-    return f"{AGENT_CAPABILITIES}{capability_uid}/content/"
 
 
 def model_provider_credentials(operation: ModelProviderCredentialOperation) -> str:

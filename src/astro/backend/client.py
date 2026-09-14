@@ -24,7 +24,6 @@ from .models import (
     AgentSession,
     AgentTask,
     AgentTaskCreateResult,
-    CapabilityContent,
     ProviderControl,
     ProviderCredential,
     ProviderExecutionEvidence,
@@ -35,7 +34,6 @@ from .models import (
     RuntimeLeaseRequest,
     RuntimeState,
     RuntimeStatePatch,
-    SessionCapabilityBinding,
     SessionEntryAppendRequest,
     SessionEntryBatchAppendRequest,
     SessionEntryBatchAppendResponse,
@@ -48,10 +46,8 @@ from .models import (
 )
 from .routes import (
     AGENT_TASKS,
-    agent_capability_content,
     agent_session,
     agent_session_agent_card,
-    agent_session_capabilities,
     agent_session_checkpoint_lease,
     agent_session_entries,
     agent_session_entries_append,
@@ -278,26 +274,6 @@ class MainSequenceClient:
             idempotent=True,
         )
         return AgentCardEnvelope.model_validate(data)
-
-    async def list_session_capabilities(
-        self,
-        session_uid: str,
-    ) -> list[SessionCapabilityBinding]:
-        data = await self._request(
-            "GET",
-            agent_session_capabilities(session_uid),
-            idempotent=True,
-        )
-        values = data.get("results", []) if isinstance(data, dict) else data
-        return TypeAdapter(list[SessionCapabilityBinding]).validate_python(values or [])
-
-    async def get_capability_content(self, capability_uid: str) -> CapabilityContent:
-        data = await self._request(
-            "GET",
-            agent_capability_content(capability_uid),
-            idempotent=True,
-        )
-        return CapabilityContent.model_validate(data)
 
     async def get_entries(self, session_uid: str) -> SessionEntryList:
         entries: list[SessionEntryRecord] = []

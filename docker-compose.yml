@@ -18,7 +18,6 @@ services:
       ASTRO_CODE_REPOSITORY_CWD: /workspace
       ASTRO_HOME: /home/appuser
       ASTRO_A2A_ASSET_ROOT: /tmp/astro-a2a-assets
-      ASTRO_SESSION_ASSET_ROOT: /tmp/astro-session-assets
       ASTRO_STARTUP_DEPENDENCIES_ENABLED: ${ASTRO_STARTUP_DEPENDENCIES_ENABLED:-true}
       ASTRO_MCP_READ_CONCURRENCY: ${ASTRO_MCP_READ_CONCURRENCY:-8}
     extra_hosts:

@@ -76,8 +76,7 @@ ENV APP_USER=appuser \
     ASTRO_STREAM_SESSION_DIR=/session-state/sessions \
     ASTRO_SESSION_OVERRIDES_DIR=/session-state/session-overrides \
     ASTRO_PROVIDER_CREDENTIAL_DIR=/session-state/pi-agent-auth \
-    ASTRO_A2A_ASSET_ROOT=/tmp/astro-a2a-assets \
-    ASTRO_SESSION_ASSET_ROOT=/tmp/astro-session-assets
+    ASTRO_A2A_ASSET_ROOT=/tmp/astro-a2a-assets
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
@@ -99,13 +98,11 @@ RUN groupadd --gid "${APP_GID}" "${APP_GROUP}" \
     "${ASTRO_SESSION_OVERRIDES_DIR}" \
     "${ASTRO_PROVIDER_CREDENTIAL_DIR}" \
     "${ASTRO_A2A_ASSET_ROOT}" \
-    "${ASTRO_SESSION_ASSET_ROOT}" \
  && chown -R "${APP_UID}:${APP_GID}" \
     "${HOME}" \
     /workspace \
     /session-state \
-    "${ASTRO_A2A_ASSET_ROOT}" \
-    "${ASTRO_SESSION_ASSET_ROOT}"
+    "${ASTRO_A2A_ASSET_ROOT}"
 
 # Install only the builder-produced wheelhouse into the one runtime venv. The
 # wheelhouse is mounted from the build stage and is not retained in a layer.

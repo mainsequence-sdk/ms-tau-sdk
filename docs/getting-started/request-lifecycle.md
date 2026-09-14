@@ -9,9 +9,10 @@
 5. Astro sends the exact backend AgentSession UID to Django; Django derives
    that session's User owner and returns only the requested provider
    credential. The runtime responsible User remains the acting principal.
-6. Enabled backend session skills are materialized into a private Tau resource root.
+6. Tau discovers project-owned skills directly from `<repository>/.agents/skills` and, when the
+   executor setting is enabled, project extensions from `<repository>/.tau/extensions`.
 7. Astro connects to Django `/mcp` with the same runtime bearer token.
-8. Main Sequence MCP tools and resources are exposed to Tau. For Agent
+8. Main Sequence MCP tools and platform skills are exposed to Tau. For Agent
    list/search, Astro removes the environment selector from the Tau schema and
    injects the backend-provided CodeRepositoryBranch environment at transport time.
 9. Astro builds the Tau provider and `CodingSession` in memory.
@@ -40,7 +41,7 @@ comes from `tau-file-tools`; web search and extraction come from
 `tau-web-access`.
 
 CodeRepository-owned skills are discovered directly from the mounted code repository's
-`.agents/skills` directory. Backend-bound session capabilities continue to be
-materialized into the private session resource root. General Main Sequence
-platform skills and operations come from Django `/mcp`; SDK skills are not
-copied into the code repository.
+`.agents/skills` directory. CodeRepository-owned executable extensions are discovered from
+`.tau/extensions` when enabled by the executor deployment. General Main Sequence platform skills
+and operations come from Django `/mcp`; SDK skills are not copied into the code repository. Astro
+does not fetch or materialize backend AgentCapability/session-binding overlays.

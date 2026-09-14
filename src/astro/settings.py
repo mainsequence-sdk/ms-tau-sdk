@@ -61,10 +61,6 @@ class Settings(BaseSettings):
         default=Path("/tmp/astro-a2a-assets"),
         validation_alias="ASTRO_A2A_ASSET_ROOT",
     )
-    session_asset_root: Path = Field(
-        default=Path("/tmp/astro-session-assets"),
-        validation_alias="ASTRO_SESSION_ASSET_ROOT",
-    )
     a2a_max_inline_file_bytes: int = Field(
         default=20 * 1024 * 1024,
         validation_alias="ASTRO_A2A_MAX_INLINE_FILE_BYTES",
