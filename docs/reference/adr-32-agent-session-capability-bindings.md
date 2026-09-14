@@ -3,7 +3,7 @@
 Status: Superseded by [ADR 53](../adrs/adr-53-retire-agent-capability-registry.md)
 Date: 2026-06-14
 Implementation Status: Historical. Astro runtime materialization, client contracts, DTOs, and
-session capability hashes were removed in 4.0.22. This record is retained only to explain the
+session capability hashes were removed in 4.0.23. This record is retained only to explain the
 retired design.
 
 ## Context

@@ -63,8 +63,8 @@ from .session import ActiveSessionRuntime
 
 logger = structlog.get_logger(__name__)
 ADR49_RUNTIME_CAPABILITIES = {
-    "tau_runtime_bootstrap": "v2",
-    "tau_resume_snapshot": "v1",
+    "tau_runtime_bootstrap": "v3",
+    "tau_resume_snapshot": "v2",
     "tau_activity_sequence": "v1",
     "tau_turn_commit": "v1",
 }

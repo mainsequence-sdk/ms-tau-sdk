@@ -7,8 +7,10 @@
 - Removed Astro's AgentCapability/session-binding DTOs, client routes, materializer, cache scan,
   session asset root, and related deployment plumbing.
 - Removed capability hashes and capability payloads from Tau bootstrap, resume snapshot restore,
-  and snapshot upload behavior. Transition-era Django responses may still include the retired
-  fields; Astro ignores them.
+  and snapshot upload behavior.
+- Aligned the coordinated Django ADR-032 cutover by requiring Tau bootstrap v3, resume snapshot v2,
+  and snapshot schema v2. Astro 4.0.22 retained the obsolete runtime-version gates and is
+  superseded by 4.0.23.
 - Kept repository-native `.agents/skills` and `.tau/extensions`, process-scoped Main Sequence MCP
   platform skills/tools, A2A Agent Card capabilities, and backend `runtime_capabilities` protocol
   negotiation as separate authoritative concepts.

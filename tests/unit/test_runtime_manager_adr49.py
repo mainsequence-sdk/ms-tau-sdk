@@ -25,7 +25,7 @@ from astro.backend.models import (
 from astro.errors import BackendConflictError
 from astro.runtime.manager import ADR49_RUNTIME_CAPABILITIES, SessionRuntimeManager
 from astro.runtime.session import ActiveSessionRuntime
-from astro.runtime.snapshots import build_snapshot_upload
+from astro.runtime.snapshots import SNAPSHOT_SCHEMA_VERSION, build_snapshot_upload
 from astro.sessions.storage import SESSION_ENTRY_ADAPTER
 from astro.settings import Settings
 
@@ -67,7 +67,6 @@ def _bootstrap(
             active_provider="test-provider",
             active_model="test-model",
             runtime_config_sha256=runtime_config_sha256,
-            capability_set_sha256="sha256:legacy-capabilities",
         ),
         lease=RuntimeLease(
             lease_token=f"lease-{session_uid}",
@@ -85,7 +84,6 @@ def _bootstrap(
         ),
         history=history or SessionEntryList(entries=[], next_sequence=0),
         resume_snapshot=snapshot,
-        capabilities=[{"legacy": "ignored"}],
         provider_credentials={},
         provider_control=ProviderControl(
             schema_version=1,
@@ -157,6 +155,16 @@ def _coding_session(
     return session
 
 
+def test_django_adr32_runtime_contract_versions():
+    assert ADR49_RUNTIME_CAPABILITIES == {
+        "tau_runtime_bootstrap": "v3",
+        "tau_resume_snapshot": "v2",
+        "tau_activity_sequence": "v1",
+        "tau_turn_commit": "v1",
+    }
+    assert SNAPSHOT_SCHEMA_VERSION == 2
+
+
 @pytest.mark.asyncio
 async def test_stale_pre_provider_lease_reloads_once_before_execution(tmp_path):
     manager, _backend, _providers = _manager_dependencies(tmp_path, [])
@@ -204,7 +212,7 @@ async def test_stale_pre_provider_lease_reloads_once_before_execution(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_v1_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
+async def test_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
     manager, backend, providers = _manager_dependencies(
         tmp_path,
         [_bootstrap("session-1"), _bootstrap("session-2")],
@@ -248,6 +256,7 @@ async def test_v1_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
     for call in backend.bootstrap_tau_runtime.await_args_list:
         request = call.args[1]
         assert "known_capability_hashes" not in request.model_dump()
+        assert request.supported_snapshot_schema_versions == [2]
     for load_call in load_coding_session.await_args_list:
         assert [tool.name for tool in load_call.args[0].tools] == ["runtime_info"]
         assert load_call.args[0].project_extensions_enabled is False
@@ -387,7 +396,7 @@ def test_extension_diagnostics_are_structured_and_repository_relative(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_v1_restores_compatible_snapshot_and_applies_only_delta(tmp_path):
+async def test_restores_compatible_snapshot_and_applies_only_delta(tmp_path):
     first = SessionInfoEntry(cwd="/snapshot")
     second = SessionInfoEntry(cwd="/delta")
     upload = build_snapshot_upload(
@@ -401,7 +410,6 @@ async def test_v1_restores_compatible_snapshot_and_applies_only_delta(tmp_path):
     snapshot = TauResumeSnapshot(
         **upload.model_dump(exclude={"holder_id", "lease_token"}),
         canonical_size=1,
-        capability_set_sha256="sha256:legacy-capabilities",
     )
     history = SessionEntryList(
         entries=[_entry_record(second, 1)],
@@ -436,7 +444,7 @@ async def test_v1_restores_compatible_snapshot_and_applies_only_delta(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_v1_corrupt_snapshot_falls_back_to_canonical_history(tmp_path):
+async def test_corrupt_snapshot_falls_back_to_canonical_history(tmp_path):
     durable_entry = SessionInfoEntry(cwd="/durable")
     upload = build_snapshot_upload(
         holder_id="holder",
@@ -522,7 +530,7 @@ async def test_startup_readiness_waits_for_auth_and_shared_mcp(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_v1_turn_commit_blocks_done_but_snapshot_upload_does_not(tmp_path):
+async def test_turn_commit_blocks_done_but_snapshot_upload_does_not(tmp_path):
     class SettlingCodingSession:
         is_running = False
 
@@ -564,7 +572,6 @@ async def test_v1_turn_commit_blocks_done_but_snapshot_upload_does_not(tmp_path)
             snapshot_schema_version=request.snapshot_schema_version,
             tau_runtime_version=request.tau_runtime_version,
             runtime_config_sha256=request.runtime_config_sha256,
-            capability_set_sha256="sha256:legacy-capabilities",
             payload_sha256=request.payload_sha256,
             canonical_size=1,
         )

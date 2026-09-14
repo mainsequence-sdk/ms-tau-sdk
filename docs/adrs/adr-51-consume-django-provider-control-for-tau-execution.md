@@ -119,7 +119,7 @@ the exact provider-control schema understood by the runtime:
   "ttl_seconds": 300,
   "bootstrap_request_uid": "<request-uid>",
   "history_after_sequence": null,
-  "supported_snapshot_schema_versions": [1],
+  "supported_snapshot_schema_versions": [2],
   "tau_runtime_version": "<astro-version>",
   "supported_provider_control_schema_versions": [1]
 }
@@ -129,7 +129,8 @@ Django requires schema version `1` to appear in
 `supported_provider_control_schema_versions` and validates this requirement
 before acquiring a runtime lease. A missing field or a list with no supported
 version fails with `provider_control_contract_unsupported`. Django advertises
-`tau_runtime_bootstrap = "v2"` in `runtime_capabilities` for this contract.
+ADR 53 subsequently combines provider control with the retired-capability contract and advances the
+current advertisement to `tau_runtime_bootstrap = "v3"` in `runtime_capabilities`.
 
 The successful response contains:
 

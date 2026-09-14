@@ -4,8 +4,9 @@ Status: Accepted
 
 Date: 2026-09-14
 
-Implementation Status: Implemented in Astro Tau 4.0.22; tdag-django destructive cleanup follows
-after its transition-compatible release is deployed.
+Implementation Status: Implemented in Astro Tau 4.0.23 as the client side of the coordinated
+tdag-django ADR-032 contract cutover. Astro Tau 4.0.22 removed the fields but retained the obsolete
+runtime-version gates and must not be deployed with the new Django contract.
 
 Owners: Astro Tau and tdag-django
 
@@ -79,32 +80,26 @@ Project resources are revisioned with the CodeRepository image or checkout. A ne
 therefore receives a new runtime deployment boundary rather than mutating an existing session
 through an out-of-band binding overlay.
 
-## Transition and rollout
+## Coordinated contract cutover
 
-This is a coordinated deletion but not a hard simultaneous cutover.
+This is the Astro side of tdag-django ADR-032's destructive registry retirement. Django removes the
+models, routes, serialization, snapshot field, and bootstrap behavior rather than retaining a
+transition capability payload.
 
-Before Astro 4.0.22 is deployed, tdag-django must make these request fields optional and ignored:
+The new shared contract is explicit:
 
-- `known_capability_hashes` on
-  `POST /api/v1/agent-sessions/{uid}/tau-runtime/bootstrap/`; and
-- `capability_set_sha256` on
-  `PUT /api/v1/agent-sessions/{uid}/tau-runtime/resume-snapshot/`.
+- Django advertises `tau_runtime_bootstrap="v3"` and returns no `capabilities` field;
+- Django advertises `tau_resume_snapshot="v2"` and accepts/returns no
+  `capability_set_sha256`;
+- Astro requires those exact `runtime_capabilities` versions;
+- Astro advertises and writes snapshot schema version `2`; and
+- Astro sends neither `known_capability_hashes` nor `capability_set_sha256`.
 
-Django snapshot selection and storage must no longer require capability-set equality. This
-transition-compatible Django release may continue returning `capabilities` or
-`capability_set_sha256`. Astro backend response models deliberately allow additive fields, so
-Astro ignores those legacy response members while its strict request models prove it no longer
-sends them.
-
-After Astro 4.0.22 is deployed everywhere, tdag-django can delete:
-
-- AgentCapability and binding models, migrations, serializers, services, views, URLs, admin, and
-  frontend contracts;
-- capability bootstrap serialization, body-cache negotiation, and capability timing phases; and
-- capability hashes from session projections and resume-snapshot persistence.
-
-Astro cannot be deployed safely against a pre-transition Django version whose request serializers
-still require either retired field. No other Django endpoint is required by the new Astro path.
+This version gate intentionally makes the incompatible combinations fail closed. Astro 4.0.21 and
+earlier require Django's old v2/v1 contract. Astro 4.0.22 removed the fields but accidentally kept
+those old gates. Astro 4.0.23 requires Django's new v3/v2 contract. Deploy Django ADR-032 and Astro
+4.0.23 in one coordinated, drained rollout; neither side should serve conversation traffic while
+paired with the other contract generation.
 
 ## Hot-path effect
 
@@ -144,8 +139,8 @@ Astro tests must prove that:
 
 - bootstrap requests omit `known_capability_hashes`;
 - snapshot upload requests omit `capability_set_sha256`;
-- transition-era bootstrap and snapshot responses with retired extra fields still parse and are
-  ignored;
+- runtime capability gates require bootstrap v3 and resume snapshot v2;
+- snapshot requests, payloads, and compatibility checks use schema version 2;
 - session loading performs no capability route call or materialization;
 - Tau receives the repository `cwd` with no generated `agents_root`;
 - repository extensions retain the deployment-controlled setting;

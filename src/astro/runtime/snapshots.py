@@ -17,7 +17,7 @@ from astro.backend.models import (
 from astro.errors import BackendConflictError
 from astro.sessions.storage import SESSION_ENTRY_ADAPTER, serialize_entry
 
-SNAPSHOT_SCHEMA_VERSION = 1
+SNAPSHOT_SCHEMA_VERSION = 2
 TAU_RUNTIME_VERSION = __version__
 
 

@@ -185,7 +185,7 @@ Request:
   "ttl_seconds": 300,
   "bootstrap_request_uid": "c7deff96-f9b3-4d20-a7a6-cd4d85736546",
   "history_after_sequence": null,
-  "supported_snapshot_schema_versions": [1],
+  "supported_snapshot_schema_versions": [2],
   "tau_runtime_version": "..."
 }
 ~~~
@@ -258,7 +258,7 @@ Request:
   "lease_token": "...",
   "base_sequence": 81,
   "last_committed_turn_uid": "b1889848-0034-4f55-933a-8116cc856a96",
-  "snapshot_schema_version": 1,
+  "snapshot_schema_version": 2,
   "tau_runtime_version": "...",
   "runtime_config_sha256": "sha256:...",
   "payload_sha256": "sha256:...",
@@ -519,8 +519,8 @@ file, test, branch, or deployment is modified.
 ## API compatibility
 
 The original decision was additive. ADR 53 later removed Astro's capability client/materialization
-surface and capability fields from bootstrap and snapshots while retaining transition-tolerant
-response parsing:
+surface and capability fields from bootstrap and snapshots through a coordinated versioned
+cutover:
 
 - existing AgentSession, lease, entries, provider credential, and activity routes remain;
 - append-batch requests without turn preserve ADR 48 behavior;
@@ -535,8 +535,8 @@ The existing AgentSession detail/runtime-state response advertises the additive 
 ~~~json
 {
   "runtime_capabilities": {
-    "tau_runtime_bootstrap": "v1",
-    "tau_resume_snapshot": "v1",
+    "tau_runtime_bootstrap": "v3",
+    "tau_resume_snapshot": "v2",
     "tau_activity_sequence": "v1",
     "tau_turn_commit": "v1"
   }
@@ -544,9 +544,9 @@ The existing AgentSession detail/runtime-state response advertises the additive 
 ~~~
 
 These keys are present only when the session uses Tau and the backend implements the complete
-corresponding operation. Astro Tau switches only after all four values are advertised. During a
-rolling deployment it may retain the ADR 48 path and must log the selected contract. It must not use
-404 probing as capability discovery, and no request is translated into Pi checkpoint behavior.
+corresponding operation. Astro Tau requires all four exact values. ADR 53 makes the v3/v2 capability
+registry deletion a coordinated cutover; incompatible Astro/Django generations fail closed rather
+than probing routes or translating requests into Pi checkpoint behavior.
 
 ## Failure and consistency behavior
 

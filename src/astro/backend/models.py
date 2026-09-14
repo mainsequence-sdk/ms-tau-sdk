@@ -254,7 +254,7 @@ class TauRuntimeBootstrapRequest(BackendRequestModel):
     ttl_seconds: int = Field(ge=1)
     bootstrap_request_uid: str
     history_after_sequence: int | None = Field(default=None, ge=0)
-    supported_snapshot_schema_versions: list[int] = Field(default_factory=lambda: [1])
+    supported_snapshot_schema_versions: list[int] = Field(default_factory=lambda: [2])
     supported_provider_control_schema_versions: list[int] = Field(default_factory=lambda: [1])
     tau_runtime_version: str
 
