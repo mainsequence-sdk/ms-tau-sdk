@@ -49,6 +49,10 @@ class Settings(BaseSettings):
         default=Path("/workspace"),
         validation_alias="ASTRO_CODE_REPOSITORY_CWD",
     )
+    code_repository_extensions_enabled: bool = Field(
+        default=False,
+        validation_alias="ASTRO_CODE_REPOSITORY_EXTENSIONS_ENABLED",
+    )
     home: Path = Field(
         default_factory=Path.home,
         validation_alias="ASTRO_HOME",

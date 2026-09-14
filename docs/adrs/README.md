@@ -7,5 +7,6 @@ Active Astro architecture decisions live in this directory.
 - [ADR 49: Decouple the Tau Conversational Critical Path](./adr-49-decouple-tau-conversational-critical-path.md)
 - [ADR 50: Adopt the Lean Python Runtime ABI](./adr-50-lean-python-runtime-abi.md)
 - [ADR 51: Consume Django Provider Control for Tau Execution](./adr-51-consume-django-provider-control-for-tau-execution.md)
+- [ADR 52: Enable Repository Tau Extensions in CodeRepository Executors](./adr-52-enable-repository-tau-extensions-in-code-executors.md)
 
 Earlier records under `docs/reference/` are retained as historical design context.

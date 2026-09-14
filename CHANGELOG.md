@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### CodeRepository Tau extensions
+
+- CodeRepository Executor images now enable Tau-native project extensions from
+  `/workspace/.tau/extensions`; generic Astro runtimes remain disabled by default.
+- Executor images publish `PYTHONPATH=/workspace/src:/workspace`, allowing extension adapters to
+  import both `src`-layout packages and flat repository modules without editing `sys.path`.
+- Runtime health, `runtime_info`, and structured session-load logs now report extension,
+  project-tool, diagnostic, and error counts; deterministic effective tool-catalog digests; and
+  sanitized Tau extension diagnostics.
+- Added final-image verification and unit fixtures covering project and sibling imports, tool
+  registration, extension-over-base precedence, hook execution, and durable Tau tool invocation.
+
 ### Current-turn platform action discipline
 
 - Explicit requests for supported actions now require a fresh tool attempt in the current turn.

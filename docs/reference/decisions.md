@@ -93,6 +93,9 @@ pre-UID API sketches have been removed from the active reference set.
   - Workspace analysis is a first-class orchestrator capability backed by an injected skill.
 - [`adr-32-agent-session-capability-bindings.md`](./adr-32-agent-session-capability-bindings.md)
   - Agent capabilities define defaults; session capabilities define session-local skill overlays.
+- [`../adrs/adr-52-enable-repository-tau-extensions-in-code-executors.md`](../adrs/adr-52-enable-repository-tau-extensions-in-code-executors.md)
+  - CodeRepository Executor deployments enable Tau-native repository extensions as first-class
+    tools in durable Chat and A2A sessions.
 
 ## Static Runtime Shape
 

@@ -45,6 +45,7 @@ from astro.logging import conversation_log_fields
 from astro.providers.factory import ProviderFactory
 from astro.resources.loader import append_system_prompt, resource_root
 from astro.runtime.events import AstroRuntimeEvent
+from astro.runtime.extensions import ProjectExtensionState
 from astro.runtime.observability import TauTurnObserver
 from astro.runtime.provenance import TurnProvenance
 from astro.runtime.snapshots import (
@@ -71,6 +72,30 @@ ADR49_RUNTIME_CAPABILITIES = {
     "tau_activity_sequence": "v1",
     "tau_turn_commit": "v1",
 }
+
+
+def _repository_relative_path(path: Path | None, *, cwd: Path) -> str | None:
+    if path is None:
+        return None
+    try:
+        return path.resolve().relative_to(cwd.resolve()).as_posix()
+    except ValueError:
+        return None
+
+
+def _extension_diagnostic_type(message: str) -> str:
+    normalized = message.lower()
+    if "failed to import" in normalized:
+        return "import_error"
+    if "setup failed" in normalized:
+        return "setup_error"
+    if "duplicate" in normalized or "already registered" in normalized:
+        return "registration_conflict"
+    if "does not exist" in normalized:
+        return "missing_entry"
+    if "must be" in normalized or "does not define" in normalized:
+        return "invalid_extension"
+    return "tau_extension_diagnostic"
 
 
 class SessionRuntimeManager:
@@ -112,6 +137,14 @@ class SessionRuntimeManager:
             )
 
     def snapshot(self) -> dict[str, object]:
+        extension_states = [
+            runtime.project_extension_state
+            for runtime in self._runtimes.values()
+            if runtime.project_extension_state is not None
+        ]
+        tool_catalog_digests = {
+            state.tool_catalog_digest for state in extension_states if state.tool_catalog_digest
+        }
         return {
             "holder_id": self.holder_id,
             "loaded_sessions": len(self._runtimes),
@@ -125,6 +158,28 @@ class SessionRuntimeManager:
             "snapshot_restore_count": self._snapshot_restore_count,
             "snapshot_fallback_count": self._snapshot_fallback_count,
             "snapshot_upload_count": self._snapshot_upload_count,
+            "code_repository_extensions_enabled": (
+                self.settings.code_repository_extensions_enabled
+            ),
+            "loaded_extension_count": max(
+                (state.loaded_extension_count for state in extension_states),
+                default=0,
+            ),
+            "project_tool_count": max(
+                (state.project_tool_count for state in extension_states),
+                default=0,
+            ),
+            "extension_diagnostic_count": max(
+                (state.extension_diagnostic_count for state in extension_states),
+                default=0,
+            ),
+            "extension_error_count": max(
+                (state.extension_error_count for state in extension_states),
+                default=0,
+            ),
+            "tool_catalog_digest": (
+                next(iter(tool_catalog_digests)) if len(tool_catalog_digests) == 1 else None
+            ),
         }
 
     async def _get_mcp_client(self) -> MainSequenceMCPClient:
@@ -314,6 +369,9 @@ class SessionRuntimeManager:
             mcp_client = mcp_task.result()
             cwd = self._resolve_cwd()
             web_store = MemorySearchResultStore()
+            project_extension_state = ProjectExtensionState(
+                enabled=self.settings.code_repository_extensions_enabled,
+            )
             tools = [
                 *create_coding_tools(cwd=cwd),
                 *create_file_tools(cwd=cwd),
@@ -331,6 +389,7 @@ class SessionRuntimeManager:
                     cwd=cwd,
                     provider=provider_runtime.name,
                     model=provider_runtime.model,
+                    project_extensions=project_extension_state,
                 ),
             ]
             coding_session = await CodingSession.load(
@@ -351,8 +410,15 @@ class SessionRuntimeManager:
                         cwd=cwd,
                         agents_root=session_agents_root,
                     ),
-                    project_extensions_enabled=False,
+                    project_extensions_enabled=(self.settings.code_repository_extensions_enabled),
                 )
+            )
+            project_extension_state.update_from_session(coding_session)
+            self._log_project_extension_diagnostics(
+                session_uid=session_uid,
+                cwd=cwd,
+                coding_session=coding_session,
+                state=project_extension_state,
             )
             runtime = ActiveSessionRuntime(
                 session_uid=session_uid,
@@ -367,6 +433,7 @@ class SessionRuntimeManager:
                 capability_set_sha256=str(session_extra.get("capability_set_sha256", "")),
                 provider_control_schema=bootstrap.provider_control.schema_version,
                 catalog_digest=bootstrap.provider_control.catalog_digest,
+                project_extension_state=project_extension_state,
             )
             state = bootstrap.runtime_state
             runtime.runtime_activity = state.runtime_activity or "loading"
@@ -396,6 +463,12 @@ class SessionRuntimeManager:
                 mcp_resource_count=len(mcp_client.resources),
                 provider_control_schema=bootstrap.provider_control.schema_version,
                 catalog_digest=bootstrap.provider_control.catalog_digest,
+                code_repository_extensions_enabled=project_extension_state.enabled,
+                loaded_extension_count=project_extension_state.loaded_extension_count,
+                project_tool_count=project_extension_state.project_tool_count,
+                extension_diagnostic_count=(project_extension_state.extension_diagnostic_count),
+                extension_error_count=project_extension_state.extension_error_count,
+                tool_catalog_digest=project_extension_state.tool_catalog_digest,
                 contract="tau-bootstrap-v2",
                 duration_ms=round((time.monotonic() - load_started_at) * 1000, 3),
             )
@@ -411,6 +484,38 @@ class SessionRuntimeManager:
                     ),
                 )
             raise
+
+    @staticmethod
+    def _log_project_extension_diagnostics(
+        *,
+        session_uid: str,
+        cwd: Path,
+        coding_session: CodingSession,
+        state: ProjectExtensionState,
+    ) -> None:
+        diagnostics = coding_session.extension_runtime.diagnostics
+        logger.info(
+            "runtime.project_extensions.load.completed",
+            session_uid=session_uid,
+            enabled=state.enabled,
+            loaded_extension_count=state.loaded_extension_count,
+            project_tool_count=state.project_tool_count,
+            tool_catalog_digest=state.tool_catalog_digest,
+            diagnostic_count=state.extension_diagnostic_count,
+            diagnostic_error_count=state.extension_error_count,
+        )
+        for diagnostic in diagnostics:
+            path = _repository_relative_path(diagnostic.path, cwd=cwd)
+            log = logger.error if diagnostic.severity == "error" else logger.warning
+            log(
+                "runtime.project_extensions.diagnostic",
+                session_uid=session_uid,
+                extension_name=diagnostic.name,
+                extension_path=path,
+                diagnostic_kind=diagnostic.kind,
+                diagnostic_severity=diagnostic.severity,
+                error_type=_extension_diagnostic_type(diagnostic.message),
+            )
 
     def _resolve_cwd(self) -> Path:
         code_repository_root = self.settings.code_repository_root.resolve()

@@ -28,6 +28,14 @@ def test_settings_accept_only_code_repository_cwd(monkeypatch):
     assert settings.code_repository_root == Path("/canonical")
 
 
+def test_code_repository_extensions_are_opt_in(monkeypatch):
+    monkeypatch.delenv("ASTRO_CODE_REPOSITORY_EXTENSIONS_ENABLED", raising=False)
+    assert Settings(_env_file=None).code_repository_extensions_enabled is False
+
+    monkeypatch.setenv("ASTRO_CODE_REPOSITORY_EXTENSIONS_ENABLED", "true")
+    assert Settings(_env_file=None).code_repository_extensions_enabled is True
+
+
 def test_runtime_auth_requires_both_credential_parts():
     settings = Settings(
         _env_file=None,

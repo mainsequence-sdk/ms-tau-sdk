@@ -12,6 +12,7 @@ from tau_coding import CodingSession
 from astro.backend.mcp import MainSequenceMCPClient
 from astro.backend.models import TauTurnCommit
 from astro.runtime.events import AstroRuntimeEvent, translate_tau_event
+from astro.runtime.extensions import ProjectExtensionState
 from astro.runtime.provenance import PROVENANCE_NAMESPACE, TurnProvenance
 from astro.sessions.storage import BackendSessionStorage
 
@@ -42,6 +43,7 @@ class ActiveSessionRuntime:
     capability_set_sha256: str = ""
     provider_control_schema: int = 0
     catalog_digest: str = ""
+    project_extension_state: ProjectExtensionState | None = None
 
     async def prompt(
         self,

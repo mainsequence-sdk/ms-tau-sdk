@@ -13,6 +13,7 @@ from tau_agent.tools import AgentTool, AgentToolResult, ToolCancellationToken, T
 from tau_agent.types import JSONValue
 
 from astro import __version__
+from astro.runtime.extensions import ProjectExtensionState
 
 
 def create_runtime_info_tool(
@@ -21,7 +22,10 @@ def create_runtime_info_tool(
     cwd: Path,
     provider: str,
     model: str,
+    project_extensions: ProjectExtensionState | None = None,
 ) -> AgentTool:
+    extension_state = project_extensions or ProjectExtensionState(enabled=False)
+
     async def execute(
         tool_call_id: str,
         arguments: Mapping[str, JSONValue],
@@ -38,6 +42,7 @@ def create_runtime_info_tool(
             "cwd": str(cwd),
             "provider": provider,
             "model": model,
+            **extension_state.details(),
         }
         return AgentToolResult(
             content=[TextContent(text=json.dumps(data, indent=2))],
@@ -49,7 +54,7 @@ def create_runtime_info_tool(
         label="Runtime Info",
         description=(
             "Return the active Astro/Tau runtime, Python interpreter, code repository path, "
-            "session, provider, and model."
+            "session, provider, model, and project-extension catalog state."
         ),
         parameters={"type": "object", "properties": {}, "additionalProperties": False},
         execute_fn=execute,

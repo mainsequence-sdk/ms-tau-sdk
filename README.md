@@ -42,6 +42,23 @@ users and code repository code do not select or switch it.
 
 See [`.env.example`](./.env.example) for optional web-provider settings.
 
+## CodeRepository Tau Extensions
+
+The CodeRepository Executor image enables Tau-native project extensions from
+`/workspace/.tau/extensions`. Generic Astro deployments keep project extension discovery disabled.
+The deployment flag is `ASTRO_CODE_REPOSITORY_EXTENSIONS_ENABLED`; it is runtime-owned and cannot
+be changed by a chat or A2A request.
+
+An extension may be a Python file, a directory containing `extension.py`, or an entry declared by
+`[tool.tau]` in a directory's `pyproject.toml`. Its synchronous `setup(tau)` function registers
+structured tools and hooks through Tau's `ExtensionAPI`. Keep domain behavior in normal project
+modules and make the extension a thin adapter, so the same implementation can also back a CLI.
+
+The executor sets `PYTHONPATH=/workspace/src:/workspace`, so directory extensions can use relative
+imports and can import both `src`-layout packages and flat project modules. See
+[ADR 52](./docs/adrs/adr-52-enable-repository-tau-extensions-in-code-executors.md) for a complete
+layout and tool example.
+
 ## Container Startup
 
 The Compose build context is the Astro repository. The independently

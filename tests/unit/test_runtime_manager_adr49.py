@@ -1,10 +1,13 @@
 import asyncio
+import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from tau_agent.session import SessionInfoEntry
+from tau_agent.tools import AgentTool
+from tau_coding.resources import ResourceDiagnostic
 
 from astro.backend.models import (
     AgentSession,
@@ -141,6 +144,20 @@ def _mcp_client():
     return SimpleNamespace(tools=(), resources=(), aclose=AsyncMock())
 
 
+def _coding_session(
+    *,
+    tools=(),
+    extension_names=(),
+    extension_tool_sources=None,
+):
+    session = Mock(is_running=False)
+    session.tools = tools
+    session.extension_names = extension_names
+    session.extension_tool_sources = extension_tool_sources or {}
+    session.extension_runtime = SimpleNamespace(diagnostics=())
+    return session
+
+
 @pytest.mark.asyncio
 async def test_stale_pre_provider_lease_reloads_once_before_execution(tmp_path):
     manager, _backend, _providers = _manager_dependencies(tmp_path, [])
@@ -194,7 +211,7 @@ async def test_v1_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
         [_bootstrap("session-1"), _bootstrap("session-2")],
     )
     mcp_client = _mcp_client()
-    coding_sessions = [Mock(is_running=False), Mock(is_running=False)]
+    coding_sessions = [_coding_session(), _coding_session()]
 
     with (
         patch(
@@ -234,6 +251,7 @@ async def test_v1_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
     connect.assert_awaited_once_with(settings=manager.settings, auth=backend.auth)
     for load_call in load_coding_session.await_args_list:
         assert [tool.name for tool in load_call.args[0].tools] == ["runtime_info"]
+        assert load_call.args[0].project_extensions_enabled is False
     assert create_mcp_tools.call_args_list == [
         (
             (mcp_client,),
@@ -252,6 +270,124 @@ async def test_v1_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
 
     await manager.aclose()
     mcp_client.aclose.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_executor_setting_enables_tau_extensions_and_reports_effective_catalog(tmp_path):
+    manager, _backend, _providers = _manager_dependencies(
+        tmp_path,
+        [_bootstrap("session-1")],
+    )
+    manager.settings = manager.settings.model_copy(
+        update={"code_repository_extensions_enabled": True}
+    )
+    project_tool = AgentTool(
+        name="project_tool",
+        label="Project Tool",
+        description="A repository extension tool.",
+        parameters={"type": "object", "properties": {}},
+        execute_fn=AsyncMock(),
+    )
+    loaded_session = _coding_session(
+        extension_names=("project_extension",),
+        extension_tool_sources={"project_tool": "project_extension"},
+    )
+
+    async def load_with_project_tool(config):
+        loaded_session.tools = (*config.tools, project_tool)
+        return loaded_session
+
+    with (
+        patch(
+            "astro.runtime.manager.materialize_bootstrap_capabilities",
+            AsyncMock(return_value=tmp_path / ".agents"),
+        ),
+        patch(
+            "astro.runtime.manager.MainSequenceMCPClient.connect",
+            AsyncMock(return_value=_mcp_client()),
+        ),
+        patch("astro.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
+        patch("astro.runtime.manager.create_coding_tools", return_value=[]),
+        patch("astro.runtime.manager.create_file_tools", return_value=[]),
+        patch("astro.runtime.manager.build_web_tools", return_value=[]),
+        patch(
+            "astro.runtime.manager.CodingSession.load",
+            AsyncMock(side_effect=load_with_project_tool),
+        ) as load_coding_session,
+    ):
+        runtime = await manager.get("session-1")
+
+    config = load_coding_session.await_args.args[0]
+    assert config.project_extensions_enabled is True
+    assert runtime.project_extension_state is not None
+    assert runtime.project_extension_state.loaded_extension_count == 1
+    assert runtime.project_extension_state.project_tool_count == 1
+    assert runtime.project_extension_state.extension_diagnostic_count == 0
+    assert runtime.project_extension_state.extension_error_count == 0
+    assert runtime.project_extension_state.tool_catalog_digest.startswith("sha256:")
+
+    runtime_info = config.tools[-1]
+    payload = json.loads((await runtime_info.execute("call-1", {})).text)
+    assert payload["code_repository_extensions_enabled"] is True
+    assert payload["loaded_extension_count"] == 1
+    assert payload["project_tool_count"] == 1
+    assert payload["extension_diagnostic_count"] == 0
+    assert payload["extension_error_count"] == 0
+    assert payload["tool_catalog_digest"] == runtime.project_extension_state.tool_catalog_digest
+
+    snapshot = manager.snapshot()
+    assert snapshot["code_repository_extensions_enabled"] is True
+    assert snapshot["loaded_extension_count"] == 1
+    assert snapshot["project_tool_count"] == 1
+    assert snapshot["extension_diagnostic_count"] == 0
+    assert snapshot["extension_error_count"] == 0
+    assert snapshot["tool_catalog_digest"] == runtime.project_extension_state.tool_catalog_digest
+
+    await manager.aclose()
+
+
+def test_extension_diagnostics_are_structured_and_repository_relative(tmp_path):
+    state = SimpleNamespace(
+        enabled=True,
+        loaded_extension_count=0,
+        project_tool_count=0,
+        extension_diagnostic_count=1,
+        extension_error_count=1,
+        tool_catalog_digest=f"sha256:{'a' * 64}",
+    )
+    coding_session = SimpleNamespace(
+        extension_runtime=SimpleNamespace(
+            diagnostics=(
+                ResourceDiagnostic(
+                    kind="extension",
+                    name="broken_extension",
+                    path=tmp_path / ".tau/extensions/broken_extension/extension.py",
+                    message="failed to import extension: RuntimeError('sensitive detail')",
+                    severity="error",
+                ),
+            )
+        )
+    )
+
+    with patch("astro.runtime.manager.logger") as structured_logger:
+        SessionRuntimeManager._log_project_extension_diagnostics(
+            session_uid="session-1",
+            cwd=tmp_path,
+            coding_session=coding_session,
+            state=state,
+        )
+
+    structured_logger.info.assert_called_once()
+    structured_logger.error.assert_called_once()
+    diagnostic = structured_logger.error.call_args.kwargs
+    assert diagnostic == {
+        "session_uid": "session-1",
+        "extension_name": "broken_extension",
+        "extension_path": ".tau/extensions/broken_extension/extension.py",
+        "diagnostic_kind": "extension",
+        "diagnostic_severity": "error",
+        "error_type": "import_error",
+    }
 
 
 @pytest.mark.asyncio
@@ -295,7 +431,7 @@ async def test_v1_restores_compatible_snapshot_and_applies_only_delta(tmp_path):
         patch("astro.runtime.manager.build_web_tools", return_value=[]),
         patch(
             "astro.runtime.manager.CodingSession.load",
-            AsyncMock(return_value=Mock(is_running=False)),
+            AsyncMock(return_value=_coding_session()),
         ),
     ):
         runtime = await manager.get("session-1")
@@ -347,7 +483,7 @@ async def test_v1_corrupt_snapshot_falls_back_to_canonical_history(tmp_path):
         patch("astro.runtime.manager.build_web_tools", return_value=[]),
         patch(
             "astro.runtime.manager.CodingSession.load",
-            AsyncMock(return_value=Mock(is_running=False)),
+            AsyncMock(return_value=_coding_session()),
         ),
     ):
         runtime = await manager.get("session-1")

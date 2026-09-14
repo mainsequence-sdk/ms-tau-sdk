@@ -96,6 +96,8 @@ def test_remote_worker_consumes_only_the_lean_python_runtime_abi() -> None:
     assert "ASTRO_HOME=/home/appuser" in recipe
     assert "ASTRO_CODE_REPOSITORY_CWD=/workspace" in recipe
     assert "ASTRO_FIXED_CODE_REPOSITORY_CWD=/workspace" in recipe
+    assert "ASTRO_CODE_REPOSITORY_EXTENSIONS_ENABLED=true" in recipe
+    assert "PYTHONPATH=/workspace/src:/workspace" in recipe
     assert "ASTRO_SESSION_STATE_DIR=/session-state" in recipe
     assert "source=/opt/wheels,target=/opt/astro-wheels,ro" in recipe
     assert "COPY --chown=0:0 --from=astro-executor-bundle /app /app" in recipe
@@ -117,6 +119,17 @@ def test_runtime_verification_does_not_require_media_tools() -> None:
     assert "command -v git" in verification
     assert "ffmpeg" not in verification
     assert "ffprobe" not in verification
+
+
+def test_runtime_verification_exercises_project_extension_import_contract() -> None:
+    verification = (REPOSITORY_ROOT / "scripts/verify-runtime-image.sh").read_text()
+    fixture = REPOSITORY_ROOT / "tests/fixtures/project-extension-workspace"
+
+    assert "ASTRO_CODE_REPOSITORY_EXTENSIONS_ENABLED" in verification
+    assert "project-extension-workspace" in verification
+    assert (fixture / "verify_extension.py").is_file()
+    assert (fixture / ".tau/extensions/import_fixture/extension.py").is_file()
+    assert (fixture / "src/project_fixture/service.py").is_file()
 
 
 def test_active_deployment_examples_use_the_non_root_runtime_contract() -> None:

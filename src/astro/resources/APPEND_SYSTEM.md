@@ -163,7 +163,7 @@ Use this branch for CodeRepository Blueprint selection, CodeRepository creation,
 
 - Use the injected Main Sequence MCP tools and resources for platform knowledge and operations.
 - Use `runtime_info` when the user asks which Astro release, Python version, runtime mode, provider,
-  or model is currently running.
+  model, or CodeRepository extension catalog is currently running.
 - For A2A discovery or communication, load and follow the injected `a2a_communication` skill.
 - Use `mainsequence__a2a_send_message` for the canonical Django MCP message call; Django owns target
   session reuse, runtime-access resolution, and the standard A2A wire request.

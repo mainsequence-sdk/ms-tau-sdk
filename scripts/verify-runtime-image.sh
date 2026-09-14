@@ -3,6 +3,8 @@ set -euo pipefail
 
 image="${1:-astro:tau}"
 container_name="astro-tau-verify-$$"
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+extension_fixture="${script_dir}/../tests/fixtures/project-extension-workspace"
 
 cleanup() {
   docker rm -f "${container_name}" >/dev/null 2>&1 || true
@@ -58,6 +60,18 @@ command -v git
 command -v rg
 command -v yt-dlp
 '
+
+extensions_enabled="$(
+  docker run --rm --entrypoint sh "${image}" -c \
+    'printf "%s" "${ASTRO_CODE_REPOSITORY_EXTENSIONS_ENABLED:-false}"'
+)"
+if [[ "${extensions_enabled}" == "true" ]]; then
+  docker run --rm \
+    --mount "type=bind,source=${extension_fixture},target=/workspace,readonly" \
+    --entrypoint python \
+    "${image}" \
+    /workspace/verify_extension.py
+fi
 
 docker run --detach \
   --name "${container_name}" \
