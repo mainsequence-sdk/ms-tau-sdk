@@ -37,6 +37,9 @@ ASTRO_SESSION_LEASE_RENEW_SECONDS=30
 ASTRO_TURN_TIMEOUT_SECONDS=900
 ASTRO_SHUTDOWN_GRACE_SECONDS=30
 ASTRO_MAX_TURN_OUTPUT_BYTES=4194304
+ASTRO_A2A_TASK_OUTPUT_FLUSH_INTERVAL_MS=200
+ASTRO_A2A_TASK_OUTPUT_FLUSH_BYTES=8192
+ASTRO_A2A_TASK_EVENT_POLL_SECONDS=0.5
 ASTRO_LOG_LEVEL=INFO
 ASTRO_LOG_MACHINE_SINK=true
 ASTRO_LOG_HUMAN_SINK=false
@@ -54,6 +57,9 @@ Optional settings:
 
 - `ASTRO_TRUSTED_ORIGINS`: comma-separated browser origins.
 - `ASTRO_A2A_MAX_INLINE_FILE_BYTES`: maximum decoded inline A2A file size.
+- `ASTRO_A2A_TASK_OUTPUT_FLUSH_INTERVAL_MS`: maximum active-output coalescing interval.
+- `ASTRO_A2A_TASK_OUTPUT_FLUSH_BYTES`: output bytes that trigger a durable artifact flush.
+- `ASTRO_A2A_TASK_EVENT_POLL_SECONDS`: durable Task event/cancellation polling interval.
 - `ASTRO_SESSION_EVICTION_INTERVAL_SECONDS`: idle-runtime scan interval.
 - `ASTRO_BACKEND_*`: backend timeout and response-size limits.
 

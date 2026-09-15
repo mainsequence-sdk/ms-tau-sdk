@@ -10,10 +10,20 @@ RUNTIME_CREDENTIAL_TOKEN = f"{API_V1_PREFIX}/runtime-credentials/token/"
 AGENT_SESSIONS = f"{API_V1_PREFIX}/agent-sessions/"
 MODEL_PROVIDER_CREDENTIALS = f"{API_V1_PREFIX}/model-provider-credentials/"
 AGENT_TASKS = f"{API_V1_PREFIX}/agent-tasks/"
+AGENT_TASK_CALLER_DELIVERIES = f"{API_V1_PREFIX}/agent-task-caller-deliveries/"
 
 type CheckpointLeaseOperation = Literal["acquire", "renew", "release"]
 type ModelProviderCredentialOperation = Literal["hydrate", "status", "flush", "revoke"]
-type AgentTaskOperation = Literal["status", "messages", "cancel"]
+type AgentTaskOperation = Literal[
+    "cancel",
+    "claim-dispatch",
+    "continue",
+    "attempt-messages",
+    "attempt-outputs",
+    "settle-attempt",
+    "snapshot",
+    "events",
+]
 
 
 def agent_session(session_uid: str) -> str:
@@ -73,3 +83,11 @@ def agent_task(task_uid: str) -> str:
 
 def agent_task_operation(task_uid: str, operation: AgentTaskOperation) -> str:
     return f"{agent_task(task_uid)}{operation}/"
+
+
+def agent_task_caller_delivery(delivery_uid: str) -> str:
+    return f"{AGENT_TASK_CALLER_DELIVERIES}{delivery_uid}/"
+
+
+def agent_task_caller_delivery_operation(delivery_uid: str, operation: str) -> str:
+    return f"{agent_task_caller_delivery(delivery_uid)}{operation}/"

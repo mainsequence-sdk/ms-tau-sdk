@@ -23,7 +23,11 @@ from .models import (
     AgentCardEnvelope,
     AgentSession,
     AgentTask,
+    AgentTaskCallerDelivery,
     AgentTaskCreateResult,
+    AgentTaskEventPage,
+    AgentTaskExecutionAttempt,
+    AgentTaskSnapshot,
     ProviderControl,
     ProviderCredential,
     ProviderExecutionEvidence,
@@ -57,6 +61,8 @@ from .routes import (
     agent_session_tau_resume_snapshot,
     agent_session_tau_runtime_activity,
     agent_session_tau_runtime_bootstrap,
+    agent_task_caller_delivery,
+    agent_task_caller_delivery_operation,
     agent_task_operation,
     model_provider_credentials,
 )
@@ -579,38 +585,220 @@ class MainSequenceClient:
             raise SessionNotFoundError(f"A2A task not found: {task_id}")
         return tasks[0]
 
-    async def update_task_status(
-        self,
-        task_uid: str,
-        *,
-        status: str,
-        status_message: object | None = None,
-    ) -> AgentTask:
-        payload: dict[str, Any] = {"status": status}
-        if status_message is not None:
-            payload["status_message"] = status_message
+    async def get_task(self, task_uid: str) -> AgentTask:
         data = await self._request(
-            "POST",
-            agent_task_operation(task_uid, "status"),
-            json=payload,
+            "GET",
+            f"{AGENT_TASKS}{task_uid}/",
             idempotent=True,
         )
         return AgentTask.model_validate(data)
 
-    async def add_task_message(
+    async def get_task_snapshot(self, task_uid: str) -> AgentTaskSnapshot:
+        data = await self._request(
+            "GET",
+            agent_task_operation(task_uid, "snapshot"),
+            idempotent=True,
+        )
+        return AgentTaskSnapshot.model_validate(data)
+
+    async def get_task_snapshot_by_protocol_id(self, task_id: str) -> AgentTaskSnapshot:
+        task = await self.get_task_by_protocol_id(task_id)
+        return await self.get_task_snapshot(task.uid)
+
+    async def list_task_events(
         self,
         task_uid: str,
-        payload: Mapping[str, Any],
+        *,
+        after_sequence: int,
+        limit: int = 100,
+    ) -> AgentTaskEventPage:
+        query = urlencode(
+            {"after_sequence": max(0, int(after_sequence)), "limit": int(limit)}
+        )
+        data = await self._request(
+            "GET",
+            f"{agent_task_operation(task_uid, 'events')}?{query}",
+            idempotent=True,
+        )
+        return AgentTaskEventPage.model_validate(data)
+
+    async def claim_task_dispatch(
+        self,
+        task_uid: str,
+        *,
+        holder_id: str,
+        lease_token: str,
+        dispatch_uid: str | None = None,
+        executor_instance_id: str = "",
+    ) -> AgentTaskExecutionAttempt:
+        payload: dict[str, Any] = {
+            "holder_id": holder_id,
+            "lease_token": lease_token,
+            "executor_instance_id": executor_instance_id,
+        }
+        if dispatch_uid:
+            payload["dispatch_uid"] = dispatch_uid
+        data = await self._request(
+            "POST",
+            agent_task_operation(task_uid, "claim-dispatch"),
+            json=payload,
+            idempotent=True,
+        )
+        return AgentTaskExecutionAttempt.model_validate(data)
+
+    async def add_task_attempt_message(
+        self,
+        task_uid: str,
+        *,
+        attempt_uid: str,
+        holder_id: str,
+        lease_token: str,
+        message: Mapping[str, Any],
     ) -> dict[str, Any]:
         data = await self._request(
             "POST",
-            agent_task_operation(task_uid, "messages"),
-            json=payload,
+            agent_task_operation(task_uid, "attempt-messages"),
+            json={
+                "attempt_uid": attempt_uid,
+                "holder_id": holder_id,
+                "lease_token": lease_token,
+                **dict(message),
+            },
             idempotent=True,
         )
         if not isinstance(data, dict):
             raise BackendError("Backend task message response is invalid")
         return data
+
+    async def mutate_task_output(
+        self,
+        task_uid: str,
+        *,
+        attempt_uid: str,
+        holder_id: str,
+        lease_token: str,
+        operation: str,
+        artifact_id: str,
+        parts: list[dict[str, Any]],
+        expected_revision: int | None = None,
+        name: str = "",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "attempt_uid": attempt_uid,
+            "holder_id": holder_id,
+            "lease_token": lease_token,
+            "operation": operation,
+            "artifact_id": artifact_id,
+            "parts": parts,
+            "name": name,
+        }
+        if expected_revision is not None:
+            payload["expected_revision"] = expected_revision
+        if metadata is not None:
+            payload["metadata"] = dict(metadata)
+        data = await self._request(
+            "POST",
+            agent_task_operation(task_uid, "attempt-outputs"),
+            json=payload,
+            idempotent=True,
+        )
+        if not isinstance(data, dict):
+            raise BackendError("Backend Task output response is invalid")
+        return data
+
+    async def settle_task_attempt(
+        self,
+        task_uid: str,
+        *,
+        attempt_uid: str,
+        holder_id: str,
+        lease_token: str,
+        status: str,
+        status_message: Mapping[str, Any] | None = None,
+        failure_category: str = "",
+        detail: str = "",
+    ) -> AgentTask:
+        payload: dict[str, Any] = {
+            "attempt_uid": attempt_uid,
+            "holder_id": holder_id,
+            "lease_token": lease_token,
+            "status": status,
+        }
+        if status_message is not None:
+            payload["status_message"] = dict(status_message)
+        if failure_category:
+            payload["failure_category"] = failure_category
+        if detail:
+            payload["detail"] = detail
+        data = await self._request(
+            "POST",
+            agent_task_operation(task_uid, "settle-attempt"),
+            json=payload,
+            idempotent=True,
+        )
+        return AgentTask.model_validate(data)
+
+    async def continue_task(
+        self,
+        task_uid: str,
+        message: Mapping[str, Any],
+    ) -> AgentTask:
+        data = await self._request(
+            "POST",
+            agent_task_operation(task_uid, "continue"),
+            json=message,
+            idempotent=True,
+        )
+        return AgentTask.model_validate(data)
+
+    async def get_task_caller_delivery(
+        self,
+        delivery_uid: str,
+    ) -> AgentTaskCallerDelivery:
+        data = await self._request(
+            "GET",
+            agent_task_caller_delivery(delivery_uid),
+            idempotent=True,
+        )
+        return AgentTaskCallerDelivery.model_validate(data)
+
+    async def claim_task_caller_delivery(
+        self,
+        delivery_uid: str,
+        *,
+        holder_id: str,
+        lease_token: str,
+    ) -> AgentTaskCallerDelivery:
+        data = await self._request(
+            "POST",
+            agent_task_caller_delivery_operation(delivery_uid, "claim"),
+            json={"holder_id": holder_id, "lease_token": lease_token},
+            idempotent=True,
+        )
+        return AgentTaskCallerDelivery.model_validate(data)
+
+    async def settle_task_caller_delivery(
+        self,
+        delivery_uid: str,
+        *,
+        holder_id: str,
+        lease_token: str,
+        outcome: str,
+        detail: str = "",
+    ) -> AgentTaskCallerDelivery:
+        data = await self._request(
+            "POST",
+            agent_task_caller_delivery_operation(delivery_uid, "settle"),
+            json={
+                "holder_id": holder_id,
+                "lease_token": lease_token,
+                "outcome": outcome,
+                "detail": detail,
+            },
+            idempotent=True,
+        )
+        return AgentTaskCallerDelivery.model_validate(data)
 
     async def cancel_task(self, task_uid: str) -> AgentTask:
         data = await self._request(

@@ -32,13 +32,19 @@ orchestration arguments. For a new target conversation:
   "agent_uid": "<selected-Agent.uid>",
   "handle_unique_id": "<stable-task-handle>",
   "message": "<bounded request>",
-  "message_id": "<stable-message-id>"
+  "message_id": "<stable-message-id>",
+  "response_kind": "message"
 }
 ```
 
 For a continuation, `agent_session_uid` replaces `handle_unique_id`. The required
 `agent_uid` always identifies the selected discovery result. This object is the host-tool input;
 it is not sent to the target runtime.
+
+`response_kind` is always required and has no controlled-client default. A Task request also
+requires `completion_policy: "poll" | "resume_caller"`; the field is invalid for Message mode.
+The generic projection also exposes Django's `a2a.get_task`, `a2a.cancel_task`, and
+`a2a.wait_task` operations when they are present in the MCP catalog.
 
 The MCP catalog marks every protected operation with Tool `_meta`
 `mainsequence.ai/requires-caller-session-proof/v1: true`. Astro's generic MCP projection reads
@@ -72,7 +78,7 @@ Django turns the semantic arguments into the transport request:
     "contextId": "<target-AgentSession.uid>",
     "parts": [{"text": "<bounded request>"}]
   },
-  "configuration": {"responseKind": "message"}
+  "configuration": {"responseKind": "<message-or-task>"}
 }
 ```
 
@@ -86,9 +92,10 @@ readiness window and requires `runtime_interaction.can_submit=true` before deliv
 submission remains blocked, the tool returns the backend-owned notice; neither Astro nor the model
 derives readiness from `runtime_presence`.
 
-The outbound host tool currently supports the direct `message` result kind. It preserves the
-target session UID for continuation and reports its generated message ID when a timeout or
-disconnect leaves the delivery outcome ambiguous.
+The outbound host tool preserves the selected Message-or-Task result shape. Controlled Task sends
+use `returnImmediately: true`: `poll` leaves completion to explicit get/wait calls, while
+`resume_caller` registers a durable delivery that resumes the proven caller AgentSession on a
+terminal or actionable interrupted state.
 
 Astro models A2A message authorship directly as the transport directions `requester` and
 `responder`. The Main Sequence A2A wire values are `ROLE_REQUESTER` and `ROLE_RESPONDER`; there is
@@ -103,20 +110,35 @@ the Django `AgentTask` models only when the caller selects a Task result.
 
 `configuration.responseKind="message"` executes directly and returns an A2A
 agent `Message` without creating an `AgentTask`.
-`configuration.responseKind="task"` returns a durable `Task` and executes it
-as tracked background work that drains or cancels during ASGI shutdown. The
-field activates the versioned response-kind extension through the
-`A2A-Extensions` header; omission defaults to direct Message execution.
-Streaming and subscription responses use SSE. Non-strict streaming emits
-incremental artifact updates with direct backpressure before the final durable
-task event. Strict JSON output is bounded and validated before its artifact is
-emitted.
+`configuration.responseKind="task"` returns a durable `Task`. Standard
+`configuration.returnImmediately=true` returns after the durable Task/dispatch is committed;
+`false` or omission waits for a terminal or interrupted Task state. For Message mode,
+`returnImmediately` has no effect. The response-kind field activates the versioned extension
+through the `A2A-Extensions` header; public omission defaults to direct Message execution.
+
+Task execution first holds the existing AgentSession runtime lease and atomically claims the
+durable dispatch attempt. Every output, Message, and settlement refreshes that canonical lease and
+carries the current attempt UID as a state fence. A local asyncio task is only an accelerator after
+that claim; shutdown does not translate process exit into protocol cancellation. Django's durable
+dispatch/recovery contract remains the recovery owner.
+
+Streaming and subscription responses use SSE. Non-strict streaming emits request-local artifact
+deltas and persists coalesced durable artifact events. Strict JSON is bounded and validated before
+durable publication. REST and JSON-RPC Task subscriptions share the ordered backend event cursor;
+reconnects may supply `afterSequence`. Subscription of an already-terminal Task returns the A2A
+unsupported-operation error and the client uses GetTask instead.
 
 JSON-RPC accepts both the named methods and standard slash forms, including
 `SendMessage`/`message/send`, `SendStreamingMessage`/`message/stream`,
 `GetTask`/`tasks/get`, `ListTasks`/`tasks/list`, and
-`CancelTask`/`tasks/cancel`. Streaming JSON-RPC responses are SSE frames whose
+`CancelTask`/`tasks/cancel`, and `SubscribeToTask`/`tasks/subscribe`. Streaming JSON-RPC responses are SSE frames whose
 payloads retain the original JSON-RPC request id.
+
+After the existing runtime wake/readiness operation succeeds, the backend sends a bounded internal
+dispatch-available signal. Astro pulls the referenced durable Task, acquires its session lease, and
+claims the dispatch before scheduling execution. Caller-delivery signals follow the same pattern;
+if the caller already has an active turn, the durable delivery remains queued. These internal
+control-plane signals are not public A2A push notifications.
 
 Push notifications are deliberately disabled until the backend provides canonical durable
 configuration storage and webhook delivery. Agent Cards report `pushNotifications: false`.

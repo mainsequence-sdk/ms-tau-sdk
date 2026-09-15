@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Durable asynchronous A2A Task lifecycle
+
+- Added explicit Task result selection and standard `returnImmediately` handling while preserving
+  direct Message as the public A2A default; controlled MCP callers must choose `response_kind` and
+  a Task completion policy explicitly.
+- Added durable dispatch claiming, attempt-fenced Task writes, continuation controls, cursor-backed
+  REST and JSON-RPC subscriptions, cancellation observation, incremental coalesced artifacts, and
+  caller-session delivery through the existing runtime wake and AgentSession lease boundaries.
+- Kept local `asyncio` execution as an accelerator only: durable Django dispatch state owns
+  recovery, shutdown no longer falsely cancels Tasks, and external push notifications remain
+  disabled.
+- Added ADR 54, backend client contracts, runtime Task controls, conformance coverage, and operator
+  documentation. Task mode remains unadvertised until the coordinated Django deployment passes
+  end-to-end conformance.
+
 ### Retired centralized AgentCapability registry
 
 - Removed Astro's AgentCapability/session-binding DTOs, client routes, materializer, cache scan,

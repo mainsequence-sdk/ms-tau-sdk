@@ -28,6 +28,7 @@ _INVALID_TOOL_NAME = re.compile(r"[^A-Za-z0-9_-]")
 _RESOURCE_TOOL_NAME = "mainsequence__read_resource"
 CALLER_SESSION_PROOF_META_KEY = "mainsequence.ai/caller-session-proof/v1"
 CALLER_SESSION_PROOF_REQUIRED_META_KEY = "mainsequence.ai/requires-caller-session-proof/v1"
+A2A_SEND_TOOL = "a2a.send_message"
 
 
 def _tau_tool_name(mcp_name: str) -> str:
@@ -82,6 +83,42 @@ def _tool_result(
 
 def _tau_tool_input_schema(tool: types.Tool) -> Mapping[str, JSONValue]:
     schema = deepcopy(tool.inputSchema)
+    if tool.name == A2A_SEND_TOOL:
+        properties = schema.setdefault("properties", {})
+        if isinstance(properties, dict):
+            properties["response_kind"] = {
+                "type": "string",
+                "enum": ["message", "task"],
+                "description": "Required result shape; it is never inferred.",
+            }
+            properties["completion_policy"] = {
+                "type": "string",
+                "enum": ["poll", "resume_caller"],
+                "description": "Required only for Task mode.",
+            }
+        required = schema.setdefault("required", [])
+        if isinstance(required, list) and "response_kind" not in required:
+            required.append("response_kind")
+        all_of = schema.setdefault("allOf", [])
+        if isinstance(all_of, list):
+            all_of.extend(
+                [
+                    {
+                        "if": {
+                            "properties": {"response_kind": {"const": "task"}},
+                            "required": ["response_kind"],
+                        },
+                        "then": {"required": ["completion_policy"]},
+                    },
+                    {
+                        "if": {
+                            "properties": {"response_kind": {"const": "message"}},
+                            "required": ["response_kind"],
+                        },
+                        "then": {"not": {"required": ["completion_policy"]}},
+                    },
+                ]
+            )
     if tool.name not in ENVIRONMENT_SCOPED_AGENT_TOOLS:
         return cast(Mapping[str, JSONValue], schema)
 
@@ -137,6 +174,20 @@ def _create_mcp_tool(
                 content=[TextContent(text="Main Sequence MCP tool call was cancelled.")],
                 details={"mcp_tool": canonical_name, "cancelled": True},
             )
+        if canonical_name == A2A_SEND_TOOL:
+            response_kind = arguments.get("response_kind")
+            completion_policy = arguments.get("completion_policy")
+            if response_kind not in {"message", "task"}:
+                raise ValueError("a2a.send_message requires response_kind 'message' or 'task'")
+            if response_kind == "task" and completion_policy not in {
+                "poll",
+                "resume_caller",
+            }:
+                raise ValueError(
+                    "Task response_kind requires completion_policy 'poll' or 'resume_caller'"
+                )
+            if response_kind == "message" and completion_policy is not None:
+                raise ValueError("completion_policy is not valid for Message response_kind")
         if private_meta is None:
             result = await client.call_tool(canonical_name, dict(arguments))
         else:

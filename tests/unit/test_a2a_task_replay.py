@@ -94,7 +94,10 @@ def _body() -> dict:
             "contextId": "session-1",
             "parts": [{"text": "Run this once."}],
         },
-        "configuration": {"responseKind": "task"},
+        "configuration": {
+            "responseKind": "task",
+            "returnImmediately": True,
+        },
     }
 
 
@@ -118,7 +121,7 @@ async def test_message_send_returns_replayed_task_without_scheduling_execution(
     assert response.json()["task"]["status"]["state"] == f"TASK_STATE_{status.upper()}"
     assert response.json()["task"]["artifacts"][0]["parts"] == [{"text": "Stored answer."}]
     assert manager.background is None
-    client.update_task_status.assert_not_awaited()
+    client.settle_task_attempt.assert_not_awaited()
 
 
 async def test_message_stream_returns_replayed_terminal_task_without_execution(
@@ -137,4 +140,4 @@ async def test_message_stream_returns_replayed_terminal_task_without_execution(
     assert '"state":"TASK_STATE_COMPLETED"' in response.text
     assert '"final":true' in response.text
     assert manager.background is None
-    client.update_task_status.assert_not_awaited()
+    client.settle_task_attempt.assert_not_awaited()

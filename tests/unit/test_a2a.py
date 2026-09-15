@@ -1,4 +1,6 @@
+import asyncio
 import base64
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import httpx
@@ -25,7 +27,10 @@ from astro.backend.models import (
     AgentSession,
     AgentTask,
     AgentTaskCreateResult,
+    AgentTaskExecutionAttempt,
+    AgentTaskSnapshot,
 )
+from astro.errors import BackendError
 from astro.runtime.events import translate_tau_event
 from astro.settings import Settings
 
@@ -63,6 +68,8 @@ AGENT_CALLER_HEADERS = {
 
 
 class _TauEventManager:
+    draining = False
+
     def __init__(self, *events: object) -> None:
         self.events = events
         self.delivered_sessions: list[str] = []
@@ -75,6 +82,9 @@ class _TauEventManager:
 
     async def cancel(self, _context_id: str) -> bool:
         return True
+
+    async def task_execution_fence(self, _context_id: str):
+        return SimpleNamespace(holder_id="holder-1", lease_token="lease-1")
 
     def mark_response_delivered(self, session_uid: str) -> bool:
         self.delivered_sessions.append(session_uid)
@@ -103,10 +113,15 @@ def _direct_message_client() -> tuple[AsyncMock, AgentTask]:
         agent_card=None,
     )
     client.create_task.return_value = AgentTaskCreateResult(task=task, created=True)
-    client.update_task_status.side_effect = [
-        task.model_copy(update={"status": "working"}),
-        task.model_copy(update={"status": "completed"}),
-    ]
+    client.claim_task_dispatch.return_value = AgentTaskExecutionAttempt(
+        uid="attempt-1",
+        dispatch_uid="dispatch-1",
+        attempt_number=1,
+        state="running",
+    )
+    client.mutate_task_output.side_effect = [{"revision": 1}, {"revision": 2}]
+    client.get_task.return_value = task.model_copy(update={"status": "working"})
+    client.settle_task_attempt.return_value = task.model_copy(update={"status": "completed"})
     return client, task
 
 
@@ -414,8 +429,8 @@ async def test_direct_message_send_returns_final_tau_answer():
         {"text": "The two DataNodes load and transform the tutorial data."}
     ]
     client.create_task.assert_not_awaited()
-    client.add_task_message.assert_not_awaited()
-    client.update_task_status.assert_not_awaited()
+    client.add_task_attempt_message.assert_not_awaited()
+    client.settle_task_attempt.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -435,8 +450,8 @@ async def test_omitted_response_kind_defaults_to_direct_message_without_task():
     client.get_agent_card.assert_not_awaited()
     client.get_session.assert_not_awaited()
     client.create_task.assert_not_awaited()
-    client.add_task_message.assert_not_awaited()
-    client.update_task_status.assert_not_awaited()
+    client.add_task_attempt_message.assert_not_awaited()
+    client.settle_task_attempt.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -452,8 +467,8 @@ async def test_direct_message_send_rejects_empty_tau_answer():
     assert response.status_code == 502
     assert response.json()["detail"] == "Agent turn produced no textual answer"
     client.create_task.assert_not_awaited()
-    client.add_task_message.assert_not_awaited()
-    client.update_task_status.assert_not_awaited()
+    client.add_task_attempt_message.assert_not_awaited()
+    client.settle_task_attempt.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -472,17 +487,21 @@ async def test_direct_message_send_surfaces_tau_terminal_failure():
     assert response.status_code == 502
     assert response.json()["detail"] == ("Agent turn failed: Provider could not complete the turn")
     client.create_task.assert_not_awaited()
-    client.add_task_message.assert_not_awaited()
-    client.update_task_status.assert_not_awaited()
+    client.add_task_attempt_message.assert_not_awaited()
+    client.settle_task_attempt.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_message_send_rejects_legacy_return_immediately():
+async def test_message_send_accepts_standard_return_immediately_for_message():
     client, _task = _direct_message_client()
+    final = _assistant_message("Direct answer.")
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[backend] = lambda: client
-    app.dependency_overrides[runtime_manager] = lambda: _TauEventManager()
+    app.dependency_overrides[runtime_manager] = lambda: _TauEventManager(
+        MessageEndEvent(message=final),
+        SessionAgentEndEvent(messages=[final], will_retry=False),
+    )
     app.dependency_overrides[settings] = lambda: Settings(_env_file=None)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -502,8 +521,8 @@ async def test_message_send_rejects_legacy_return_immediately():
             },
         )
 
-    assert response.status_code == 400
-    assert "configuration.returnImmediately is not supported" in response.json()["detail"]
+    assert response.status_code == 200
+    assert response.json()["message"]["parts"] == [{"text": "Direct answer."}]
     client.get_agent_card.assert_not_awaited()
     client.create_task.assert_not_awaited()
 
@@ -534,9 +553,10 @@ async def test_message_send_task_requires_advertised_task_and_returns_task():
     class BackgroundManager(_TauEventManager):
         background = None
 
-        def create_background_task(self, coroutine, *, name, operation_uid=None):
-            del name, operation_uid
+        def create_a2a_task_execution(self, task_uid, coroutine, *, name):
+            del task_uid, name
             self.background = coroutine
+            return None, True
 
     manager = BackgroundManager(
         MessageEndEvent(message=final),
@@ -562,7 +582,10 @@ async def test_message_send_task_requires_advertised_task_and_returns_task():
                     "contextId": "session-1",
                     "parts": [{"text": "Run this asynchronously."}],
                 },
-                "configuration": {"responseKind": "task"},
+                "configuration": {
+                    "responseKind": "task",
+                    "returnImmediately": True,
+                },
             },
         )
 
@@ -573,7 +596,276 @@ async def test_message_send_task_requires_advertised_task_and_returns_task():
     assert manager.background is not None
     await manager.background
     client.create_task.assert_awaited_once()
-    client.add_task_message.assert_awaited_once()
+    client.claim_task_dispatch.assert_awaited_once_with(
+        task.uid,
+        holder_id="holder-1",
+        lease_token="lease-1",
+        dispatch_uid=None,
+        executor_instance_id="holder-1",
+    )
+    client.add_task_attempt_message.assert_awaited_once()
+    client.settle_task_attempt.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_immediate_task_return_survives_local_accelerator_claim_failure():
+    client, task = _direct_message_client()
+    client.claim_task_dispatch.side_effect = BackendError("claim unavailable")
+    client.get_agent_card.return_value = AgentCardEnvelope(
+        agent_session_uid="session-1",
+        agent_uid="agent-1",
+        agent_card={
+            "capabilities": {
+                "extensions": [
+                    {
+                        "uri": RESPONSE_KIND_EXTENSION_URI,
+                        "params": {"supportedResponseKinds": ["message", "task"]},
+                    }
+                ]
+            }
+        },
+    )
+
+    class Manager(_TauEventManager):
+        background = None
+
+        def create_a2a_task_execution(self, task_uid, coroutine, *, name):
+            del task_uid, name
+            self.background = coroutine
+            return None, True
+
+    manager = Manager()
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[backend] = lambda: client
+    app.dependency_overrides[runtime_manager] = lambda: manager
+    app.dependency_overrides[settings] = lambda: Settings(_env_file=None)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as http:
+        response = await http.post(
+            f"{REST_BASE}/message:send",
+            headers={"A2A-Extensions": RESPONSE_KIND_EXTENSION_URI, **USER_CALLER_HEADERS},
+            json={
+                "message": {
+                    "messageId": "message-1",
+                    "role": "ROLE_REQUESTER",
+                    "contextId": "session-1",
+                    "parts": [{"text": "Run durably."}],
+                },
+                "configuration": {
+                    "responseKind": "task",
+                    "returnImmediately": True,
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["task"]["id"] == task.task_id
+    assert response.json()["task"]["status"]["state"] == "TASK_STATE_SUBMITTED"
+    assert manager.background is None
+    client.create_task.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_message_send_task_waits_when_return_immediately_is_false():
+    client, task = _direct_message_client()
+    client.get_agent_card.return_value = AgentCardEnvelope(
+        agent_session_uid="session-1",
+        agent_uid="agent-1",
+        agent_card={
+            "capabilities": {
+                "extensions": [
+                    {
+                        "uri": RESPONSE_KIND_EXTENSION_URI,
+                        "params": {"supportedResponseKinds": ["message", "task"]},
+                    }
+                ]
+            }
+        },
+    )
+    working = task.model_copy(update={"status": "working"})
+    completed = task.model_copy(update={"status": "completed"})
+    settled = False
+
+    async def get_task(_task_uid):
+        return completed if settled else working
+
+    async def settle_task_attempt(*args, **kwargs):
+        nonlocal settled
+        settled = True
+        return completed
+
+    async def get_task_snapshot(_task_uid):
+        current = completed if settled else working
+        return AgentTaskSnapshot(task=current, event_cursor=1 if settled else 0)
+
+    client.get_task.side_effect = get_task
+    client.get_task_snapshot.side_effect = get_task_snapshot
+    client.settle_task_attempt.side_effect = settle_task_attempt
+    final = _assistant_message("Finished before returning.")
+    class RunningManager(_TauEventManager):
+        background = None
+
+        def create_a2a_task_execution(self, task_uid, coroutine, *, name):
+            del task_uid
+            self.background = asyncio.create_task(coroutine, name=name)
+            return self.background, True
+
+    manager = RunningManager(
+        MessageEndEvent(message=final),
+        SessionAgentEndEvent(messages=[final], will_retry=False),
+    )
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[backend] = lambda: client
+    app.dependency_overrides[runtime_manager] = lambda: manager
+    app.dependency_overrides[settings] = lambda: Settings(
+        _env_file=None,
+        a2a_task_event_poll_interval_seconds=0.05,
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as http:
+        response = await http.post(
+            f"{REST_BASE}/message:send",
+            headers={"A2A-Extensions": RESPONSE_KIND_EXTENSION_URI, **USER_CALLER_HEADERS},
+            json={
+                "message": {
+                    "messageId": "message-1",
+                    "role": "ROLE_REQUESTER",
+                    "contextId": "session-1",
+                    "parts": [{"text": "Run and wait."}],
+                },
+                "configuration": {
+                    "responseKind": "task",
+                    "returnImmediately": False,
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["task"]["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert manager.background is not None
+    await manager.background
+    client.claim_task_dispatch.assert_awaited_once()
+    client.settle_task_attempt.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_task_continuation_uses_authorized_backend_task_and_new_dispatch():
+    client, task = _direct_message_client()
+    interrupted = task.model_copy(update={"status": "input_required"})
+    submitted = task.model_copy(update={"status": "submitted"})
+    client.get_task_by_protocol_id.return_value = interrupted
+    client.continue_task.return_value = submitted
+    client.get_agent_card.return_value = AgentCardEnvelope(
+        agent_session_uid="session-1",
+        agent_uid="agent-1",
+        agent_card={
+            "capabilities": {
+                "extensions": [
+                    {
+                        "uri": RESPONSE_KIND_EXTENSION_URI,
+                        "params": {"supportedResponseKinds": ["message", "task"]},
+                    }
+                ]
+            }
+        },
+    )
+
+    class BackgroundManager(_TauEventManager):
+        background = None
+
+        def create_a2a_task_execution(self, task_uid, coroutine, *, name):
+            del task_uid, name
+            self.background = coroutine
+            return None, True
+
+    manager = BackgroundManager()
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[backend] = lambda: client
+    app.dependency_overrides[runtime_manager] = lambda: manager
+    app.dependency_overrides[settings] = lambda: Settings(_env_file=None)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as http:
+        response = await http.post(
+            f"{REST_BASE}/message:send",
+            headers={"A2A-Extensions": RESPONSE_KIND_EXTENSION_URI, **USER_CALLER_HEADERS},
+            json={
+                "message": {
+                    "messageId": "message-2",
+                    "taskId": "task-1",
+                    "role": "ROLE_REQUESTER",
+                    "contextId": "session-1",
+                    "parts": [{"text": "Use account A."}],
+                },
+                "configuration": {
+                    "responseKind": "task",
+                    "returnImmediately": True,
+                },
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json()["task"]["status"]["state"] == "TASK_STATE_SUBMITTED"
+    client.create_task.assert_not_awaited()
+    client.continue_task.assert_awaited_once_with(
+        interrupted.uid,
+        {
+            "message_id": "message-2",
+            "role": "user",
+            "parts": [{"text": "Use account A."}],
+            "metadata": {},
+            "extensions": [],
+            "reference_task_ids": [],
+        },
+    )
+    assert manager.background is not None
+    manager.background.close()
+
+
+@pytest.mark.asyncio
+async def test_message_send_rejects_non_boolean_return_immediately():
+    client, _task = _direct_message_client()
+    manager = _TauEventManager()
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[backend] = lambda: client
+    app.dependency_overrides[runtime_manager] = lambda: manager
+    app.dependency_overrides[settings] = lambda: Settings(_env_file=None)
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as http:
+        response = await http.post(
+            f"{REST_BASE}/message:send",
+            headers=USER_CALLER_HEADERS,
+            json={
+                "message": {
+                    "messageId": "message-1",
+                    "role": "ROLE_REQUESTER",
+                    "contextId": "session-1",
+                    "parts": [{"text": "Do this."}],
+                },
+                "configuration": {"returnImmediately": "true"},
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "configuration.returnImmediately must be a boolean"
+    )
+    client.create_task.assert_not_awaited()
 
 
 @pytest.mark.asyncio

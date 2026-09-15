@@ -258,7 +258,11 @@ async def test_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
         assert "known_capability_hashes" not in request.model_dump()
         assert request.supported_snapshot_schema_versions == [2]
     for load_call in load_coding_session.await_args_list:
-        assert [tool.name for tool in load_call.args[0].tools] == ["runtime_info"]
+        assert [tool.name for tool in load_call.args[0].tools] == [
+            "task_request_input",
+            "task_request_authorization",
+            "runtime_info",
+        ]
         assert load_call.args[0].project_extensions_enabled is False
         assert load_call.args[0].resource_paths.agents_root is None
     assert create_mcp_tools.call_args_list == [

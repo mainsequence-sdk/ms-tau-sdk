@@ -334,6 +334,51 @@ def test_normalized_mcp_tool_name_collisions_fail_session_setup():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("arguments", "error"),
+    [
+        ({"message": "hello"}, "requires response_kind"),
+        (
+            {"message": "hello", "response_kind": "task"},
+            "requires completion_policy",
+        ),
+        (
+            {
+                "message": "hello",
+                "response_kind": "message",
+                "completion_policy": "poll",
+            },
+            "not valid for Message",
+        ),
+    ],
+)
+async def test_a2a_send_requires_explicit_result_and_completion_policy_before_network(
+    arguments,
+    error,
+):
+    client = AsyncMock()
+    client.tools = (
+        types.Tool(
+            name="a2a.send_message",
+            inputSchema={
+                "type": "object",
+                "properties": {"message": {"type": "string"}},
+                "required": ["message"],
+            },
+        ),
+    )
+    client.resources = ()
+    tool = create_mainsequence_mcp_tools(client)[0]
+
+    assert "response_kind" in tool.parameters["required"]
+    assert "default" not in tool.parameters["properties"]["response_kind"]
+    with pytest.raises(ValueError, match=error):
+        await tool.execute("call-1", arguments)
+
+    client.call_tool.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("canonical_name", ["a2a.send_message", "agent.update_runtime"])
 async def test_marked_mcp_tool_uses_generic_projection_with_private_context(
     canonical_name,
@@ -365,13 +410,16 @@ async def test_marked_mcp_tool_uses_generic_projection_with_private_context(
         client,
         caller_session_proof=proof,
     )
-    result = await tools[0].execute("call-1", {"message": "hello"})
+    arguments = {"message": "hello"}
+    if canonical_name == "a2a.send_message":
+        arguments["response_kind"] = "message"
+    result = await tools[0].execute("call-1", arguments)
 
     assert tools[0].name == f"mainsequence__{canonical_name.replace('.', '_')}"
     assert result.text == "sent"
     client.call_tool.assert_awaited_once_with(
         canonical_name,
-        {"message": "hello"},
+        arguments,
         meta={CALLER_SESSION_PROOF_META_KEY: proof},
     )
 

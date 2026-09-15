@@ -167,6 +167,13 @@ Use this branch for CodeRepository Blueprint selection, CodeRepository creation,
 - For A2A discovery or communication, load and follow the injected `a2a_communication` skill.
 - Use `mainsequence__a2a_send_message` for the canonical Django MCP message call; Django owns target
   session reuse, runtime-access resolution, and the standard A2A wire request.
+- Always choose `response_kind` explicitly for that tool. Use `message` for a direct answer. Use
+  `task` for asynchronous work and also choose `completion_policy`: `poll` when you will inspect the
+  Task yourself, or `resume_caller` when this session must be durably resumed on actionable state.
+- During an active asynchronous A2A Task, use `task_request_input` when essential caller input is
+  missing or `task_request_authorization` when an existing backend authorization requirement must
+  be satisfied out of band. After either tool accepts the interruption, stop the turn. Never put a
+  credential, bearer token, or secret value in either request.
 - Use `web_search` for fresh Main Sequence information or external research that is not already present locally.
 - Use `fetch_content` when you need the contents of a specific external page, repo, PDF, or URL.
 

@@ -365,8 +365,58 @@ class AgentTask(BackendModel):
     latest_message: dict[str, Any] | None = None
     outputs: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
+    last_event_sequence: int = 0
+    dispatch_uid: str | None = None
+    current_attempt_uid: str | None = None
 
 
 class AgentTaskCreateResult(BackendModel):
     task: AgentTask
     created: bool
+
+
+class AgentTaskExecutionAttempt(BackendModel):
+    uid: str
+    dispatch_uid: str
+    attempt_number: int = Field(ge=1)
+    state: Literal[
+        "claimed",
+        "running",
+        "interrupted",
+        "completed",
+        "failed",
+        "canceled",
+        "expired",
+        "ambiguous",
+    ]
+
+
+class AgentTaskSnapshot(BackendModel):
+    task: AgentTask
+    event_cursor: int = Field(ge=0)
+
+
+class AgentTaskEvent(BackendModel):
+    uid: str | None = None
+    sequence: int = Field(ge=1)
+    event_type: str
+    status: str = ""
+    message_uid: str | None = None
+    output_uid: str | None = None
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class AgentTaskEventPage(BackendModel):
+    events: list[AgentTaskEvent] = Field(default_factory=list)
+    next_cursor: int = Field(ge=0)
+    has_more: bool = False
+
+
+class AgentTaskCallerDelivery(BackendModel):
+    uid: str
+    task_uid: str
+    task_id: str
+    caller_agent_session_uid: str
+    triggering_event_sequence: int = Field(ge=1)
+    task_status: AgentTaskStatus
+    state: str

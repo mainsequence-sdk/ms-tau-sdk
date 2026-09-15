@@ -8,6 +8,7 @@ import socket
 import time
 import uuid
 from collections.abc import AsyncIterator, Coroutine
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -57,9 +58,10 @@ from astro.tools.mainsequence_mcp import (
     mainsequence_mcp_resource_prompt,
 )
 from astro.tools.runtime_info import create_runtime_info_tool
+from astro.tools.task_control import create_task_control_tools
 from astro.tools.web_access import build_web_tools
 
-from .session import ActiveSessionRuntime
+from .session import ActiveSessionRuntime, PlatformEvent
 
 logger = structlog.get_logger(__name__)
 ADR49_RUNTIME_CAPABILITIES = {
@@ -68,6 +70,12 @@ ADR49_RUNTIME_CAPABILITIES = {
     "tau_activity_sequence": "v1",
     "tau_turn_commit": "v1",
 }
+
+
+@dataclass(frozen=True, slots=True)
+class RuntimeExecutionFence:
+    holder_id: str
+    lease_token: str
 
 
 def _repository_relative_path(path: Path | None, *, cwd: Path) -> str | None:
@@ -111,6 +119,8 @@ class SessionRuntimeManager:
         self._registry_lock = asyncio.Lock()
         self._eviction_task: asyncio.Task[None] | None = None
         self._background_tasks: set[asyncio.Task[object]] = set()
+        self._a2a_task_executions: dict[str, asyncio.Task[object]] = {}
+        self._a2a_caller_deliveries: dict[str, asyncio.Task[object]] = {}
         self._web_client = httpx.AsyncClient(timeout=60)
         self._mcp_client: MainSequenceMCPClient | None = None
         self._mcp_lock = asyncio.Lock()
@@ -177,6 +187,21 @@ class SessionRuntimeManager:
                 next(iter(tool_catalog_digests)) if len(tool_catalog_digests) == 1 else None
             ),
         }
+
+    @property
+    def draining(self) -> bool:
+        return self._draining or self._closed
+
+    async def task_execution_fence(self, session_uid: str) -> RuntimeExecutionFence:
+        """Acquire/load the canonical runtime and expose its existing session lease."""
+
+        runtime = await self.get(session_uid)
+        if runtime.lease_lost:
+            raise LeaseLostError(f"Runtime lease was lost for session {session_uid}")
+        return RuntimeExecutionFence(
+            holder_id=self.holder_id,
+            lease_token=runtime.storage.lease_token,
+        )
 
     async def _get_mcp_client(self) -> MainSequenceMCPClient:
         if self._mcp_client is not None:
@@ -364,6 +389,7 @@ class SessionRuntimeManager:
                         "lease_token": lease.lease_token,
                     },
                 ),
+                *create_task_control_tools(),
                 create_runtime_info_tool(
                     session_uid=session_uid,
                     cwd=cwd,
@@ -508,6 +534,7 @@ class SessionRuntimeManager:
         content: str,
         *,
         provenance: TurnProvenance | None = None,
+        platform_event: PlatformEvent | None = None,
     ) -> AsyncIterator[AstroRuntimeEvent]:
         agent_run_uid = str(uuid.uuid4())
         turn_uid = str(uuid.uuid4())
@@ -519,7 +546,10 @@ class SessionRuntimeManager:
             agent_uid="astro-tau",
         ):
             async for event in self._prompt_with_context(
-                session_uid, content, provenance=provenance
+                session_uid,
+                content,
+                provenance=provenance,
+                platform_event=platform_event,
             ):
                 yield event
 
@@ -529,6 +559,7 @@ class SessionRuntimeManager:
         content: str,
         *,
         provenance: TurnProvenance | None = None,
+        platform_event: PlatformEvent | None = None,
     ) -> AsyncIterator[AstroRuntimeEvent]:
         logger.info(
             "agent.run.accepted",
@@ -593,6 +624,7 @@ class SessionRuntimeManager:
                     async for event in runtime.prompt(
                         content,
                         provenance=provenance,
+                        platform_event=platform_event,
                         durability_task=lambda: self.create_background_task(
                             self._settle_turn_durability(runtime, turn_uid),
                             name=f"astro-turn-persist-{session_uid}-{turn_uid}",
@@ -852,6 +884,13 @@ class SessionRuntimeManager:
         cancelled = runtime.cancel()
         return cancelled
 
+    def session_turn_active(self, session_uid: str) -> bool:
+        runtime = self._runtimes.get(session_uid)
+        return bool(
+            runtime is not None
+            and (runtime.active_turn_uid is not None or runtime.lock.locked())
+        )
+
     def mark_response_delivered(self, session_uid: str) -> bool:
         """Schedule the latest durable snapshot after the transport terminal event."""
         runtime = self._runtimes.get(session_uid)
@@ -921,6 +960,58 @@ class SessionRuntimeManager:
         self._background_tasks.add(task)
         task.add_done_callback(self._background_task_done)
         return task
+
+    def create_a2a_task_execution(
+        self,
+        task_uid: str,
+        coroutine: Coroutine[Any, Any, object],
+        *,
+        name: str,
+    ) -> tuple[asyncio.Task[object], bool]:
+        """Deduplicate local accelerators; Django's dispatch remains recovery owner."""
+
+        existing = self._a2a_task_executions.get(task_uid)
+        if existing is not None and not existing.done():
+            coroutine.close()
+            return existing, False
+        task = self.create_background_task(
+            coroutine,
+            name=name,
+            operation_uid=task_uid,
+        )
+        self._a2a_task_executions[task_uid] = task
+
+        def discard(completed: asyncio.Task[object]) -> None:
+            if self._a2a_task_executions.get(task_uid) is completed:
+                self._a2a_task_executions.pop(task_uid, None)
+
+        task.add_done_callback(discard)
+        return task, True
+
+    def create_a2a_caller_delivery(
+        self,
+        delivery_uid: str,
+        coroutine: Coroutine[Any, Any, object],
+        *,
+        name: str,
+    ) -> tuple[asyncio.Task[object], bool]:
+        existing = self._a2a_caller_deliveries.get(delivery_uid)
+        if existing is not None and not existing.done():
+            coroutine.close()
+            return existing, False
+        task = self.create_background_task(
+            coroutine,
+            name=name,
+            operation_uid=delivery_uid,
+        )
+        self._a2a_caller_deliveries[delivery_uid] = task
+
+        def discard(completed: asyncio.Task[object]) -> None:
+            if self._a2a_caller_deliveries.get(delivery_uid) is completed:
+                self._a2a_caller_deliveries.pop(delivery_uid, None)
+
+        task.add_done_callback(discard)
+        return task, True
 
     def _background_task_done(self, task: asyncio.Task[object]) -> None:
         self._background_tasks.discard(task)

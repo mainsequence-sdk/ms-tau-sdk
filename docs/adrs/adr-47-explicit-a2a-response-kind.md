@@ -4,6 +4,14 @@ Status: Accepted
 Date: 2026-08-23
 Implementation Status: Implemented across Astro Tau, `tdag-django`, and `mainsequence-sdk`
 
+Amended on 2026-09-15 by
+[ADR 54](./adr-54-durable-asynchronous-a2a-task-lifecycle.md). ADR 54 preserves this record's v1
+default of `message`, adds explicit durable Task behavior, restores standard `returnImmediately`
+handling on the public A2A endpoint, and separates Task result shape from Task waiting/completion
+policy. The public wire default remains compatible, while controlled MCP, SDK, and CLI entry points
+now require an explicit `response_kind` and provide no local default. The remaining explicit
+result-shape rationale continues to apply.
+
 The Main Sequence A2A profile uses `ROLE_REQUESTER` for request Messages and
 `ROLE_RESPONDER` for response Messages. These values describe direction directly and are not
 aliases for identity-oriented role names.

@@ -9,5 +9,6 @@ Active Astro architecture decisions live in this directory.
 - [ADR 51: Consume Django Provider Control for Tau Execution](./adr-51-consume-django-provider-control-for-tau-execution.md)
 - [ADR 52: Enable Repository Tau Extensions in CodeRepository Executors](./adr-52-enable-repository-tau-extensions-in-code-executors.md)
 - [ADR 53: Retire the Agent Capability Registry from Astro Tau](./adr-53-retire-agent-capability-registry.md)
+- [ADR 54: Durable Asynchronous A2A Task Lifecycle](./adr-54-durable-asynchronous-a2a-task-lifecycle.md)
 
 Earlier records under `docs/reference/` are retained as historical design context.

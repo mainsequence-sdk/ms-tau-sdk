@@ -5,7 +5,12 @@ from fastapi import FastAPI
 
 from astro.api.a2a import RESPONSE_KIND_EXTENSION_URI, REST_BASE, router
 from astro.api.dependencies import backend, runtime_manager, settings
-from astro.backend.models import AgentTask
+from astro.backend.models import (
+    AgentTask,
+    AgentTaskEvent,
+    AgentTaskEventPage,
+    AgentTaskSnapshot,
+)
 from astro.runtime.events import AstroRuntimeEvent
 from astro.settings import Settings
 
@@ -70,6 +75,24 @@ async def test_rest_task_list_get_cancel_and_subscribe_contract(asgi_client):
     client.list_tasks.return_value = [submitted]
     client.get_task_by_protocol_id.return_value = completed
     client.cancel_task.return_value = canceled
+    client.get_task_snapshot_by_protocol_id.return_value = AgentTaskSnapshot(
+        task=submitted,
+        event_cursor=0,
+    )
+    client.list_task_events.return_value = AgentTaskEventPage(
+        events=[
+            AgentTaskEvent(
+                sequence=1,
+                event_type="status_changed",
+                status="completed",
+            )
+        ],
+        next_cursor=1,
+    )
+    client.get_task_snapshot.return_value = AgentTaskSnapshot(
+        task=completed,
+        event_cursor=1,
+    )
     manager = AsyncMock()
 
     async with asgi_client(_app(client, manager), headers=USER_CALLER_HEADERS) as http:
@@ -82,10 +105,41 @@ async def test_rest_task_list_get_cancel_and_subscribe_contract(asgi_client):
     assert fetched.json()["task"]["status"]["state"] == "TASK_STATE_COMPLETED"
     assert cancelled.json()["task"]["status"]["state"] == "TASK_STATE_CANCELED"
     assert subscribed.headers["content-type"].startswith("text/event-stream")
+    assert '"eventCursor":0' in subscribed.text
     assert '"state":"TASK_STATE_COMPLETED"' in subscribed.text
     client.list_tasks.assert_awaited_once_with(context_id="session-1")
     manager.cancel.assert_awaited_once_with("session-1")
     client.cancel_task.assert_awaited_once_with("backend-task-1")
+
+
+async def test_terminal_task_subscription_is_unsupported_for_rest_and_json_rpc(
+    asgi_client,
+):
+    completed = _task("completed")
+    client = AsyncMock()
+    client.get_task_snapshot_by_protocol_id.return_value = AgentTaskSnapshot(
+        task=completed,
+        event_cursor=7,
+    )
+    manager = AsyncMock()
+
+    async with asgi_client(_app(client, manager), headers=USER_CALLER_HEADERS) as http:
+        rest = await http.get(f"{REST_BASE}/tasks/task-1:subscribe")
+        rpc = await http.post(
+            "/api/a2a/rpc",
+            json={
+                "jsonrpc": "2.0",
+                "id": "subscribe-1",
+                "method": "SubscribeToTask",
+                "params": {"id": "task-1"},
+            },
+        )
+
+    assert rest.status_code == 400
+    assert rest.json()["error"]["details"][0]["reason"] == "UNSUPPORTED_OPERATION"
+    assert rpc.status_code == 200
+    assert rpc.json()["error"]["code"] == -32004
+    assert "terminal Task" in rpc.json()["error"]["message"]
 
 
 async def test_json_rpc_direct_message_does_not_create_a_task(asgi_client):
@@ -114,8 +168,8 @@ async def test_json_rpc_direct_message_does_not_create_a_task(asgi_client):
     assert response.json()["result"]["message"]["parts"] == [{"text": "Direct RPC answer."}]
     client.get_session.assert_not_awaited()
     client.create_task.assert_not_awaited()
-    client.add_task_message.assert_not_awaited()
-    client.update_task_status.assert_not_awaited()
+    client.add_task_attempt_message.assert_not_awaited()
+    client.settle_task_attempt.assert_not_awaited()
 
 
 async def test_json_rpc_task_operations_use_the_canonical_rest_implementation(asgi_client):

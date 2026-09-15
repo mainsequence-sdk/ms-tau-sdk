@@ -7,6 +7,7 @@ import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, field
 
+from tau_agent.types import JSONValue
 from tau_coding import CodingSession
 
 from astro.backend.mcp import MainSequenceMCPClient
@@ -15,6 +16,8 @@ from astro.runtime.events import AstroRuntimeEvent, translate_tau_event
 from astro.runtime.extensions import ProjectExtensionState
 from astro.runtime.provenance import PROVENANCE_NAMESPACE, TurnProvenance
 from astro.sessions.storage import BackendSessionStorage
+
+type PlatformEvent = tuple[str, dict[str, JSONValue]]
 
 
 @dataclass(slots=True)
@@ -50,6 +53,7 @@ class ActiveSessionRuntime:
         *,
         durability_task: Callable[[], asyncio.Task[object]],
         provenance: TurnProvenance | None = None,
+        platform_event: PlatformEvent | None = None,
     ) -> AsyncIterator[AstroRuntimeEvent]:
         if self.evicting:
             raise RuntimeError("Session runtime is being evicted")
@@ -68,6 +72,9 @@ class ActiveSessionRuntime:
                 await self.coding_session.append_custom_entry(
                     PROVENANCE_NAMESPACE, dict(provenance)
                 )
+            if platform_event is not None:
+                namespace, payload = platform_event
+                await self.coding_session.append_custom_entry(namespace, dict(payload))
             async for event in self.coding_session.prompt(content):
                 translated = translate_tau_event(event)
                 if settled_event is not None and translated.type != "agent_settled":

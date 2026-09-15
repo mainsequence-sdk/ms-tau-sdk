@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
+import time
 import uuid
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
@@ -15,9 +17,16 @@ from typing import Annotated, Any
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from tau_agent.types import JSONValue
 
 from astro.backend.client import MainSequenceClient
-from astro.backend.models import AgentTask, AgentTaskCreateResult
+from astro.backend.models import (
+    AgentTask,
+    AgentTaskCallerDelivery,
+    AgentTaskCreateResult,
+    AgentTaskSnapshot,
+)
+from astro.errors import BackendError, LeaseLostError
 from astro.logging import bind_request_log_fields
 from astro.protocols.a2a_message import (
     agent_message as serialize_agent_message,
@@ -38,11 +47,16 @@ from astro.protocols.strict_json import (
     build_repair_prompt,
     validate_strict_json,
 )
-from astro.runtime.manager import SessionRuntimeManager
+from astro.runtime.manager import RuntimeExecutionFence, SessionRuntimeManager
 from astro.runtime.provenance import (
     CallerIdentityError,
     TurnProvenance,
     turn_provenance_from_request,
+)
+from astro.runtime.task_context import (
+    TaskExecutionContext,
+    active_task_execution,
+    task_execution_scope,
 )
 from astro.settings import Settings
 
@@ -56,6 +70,8 @@ logger = structlog.get_logger(__name__)
 
 REST_BASE = "/api/a2a/v1"
 TERMINAL = {"completed", "failed", "canceled", "rejected"}
+INTERRUPTED = {"input_required", "auth_required"}
+TASK_RETURN_STATES = TERMINAL | INTERRUPTED
 STATE_MAP = {
     "submitted": "TASK_STATE_SUBMITTED",
     "working": "TASK_STATE_WORKING",
@@ -131,20 +147,23 @@ def _response_kind(
     *,
     a2a_extensions: str | None,
     streaming: bool = False,
-) -> tuple[ResponseKind, bool]:
+) -> tuple[ResponseKind, bool, bool]:
     configuration = body.get("configuration", {})
     if not isinstance(configuration, dict):
         raise HTTPException(status_code=400, detail="configuration must be an object")
-    if "returnImmediately" in configuration:
+    return_immediately = configuration.get("returnImmediately", False)
+    if not isinstance(return_immediately, bool):
         raise HTTPException(
             status_code=400,
-            detail=(
-                "configuration.returnImmediately is not supported; use "
-                "configuration.responseKind with 'message' or 'task'"
-            ),
+            detail="configuration.returnImmediately must be a boolean",
+        )
+    if streaming and "returnImmediately" in configuration:
+        raise HTTPException(
+            status_code=400,
+            detail="configuration.returnImmediately is not valid for message:stream",
         )
     if "responseKind" not in configuration:
-        return ResponseKind.MESSAGE, False
+        return ResponseKind.MESSAGE, False, return_immediately
     if streaming:
         raise HTTPException(
             status_code=400,
@@ -164,7 +183,7 @@ def _response_kind(
                 f"configuration.responseKind requires A2A-Extensions: {RESPONSE_KIND_EXTENSION_URI}"
             ),
         )
-    return response_kind, True
+    return response_kind, True, return_immediately
 
 
 def _response_kind_extension(response_kinds: list[str]) -> dict[str, Any]:
@@ -294,6 +313,38 @@ def _push_notification_json_rpc_error(request_id: object) -> dict[str, Any]:
             "message": PUSH_NOTIFICATION_NOT_SUPPORTED_MESSAGE,
             "data": [_push_notification_error_info()],
         },
+    }
+
+
+def _unsupported_operation_rest_error(message: str) -> JSONResponse:
+    return JSONResponse(
+        status_code=400,
+        media_type="application/a2a+json",
+        content={
+            "error": {
+                "code": 400,
+                "status": "FAILED_PRECONDITION",
+                "message": message,
+                "details": [
+                    {
+                        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                        "reason": "UNSUPPORTED_OPERATION",
+                        "domain": "a2a-protocol.org",
+                    }
+                ],
+            }
+        },
+    )
+
+
+def _unsupported_operation_json_rpc_error(
+    request_id: object,
+    message: str,
+) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": {"code": -32004, "message": message},
     }
 
 
@@ -604,6 +655,9 @@ async def _collect_turn(
     accumulator = _TurnAccumulator(max_output_bytes=max_output_bytes)
     async for event in manager.prompt(context_id, prompt, provenance=provenance):
         accumulator.consume(event)
+    context = active_task_execution()
+    if context is not None and context.interruption_status is not None:
+        return ""
     try:
         return accumulator.result()
     except HTTPException as error:
@@ -669,6 +723,8 @@ async def _create_backend_task(
     *,
     message: dict[str, Any],
     task_id: str,
+    output_contract: StrictJsonContract | None = None,
+    provenance: TurnProvenance | None = None,
 ) -> AgentTaskCreateResult:
     context_id = str(message["contextId"])
     session = await client.get_session(context_id)
@@ -688,9 +744,255 @@ async def _create_backend_task(
                 "extensions": message.get("extensions", []),
                 "reference_task_ids": message.get("referenceTaskIds", []),
             },
-            "metadata": {"transport": "a2a"},
+            "metadata": {
+                "transport": "a2a",
+                "execution": {
+                    "output_contract": {
+                        "mode": (output_contract or StrictJsonContract()).mode,
+                        "schema": (output_contract or StrictJsonContract()).schema,
+                        "repair_attempts": (
+                            output_contract or StrictJsonContract()
+                        ).repair_attempts,
+                    },
+                    "provenance": dict(provenance or {}),
+                },
+            },
         }
     )
+
+
+async def _wait_for_task_return_state(
+    client: MainSequenceClient,
+    task: AgentTask,
+    *,
+    poll_interval_seconds: float,
+) -> AgentTask:
+    current = task
+    while current.status not in TASK_RETURN_STATES:
+        await asyncio.sleep(poll_interval_seconds)
+        current = (await client.get_task_snapshot(current.uid)).task
+    return current
+
+
+@dataclass(frozen=True, slots=True)
+class _ClaimedTask:
+    attempt_uid: str
+    holder_id: str
+    lease_token: str
+
+
+class _TaskCancellationRequested(Exception):
+    """The durable Task aggregate contains an explicit cancellation request."""
+
+    def __init__(self, task: AgentTask) -> None:
+        self.task = task
+        super().__init__(f"Cancellation requested for Task {task.task_id}")
+
+
+async def _claim_backend_task(
+    client: MainSequenceClient,
+    manager: SessionRuntimeManager,
+    task: AgentTask,
+    *,
+    dispatch_uid: str | None = None,
+) -> _ClaimedTask:
+    fence = await manager.task_execution_fence(task.agent_session_uid or task.context_id)
+    attempt = await client.claim_task_dispatch(
+        task.uid,
+        holder_id=fence.holder_id,
+        lease_token=fence.lease_token,
+        dispatch_uid=dispatch_uid or task.dispatch_uid,
+        executor_instance_id=fence.holder_id,
+    )
+    return _ClaimedTask(
+        attempt_uid=attempt.uid,
+        holder_id=fence.holder_id,
+        lease_token=fence.lease_token,
+    )
+
+
+async def _current_task_fence(
+    manager: SessionRuntimeManager,
+    task: AgentTask,
+    claim: _ClaimedTask,
+) -> RuntimeExecutionFence:
+    """Read the current rotating session lease token for an attempt-fenced write."""
+
+    fence = await manager.task_execution_fence(task.agent_session_uid or task.context_id)
+    if fence.holder_id != claim.holder_id:
+        raise LeaseLostError(f"Task execution lease holder changed for Task {task.task_id}")
+    return fence
+
+
+async def _add_claimed_task_message(
+    client: MainSequenceClient,
+    manager: SessionRuntimeManager,
+    task: AgentTask,
+    claim: _ClaimedTask,
+    message: dict[str, Any],
+) -> dict[str, Any]:
+    fence = await _current_task_fence(manager, task, claim)
+    return await client.add_task_attempt_message(
+        task.uid,
+        attempt_uid=claim.attempt_uid,
+        holder_id=fence.holder_id,
+        lease_token=fence.lease_token,
+        message=message,
+    )
+
+
+async def _settle_claimed_task(
+    client: MainSequenceClient,
+    manager: SessionRuntimeManager,
+    task: AgentTask,
+    claim: _ClaimedTask,
+    *,
+    status: str,
+    status_message: dict[str, Any] | None = None,
+    failure_category: str = "",
+    detail: str = "",
+) -> AgentTask:
+    fence = await _current_task_fence(manager, task, claim)
+    optional: dict[str, Any] = {}
+    if status_message is not None:
+        optional["status_message"] = status_message
+    if failure_category:
+        optional["failure_category"] = failure_category
+    if detail:
+        optional["detail"] = detail
+    return await client.settle_task_attempt(
+        task.uid,
+        attempt_uid=claim.attempt_uid,
+        holder_id=fence.holder_id,
+        lease_token=fence.lease_token,
+        status=status,
+        **optional,
+    )
+
+
+@dataclass(slots=True)
+class _DurableArtifactWriter:
+    client: MainSequenceClient
+    manager: SessionRuntimeManager
+    task: AgentTask
+    claim: _ClaimedTask
+    flush_interval_ms: int
+    flush_bytes: int
+    cancellation_poll_interval_seconds: float
+    artifact_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    revision: int = 0
+    pending: list[str] = field(default_factory=list)
+    pending_bytes: int = 0
+    last_flush_at: float = field(default_factory=time.monotonic)
+    last_cancellation_check_at: float = 0.0
+
+    async def ensure_not_canceled(self, *, force: bool = False) -> None:
+        now = time.monotonic()
+        if (
+            not force
+            and now - self.last_cancellation_check_at
+            < self.cancellation_poll_interval_seconds
+        ):
+            return
+        current = await self.client.get_task(self.task.uid)
+        self.last_cancellation_check_at = now
+        if current.cancellation_requested or current.status == "canceled":
+            raise _TaskCancellationRequested(current)
+
+    async def append_text(self, value: str) -> None:
+        if not value:
+            return
+        self.pending.append(value)
+        self.pending_bytes += len(value.encode("utf-8"))
+        elapsed_ms = (time.monotonic() - self.last_flush_at) * 1000
+        if self.pending_bytes >= self.flush_bytes or elapsed_ms >= self.flush_interval_ms:
+            await self.flush()
+
+    async def flush(self, *, final: bool = False) -> None:
+        text = "".join(self.pending)
+        if not text and not final:
+            return
+        await self.ensure_not_canceled(force=True)
+        fence = await _current_task_fence(self.manager, self.task, self.claim)
+        operation = "create" if self.revision == 0 else "finalize" if final else "append"
+        result = await self.client.mutate_task_output(
+            self.task.uid,
+            attempt_uid=self.claim.attempt_uid,
+            holder_id=fence.holder_id,
+            lease_token=fence.lease_token,
+            operation=operation,
+            artifact_id=self.artifact_id,
+            parts=[{"text": text}] if text else [],
+            expected_revision=self.revision or None,
+            name="Agent response",
+        )
+        self.revision = int(result.get("revision") or self.revision + 1)
+        self.pending.clear()
+        self.pending_bytes = 0
+        self.last_flush_at = time.monotonic()
+        if final and operation == "create":
+            await self.flush(final=True)
+
+    async def write_strict_json(self, text: str) -> None:
+        await self.ensure_not_canceled(force=True)
+        fence = await _current_task_fence(self.manager, self.task, self.claim)
+        result = await self.client.mutate_task_output(
+            self.task.uid,
+            attempt_uid=self.claim.attempt_uid,
+            holder_id=fence.holder_id,
+            lease_token=fence.lease_token,
+            operation="create",
+            artifact_id=self.artifact_id,
+            parts=[{"data": json.loads(text), "mediaType": "application/json"}],
+            name="Agent response",
+        )
+        self.revision = int(result.get("revision") or 1)
+        await self.flush(final=True)
+
+
+async def _collect_task_turn(
+    manager: SessionRuntimeManager,
+    task: AgentTask,
+    prompt: str,
+    contract: StrictJsonContract,
+    *,
+    max_output_bytes: int,
+    provenance: TurnProvenance,
+    writer: _DurableArtifactWriter,
+) -> str:
+    if contract.enabled:
+        await writer.ensure_not_canceled(force=True)
+        text = await _collect_validated_turn(
+            manager,
+            task.context_id,
+            prompt,
+            contract,
+            max_output_bytes=max_output_bytes,
+            provenance=provenance,
+        )
+        context = active_task_execution()
+        if context is not None and context.interruption_status is not None:
+            return ""
+        await writer.ensure_not_canceled(force=True)
+        await writer.write_strict_json(text)
+        return text
+
+    accumulator = _TurnAccumulator(max_output_bytes=max_output_bytes)
+    async for event in manager.prompt(task.context_id, prompt, provenance=provenance):
+        await writer.ensure_not_canceled()
+        accumulator.consume(event)
+        value = _event_text(event.type, event.data, has_chunks=bool(accumulator.delta_chunks[:-1]))
+        if event.type in {"text_delta", "text-delta"} and value:
+            await writer.append_text(value)
+    context = active_task_execution()
+    if context is not None and context.interruption_status is not None:
+        await writer.flush()
+        return ""
+    text = accumulator.result()
+    if not accumulator.delta_chunks:
+        await writer.append_text(text)
+    await writer.flush(final=True)
+    return text
 
 
 async def _execute_task(
@@ -702,44 +1004,180 @@ async def _execute_task(
     output_contract: StrictJsonContract,
     max_output_bytes: int,
     provenance: TurnProvenance,
+    config: Settings | None = None,
+    dispatch_uid: str | None = None,
+    claim: _ClaimedTask | None = None,
 ) -> dict[str, Any]:
-    await client.update_task_status(task.uid, status="working")
-    try:
-        text = await _collect_validated_turn(
+    if claim is None:
+        claim = await _claim_backend_task(
+            client,
             manager,
-            task.context_id,
-            prompt,
-            output_contract,
-            max_output_bytes=max_output_bytes,
-            provenance=provenance,
+            task,
+            dispatch_uid=dispatch_uid,
         )
+    resolved = config or manager.settings
+    writer = _DurableArtifactWriter(
+        client=client,
+        manager=manager,
+        task=task,
+        claim=claim,
+        flush_interval_ms=resolved.a2a_task_output_flush_interval_ms,
+        flush_bytes=resolved.a2a_task_output_flush_bytes,
+        cancellation_poll_interval_seconds=resolved.a2a_task_event_poll_interval_seconds,
+    )
+    task_context = TaskExecutionContext(
+        task_uid=task.uid,
+        task_id=task.task_id,
+        attempt_uid=claim.attempt_uid,
+        holder_id=claim.holder_id,
+        lease_token=claim.lease_token,
+    )
+    try:
+        await writer.ensure_not_canceled(force=True)
+        with task_execution_scope(task_context):
+            text = await _collect_task_turn(
+                manager,
+                task,
+                prompt,
+                output_contract,
+                max_output_bytes=max_output_bytes,
+                provenance=provenance,
+                writer=writer,
+            )
+        if task_context.interruption_status is not None:
+            await writer.ensure_not_canceled(force=True)
+            await _settle_claimed_task(
+                client,
+                manager,
+                task,
+                claim,
+                status=task_context.interruption_status,
+                status_message=task_context.interruption_message,
+            )
+            manager.mark_response_delivered(task.context_id)
+            return {
+                "taskId": task.task_id,
+                "state": task_context.interruption_status,
+            }
         message = _agent_message(
             context_id=task.context_id,
             text=text,
             strict_json=output_contract.enabled,
         )
-        await client.add_task_message(
-            task.uid,
+        await writer.ensure_not_canceled(force=True)
+        await _add_claimed_task_message(
+            client,
+            manager,
+            task,
+            claim,
             {
                 "message_id": message["messageId"],
                 "role": "agent",
                 "parts": message["parts"],
             },
         )
-        await client.update_task_status(task.uid, status="completed")
+        await writer.ensure_not_canceled(force=True)
+        await _settle_claimed_task(
+            client,
+            manager,
+            task,
+            claim,
+            status="completed",
+        )
         manager.mark_response_delivered(task.context_id)
         return message
+    except _TaskCancellationRequested as cancellation:
+        canceled = cancellation.task
+        if canceled.status != "canceled":
+            canceled = await _settle_claimed_task(
+                client,
+                manager,
+                task,
+                claim,
+                status="canceled",
+            )
+        manager.mark_response_delivered(task.context_id)
+        return {"taskId": canceled.task_id, "state": canceled.status}
     except asyncio.CancelledError:
-        await manager.cancel(task.context_id)
-        await client.cancel_task(task.uid)
+        if not manager.draining:
+            with contextlib.suppress(Exception):
+                current = await client.get_task(task.uid)
+                if current.cancellation_requested and current.status not in TERMINAL:
+                    await _settle_claimed_task(
+                        client,
+                        manager,
+                        task,
+                        claim,
+                        status="canceled",
+                    )
+        raise
+    except (BackendError, LeaseLostError):
         raise
     except Exception as error:
-        await client.update_task_status(
-            task.uid,
-            status="failed",
-            status_message={"message": str(error)},
-        )
+        with contextlib.suppress(Exception):
+            await _settle_claimed_task(
+                client,
+                manager,
+                task,
+                claim,
+                status="failed",
+                status_message={"message": "Task execution failed"},
+                failure_category="execution",
+                detail=type(error).__name__,
+            )
         raise
+
+
+async def _schedule_task_accelerator(
+    client: MainSequenceClient,
+    manager: SessionRuntimeManager,
+    task: AgentTask,
+    *,
+    prompt: str,
+    output_contract: StrictJsonContract,
+    max_output_bytes: int,
+    provenance: TurnProvenance,
+    config: Settings,
+) -> bool:
+    """Best-effort local start after durable creation; dispatch remains recovery owner."""
+
+    try:
+        claim = await _claim_backend_task(client, manager, task)
+    except (BackendError, LeaseLostError, RuntimeError) as error:
+        logger.info(
+            "a2a.task.accelerator.deferred",
+            task_uid=task.uid,
+            task_id=task.task_id,
+            error_type=type(error).__name__,
+        )
+        return False
+    execution = _execute_task(
+        client,
+        manager,
+        task,
+        prompt=prompt,
+        output_contract=output_contract,
+        max_output_bytes=max_output_bytes,
+        provenance=provenance,
+        config=config,
+        claim=claim,
+    )
+    try:
+        _background, scheduled = manager.create_a2a_task_execution(
+            task.uid,
+            execution,
+            name=f"a2a-task-{task.task_id}",
+        )
+    except RuntimeError as error:
+        execution.close()
+        logger.info(
+            "a2a.task.accelerator.deferred",
+            task_uid=task.uid,
+            task_id=task.task_id,
+            error_type=type(error).__name__,
+        )
+        return False
+    return scheduled
 
 
 async def _execute_message(
@@ -799,25 +1237,45 @@ async def _stream_task_events(
     output_contract: StrictJsonContract,
     max_output_bytes: int,
     provenance: TurnProvenance,
+    config: Settings | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
-    working = await client.update_task_status(task.uid, status="working")
+    claim = await _claim_backend_task(client, manager, task)
+    resolved = config or manager.settings
+    writer = _DurableArtifactWriter(
+        client=client,
+        manager=manager,
+        task=task,
+        claim=claim,
+        flush_interval_ms=resolved.a2a_task_output_flush_interval_ms,
+        flush_bytes=resolved.a2a_task_output_flush_bytes,
+        cancellation_poll_interval_seconds=resolved.a2a_task_event_poll_interval_seconds,
+    )
+    task_context = TaskExecutionContext(
+        task_uid=task.uid,
+        task_id=task.task_id,
+        attempt_uid=claim.attempt_uid,
+        holder_id=claim.holder_id,
+        lease_token=claim.lease_token,
+    )
+    working = await client.get_task(task.uid)
     yield {"task": _task_payload(working)}
-    artifact_id = str(uuid.uuid4())
-    chunks: list[str] = []
-    output_bytes = 0
+    artifact_id = writer.artifact_id
+    text = ""
     emitted = False
     try:
+        await writer.ensure_not_canceled(force=True)
         if output_contract.enabled:
-            text = await _collect_validated_turn(
-                manager,
-                task.context_id,
-                prompt,
-                output_contract,
-                max_output_bytes=max_output_bytes,
-                provenance=provenance,
-            )
-            chunks.append(text)
-            if text:
+            with task_execution_scope(task_context):
+                text = await _collect_validated_turn(
+                    manager,
+                    task.context_id,
+                    prompt,
+                    output_contract,
+                    max_output_bytes=max_output_bytes,
+                    provenance=provenance,
+                )
+            if text and task_context.interruption_status is None:
+                await writer.write_strict_json(text)
                 yield _artifact_update(
                     task,
                     artifact_id=artifact_id,
@@ -830,40 +1288,81 @@ async def _stream_task_events(
                 )
                 emitted = True
         else:
-            async for event in manager.prompt(task.context_id, prompt, provenance=provenance):
-                value = _event_text(event.type, event.data, has_chunks=bool(chunks))
-                if not value:
-                    continue
-                output_bytes = _append_bounded(
-                    chunks,
-                    value,
-                    current_bytes=output_bytes,
-                    max_output_bytes=max_output_bytes,
-                )
-                yield _artifact_update(
-                    task,
-                    artifact_id=artifact_id,
-                    part={"text": value},
-                    append=emitted,
-                    last_chunk=False,
-                )
-                emitted = True
-
-        text = "".join(chunks).strip()
+            accumulator = _TurnAccumulator(max_output_bytes=max_output_bytes)
+            with task_execution_scope(task_context):
+                async for event in manager.prompt(task.context_id, prompt, provenance=provenance):
+                    await writer.ensure_not_canceled()
+                    accumulator.consume(event)
+                    if event.type not in {"text_delta", "text-delta"}:
+                        continue
+                    value = _event_text(
+                        event.type,
+                        event.data,
+                        has_chunks=bool(accumulator.delta_chunks[:-1]),
+                    )
+                    if not value:
+                        continue
+                    await writer.append_text(value)
+                    yield _artifact_update(
+                        task,
+                        artifact_id=artifact_id,
+                        part={"text": value},
+                        append=emitted,
+                        last_chunk=False,
+                    )
+                    emitted = True
+            if task_context.interruption_status is None:
+                text = accumulator.result()
+                if not accumulator.delta_chunks:
+                    await writer.append_text(text)
+                    yield _artifact_update(
+                        task,
+                        artifact_id=artifact_id,
+                        part={"text": text},
+                        append=False,
+                        last_chunk=False,
+                    )
+                    emitted = True
+        if task_context.interruption_status is not None:
+            await writer.flush()
+            await writer.ensure_not_canceled(force=True)
+            interrupted = await _settle_claimed_task(
+                client,
+                manager,
+                task,
+                claim,
+                status=task_context.interruption_status,
+                status_message=task_context.interruption_message,
+            )
+            yield {"task": _task_payload(interrupted)}
+            return
+        if not output_contract.enabled:
+            await writer.flush(final=True)
         message = _agent_message(
             context_id=task.context_id,
             text=text,
             strict_json=output_contract.enabled,
         )
-        await client.add_task_message(
-            task.uid,
+        await writer.ensure_not_canceled(force=True)
+        await _add_claimed_task_message(
+            client,
+            manager,
+            task,
+            claim,
             {
                 "message_id": message["messageId"],
                 "role": "agent",
                 "parts": message["parts"],
             },
         )
-        completed = await client.update_task_status(task.uid, status="completed")
+        await writer.ensure_not_canceled(force=True)
+        completed = await _settle_claimed_task(
+            client,
+            manager,
+            task,
+            claim,
+            status="completed",
+        )
         if emitted and not output_contract.enabled:
             yield _artifact_update(
                 task,
@@ -873,16 +1372,44 @@ async def _stream_task_events(
                 last_chunk=True,
             )
         yield {"task": _task_payload(completed), "final": True}
+    except _TaskCancellationRequested as cancellation:
+        canceled = cancellation.task
+        if canceled.status != "canceled":
+            canceled = await _settle_claimed_task(
+                client,
+                manager,
+                task,
+                claim,
+                status="canceled",
+            )
+        yield {"task": _task_payload(canceled), "final": True}
     except asyncio.CancelledError:
-        await manager.cancel(task.context_id)
-        await client.cancel_task(task.uid)
+        if not manager.draining:
+            with contextlib.suppress(Exception):
+                current = await client.get_task(task.uid)
+                if current.cancellation_requested and current.status not in TERMINAL:
+                    await _settle_claimed_task(
+                        client,
+                        manager,
+                        task,
+                        claim,
+                        status="canceled",
+                    )
+        raise
+    except (BackendError, LeaseLostError):
         raise
     except Exception as error:
-        await client.update_task_status(
-            task.uid,
-            status="failed",
-            status_message={"message": str(error)},
-        )
+        with contextlib.suppress(Exception):
+            await _settle_claimed_task(
+                client,
+                manager,
+                task,
+                claim,
+                status="failed",
+                status_message={"message": "Task execution failed"},
+                failure_category="execution",
+                detail=type(error).__name__,
+            )
         raise
 
 
@@ -910,6 +1437,7 @@ def _message_stream_response(
     output_contract: StrictJsonContract,
     max_output_bytes: int,
     provenance: TurnProvenance,
+    config: Settings | None = None,
     json_rpc: bool = False,
     request_id: object = None,
 ) -> StreamingResponse:
@@ -923,6 +1451,7 @@ def _message_stream_response(
                 output_contract=output_contract,
                 max_output_bytes=max_output_bytes,
                 provenance=provenance,
+                config=config,
             ):
                 yield _sse(
                     _stream_payload(
@@ -934,6 +1463,9 @@ def _message_stream_response(
             manager.mark_response_delivered(task.context_id)
         except asyncio.CancelledError:
             await manager.cancel(task.context_id)
+            if not manager.draining:
+                with contextlib.suppress(Exception):
+                    await manager.evict(task.context_id)
             raise
         except Exception as error:
             payload = {
@@ -1000,9 +1532,311 @@ def _existing_task_stream_response(
     )
 
 
+def _status_update(task: AgentTask) -> dict[str, Any]:
+    payload = _task_payload(task)
+    return {
+        "statusUpdate": {
+            "taskId": task.task_id,
+            "contextId": task.context_id,
+            "status": payload["status"],
+            "final": task.status in TERMINAL,
+        }
+    }
+
+
+def _artifact_update_from_event(task: AgentTask, payload: dict[str, Any]) -> dict[str, Any]:
+    artifact_id = str(payload.get("artifact_id") or payload.get("artifactId") or "")
+    return {
+        "artifactUpdate": {
+            "taskId": task.task_id,
+            "contextId": task.context_id,
+            "artifact": {
+                "artifactId": artifact_id,
+                "name": str(payload.get("name") or ""),
+                "parts": payload.get("parts") or [],
+                "metadata": payload.get("metadata") or {},
+            },
+            "append": bool(payload.get("append", False)),
+            "lastChunk": bool(payload.get("lastChunk", payload.get("last_chunk", False))),
+        }
+    }
+
+
+async def _task_subscription_events(
+    *,
+    client: MainSequenceClient,
+    snapshot: AgentTaskSnapshot,
+    poll_interval_seconds: float,
+    after_sequence: int | None = None,
+) -> AsyncIterator[dict[str, Any]]:
+    task = snapshot.task
+    cursor = snapshot.event_cursor if after_sequence is None else max(0, after_sequence)
+    yield {"task": _task_payload(task), "eventCursor": cursor}
+    while True:
+        page = await client.list_task_events(
+            task.uid,
+            after_sequence=cursor,
+            limit=100,
+        )
+        for event in page.events:
+            if event.event_type in {"output_added", "output_updated"}:
+                payload = _artifact_update_from_event(task, event.payload)
+            elif event.event_type == "status_changed":
+                task = (await client.get_task_snapshot(task.uid)).task
+                payload = _status_update(task)
+            else:
+                cursor = event.sequence
+                continue
+            payload["eventCursor"] = event.sequence
+            yield payload
+            cursor = event.sequence
+            if task.status in TERMINAL:
+                return
+        if page.events:
+            cursor = max(cursor, page.next_cursor)
+        if page.has_more:
+            continue
+        latest = await client.get_task_snapshot(task.uid)
+        task = latest.task
+        if task.status in TERMINAL:
+            payload = _status_update(task)
+            payload["eventCursor"] = latest.event_cursor
+            yield payload
+            return
+        await asyncio.sleep(poll_interval_seconds)
+
+
+def _task_subscription_response(
+    *,
+    client: MainSequenceClient,
+    snapshot: AgentTaskSnapshot,
+    poll_interval_seconds: float,
+    after_sequence: int | None = None,
+    json_rpc: bool = False,
+    request_id: object = None,
+) -> StreamingResponse:
+    async def stream() -> AsyncIterator[bytes]:
+        async for payload in _task_subscription_events(
+            client=client,
+            snapshot=snapshot,
+            poll_interval_seconds=poll_interval_seconds,
+            after_sequence=after_sequence,
+        ):
+            yield _sse(
+                _stream_payload(
+                    payload,
+                    json_rpc=json_rpc,
+                    request_id=request_id,
+                )
+            )
+
+    return StreamingResponse(
+        stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 def _task_id(body: dict[str, Any]) -> str:
     value = body.get("taskId")
     return str(value).strip() if value else str(uuid.uuid4())
+
+
+def _durable_task_execution_input(
+    task: AgentTask,
+    config: Settings,
+) -> tuple[str, StrictJsonContract, TurnProvenance]:
+    message = task.latest_message or {}
+    if message.get("role") != "user" or not isinstance(message.get("parts"), list):
+        raise HTTPException(
+            status_code=409,
+            detail="Durable Task dispatch has no executable requester Message",
+        )
+    body = {
+        "message": {
+            "messageId": str(message.get("message_id") or message.get("messageId") or ""),
+            "role": "ROLE_REQUESTER",
+            "contextId": task.context_id,
+            "parts": message["parts"],
+            "metadata": message.get("metadata") or {},
+            "extensions": message.get("extensions") or [],
+        }
+    }
+    _normalized, prompt = _request_parts(body, config)
+    execution = task.metadata.get("execution", {})
+    raw_contract = execution.get("output_contract", {}) if isinstance(execution, dict) else {}
+    mode = str(raw_contract.get("mode") or "none")
+    if mode not in {"none", "json", "json_object", "json_schema"}:
+        raise HTTPException(status_code=409, detail="Durable Task output contract is invalid")
+    contract = StrictJsonContract(
+        mode=mode,  # type: ignore[arg-type]
+        schema=(
+            raw_contract.get("schema")
+            if isinstance(raw_contract.get("schema"), dict)
+            else None
+        ),
+        repair_attempts=max(0, min(int(raw_contract.get("repair_attempts", 3)), 10)),
+    )
+    raw_provenance = execution.get("provenance", {}) if isinstance(execution, dict) else {}
+    provenance: TurnProvenance = {
+        str(key): str(value)
+        for key, value in raw_provenance.items()
+        if isinstance(key, str) and isinstance(value, str)
+    }
+    if not provenance:
+        provenance = {"channel": "a2a", "origin": "agent", "actorKind": "agent"}
+    return prompt, contract, provenance
+
+
+@router.post("/internal/a2a/dispatches:available", status_code=202)
+async def task_dispatch_available(
+    body: dict[str, Any],
+    client: BackendDep,
+    manager: RuntimeManagerDep,
+    config: SettingsDep,
+) -> dict[str, Any]:
+    """Handle the bounded post-wake hint; the backend claim is the authority."""
+
+    task_uid = str(body.get("taskUid") or "").strip()
+    dispatch_uid = str(body.get("dispatchUid") or "").strip()
+    if not task_uid or not dispatch_uid:
+        raise HTTPException(status_code=400, detail="taskUid and dispatchUid are required")
+    task = await client.get_task(task_uid)
+    if task.status != "submitted":
+        return {"accepted": True, "scheduled": False, "taskUid": task.uid}
+    prompt, output_contract, provenance = _durable_task_execution_input(task, config)
+    claim = await _claim_backend_task(
+        client,
+        manager,
+        task,
+        dispatch_uid=dispatch_uid,
+    )
+    _execution, scheduled = manager.create_a2a_task_execution(
+        task.uid,
+        _execute_task(
+            client,
+            manager,
+            task,
+            prompt=prompt,
+            output_contract=output_contract,
+            max_output_bytes=config.max_turn_output_bytes,
+            provenance=provenance,
+            config=config,
+            claim=claim,
+        ),
+        name=f"a2a-task-{task.task_id}",
+    )
+    return {"accepted": True, "scheduled": scheduled, "taskUid": task.uid}
+
+
+async def _resume_caller_delivery(
+    *,
+    client: MainSequenceClient,
+    manager: SessionRuntimeManager,
+    delivery: AgentTaskCallerDelivery,
+    holder_id: str,
+) -> None:
+    event_payload: dict[str, JSONValue] = {
+        "deliveryUid": delivery.uid,
+        "taskUid": delivery.task_uid,
+        "taskId": delivery.task_id,
+        "state": delivery.task_status,
+        "eventCursor": delivery.triggering_event_sequence,
+    }
+    prompt = (
+        "A delegated asynchronous A2A Task has new actionable state. "
+        f"Task {delivery.task_id} is {delivery.task_status}. "
+        "Use the Main Sequence A2A get/wait tools with the Task UID in the attached "
+        "platform event, then continue the original work."
+    )
+    try:
+        async for _event in manager.prompt(
+            delivery.caller_agent_session_uid,
+            prompt,
+            provenance={
+                "channel": "a2a",
+                "origin": "agent",
+                "actorKind": "platform",
+                "actorUid": "mainsequence",
+            },
+            platform_event=("io.mainsequence.a2a.task-delivery/v1", event_payload),
+        ):
+            pass
+        manager.mark_response_delivered(delivery.caller_agent_session_uid)
+        fence = await manager.task_execution_fence(delivery.caller_agent_session_uid)
+        if fence.holder_id != holder_id:
+            raise LeaseLostError(
+                f"Caller delivery lease holder changed for delivery {delivery.uid}"
+            )
+        await client.settle_task_caller_delivery(
+            delivery.uid,
+            holder_id=fence.holder_id,
+            lease_token=fence.lease_token,
+            outcome="delivered",
+        )
+    except asyncio.CancelledError:
+        raise
+    except (BackendError, LeaseLostError):
+        raise
+    except Exception as error:
+        with contextlib.suppress(Exception):
+            fence = await manager.task_execution_fence(
+                delivery.caller_agent_session_uid
+            )
+            if fence.holder_id == holder_id:
+                await client.settle_task_caller_delivery(
+                    delivery.uid,
+                    holder_id=fence.holder_id,
+                    lease_token=fence.lease_token,
+                    outcome="failed",
+                    detail=type(error).__name__,
+                )
+        raise
+
+
+@router.post("/internal/a2a/caller-deliveries:available", status_code=202)
+async def task_caller_delivery_available(
+    body: dict[str, Any],
+    client: BackendDep,
+    manager: RuntimeManagerDep,
+) -> dict[str, Any]:
+    delivery_uid = str(body.get("deliveryUid") or "").strip()
+    if not delivery_uid:
+        raise HTTPException(status_code=400, detail="deliveryUid is required")
+    delivery = await client.get_task_caller_delivery(delivery_uid)
+    if delivery.state == "delivered":
+        return {"accepted": True, "scheduled": False, "deliveryUid": delivery.uid}
+    if manager.session_turn_active(delivery.caller_agent_session_uid):
+        return {
+            "accepted": True,
+            "scheduled": False,
+            "queued": True,
+            "deliveryUid": delivery.uid,
+        }
+    fence = await manager.task_execution_fence(delivery.caller_agent_session_uid)
+    delivery = await client.claim_task_caller_delivery(
+        delivery.uid,
+        holder_id=fence.holder_id,
+        lease_token=fence.lease_token,
+    )
+    _execution, scheduled = manager.create_a2a_caller_delivery(
+        delivery.uid,
+        _resume_caller_delivery(
+            client=client,
+            manager=manager,
+            delivery=delivery,
+            holder_id=fence.holder_id,
+        ),
+        name=f"a2a-caller-delivery-{delivery.uid}",
+    )
+    return {
+        "accepted": True,
+        "scheduled": scheduled,
+        "deliveryUid": delivery.uid,
+    }
 
 
 @router.post(f"{REST_BASE}/message:send")
@@ -1029,7 +1863,7 @@ async def message_send(
         task_id=body.get("taskId"),
     )
     output_contract = _output_contract(body)
-    response_kind, was_explicit = _response_kind(
+    response_kind, was_explicit, return_immediately = _response_kind(
         body,
         a2a_extensions=a2a_extensions,
     )
@@ -1039,26 +1873,76 @@ async def message_send(
             context_id=str(message["contextId"]),
             response_kind=response_kind,
         )
+    continuation_task_id = str(message.get("taskId") or "").strip()
+    if continuation_task_id:
+        if response_kind is not ResponseKind.TASK:
+            raise HTTPException(
+                status_code=400,
+                detail="A Task continuation requires configuration.responseKind 'task'",
+            )
+        existing_task = await client.get_task_by_protocol_id(continuation_task_id)
+        task = await client.continue_task(
+            existing_task.uid,
+            {
+                "message_id": message["messageId"],
+                "role": "user",
+                "parts": message["parts"],
+                "metadata": message.get("metadata", {}),
+                "extensions": message.get("extensions", []),
+                "reference_task_ids": message.get("referenceTaskIds", []),
+            },
+        )
+        await _schedule_task_accelerator(
+            client,
+            manager,
+            task,
+            prompt=prompt,
+            output_contract=output_contract,
+            max_output_bytes=config.max_turn_output_bytes,
+            provenance=provenance,
+            config=config,
+        )
+        if return_immediately:
+            return {"task": _task_payload(task)}
+        task = await _wait_for_task_return_state(
+            client,
+            task,
+            poll_interval_seconds=config.a2a_task_event_poll_interval_seconds,
+        )
+        return {"task": _task_payload(task)}
     if response_kind is ResponseKind.TASK:
         creation = await _create_backend_task(
             client,
             message=message,
             task_id=_task_id(body),
+            output_contract=output_contract,
+            provenance=provenance,
         )
         task = creation.task
         if creation.created:
-            manager.create_background_task(
-                _execute_task(
-                    client,
-                    manager,
-                    task,
-                    prompt=prompt,
-                    output_contract=output_contract,
-                    max_output_bytes=config.max_turn_output_bytes,
-                    provenance=provenance,
-                ),
-                name=f"a2a-task-{task.task_id}",
-                operation_uid=task.uid,
+            await _schedule_task_accelerator(
+                client,
+                manager,
+                task,
+                prompt=prompt,
+                output_contract=output_contract,
+                max_output_bytes=config.max_turn_output_bytes,
+                provenance=provenance,
+                config=config,
+            )
+            if return_immediately:
+                return {"task": _task_payload(task)}
+            task = await _wait_for_task_return_state(
+                client,
+                task,
+                poll_interval_seconds=config.a2a_task_event_poll_interval_seconds,
+            )
+            return {"task": _task_payload(task)}
+        if not return_immediately and task.status not in TASK_RETURN_STATES:
+            task = await _wait_for_task_return_state(
+                client,
+                task,
+                poll_interval_seconds=config.a2a_task_event_poll_interval_seconds,
             )
         return {"task": _task_payload(task)}
     result = await _execute_message(
@@ -1106,6 +1990,8 @@ async def message_stream(
         client,
         message=message,
         task_id=_task_id(body),
+        output_contract=output_contract,
+        provenance=provenance,
     )
     task = creation.task
     if not creation.created:
@@ -1118,6 +2004,7 @@ async def message_stream(
         output_contract=output_contract,
         max_output_bytes=config.max_turn_output_bytes,
         provenance=provenance,
+        config=config,
     )
 
 
@@ -1138,21 +2025,24 @@ async def cancel_task(
     return {"task": _task_payload(await client.cancel_task(task.uid))}
 
 
-@router.get(f"{REST_BASE}/tasks/{{task_id}}:subscribe")
-async def subscribe_task(task_id: str, client: BackendDep) -> StreamingResponse:
-    async def stream() -> AsyncIterator[bytes]:
-        previous: tuple[str, str] | None = None
-        while True:
-            task = await client.get_task_by_protocol_id(task_id)
-            marker = (task.status, str(task.status_timestamp))
-            if marker != previous:
-                yield _sse({"task": _task_payload(task)})
-                previous = marker
-            if task.status in TERMINAL:
-                break
-            await asyncio.sleep(1)
-
-    return StreamingResponse(stream(), media_type="text/event-stream")
+@router.get(f"{REST_BASE}/tasks/{{task_id}}:subscribe", response_model=None)
+async def subscribe_task(
+    task_id: str,
+    client: BackendDep,
+    config: SettingsDep,
+    after_sequence: int | None = Query(default=None, alias="afterSequence", ge=0),
+) -> StreamingResponse | JSONResponse:
+    snapshot = await client.get_task_snapshot_by_protocol_id(task_id)
+    if snapshot.task.status in TERMINAL:
+        return _unsupported_operation_rest_error(
+            "SubscribeToTask is unavailable for a terminal Task; use GetTask."
+        )
+    return _task_subscription_response(
+        client=client,
+        snapshot=snapshot,
+        poll_interval_seconds=config.a2a_task_event_poll_interval_seconds,
+        after_sequence=after_sequence,
+    )
 
 
 @router.get(f"{REST_BASE}/tasks/{{task_id}}")
@@ -1220,7 +2110,13 @@ async def json_rpc(
         request,
         method=method or "invalid",
         request_id=request_id,
-        streaming=method in {"SendStreamingMessage", "message/stream"},
+        streaming=method
+        in {
+            "SendStreamingMessage",
+            "message/stream",
+            "SubscribeToTask",
+            "tasks/subscribe",
+        },
     )
     if body.get("jsonrpc") != "2.0":
         return {
@@ -1281,6 +2177,8 @@ async def json_rpc(
                 client,
                 message=message,
                 task_id=_task_id(params),
+                output_contract=output_contract,
+                provenance=provenance,
             )
             task = creation.task
             if not creation.created:
@@ -1299,6 +2197,7 @@ async def json_rpc(
                 output_contract=output_contract,
                 max_output_bytes=config.max_turn_output_bytes,
                 provenance=provenance,
+                config=config,
                 json_rpc=True,
                 request_id=request_id,
             )
@@ -1312,6 +2211,30 @@ async def json_rpc(
                 task_id(),
                 client,
                 manager,
+            )
+        elif method in {"SubscribeToTask", "tasks/subscribe"}:
+            snapshot = await client.get_task_snapshot_by_protocol_id(task_id())
+            if snapshot.task.status in TERMINAL:
+                return _unsupported_operation_json_rpc_error(
+                    request_id,
+                    "SubscribeToTask is unavailable for a terminal Task; use GetTask.",
+                )
+            after_sequence_value = params.get("afterSequence")
+            if after_sequence_value is not None:
+                try:
+                    after_sequence_value = max(0, int(after_sequence_value))
+                except (TypeError, ValueError) as error:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="afterSequence must be a non-negative integer",
+                    ) from error
+            return _task_subscription_response(
+                client=client,
+                snapshot=snapshot,
+                poll_interval_seconds=config.a2a_task_event_poll_interval_seconds,
+                after_sequence=after_sequence_value,
+                json_rpc=True,
+                request_id=request_id,
             )
         else:
             return {

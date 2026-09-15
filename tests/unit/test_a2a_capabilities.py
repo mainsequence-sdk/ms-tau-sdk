@@ -1,4 +1,5 @@
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -21,6 +22,7 @@ from astro.backend.models import (
     AgentSession,
     AgentTask,
     AgentTaskCreateResult,
+    AgentTaskExecutionAttempt,
 )
 from astro.runtime.events import AstroRuntimeEvent
 from astro.settings import Settings
@@ -208,9 +210,23 @@ async def test_a2a_stream_emits_incremental_artifact_and_final_task():
     working = task.model_copy(update={"status": "working"})
     completed = task.model_copy(update={"status": "completed"})
     client = AsyncMock()
-    client.update_task_status.side_effect = [working, completed]
+    client.claim_task_dispatch.return_value = AgentTaskExecutionAttempt(
+        uid="attempt-1",
+        dispatch_uid="dispatch-1",
+        attempt_number=1,
+        state="running",
+    )
+    client.get_task.return_value = working
+    client.mutate_task_output.side_effect = [{"revision": 1}, {"revision": 2}]
+    client.settle_task_attempt.return_value = completed
 
     class Manager:
+        draining = False
+        settings = Settings(_env_file=None)
+
+        async def task_execution_fence(self, _context_id):
+            return SimpleNamespace(holder_id="holder-1", lease_token="lease-1")
+
         async def prompt(self, _context_id, _prompt, *, provenance=None):
             yield AstroRuntimeEvent(
                 type="text_delta",
@@ -245,4 +261,11 @@ async def test_a2a_stream_emits_incremental_artifact_and_final_task():
     ]
     assert events[-1]["final"] is True
     assert events[-1]["task"]["status"]["state"] == "TASK_STATE_COMPLETED"
-    client.add_task_message.assert_awaited_once()
+    client.add_task_attempt_message.assert_awaited_once()
+    client.settle_task_attempt.assert_awaited_once_with(
+        task.uid,
+        attempt_uid="attempt-1",
+        holder_id="holder-1",
+        lease_token="lease-1",
+        status="completed",
+    )

@@ -148,6 +148,24 @@ class Settings(BaseSettings):
         gt=0,
         validation_alias="ASTRO_MAX_TURN_OUTPUT_BYTES",
     )
+    a2a_task_output_flush_interval_ms: int = Field(
+        default=200,
+        ge=25,
+        le=5000,
+        validation_alias="ASTRO_A2A_TASK_OUTPUT_FLUSH_INTERVAL_MS",
+    )
+    a2a_task_output_flush_bytes: int = Field(
+        default=8 * 1024,
+        ge=256,
+        le=1024 * 1024,
+        validation_alias="ASTRO_A2A_TASK_OUTPUT_FLUSH_BYTES",
+    )
+    a2a_task_event_poll_interval_seconds: float = Field(
+        default=0.5,
+        ge=0.05,
+        le=10,
+        validation_alias="ASTRO_A2A_TASK_EVENT_POLL_SECONDS",
+    )
     runtime_lease_ttl_seconds: int = Field(
         default=90,
         ge=10,
