@@ -1,159 +1,77 @@
-# Astro
+# Main Sequence TAU SDK
 
-Astro is Main Sequence's Python 3.13 agent service built on
-[Hugging Face Tau](https://github.com/huggingface/tau). It exposes durable
-Assistant UI chat, agent-targeted sessionless responses, and standard A2A transports.
+Main Sequence TAU SDK is the Python library that supplies the prepackaged Tau and Main Sequence
+integration used by a normal project repository. The target distribution is `ms-tau-sdk`, the
+import namespace is `ms_tau_sdk`, and the command is `ms-tau`.
 
-Astro is container-only. Do not run a second host Python or Node runtime.
+This repository does not publish or own a runtime image. It contains no Dockerfile, Compose stack,
+Kubernetes manifest, executor bundle, remote-worker overlay, or image-publication pipeline. A
+consuming project declares and locks the SDK and owns its resulting deployable artifact.
 
-## Runtime
+## Migration Status
 
-- Python `>=3.13`
-- Tau `0.3.1`
-- FastAPI/Uvicorn on port `8787`
-- Django backend on `MAINSEQUENCE_BACKEND`
-- Main Sequence MCP automatically loaded from `{MAINSEQUENCE_BACKEND}/mcp`
-- Native Tau session entries persisted by Django
-- One process and one Python environment
-- Hash-locked runtime wheelhouse generated from `uv.lock`
-- No Node.js, Pi runtime, JSONL checkpoint, or checkpoint sidecar
+The implementation is being moved from the former Astro package under
+[ADR 56](./docs/adrs/adr-56-main-sequence-tau-sdk-workspace-bound-library-deployment.md). During the
+bounded extraction phases, the source still uses the temporary `mainsequence-astro`, `astro`, and
+`astro-stream` names. They are not public compatibility promises for the new SDK.
 
-## Required Environment
+Current migration evidence and phase status live in the
+[ADR 56 migration workspace](./docs/migration/adr-56/README.md).
 
-```dotenv
-MAINSEQUENCE_BACKEND=http://api.main-sequence.app:8000
-MAINSEQUENCE_AUTH_MODE=runtime_credential
-MAINSEQUENCE_RUNTIME_CREDENTIAL_ID=replace-with-coding-agent-service-credential-id
-MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET=replace-with-coding-agent-service-credential-secret
-```
+## SDK Responsibilities
 
-The runtime credential pair is required because Astro authenticates every
-session, task, provider credential, lease request, and MCP call to Django.
-It must belong to the deployed coding-agent service; organization-test and
-code repository runtime credentials are not valid for MCP.
-Provider API keys remain backend-owned and are hydrated for the exact session
-or Agent execution identity.
+The SDK provides:
 
-For a CodeRepository Executor deployment, Django derives Agent discovery scope from
-the authenticated service credential and the service's persisted
-CodeRepositoryBranch. Astro sends no Environment selector and hides that selector from
-Tau. One Astro CodeRepository Executor deployment serves exactly that one Environment;
-users and code repository code do not select or switch it.
+- FastAPI application construction and lifecycle;
+- Main Sequence runtime-credential exchange and backend access;
+- provider validation and credential hydration;
+- durable Tau sessions, leases, restore, persistence, cancellation, eviction, and shutdown;
+- sessionless Tau execution;
+- chat, responses, SSE, A2A, health, and readiness transports;
+- Main Sequence MCP and protocol-required task controls; and
+- packaged Tau defaults integrated with Tau's normal project configuration.
 
-See [`.env.example`](./.env.example) for the complete service configuration.
+The consuming project owns its dependency lock, source and system dependencies, `.tau` overrides,
+skills, prompts, hooks, extensions, and extension dependencies. Project code and the SDK execute in
+the same trust boundary.
 
-## CodeRepository Tau Extensions
+## Development
 
-The CodeRepository Executor image enables Tau-native project extensions from
-`/workspace/.tau/extensions`. Generic Astro deployments keep project extension discovery disabled.
-The deployment flag is `ASTRO_CODE_REPOSITORY_EXTENSIONS_ENABLED`; it is runtime-owned and cannot
-be changed by a chat or A2A request.
-
-An extension may be a Python file, a directory containing `extension.py`, or an entry declared by
-`[tool.tau]` in a directory's `pyproject.toml`. Its synchronous `setup(tau)` function registers
-structured tools and hooks through Tau's `ExtensionAPI`. Keep domain behavior in normal project
-modules and make the extension a thin adapter, so the same implementation can also back a CLI.
-
-The executor sets `PYTHONPATH=/workspace/src:/workspace`, so directory extensions can use relative
-imports and can import both `src`-layout packages and flat project modules. See
-[ADR 52](./docs/adrs/adr-52-enable-repository-tau-extensions-in-code-executors.md) for a complete
-layout and tool example.
-
-## Container Startup
-
-The Compose build context is the Astro repository. Astro ships Tau's core
-`read`, `write`, `edit`, and `bash` tools, Main Sequence MCP tools, and the
-protocol-required A2A task controls. Optional tools belong to CodeRepository
-`.tau/extensions` and their project image dependencies.
-
-`uv.lock` is the source dependency lock. `requirements-runtime.lock` is its
-hash-locked export used to build an offline wheelhouse for the runtime and
-code-repository-executor images.
+The repository currently requires Python 3.13 and `uv`:
 
 ```bash
-docker compose up --build astro
+uv sync --frozen
+uv run pytest
+uv run ruff check .
+uv run mypy
 ```
 
-Compose always runs Astro in the container and points it at Django on host port
-`8000` by default:
-
-```text
-http://api.main-sequence.app:8000
-```
-
-Override `ASTRO_CODE_REPOSITORY_PATH` when the mounted code repository is not the Astro checkout.
-
-Verify a built image's Python environment, core runtime, Node absence, and
-health endpoints with:
+Until Phase C3 introduces `ms-tau`, the current application can be exercised from the checkout with
+the temporary command:
 
 ```bash
-./scripts/verify-runtime-image.sh astro:tau
+export MAINSEQUENCE_BACKEND="https://api.main-sequence.app"
+export MAINSEQUENCE_RUNTIME_CREDENTIAL_ID="<development-runtime-credential-id>"
+export MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET="<redeemed-once-secret>"
+
+uv run astro-stream
 ```
 
-## Real Conversation Verification
+Runtime credentials are exchanged for short-lived Main Sequence access tokens. Secrets must not be
+committed to the repository or placed in `.tau` configuration.
 
-The opt-in test builds and starts Astro through local Compose, proves the HTTP
-response came from that container, executes two real provider turns, verifies
-SSE ordering and UX latency budgets, restarts the container, and proves that
-the same conversation resumes from Django-persisted Tau entries:
+## Target Project Usage
+
+A project will declare and lock the SDK as a normal dependency:
 
 ```bash
-ASTRO_REAL_CONVERSATION_SESSION_UID=<existing-tau-session-uid> \
-  uv run pytest tests/e2e/test_real_conversation.py -q -s
+uv add ms-tau-sdk
+uv run ms-tau
 ```
 
-The test requires a backend-owned Tau AgentSession that belongs to the runtime
-credential configured in `.env`. It records container startup, response
-headers, first SSE event, time to first text, maximum SSE event gap, output
-streaming, finish, durability, total-turn, restart, and resumed-turn timings in
-`.astro/test-results/real-conversation-timing.json`.
+The command runs from the project workspace. SDK-packaged Tau defaults are resolved with the
+project's normal `.tau` configuration, including any project-owned extensions. There is no second
+Main Sequence prompt or extension configuration system.
 
-The default UX gates are 0.25 seconds for response headers, 0.5 seconds for the
-truthful lifecycle event, 15 seconds for first text, 10 seconds for the maximum
-SSE gap, 45 seconds for a complete turn, 2 seconds for durability after
-`finish`, and 10 seconds for restart-to-ready. The 2-second durability ceiling
-is for the main-orchestrator development profile, where local Django reaches
-the development database through a host proxy; ADR 49 retains a 1-second
-co-located target. Override gates with the corresponding
-`ASTRO_REAL_CONVERSATION_MAX_*_SECONDS` variables or change the report path
-with `ASTRO_REAL_CONVERSATION_REPORT_PATH`.
-
-## Public APIs
-
-- `GET /health`
-- `GET /ready`
-- `GET /version`
-- `POST /api/chat`
-- `GET /api/chat/session-model`
-- `POST /api/chat/session/cancel`
-- `POST /api/agents/{agent_uid}/responses`
-- `POST /api/agents/{agent_uid}/responses/stream`
-- `POST /api/a2a/v1/message:send`
-- `POST /api/a2a/v1/message:stream`
-- `GET /api/a2a/v1/tasks`
-- `POST /api/a2a/rpc`
-
-The unscoped LLM chat surface is not exposed. Agent identity is mandatory for
-all one-shot model execution.
-
-Provider catalog, sign-in, attempt, revoke, credential-status, and session
-model-selection operations are canonical Django APIs. Astro exposes no proxy
-or compatibility routes for those control-plane operations.
-
-FastAPI publishes the full schema at `/docs` and `/openapi.json`.
-
-## Repository Layout
-
-```text
-astro/
-├── src/astro/
-├── tests/
-├── deployment/
-├── Dockerfile
-├── Dockerfile.remote-worker
-└── pyproject.toml
-```
-
-Astro intentionally contains no optional file-search, web-access, or
-model-facing runtime-information package. Projects add any such tools through
-Tau's repository extension contract.
+See the [source quickstart](./docs/getting-started/quickstart.md) and
+[documentation index](./docs/README.md).

@@ -1,7 +1,7 @@
 # Folder Structure
 
 ```text
-astro/
+main-sequence-tau-sdk/
 ├── src/astro/
 │   ├── api/
 │   │   ├── a2a.py
@@ -39,16 +39,17 @@ astro/
 │   ├── app.py
 │   └── settings.py
 ├── tests/
-├── deployment/
-├── Dockerfile
-├── Dockerfile.remote-worker
-├── docker-compose.yml
+├── docs/
 └── pyproject.toml
 ```
 
-Astro ships no optional model-tool distributions. Tau provides the core coding
-tools, Astro projects backend MCP and A2A protocol tools, and CodeRepositories
-own optional tools through `.tau/extensions` and their image dependencies.
+The source tree remains `src/astro` only during the bounded extraction phases. Phase C3 replaces it
+with `src/ms_tau_sdk`. This repository contains no Docker, Compose, Kubernetes, or image-publication
+assets.
+
+The SDK ships no optional model-tool distributions. Tau provides the core coding tools, the SDK
+projects backend MCP and A2A protocol tools, and CodeRepositories own optional tools through
+`.tau/extensions` and their project dependencies.
 
 Tau session history is backend-owned. There is no local session-state folder,
 Pi JSONL, shared checkpoint volume, or sidecar.

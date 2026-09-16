@@ -1,19 +1,27 @@
-# Container Quickstart
+# Source Quickstart During the SDK Migration
 
-Astro runs only as a container. The service requires a Python 3.13 image and does
-not install or launch Node.js.
+This repository is becoming the `ms-tau-sdk` Python library. It does not own a Docker image,
+Compose environment, Kubernetes manifest, or project deployment recipe.
 
-1. Create `.env` from `.env.example` and replace the runtime credential
-   placeholders.
-2. Ensure Django is reachable on host port `8000`.
-3. Start Astro:
+Until Phase C3 changes the package and command names, install and test the current source checkout:
 
 ```bash
-docker compose up --build astro
+uv sync --frozen
+uv run pytest
 ```
 
-Compose builds from the Astro repository root. It publishes Astro on port `8787` and points
-`MAINSEQUENCE_BACKEND` to `http://host.docker.internal:8000` by default.
+To exercise the current application locally, provide the Main Sequence backend and scoped runtime
+credential variables, then run the temporary compatibility command from the repository root:
+
+```bash
+uv run astro-stream
+```
+
+Phase C3 replaces that command with the project-installed SDK entrypoint:
+
+```bash
+uv run ms-tau
+```
 
 Check the service:
 
@@ -21,4 +29,5 @@ Check the service:
 curl http://localhost:8787/health
 ```
 
-Use `ASTRO_CODE_REPOSITORY_PATH` to mount a different code repository at `/workspace`.
+A consuming project owns its dependency lock, `.tau` configuration, operating-system dependencies,
+and deployable image. The SDK supplies the application and Tau/Main Sequence integration behavior.

@@ -1,6 +1,0 @@
-**
-!.python-version
-!pyproject.toml
-!requirements-runtime.lock
-!src/
-!src/**

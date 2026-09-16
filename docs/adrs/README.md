@@ -11,5 +11,6 @@ Active Astro architecture decisions live in this directory.
 - [ADR 53: Retire the Agent Capability Registry from Astro Tau](./adr-53-retire-agent-capability-registry.md)
 - [ADR 54: Durable Asynchronous A2A Task Lifecycle](./adr-54-durable-asynchronous-a2a-task-lifecycle.md)
 - [ADR 55: Minimize Astro's Bundled Tool Catalog](./adr-55-minimize-bundled-tool-catalog.md)
+- [ADR 56: Create the Workspace-Installed Main Sequence TAU SDK and Retire Astro](./adr-56-main-sequence-tau-sdk-workspace-bound-library-deployment.md)
 
 Earlier records under `docs/reference/` are retained as historical design context.

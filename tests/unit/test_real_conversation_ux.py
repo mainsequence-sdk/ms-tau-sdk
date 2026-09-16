@@ -61,10 +61,3 @@ def test_turn_budget_failures_name_every_exceeded_ux_measurement(monkeypatch):
         "turn.turn_total",
         "turn.durability",
     ]
-
-
-def test_container_identity_must_match_ready_holder():
-    conversation._assert_response_came_from_container(
-        {"holder_id": "abc123def456:runtime"},
-        {"container_id": "abc123def456"},
-    )
