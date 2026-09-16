@@ -10,7 +10,7 @@ from tau_coding.resources import TauResourcePaths
 
 from ms_tau_sdk.runtime.extensions import ProjectExtensionState
 
-FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures/project-extension-workspace"
+FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures/sdk-consumer-project"
 
 
 class _MemoryStorage:

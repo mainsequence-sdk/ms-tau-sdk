@@ -39,7 +39,7 @@ test module and fixture family in this repository; deleted image-only tests are 
 | `tests/unit/test_strict_json.py` | Portable contract | Preserve strict-JSON behavior if agent-response contract is re-adopted. |
 | `tests/unit/test_system_prompt_policy.py` | Replace with Tau configuration tests | Stop locking an Astro-only prompt injector; verify SDK defaults and native project override precedence. |
 | `tests/fixtures/a2a/` | Portable fixtures pending protocol audit | Version against reissued A2A decisions and generated OpenAPI/contract tests. |
-| `tests/fixtures/project-extension-workspace/` | Rewrite/expand | Turn into a clean installable fixture with Tau general configuration, skills, prompts, and extensions. |
+| `tests/fixtures/sdk-consumer-project/` | Rewritten SDK consumer fixture | Independent locked Python project with a minimal application shim, project Tau configuration, and project-owned extension. |
 | `tests/conftest.py` | Rewrite infrastructure | Remove implicit Astro import assumptions and support built-wheel/clean-project testing. |
 
 ## New Suites Required

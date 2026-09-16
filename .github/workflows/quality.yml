@@ -35,6 +35,13 @@ jobs:
         run: uv run ruff check src tests
       - name: Type check
         run: uv run mypy
+      - name: Verify locked SDK consumer project
+        working-directory: tests/fixtures/sdk-consumer-project
+        env:
+          MAINSEQUENCE_TAU_STARTUP_DEPENDENCIES_ENABLED: "false"
+        run: |
+          uv sync --frozen
+          uv run --frozen python -c 'from api.tau.main import app; assert app.title == "Main Sequence TAU SDK"'
       - name: Test with branch coverage
         run: >-
           uv run pytest

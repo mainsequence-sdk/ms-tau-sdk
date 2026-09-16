@@ -187,6 +187,49 @@ All checks passed!
 Success: no issues found in 49 source files
 ```
 
+### C4 gate
+
+`tests/fixtures/sdk-consumer-project` is an independent Python project with its own Python pin,
+`pyproject.toml`, and `uv.lock`. It declares `ms-tau-sdk==0.1.0`, installs the SDK into the project
+environment, exposes only this shim, and owns its `.tau` configuration and extension:
+
+```python
+from ms_tau_sdk import create_app
+
+app = create_app()
+```
+
+Gate evidence:
+
+```text
+uv sync --project tests/fixtures/sdk-consumer-project --frozen
+Installed ms-tau-sdk==0.1.0 and the fixture project
+
+uv run --frozen python -c <load api.tau.main>
+Main Sequence TAU SDK 0.1.0 <fixture workspace>
+
+fixture-native Tau discovery:
+extension_names = ("import_fixture",)
+custom_prompt_path = <fixture>/.tau/SYSTEM.md
+
+fixture .venv/bin/ms-tau
+GET /health: 200, runtime=tau, version=0.1.0
+SIGINT shutdown: clean
+
+.venv/bin/pytest -q
+268 passed, 1 skipped
+
+.venv/bin/ruff check src tests
+All checks passed!
+
+.venv/bin/mypy src/ms_tau_sdk
+Success: no issues found in 49 source files
+```
+
+The existing SDK contract suite supplies the auth-client, provider, durable/sessionless execution,
+MCP, transport, persistence, cancellation, and shutdown coverage; the consuming project writes no
+replacement integration layer for those capabilities.
+
 ## Current Runtime Characterization
 
 ### OpenAPI surface

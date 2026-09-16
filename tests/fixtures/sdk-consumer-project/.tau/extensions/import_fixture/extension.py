@@ -33,7 +33,7 @@ async def execute_fixture(
         "hooked": arguments.get("hooked") is True,
     }
     return AgentToolResult(
-        content=[TextContent(text="CodeRepository extension imports succeeded")],
+        content=[TextContent(text="Project extension imports succeeded")],
         details=details,
     )
 
@@ -43,7 +43,7 @@ def setup(tau) -> None:
         AgentTool(
             name="verify_project_imports",
             label="Verify Project Imports",
-            description="Verify CodeRepository source, flat, and extension-relative imports.",
+            description="Verify project source, flat, and extension-relative imports.",
             parameters={"type": "object", "properties": {}, "additionalProperties": False},
             execute_fn=execute_fixture,
         )
