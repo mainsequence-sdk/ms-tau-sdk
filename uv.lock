@@ -533,65 +533,6 @@ wheels = [
 ]
 
 [[package]]
-name = "mainsequence-astro"
-version = "4.0.25"
-source = { editable = "." }
-dependencies = [
-    { name = "anyio" },
-    { name = "fastapi" },
-    { name = "httpx" },
-    { name = "jsonschema" },
-    { name = "mcp" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "pypdf" },
-    { name = "python-multipart" },
-    { name = "structlog" },
-    { name = "tau-ai" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-cov" },
-    { name = "pytest-timeout" },
-    { name = "respx" },
-    { name = "ruff" },
-    { name = "types-jsonschema" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "anyio", specifier = ">=4.10" },
-    { name = "fastapi", specifier = ">=0.116" },
-    { name = "httpx", specifier = ">=0.28" },
-    { name = "jsonschema", specifier = ">=4.25,<5" },
-    { name = "mcp", specifier = ">=1.27,<2" },
-    { name = "pydantic", specifier = ">=2.11" },
-    { name = "pydantic-settings", specifier = ">=2.10" },
-    { name = "pypdf", specifier = ">=6.0,<7" },
-    { name = "python-multipart", specifier = ">=0.0.20" },
-    { name = "structlog", specifier = ">=26.1,<27" },
-    { name = "tau-ai", specifier = "==0.4.2" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.35" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "mypy", specifier = ">=1.17" },
-    { name = "pytest", specifier = ">=8.4" },
-    { name = "pytest-asyncio", specifier = ">=1.1" },
-    { name = "pytest-cov", specifier = ">=7.1.0" },
-    { name = "pytest-timeout", specifier = ">=2.4.0" },
-    { name = "respx", specifier = ">=0.22" },
-    { name = "ruff", specifier = ">=0.12" },
-    { name = "types-jsonschema", specifier = ">=4.26.0.20260518" },
-]
-
-[[package]]
 name = "markdown-it-py"
 version = "4.2.0"
 source = { registry = "https://pypi.org/simple" }
@@ -652,6 +593,65 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/d6/54/cfe61301667036ec958cb99bd3efefba235e65cdeb9c84d24a8293ba1d90/mdurl-0.1.2.tar.gz", hash = "sha256:bb413d29f5eea38f31dd4754dd7377d4465116fb207585f97bf925588687c1ba", size = 8729, upload-time = "2022-08-14T12:40:10.846Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b3/38/89ba8ad64ae25be8de66a6d463314cf1eb366222074cfda9ee839c56a4b4/mdurl-0.1.2-py3-none-any.whl", hash = "sha256:84008a41e51615a49fc9966191ff91509e3c40b939176e643fd50a5c2196b8f8", size = 9979, upload-time = "2022-08-14T12:40:09.779Z" },
+]
+
+[[package]]
+name = "ms-tau-sdk"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "anyio" },
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "jsonschema" },
+    { name = "mcp" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "pypdf" },
+    { name = "python-multipart" },
+    { name = "structlog" },
+    { name = "tau-ai" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-cov" },
+    { name = "pytest-timeout" },
+    { name = "respx" },
+    { name = "ruff" },
+    { name = "types-jsonschema" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "anyio", specifier = ">=4.10" },
+    { name = "fastapi", specifier = ">=0.116" },
+    { name = "httpx", specifier = ">=0.28" },
+    { name = "jsonschema", specifier = ">=4.25,<5" },
+    { name = "mcp", specifier = ">=1.27,<2" },
+    { name = "pydantic", specifier = ">=2.11" },
+    { name = "pydantic-settings", specifier = ">=2.10" },
+    { name = "pypdf", specifier = ">=6.0,<7" },
+    { name = "python-multipart", specifier = ">=0.0.20" },
+    { name = "structlog", specifier = ">=26.1,<27" },
+    { name = "tau-ai", specifier = "==0.4.2" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.35" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=1.17" },
+    { name = "pytest", specifier = ">=8.4" },
+    { name = "pytest-asyncio", specifier = ">=1.1" },
+    { name = "pytest-cov", specifier = ">=7.1.0" },
+    { name = "pytest-timeout", specifier = ">=2.4.0" },
+    { name = "respx", specifier = ">=0.22" },
+    { name = "ruff", specifier = ">=0.12" },
+    { name = "types-jsonschema", specifier = ">=4.26.0.20260518" },
 ]
 
 [[package]]

@@ -6,7 +6,7 @@
     "parts": [
       {
         "data": {
-          "summary": "Astro can coordinate Main Sequence agent work.",
+          "summary": "Main Sequence TAU SDK can coordinate Main Sequence agent work.",
           "capabilities": ["session-scoped execution", "structured A2A responses"]
         },
         "mediaType": "application/json"

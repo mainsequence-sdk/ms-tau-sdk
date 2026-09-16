@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock
 import pytest
 from pydantic import ValidationError
 
-from astro.api.models import CancelRequest
-from astro.api.sessions import cancel_session, session_model
-from astro.backend.models import AgentSession, RuntimeState, RuntimeStatePatch
+from ms_tau_sdk.api.models import CancelRequest
+from ms_tau_sdk.api.sessions import cancel_session, session_model
+from ms_tau_sdk.backend.models import AgentSession, RuntimeState, RuntimeStatePatch
 
 
 def test_runtime_state_patch_rejects_worker_state_fields():
@@ -59,7 +59,7 @@ async def test_session_cancel_uses_backend_cancel_request():
         cancel_requested=True,
     )
     manager = SimpleNamespace(
-        holder_id="astro-1",
+        holder_id="ms-tau-1",
         cancel=AsyncMock(return_value=True),
     )
 
@@ -72,7 +72,7 @@ async def test_session_cancel_uses_backend_cancel_request():
     client.request_runtime_cancel.assert_awaited_once_with(
         "session-1",
         message="stop",
-        requested_by_holder_id="astro-1",
+        requested_by_holder_id="ms-tau-1",
     )
     manager.cancel.assert_awaited_once_with("session-1")
     assert result["state"] == "requested"

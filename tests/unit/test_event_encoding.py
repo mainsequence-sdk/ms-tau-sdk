@@ -1,7 +1,7 @@
 import pytest
 
-from astro.protocols.assistant_ui import AssistantUiEncoder
-from astro.runtime.events import AstroRuntimeEvent
+from ms_tau_sdk.protocols.assistant_ui import AssistantUiEncoder
+from ms_tau_sdk.runtime.events import TauRuntimeEvent
 
 
 def test_text_and_reasoning_events_use_stable_assistant_ui_ids():
@@ -9,13 +9,13 @@ def test_text_and_reasoning_events_use_stable_assistant_ui_ids():
 
     chunks = []
     for event in [
-        AstroRuntimeEvent(type="text_start", data={"contentIndex": 0}),
-        AstroRuntimeEvent(
+        TauRuntimeEvent(type="text_start", data={"contentIndex": 0}),
+        TauRuntimeEvent(
             type="text_delta",
             data={"contentIndex": 0, "delta": "hello"},
         ),
-        AstroRuntimeEvent(type="text_end", data={"contentIndex": 0}),
-        AstroRuntimeEvent(type="agent_settled"),
+        TauRuntimeEvent(type="text_end", data={"contentIndex": 0}),
+        TauRuntimeEvent(type="agent_settled"),
     ]:
         chunks.extend(encoder.encode(event))
 
@@ -31,7 +31,7 @@ def test_tool_events_use_assistant_stream_names_and_preserve_call_identity():
     encoder = AssistantUiEncoder()
 
     call_chunks = encoder.encode(
-        AstroRuntimeEvent(
+        TauRuntimeEvent(
             type="toolcall_end",
             data={
                 "toolCall": {
@@ -56,7 +56,7 @@ def test_tool_events_use_assistant_stream_names_and_preserve_call_identity():
     # has no chunk.
     assert (
         encoder.encode(
-            AstroRuntimeEvent(
+            TauRuntimeEvent(
                 type="tool_execution_start",
                 data={
                     "toolCallId": "call-1",
@@ -69,7 +69,7 @@ def test_tool_events_use_assistant_stream_names_and_preserve_call_identity():
     )
     assert (
         encoder.encode(
-            AstroRuntimeEvent(
+            TauRuntimeEvent(
                 type="tool_execution_update",
                 data={"toolCallId": "call-1", "partialResult": {"content": []}},
             )
@@ -82,7 +82,7 @@ def test_tool_events_use_assistant_stream_names_and_preserve_call_identity():
         "details": {"mcp_tool": "code_repository_list", "is_error": False},
     }
     assert encoder.encode(
-        AstroRuntimeEvent(
+        TauRuntimeEvent(
             type="tool_execution_end",
             data={
                 "toolCallId": "call-1",
@@ -98,7 +98,7 @@ def test_tool_result_for_an_unannounced_call_announces_it_first():
     encoder = AssistantUiEncoder()
 
     chunks = encoder.encode(
-        AstroRuntimeEvent(
+        TauRuntimeEvent(
             type="tool_execution_end",
             data={
                 "toolCallId": "call-9",
@@ -128,7 +128,7 @@ def test_execution_start_announces_a_call_missed_by_toolcall_end():
     encoder = AssistantUiEncoder()
 
     chunks = encoder.encode(
-        AstroRuntimeEvent(
+        TauRuntimeEvent(
             type="tool_execution_start",
             data={"toolCallId": "call-2", "toolName": "read", "args": {"path": "a.py"}},
         )
@@ -142,7 +142,7 @@ def test_execution_start_announces_a_call_missed_by_toolcall_end():
     # Announced once: a later toolcall_end for the same id adds nothing.
     assert (
         encoder.encode(
-            AstroRuntimeEvent(
+            TauRuntimeEvent(
                 type="toolcall_end",
                 data={"toolCall": {"id": "call-2", "name": "read", "arguments": {}}},
             )
@@ -165,11 +165,11 @@ def test_execution_start_announces_a_call_missed_by_toolcall_end():
 def test_turn_boundaries_become_step_markers(stop_reason, finish_reason):
     encoder = AssistantUiEncoder()
 
-    assert encoder.encode(AstroRuntimeEvent(type="turn_start")) == [{"type": "start-step"}]
+    assert encoder.encode(TauRuntimeEvent(type="turn_start")) == [{"type": "start-step"}]
     message = {"role": "assistant"}
     if stop_reason is not None:
         message["stopReason"] = stop_reason
-    assert encoder.encode(AstroRuntimeEvent(type="turn_end", data={"message": message})) == [
+    assert encoder.encode(TauRuntimeEvent(type="turn_end", data={"message": message})) == [
         {"type": "finish-step", "finishReason": finish_reason}
     ]
 
@@ -184,7 +184,7 @@ def test_terminal_provider_error_is_preserved_without_success_finish(status_code
 
     assert (
         encoder.encode(
-            AstroRuntimeEvent(
+            TauRuntimeEvent(
                 type="message_end",
                 data={
                     "message": {
@@ -206,9 +206,9 @@ def test_terminal_provider_error_is_preserved_without_success_finish(status_code
         )
         == []
     )
-    assert encoder.encode(AstroRuntimeEvent(type="agent_settled")) == []
+    assert encoder.encode(TauRuntimeEvent(type="agent_settled")) == []
     assert encoder.finalize() == [{"type": "error", "errorText": provider_message}]
-    assert encoder.encode(AstroRuntimeEvent(type="agent_settled")) == []
+    assert encoder.encode(TauRuntimeEvent(type="agent_settled")) == []
 
 
 def test_direct_tau_error_uses_the_same_deferred_terminal_contract():
@@ -216,7 +216,7 @@ def test_direct_tau_error_uses_the_same_deferred_terminal_contract():
 
     assert (
         encoder.encode(
-            AstroRuntimeEvent(
+            TauRuntimeEvent(
                 type="error",
                 data={"error": {"errorMessage": "Provider supplied message"}},
             )
@@ -230,7 +230,7 @@ def test_successful_retry_replaces_an_earlier_terminal_error():
     encoder = AssistantUiEncoder()
 
     encoder.encode(
-        AstroRuntimeEvent(
+        TauRuntimeEvent(
             type="message_end",
             data={
                 "message": {
@@ -242,12 +242,12 @@ def test_successful_retry_replaces_an_earlier_terminal_error():
         )
     )
     encoder.encode(
-        AstroRuntimeEvent(
+        TauRuntimeEvent(
             type="message_end",
             data={"message": {"role": "assistant", "stopReason": "stop"}},
         )
     )
 
-    assert encoder.encode(AstroRuntimeEvent(type="agent_settled")) == [
+    assert encoder.encode(TauRuntimeEvent(type="agent_settled")) == [
         {"type": "finish", "finishReason": "stop"}
     ]

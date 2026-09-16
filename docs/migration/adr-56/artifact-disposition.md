@@ -47,6 +47,17 @@ Owner for every candidate artifact: Main Sequence TAU SDK.
   are eliminated.
 - Tau 0.4.2's atomic storage batch contract is implemented by the existing backend batch endpoint.
 
+## C3 Package Outcome
+
+- `src/astro` is replaced by `src/ms_tau_sdk`; no compatibility package is shipped.
+- Distribution metadata is `ms-tau-sdk==0.1.0`, and the only process command is `ms-tau`.
+- `ms_tau_sdk.create_app` and `ms_tau_sdk.TauSDKSettings` are the public construction surface.
+- SDK-specific settings use `MAINSEQUENCE_TAU_*`; runtime credentials retain their established
+  `MAINSEQUENCE_RUNTIME_CREDENTIAL_*` names.
+- `workspace` defaults to the current directory and is validated as an existing readable directory.
+- The obsolete image-only project-extension verification script is eliminated; native project
+  extension behavior remains covered by the Python fixture tests.
+
 ## C0 Container and Deployment Deletion
 
 The former Dockerfiles, Docker ignore files, Compose file, runtime wheelhouse lock, Kubernetes/GCP

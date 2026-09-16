@@ -1,10 +1,10 @@
 from fastapi import FastAPI
 
-from astro.api.chat import router
-from astro.api.dependencies import runtime_manager
-from astro.errors import BackendConflictError
-from astro.runtime.events import AstroRuntimeEvent
-from astro.settings import Settings
+from ms_tau_sdk.api.chat import router
+from ms_tau_sdk.api.dependencies import runtime_manager
+from ms_tau_sdk.errors import BackendConflictError
+from ms_tau_sdk.runtime.events import TauRuntimeEvent
+from ms_tau_sdk.settings import TauSDKSettings
 
 USER_CALLER_HEADERS = {
     "X-Caller-Kind": "user",
@@ -22,7 +22,7 @@ AGENT_CALLER_HEADERS = {
 
 
 class _ChatManager:
-    settings = Settings(_env_file=None)
+    settings = TauSDKSettings(_env_file=None)
 
     def __init__(self) -> None:
         self.prompts: list[tuple[str, str]] = []
@@ -32,13 +32,13 @@ class _ChatManager:
     async def prompt(self, session_uid: str, prompt: str, *, provenance=None):
         self.prompts.append((session_uid, prompt))
         self.provenances.append(provenance)
-        yield AstroRuntimeEvent(type="text_start", data={"contentIndex": 0})
-        yield AstroRuntimeEvent(
+        yield TauRuntimeEvent(type="text_start", data={"contentIndex": 0})
+        yield TauRuntimeEvent(
             type="text_delta",
             data={"contentIndex": 0, "delta": "Tau answer"},
         )
-        yield AstroRuntimeEvent(type="text_end", data={"contentIndex": 0})
-        yield AstroRuntimeEvent(type="agent_settled")
+        yield TauRuntimeEvent(type="text_end", data={"contentIndex": 0})
+        yield TauRuntimeEvent(type="agent_settled")
 
     async def cancel(self, _session_uid: str) -> bool:
         return True
@@ -69,7 +69,7 @@ class _ProviderErrorManager(_ChatManager):
     async def prompt(self, session_uid: str, prompt: str, *, provenance=None):
         self.prompts.append((session_uid, prompt))
         self.provenances.append(provenance)
-        yield AstroRuntimeEvent(
+        yield TauRuntimeEvent(
             type="message_end",
             data={
                 "message": {
@@ -79,7 +79,7 @@ class _ProviderErrorManager(_ChatManager):
                 }
             },
         )
-        yield AstroRuntimeEvent(type="agent_settled")
+        yield TauRuntimeEvent(type="agent_settled")
 
 
 def _app(manager: _ChatManager) -> FastAPI:
@@ -245,8 +245,8 @@ async def test_chat_rejects_a_request_without_caller_identity_before_any_turn(as
     assert manager.prompts == []
 
 
-async def test_non_message_routes_answer_without_caller_headers(asgi_client, astro_app):
-    async with asgi_client(astro_app) as http:
+async def test_non_message_routes_answer_without_caller_headers(asgi_client, sdk_app):
+    async with asgi_client(sdk_app) as http:
         response = await http.get("/version", headers={"X-Caller-Kind": ""})
 
     assert response.status_code != 403

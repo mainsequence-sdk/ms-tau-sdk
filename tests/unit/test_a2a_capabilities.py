@@ -6,7 +6,7 @@ import pytest
 from fastapi.responses import StreamingResponse
 from starlette.requests import Request
 
-from astro.api.a2a import (
+from ms_tau_sdk.api.a2a import (
     RESPONSE_KIND_EXTENSION_URI,
     _output_contract,
     _stream_task_events,
@@ -17,15 +17,15 @@ from astro.api.a2a import (
     list_push_configs,
     set_push_config,
 )
-from astro.backend.models import (
+from ms_tau_sdk.backend.models import (
     AgentCardEnvelope,
     AgentSession,
     AgentTask,
     AgentTaskCreateResult,
     AgentTaskExecutionAttempt,
 )
-from astro.runtime.events import AstroRuntimeEvent
-from astro.settings import Settings
+from ms_tau_sdk.runtime.events import TauRuntimeEvent
+from ms_tau_sdk.settings import TauSDKSettings
 
 
 def _request() -> Request:
@@ -84,7 +84,7 @@ async def test_push_notification_json_rpc_operations_are_explicitly_unsupported(
         {"jsonrpc": "2.0", "id": "rpc-1", "method": method, "params": {}},
         client,
         AsyncMock(),
-        Settings(_env_file=None),
+        TauSDKSettings(_env_file=None),
         _request(),
     )
 
@@ -172,7 +172,7 @@ async def test_json_rpc_message_stream_returns_sse_response():
         created=True,
     )
     manager = AsyncMock()
-    config = Settings(_env_file=None)
+    config = TauSDKSettings(_env_file=None)
 
     response = await json_rpc(
         {
@@ -222,17 +222,17 @@ async def test_a2a_stream_emits_incremental_artifact_and_final_task():
 
     class Manager:
         draining = False
-        settings = Settings(_env_file=None)
+        settings = TauSDKSettings(_env_file=None)
 
         async def task_execution_fence(self, _context_id):
             return SimpleNamespace(holder_id="holder-1", lease_token="lease-1")
 
         async def prompt(self, _context_id, _prompt, *, provenance=None):
-            yield AstroRuntimeEvent(
+            yield TauRuntimeEvent(
                 type="text_delta",
                 data={"contentIndex": 0, "delta": "hel"},
             )
-            yield AstroRuntimeEvent(
+            yield TauRuntimeEvent(
                 type="text_delta",
                 data={"contentIndex": 0, "delta": "lo"},
             )

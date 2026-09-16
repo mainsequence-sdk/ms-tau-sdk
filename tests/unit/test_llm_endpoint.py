@@ -5,12 +5,12 @@ from unittest.mock import ANY, AsyncMock, Mock, call
 from fastapi import FastAPI
 from tau_agent.messages import AssistantMessage
 
-import astro.agents.sessionless as sessionless
-from astro.agents import AgentExecutionSnapshot
-from astro.api.dependencies import backend, provider_factory, settings
-from astro.api.responses import INFERENCE_EXTENSION_URI, router
-from astro.app import create_app
-from astro.settings import Settings
+import ms_tau_sdk.agents.sessionless as sessionless
+from ms_tau_sdk.agents import AgentExecutionSnapshot
+from ms_tau_sdk.api.dependencies import backend, provider_factory, settings
+from ms_tau_sdk.api.responses import INFERENCE_EXTENSION_URI, router
+from ms_tau_sdk.app import create_app
+from ms_tau_sdk.settings import TauSDKSettings
 
 AGENT_UID = "11111111-1111-4111-8111-111111111111"
 
@@ -19,8 +19,8 @@ def _settings(
     tmp_path,
     *,
     allowed_input_media_types: tuple[str, ...] | None = None,
-) -> Settings:
-    return Settings(
+) -> TauSDKSettings:
+    return TauSDKSettings(
         _env_file=None,
         sessionless_asset_root=tmp_path,
         agent_execution_snapshot=AgentExecutionSnapshot(
@@ -38,7 +38,7 @@ def _settings(
     )
 
 
-def _app(client: AsyncMock, providers: Mock, runtime_settings: Settings) -> FastAPI:
+def _app(client: AsyncMock, providers: Mock, runtime_settings: TauSDKSettings) -> FastAPI:
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[backend] = lambda: client

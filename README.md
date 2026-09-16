@@ -8,15 +8,9 @@ This repository does not publish or own a runtime image. It contains no Dockerfi
 Kubernetes manifest, executor bundle, remote-worker overlay, or image-publication pipeline. A
 consuming project declares and locks the SDK and owns its resulting deployable artifact.
 
-## Migration Status
-
-The implementation is being moved from the former Astro package under
-[ADR 56](./docs/adrs/adr-56-main-sequence-tau-sdk-workspace-bound-library-deployment.md). During the
-bounded extraction phases, the source still uses the temporary `mainsequence-astro`, `astro`, and
-`astro-stream` names. They are not public compatibility promises for the new SDK.
-
-Current migration evidence and phase status live in the
-[ADR 56 migration workspace](./docs/migration/adr-56/README.md).
+The new project identity and migration are governed by
+[ADR 56](./docs/adrs/adr-56-main-sequence-tau-sdk-workspace-bound-library-deployment.md), with
+gate evidence in the [migration workspace](./docs/migration/adr-56/README.md).
 
 ## SDK Responsibilities
 
@@ -46,15 +40,14 @@ uv run ruff check .
 uv run mypy
 ```
 
-Until Phase C3 introduces `ms-tau`, the current application can be exercised from the checkout with
-the temporary command:
+The application can be exercised from the project workspace with:
 
 ```bash
 export MAINSEQUENCE_BACKEND="https://api.main-sequence.app"
 export MAINSEQUENCE_RUNTIME_CREDENTIAL_ID="<development-runtime-credential-id>"
 export MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET="<redeemed-once-secret>"
 
-uv run astro-stream
+uv run ms-tau
 ```
 
 Runtime credentials are exchanged for short-lived Main Sequence access tokens. Secrets must not be

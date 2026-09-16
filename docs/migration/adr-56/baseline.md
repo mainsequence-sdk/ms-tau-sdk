@@ -148,6 +148,45 @@ All checks passed!
 Success: no issues found in 49 source files
 ```
 
+### C3 gate
+
+The source package, distribution, and command are now `ms_tau_sdk`, `ms-tau-sdk==0.1.0`, and
+`ms-tau`. `TauSDKSettings.workspace` defaults to the current directory and rejects a missing or
+non-directory workspace. All SDK-specific environment settings use `MAINSEQUENCE_TAU_*`; the two
+runtime credential names remain unchanged. The public package exports `create_app` and
+`TauSDKSettings`.
+
+```text
+uv build
+Successfully built dist/ms_tau_sdk-0.1.0.tar.gz
+Successfully built dist/ms_tau_sdk-0.1.0-py3-none-any.whl
+
+clean virtual environment:
+ms-tau-sdk==0.1.0 installed from the wheel
+import ms_tau_sdk: success
+find_spec("astro"): none
+GET /health: 200, runtime=tau, version=0.1.0
+GET /version: 200, runtime=tau, version=0.1.0
+SIGINT shutdown: clean
+```
+
+The wheel contains the `ms_tau_sdk` package and its Tau markdown resources. It contains no retired
+namespace, Docker, Compose, Kubernetes, image, overlay, or wheelhouse artifact.
+
+```text
+.venv/bin/pytest -q
+266 passed, 1 skipped
+
+.venv/bin/ruff check src tests
+All checks passed!
+
+.venv/bin/ruff format --check src tests
+85 files already formatted
+
+.venv/bin/mypy src/ms_tau_sdk
+Success: no issues found in 49 source files
+```
+
 ## Current Runtime Characterization
 
 ### OpenAPI surface

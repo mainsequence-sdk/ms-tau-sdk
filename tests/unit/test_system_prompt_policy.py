@@ -1,6 +1,6 @@
 from tau_coding.resources import discover_system_prompt_resources
 
-from astro.resources.loader import resource_root, tau_resource_paths
+from ms_tau_sdk.resources.loader import resource_root, tau_resource_paths
 
 
 def test_packaged_system_prompt_is_the_default(tmp_path) -> None:

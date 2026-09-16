@@ -2,14 +2,14 @@ import json
 
 import httpx
 
-from astro.backend.auth import RuntimeCredentialAuth
-from astro.backend.client import MainSequenceClient
-from astro.backend.models import (
+from ms_tau_sdk.backend.auth import RuntimeCredentialAuth
+from ms_tau_sdk.backend.client import MainSequenceClient
+from ms_tau_sdk.backend.models import (
     RuntimeActivityPatch,
     SessionEntryBatchAppendRequest,
     SessionEntryBatchItem,
 )
-from astro.settings import Settings
+from ms_tau_sdk.settings import TauSDKSettings
 
 
 async def test_batch_append_and_tau_activity_match_django_contract():
@@ -57,7 +57,7 @@ async def test_batch_append_and_tau_activity_match_django_contract():
             )
         return httpx.Response(404)
 
-    settings = Settings(
+    settings = TauSDKSettings(
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="credential-id",
@@ -90,7 +90,7 @@ async def test_batch_append_and_tau_activity_match_django_contract():
     activity = await client.patch_runtime_activity(
         session_uid,
         RuntimeActivityPatch(
-            holder_id="astro-1",
+            holder_id="ms-tau-1",
             lease_token="lease-token",
             expected_activity_revision=3,
             runtime_activity="working",

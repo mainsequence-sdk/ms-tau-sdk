@@ -1,14 +1,14 @@
 from unittest.mock import AsyncMock, Mock
 
-from astro.application import ApplicationServices
-from astro.cli import run
-from astro.settings import Settings
+from ms_tau_sdk.application import ApplicationServices
+from ms_tau_sdk.cli import run
+from ms_tau_sdk.settings import TauSDKSettings
 
 
 async def test_application_services_own_startup_and_shutdown(tmp_path):
-    settings = Settings(
+    settings = TauSDKSettings(
         _env_file=None,
-        code_repository_root=tmp_path,
+        workspace=tmp_path,
         runtime_credential_id="credential-id",
         runtime_credential_secret="credential-secret",
     )
@@ -34,16 +34,16 @@ async def test_application_services_own_startup_and_shutdown(tmp_path):
 
 
 def test_cli_runs_constructed_application(monkeypatch, tmp_path):
-    settings = Settings(
+    settings = TauSDKSettings(
         _env_file=None,
-        code_repository_root=tmp_path,
+        workspace=tmp_path,
         runtime_credential_id="credential-id",
         runtime_credential_secret="credential-secret",
         host="127.0.0.1",
         port=9876,
     )
     uvicorn_run = Mock()
-    monkeypatch.setattr("astro.cli.uvicorn.run", uvicorn_run)
+    monkeypatch.setattr("ms_tau_sdk.cli.uvicorn.run", uvicorn_run)
 
     run(settings)
 

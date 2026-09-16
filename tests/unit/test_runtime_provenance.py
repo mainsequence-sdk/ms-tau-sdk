@@ -7,14 +7,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from astro.runtime.provenance import (
+from ms_tau_sdk.runtime.provenance import (
     PROVENANCE_NAMESPACE,
     CallerIdentityError,
     build_turn_provenance,
     turn_provenance_from_request,
     validate_caller_identity,
 )
-from astro.runtime.session import ActiveSessionRuntime
+from ms_tau_sdk.runtime.session import ActiveSessionRuntime
 
 
 def test_build_turn_provenance_maps_the_route_to_an_origin():

@@ -5,15 +5,15 @@ from types import SimpleNamespace
 import pytest
 from tau_agent.session import SessionInfoEntry
 
-from astro.backend.models import (
+from ms_tau_sdk.backend.models import (
     RuntimeState,
     SessionEntryBatchAppendResponse,
     SessionEntryList,
     SessionEntryRecord,
     TauTurnCommit,
 )
-from astro.errors import BackendConflictError
-from astro.sessions.storage import BackendSessionStorage
+from ms_tau_sdk.errors import BackendConflictError
+from ms_tau_sdk.sessions.storage import BackendSessionStorage
 
 
 class FakeBackend:
@@ -259,7 +259,7 @@ async def test_storage_combines_pending_output_and_turn_commit():
         backend=backend,
         session_uid="session-1",
         lease_token="lease-token",
-        holder_id="astro-holder",
+        holder_id="ms-tau-holder",
         initial_entries=[],
         initial_next_sequence=0,
     )
@@ -271,7 +271,7 @@ async def test_storage_combines_pending_output_and_turn_commit():
 
     assert len(backend.requests) == 1
     request = backend.requests[0]
-    assert request.holder_id == "astro-holder"
+    assert request.holder_id == "ms-tau-holder"
     assert request.turn is not None
     assert request.turn.phase == "committed"
     assert request.turn.activity_sequence == 2
@@ -286,7 +286,7 @@ async def test_storage_uses_empty_committed_fallback_when_output_is_already_dura
         backend=backend,
         session_uid="session-1",
         lease_token="lease-token",
-        holder_id="astro-holder",
+        holder_id="ms-tau-holder",
         initial_entries=[],
         initial_next_sequence=0,
     )
@@ -316,7 +316,7 @@ async def test_storage_defers_output_after_started_until_atomic_commit():
         backend=backend,
         session_uid="session-1",
         lease_token="lease-token",
-        holder_id="astro-holder",
+        holder_id="ms-tau-holder",
         initial_entries=[],
         initial_next_sequence=0,
     )

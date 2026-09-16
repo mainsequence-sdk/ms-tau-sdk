@@ -1,6 +1,6 @@
 """Executable compatibility baseline for the ADR 56 migration.
 
-This test intentionally imports the current Astro application factory. During the
+This test intentionally imports the current Main Sequence TAU SDK application factory. During the
 migration, only the import and construction boundary should change; any change to
 the externally visible operation set must be an explicit contract decision.
 """
@@ -39,8 +39,8 @@ EXPECTED_OPERATIONS = frozenset(
 )
 
 
-def test_adr56_freezes_current_http_operation_surface(astro_app: FastAPI) -> None:
-    schema = astro_app.openapi()
+def test_adr56_freezes_current_http_operation_surface(sdk_app: FastAPI) -> None:
+    schema = sdk_app.openapi()
     actual_operations = frozenset(
         (method.upper(), path)
         for path, path_item in schema["paths"].items()

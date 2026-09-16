@@ -4,17 +4,17 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from astro.backend.auth import RuntimeCredentialAuth
-from astro.backend.client import MainSequenceClient
-from astro.backend.models import (
+from ms_tau_sdk.backend.auth import RuntimeCredentialAuth
+from ms_tau_sdk.backend.client import MainSequenceClient
+from ms_tau_sdk.backend.models import (
     RuntimeLeaseReleaseRequest,
     RuntimeLeaseRenewRequest,
     RuntimeLeaseRequest,
     RuntimeStatePatch,
     SessionEntryAppendRequest,
 )
-from astro.errors import BackendError
-from astro.settings import Settings
+from ms_tau_sdk.errors import BackendError
+from ms_tau_sdk.settings import TauSDKSettings
 
 
 @pytest.mark.asyncio
@@ -67,7 +67,7 @@ async def test_python_client_matches_existing_django_session_contract():
                 json={
                     "agent_session_uid": session_uid,
                     "agent_uid": "agent-1",
-                    "agent_card": {"name": "Astro"},
+                    "agent_card": {"name": "Main Sequence TAU SDK"},
                 },
             )
         if path == f"/api/v1/agent-sessions/{session_uid}/entries/" and request.method == "GET":
@@ -117,7 +117,7 @@ async def test_python_client_matches_existing_django_session_contract():
             )
         if path == f"/api/v1/agent-sessions/{session_uid}/checkpoint-lease/acquire/":
             assert payload == {
-                "holder_id": "astro-1",
+                "holder_id": "ms-tau-1",
                 "ttl_seconds": 90,
                 "lease_purpose": "runtime_run",
             }
@@ -125,7 +125,7 @@ async def test_python_client_matches_existing_django_session_contract():
                 200,
                 json={
                     "agent_session_uid": session_uid,
-                    "holder_id": "astro-1",
+                    "holder_id": "ms-tau-1",
                     "lease_token": "lease-token",
                     "lease_expires_at": "2026-07-24T00:00:00Z",
                     "checkpoint_version": 0,
@@ -140,7 +140,7 @@ async def test_python_client_matches_existing_django_session_contract():
         if path == f"/api/v1/agent-sessions/{session_uid}/checkpoint-lease/renew/":
             assert payload == {
                 "lease_token": "lease-token",
-                "holder_id": "astro-1",
+                "holder_id": "ms-tau-1",
                 "ttl_seconds": 90,
                 "lease_purpose": "runtime_run",
             }
@@ -163,7 +163,7 @@ async def test_python_client_matches_existing_django_session_contract():
         if path == f"/api/v1/agent-sessions/{session_uid}/checkpoint-lease/release/":
             assert payload == {
                 "lease_token": "lease-token",
-                "holder_id": "astro-1",
+                "holder_id": "ms-tau-1",
                 "reason": "runtime_eviction",
             }
             return httpx.Response(
@@ -212,7 +212,7 @@ async def test_python_client_matches_existing_django_session_contract():
             assert payload == {
                 "reason": "user_requested",
                 "message": "stop",
-                "requested_by_holder_id": "astro-1",
+                "requested_by_holder_id": "ms-tau-1",
             }
             return httpx.Response(
                 200,
@@ -231,7 +231,7 @@ async def test_python_client_matches_existing_django_session_contract():
             )
         return httpx.Response(404)
 
-    settings = Settings(
+    settings = TauSDKSettings(
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="credential-id",
@@ -255,7 +255,7 @@ async def test_python_client_matches_existing_django_session_contract():
         )
         lease = await client.acquire_runtime_lease(
             session_uid,
-            RuntimeLeaseRequest(holder_id="astro-1", ttl_seconds=90),
+            RuntimeLeaseRequest(holder_id="ms-tau-1", ttl_seconds=90),
         )
         appended = await client.append_entry(
             session_uid,
@@ -275,13 +275,13 @@ async def test_python_client_matches_existing_django_session_contract():
         cancelled = await client.request_runtime_cancel(
             session_uid,
             message="stop",
-            requested_by_holder_id="astro-1",
+            requested_by_holder_id="ms-tau-1",
         )
         renewed = await client.renew_runtime_lease(
             session_uid,
             RuntimeLeaseRenewRequest(
                 lease_token=lease.lease_token,
-                holder_id="astro-1",
+                holder_id="ms-tau-1",
                 ttl_seconds=90,
             ),
         )
@@ -296,7 +296,7 @@ async def test_python_client_matches_existing_django_session_contract():
             session_uid,
             RuntimeLeaseReleaseRequest(
                 lease_token=lease.lease_token,
-                holder_id="astro-1",
+                holder_id="ms-tau-1",
                 reason="runtime_eviction",
             ),
         )
@@ -305,7 +305,7 @@ async def test_python_client_matches_existing_django_session_contract():
     assert session.active_provider == "openai"
     assert session.active_model == "gpt-5.4"
     assert session.active_thinking == "high"
-    assert card.agent_card == {"name": "Astro"}
+    assert card.agent_card == {"name": "Main Sequence TAU SDK"}
     assert entries.next_sequence == 1
     assert entries.entries[0].entry_json["label"] == "Session label"
     assert appended.sequence == 1
@@ -426,7 +426,7 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
             return httpx.Response(200, json={**task, "status": "canceled"})
         return httpx.Response(404)
 
-    settings = Settings(
+    settings = TauSDKSettings(
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="credential-id",
@@ -445,7 +445,7 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
             "openai",
             model="gpt-5.4",
             session_uid="session-1",
-            holder_id="astro-1",
+            holder_id="ms-tau-1",
         )
         created = await client.create_task({"task_id": "task-1"})
         found = await client.get_task_by_protocol_id("task-1")
@@ -460,7 +460,7 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
             holder_id="holder-1",
             lease_token="lease-1",
             dispatch_uid="dispatch-1",
-            executor_instance_id="astro-1",
+            executor_instance_id="ms-tau-1",
         )
         message = await client.add_task_attempt_message(
             "task-uid-1",
@@ -547,7 +547,7 @@ async def test_idempotent_session_get_retries_transient_backend_failure():
             )
         return httpx.Response(404)
 
-    settings = Settings(
+    settings = TauSDKSettings(
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="credential-id",
@@ -559,7 +559,7 @@ async def test_idempotent_session_get_retries_transient_backend_failure():
     ) as http:
         auth = RuntimeCredentialAuth(settings, exchange_client=http)
         client = MainSequenceClient(settings, auth, client=http)
-        with patch("astro.backend.client.asyncio.sleep", AsyncMock()) as sleep:
+        with patch("ms_tau_sdk.backend.client.asyncio.sleep", AsyncMock()) as sleep:
             session = await client.get_session(session_uid)
 
     assert session.uid == session_uid
@@ -574,7 +574,7 @@ async def test_session_get_rejects_missing_harness_contract():
             return httpx.Response(200, json={"access": "runtime-token"})
         return httpx.Response(200, json={"uid": "session-1"})
 
-    settings = Settings(
+    settings = TauSDKSettings(
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="credential-id",
@@ -608,7 +608,7 @@ async def test_session_get_rejects_contradictory_harness_protocol():
             },
         )
 
-    settings = Settings(
+    settings = TauSDKSettings(
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="credential-id",

@@ -11,7 +11,7 @@ from tau_agent.messages import AssistantMessage, StopReason
 from tau_agent.provider_events import TextDeltaEvent
 from tau_coding.events import SessionAgentEndEvent
 
-from astro.api.a2a import (
+from ms_tau_sdk.api.a2a import (
     RESPONSE_KIND_EXTENSION_URI,
     REST_BASE,
     _agent_message,
@@ -21,8 +21,8 @@ from astro.api.a2a import (
     _request_parts,
     router,
 )
-from astro.api.dependencies import backend, runtime_manager, settings
-from astro.backend.models import (
+from ms_tau_sdk.api.dependencies import backend, runtime_manager, settings
+from ms_tau_sdk.backend.models import (
     AgentCardEnvelope,
     AgentSession,
     AgentTask,
@@ -30,9 +30,9 @@ from astro.backend.models import (
     AgentTaskExecutionAttempt,
     AgentTaskSnapshot,
 )
-from astro.errors import BackendError
-from astro.runtime.events import translate_tau_event
-from astro.settings import Settings
+from ms_tau_sdk.errors import BackendError
+from ms_tau_sdk.runtime.events import translate_tau_event
+from ms_tau_sdk.settings import TauSDKSettings
 
 
 def _assistant_message(
@@ -131,7 +131,7 @@ async def _direct_message_response(
     explicit_response_kind: bool = True,
 ) -> tuple[httpx.Response, AsyncMock]:
     client, _task = _direct_message_client()
-    config = Settings(_env_file=None)
+    config = TauSDKSettings(_env_file=None)
     app = FastAPI()
     app.include_router(router)
     app.dependency_overrides[backend] = lambda: client
@@ -176,7 +176,7 @@ def test_standard_a2a_routes_exclude_runtime_attach():
 
 def test_inline_pdf_is_validated_and_materialized_private(tmp_path):
     payload = b"%PDF-1.4\n% fixture\n"
-    config = Settings(
+    config = TauSDKSettings(
         _env_file=None,
         a2a_asset_root=tmp_path,
         a2a_max_inline_file_bytes=1024,
@@ -201,7 +201,7 @@ def test_inline_pdf_is_validated_and_materialized_private(tmp_path):
 
 
 def test_inline_pdf_rejects_url_and_path_traversal(tmp_path):
-    config = Settings(_env_file=None, a2a_asset_root=tmp_path)
+    config = TauSDKSettings(_env_file=None, a2a_asset_root=tmp_path)
     with pytest.raises(HTTPException, match="url is not supported"):
         _materialize_pdfs(
             parts=[
@@ -274,7 +274,7 @@ def test_request_parts_rejects_obsolete_v03_envelope(
     }
 
     with pytest.raises(HTTPException) as error:
-        _request_parts(body, Settings(_env_file=None))
+        _request_parts(body, TauSDKSettings(_env_file=None))
     assert error.value.detail == expected_detail
 
 
@@ -502,7 +502,7 @@ async def test_message_send_accepts_standard_return_immediately_for_message():
         MessageEndEvent(message=final),
         SessionAgentEndEvent(messages=[final], will_retry=False),
     )
-    app.dependency_overrides[settings] = lambda: Settings(_env_file=None)
+    app.dependency_overrides[settings] = lambda: TauSDKSettings(_env_file=None)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
         base_url="http://test",
@@ -566,7 +566,7 @@ async def test_message_send_task_requires_advertised_task_and_returns_task():
     app.include_router(router)
     app.dependency_overrides[backend] = lambda: client
     app.dependency_overrides[runtime_manager] = lambda: manager
-    app.dependency_overrides[settings] = lambda: Settings(_env_file=None)
+    app.dependency_overrides[settings] = lambda: TauSDKSettings(_env_file=None)
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -639,7 +639,7 @@ async def test_immediate_task_return_survives_local_accelerator_claim_failure():
     app.include_router(router)
     app.dependency_overrides[backend] = lambda: client
     app.dependency_overrides[runtime_manager] = lambda: manager
-    app.dependency_overrides[settings] = lambda: Settings(_env_file=None)
+    app.dependency_overrides[settings] = lambda: TauSDKSettings(_env_file=None)
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -723,7 +723,7 @@ async def test_message_send_task_waits_when_return_immediately_is_false():
     app.include_router(router)
     app.dependency_overrides[backend] = lambda: client
     app.dependency_overrides[runtime_manager] = lambda: manager
-    app.dependency_overrides[settings] = lambda: Settings(
+    app.dependency_overrides[settings] = lambda: TauSDKSettings(
         _env_file=None,
         a2a_task_event_poll_interval_seconds=0.05,
     )
@@ -792,7 +792,7 @@ async def test_task_continuation_uses_authorized_backend_task_and_new_dispatch()
     app.include_router(router)
     app.dependency_overrides[backend] = lambda: client
     app.dependency_overrides[runtime_manager] = lambda: manager
-    app.dependency_overrides[settings] = lambda: Settings(_env_file=None)
+    app.dependency_overrides[settings] = lambda: TauSDKSettings(_env_file=None)
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -842,7 +842,7 @@ async def test_message_send_rejects_non_boolean_return_immediately():
     app.include_router(router)
     app.dependency_overrides[backend] = lambda: client
     app.dependency_overrides[runtime_manager] = lambda: manager
-    app.dependency_overrides[settings] = lambda: Settings(_env_file=None)
+    app.dependency_overrides[settings] = lambda: TauSDKSettings(_env_file=None)
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -875,7 +875,7 @@ async def test_message_send_rejects_task_when_agent_card_is_message_only():
     app.include_router(router)
     app.dependency_overrides[backend] = lambda: client
     app.dependency_overrides[runtime_manager] = lambda: manager
-    app.dependency_overrides[settings] = lambda: Settings(_env_file=None)
+    app.dependency_overrides[settings] = lambda: TauSDKSettings(_env_file=None)
 
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app),
@@ -943,7 +943,7 @@ async def test_direct_message_send_stamps_an_agent_caller_from_gateway_headers()
     app.include_router(router)
     app.dependency_overrides[backend] = lambda: client
     app.dependency_overrides[runtime_manager] = lambda: manager
-    app.dependency_overrides[settings] = lambda: Settings(_env_file=None)
+    app.dependency_overrides[settings] = lambda: TauSDKSettings(_env_file=None)
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app), base_url="http://test"
     ) as http:
@@ -1002,7 +1002,7 @@ async def test_message_routes_reject_invalid_caller_identity_before_any_turn(hea
     app.include_router(router)
     app.dependency_overrides[backend] = lambda: client
     app.dependency_overrides[runtime_manager] = lambda: manager
-    app.dependency_overrides[settings] = lambda: Settings(_env_file=None)
+    app.dependency_overrides[settings] = lambda: TauSDKSettings(_env_file=None)
     body = {
         "message": {
             "messageId": "message-1",

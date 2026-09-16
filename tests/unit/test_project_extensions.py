@@ -8,7 +8,7 @@ from tau_ai.fake import FakeProvider
 from tau_coding import CodingSession, CodingSessionConfig
 from tau_coding.resources import TauResourcePaths
 
-from astro.runtime.extensions import ProjectExtensionState
+from ms_tau_sdk.runtime.extensions import ProjectExtensionState
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures/project-extension-workspace"
 
@@ -242,7 +242,7 @@ async def test_project_tau_skills_prompts_and_reload_are_native(tmp_path):
     await session.aclose()
 
 
-def test_executor_import_fixture_covers_both_python_layouts_and_sibling_imports():
+def test_project_import_fixture_covers_both_python_layouts_and_sibling_imports():
     extension = (FIXTURE_ROOT / ".tau/extensions/import_fixture/extension.py").read_text()
 
     assert "from project_fixture.service import project_value" in extension

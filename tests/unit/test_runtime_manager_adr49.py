@@ -8,7 +8,7 @@ from tau_agent.session import SessionInfoEntry
 from tau_agent.tools import AgentTool
 from tau_coding.resources import ResourceDiagnostic
 
-from astro.backend.models import (
+from ms_tau_sdk.backend.models import (
     AgentSession,
     ProviderControl,
     ProviderCredential,
@@ -21,20 +21,20 @@ from astro.backend.models import (
     TauRuntimeBootstrap,
     TauTurnCommit,
 )
-from astro.errors import BackendConflictError
-from astro.runtime.manager import ADR49_RUNTIME_CAPABILITIES, SessionRuntimeManager
-from astro.runtime.session import ActiveSessionRuntime
-from astro.runtime.snapshots import SNAPSHOT_SCHEMA_VERSION, build_snapshot_upload
-from astro.sessions.storage import SESSION_ENTRY_ADAPTER
-from astro.settings import Settings
+from ms_tau_sdk.errors import BackendConflictError
+from ms_tau_sdk.runtime.manager import ADR49_RUNTIME_CAPABILITIES, SessionRuntimeManager
+from ms_tau_sdk.runtime.session import ActiveSessionRuntime
+from ms_tau_sdk.runtime.snapshots import SNAPSHOT_SCHEMA_VERSION, build_snapshot_upload
+from ms_tau_sdk.sessions.storage import SESSION_ENTRY_ADAPTER
+from ms_tau_sdk.settings import TauSDKSettings
 
 
 def _settings(tmp_path):
-    return Settings(
+    return TauSDKSettings(
         _env_file=None,
         runtime_credential_id="credential-id",
         runtime_credential_secret="credential-secret",
-        code_repository_root=tmp_path,
+        workspace=tmp_path,
         startup_dependencies_enabled=False,
     )
 
@@ -222,16 +222,16 @@ async def test_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
 
     with (
         patch(
-            "astro.runtime.manager.MainSequenceMCPClient.connect",
+            "ms_tau_sdk.runtime.manager.MainSequenceMCPClient.connect",
             AsyncMock(return_value=mcp_client),
         ) as connect,
         patch(
-            "astro.runtime.manager.create_mainsequence_mcp_tools",
+            "ms_tau_sdk.runtime.manager.create_mainsequence_mcp_tools",
             return_value=[],
         ) as create_mcp_tools,
-        patch("astro.runtime.manager.create_coding_tools", return_value=[]),
+        patch("ms_tau_sdk.runtime.manager.create_coding_tools", return_value=[]),
         patch(
-            "astro.runtime.manager.CodingSession.load",
+            "ms_tau_sdk.runtime.manager.CodingSession.load",
             AsyncMock(side_effect=coding_sessions),
         ) as load_coding_session,
     ):
@@ -295,12 +295,12 @@ async def test_default_catalog_keeps_tau_core_and_omits_removed_tools(tmp_path):
 
     with (
         patch(
-            "astro.runtime.manager.MainSequenceMCPClient.connect",
+            "ms_tau_sdk.runtime.manager.MainSequenceMCPClient.connect",
             AsyncMock(return_value=_mcp_client()),
         ),
-        patch("astro.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
+        patch("ms_tau_sdk.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
         patch(
-            "astro.runtime.manager.CodingSession.load",
+            "ms_tau_sdk.runtime.manager.CodingSession.load",
             AsyncMock(return_value=loaded_session),
         ) as load_coding_session,
     ):
@@ -354,13 +354,13 @@ async def test_workspace_tau_extensions_are_enabled_and_report_effective_catalog
 
     with (
         patch(
-            "astro.runtime.manager.MainSequenceMCPClient.connect",
+            "ms_tau_sdk.runtime.manager.MainSequenceMCPClient.connect",
             AsyncMock(return_value=_mcp_client()),
         ),
-        patch("astro.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
-        patch("astro.runtime.manager.create_coding_tools", return_value=[]),
+        patch("ms_tau_sdk.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
+        patch("ms_tau_sdk.runtime.manager.create_coding_tools", return_value=[]),
         patch(
-            "astro.runtime.manager.CodingSession.load",
+            "ms_tau_sdk.runtime.manager.CodingSession.load",
             AsyncMock(side_effect=load_with_project_tool),
         ) as load_coding_session,
     ):
@@ -418,7 +418,7 @@ def test_extension_diagnostics_are_structured_and_repository_relative(tmp_path):
         )
     )
 
-    with patch("astro.runtime.manager.logger") as structured_logger:
+    with patch("ms_tau_sdk.runtime.manager.logger") as structured_logger:
         SessionRuntimeManager._log_project_extension_diagnostics(
             session_uid="session-1",
             cwd=tmp_path,
@@ -522,13 +522,13 @@ async def test_restores_compatible_snapshot_and_applies_only_delta(tmp_path):
 
     with (
         patch(
-            "astro.runtime.manager.MainSequenceMCPClient.connect",
+            "ms_tau_sdk.runtime.manager.MainSequenceMCPClient.connect",
             AsyncMock(return_value=_mcp_client()),
         ),
-        patch("astro.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
-        patch("astro.runtime.manager.create_coding_tools", return_value=[]),
+        patch("ms_tau_sdk.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
+        patch("ms_tau_sdk.runtime.manager.create_coding_tools", return_value=[]),
         patch(
-            "astro.runtime.manager.CodingSession.load",
+            "ms_tau_sdk.runtime.manager.CodingSession.load",
             AsyncMock(return_value=_coding_session()),
         ),
     ):
@@ -567,13 +567,13 @@ async def test_corrupt_snapshot_falls_back_to_canonical_history(tmp_path):
 
     with (
         patch(
-            "astro.runtime.manager.MainSequenceMCPClient.connect",
+            "ms_tau_sdk.runtime.manager.MainSequenceMCPClient.connect",
             AsyncMock(return_value=_mcp_client()),
         ),
-        patch("astro.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
-        patch("astro.runtime.manager.create_coding_tools", return_value=[]),
+        patch("ms_tau_sdk.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
+        patch("ms_tau_sdk.runtime.manager.create_coding_tools", return_value=[]),
         patch(
-            "astro.runtime.manager.CodingSession.load",
+            "ms_tau_sdk.runtime.manager.CodingSession.load",
             AsyncMock(return_value=_coding_session()),
         ),
     ):
@@ -609,7 +609,7 @@ async def test_startup_readiness_waits_for_auth_and_shared_mcp(tmp_path):
     )
 
     with patch(
-        "astro.runtime.manager.MainSequenceMCPClient.connect",
+        "ms_tau_sdk.runtime.manager.MainSequenceMCPClient.connect",
         AsyncMock(side_effect=connect),
     ):
         start_task = asyncio.create_task(manager.start())

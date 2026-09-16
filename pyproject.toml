@@ -3,9 +3,9 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "mainsequence-astro"
-version = "4.0.25"
-description = "Main Sequence Tau agent runtime"
+name = "ms-tau-sdk"
+version = "0.1.0"
+description = "Workspace-bound Tau application primitives for Main Sequence projects"
 requires-python = ">=3.13"
 dependencies = [
   "anyio>=4.10",
@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [project.scripts]
-astro-stream = "astro.cli:main"
+ms-tau = "ms_tau_sdk.cli:main"
 
 [dependency-groups]
 dev = [
@@ -38,7 +38,7 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/astro"]
+packages = ["src/ms_tau_sdk"]
 
 [tool.pytest.ini_options]
 addopts = [
@@ -66,12 +66,12 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
 python_version = "3.13"
 strict = true
 files = [
-  "src/astro",
+  "src/ms_tau_sdk",
 ]
 
 [tool.coverage.run]
 branch = true
-source = ["astro"]
+source = ["ms_tau_sdk"]
 
 [tool.coverage.report]
 fail_under = 74

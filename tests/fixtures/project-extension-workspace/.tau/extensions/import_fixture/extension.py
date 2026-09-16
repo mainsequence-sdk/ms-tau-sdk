@@ -1,4 +1,4 @@
-"""Tau extension proving the CodeRepository Executor import contract."""
+"""Tau extension proving project-workspace import behavior."""
 
 from __future__ import annotations
 

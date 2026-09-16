@@ -8,8 +8,8 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from astro.app import create_app
-from astro.settings import Settings
+from ms_tau_sdk.app import create_app
+from ms_tau_sdk.settings import TauSDKSettings
 
 # Gateway-verified caller identity headers (ADR-28 amendment 2). Protected
 # message routes reject requests without them; tests that exercise those routes
@@ -31,19 +31,19 @@ AGENT_CALLER_HEADERS = {
 
 
 @pytest.fixture
-def test_settings(tmp_path) -> Settings:
-    return Settings(
+def test_settings(tmp_path) -> TauSDKSettings:
+    return TauSDKSettings(
         _env_file=None,
         backend_url="http://backend:8000",
         runtime_credential_id="credential-id",
         runtime_credential_secret="credential-secret",
-        code_repository_root=tmp_path,
+        workspace=tmp_path,
         startup_dependencies_enabled=False,
     )
 
 
 @pytest.fixture
-def astro_app(test_settings: Settings) -> FastAPI:
+def sdk_app(test_settings: TauSDKSettings) -> FastAPI:
     return create_app(test_settings)
 
 
@@ -81,6 +81,6 @@ def asgi_client() -> Callable[..., Any]:
 
 
 @pytest.fixture
-async def astro_client(astro_app: FastAPI) -> AsyncIterator[AsyncClient]:
-    async with _asgi_client(astro_app, lifespan=True) as client:
+async def sdk_client(sdk_app: FastAPI) -> AsyncIterator[AsyncClient]:
+    async with _asgi_client(sdk_app, lifespan=True) as client:
         yield client

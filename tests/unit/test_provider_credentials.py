@@ -17,18 +17,18 @@ from tau_ai import (
 )
 from tau_coding.provider_catalog import BUILTIN_PROVIDER_CATALOG
 
-from astro.backend.auth import RuntimeCredentialAuth
-from astro.backend.client import MainSequenceClient
-from astro.backend.models import (
+from ms_tau_sdk.backend.auth import RuntimeCredentialAuth
+from ms_tau_sdk.backend.client import MainSequenceClient
+from ms_tau_sdk.backend.models import (
     AgentSession,
     ProviderControl,
     ProviderCredential,
     ProviderExecutionEvidence,
 )
-from astro.errors import ConfigurationError
-from astro.providers.definitions import PROVIDER_DEFINITIONS
-from astro.providers.factory import ProviderFactory
-from astro.settings import Settings
+from ms_tau_sdk.errors import ConfigurationError
+from ms_tau_sdk.providers.definitions import PROVIDER_DEFINITIONS
+from ms_tau_sdk.providers.factory import ProviderFactory
+from ms_tau_sdk.settings import TauSDKSettings
 
 
 def _provider_control(provider_name: str, model: str) -> ProviderControl:
@@ -109,7 +109,7 @@ async def test_hydration_uses_django_tau_credential_contract():
             },
         )
 
-    settings = Settings(
+    settings = TauSDKSettings(
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="id",
@@ -191,7 +191,7 @@ async def test_hydration_derives_openai_codex_account_id_from_access_token():
             },
         )
 
-    settings = Settings(
+    settings = TauSDKSettings(
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="id",

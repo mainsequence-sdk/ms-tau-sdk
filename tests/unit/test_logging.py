@@ -10,15 +10,15 @@ from starlette.responses import PlainTextResponse, StreamingResponse
 from starlette.routing import Route
 from structlog.contextvars import bind_contextvars, clear_contextvars
 
-from astro.app import create_app
-from astro.logging import (
+from ms_tau_sdk.app import create_app
+from ms_tau_sdk.logging import (
     RequestContextMiddleware,
     bind_request_log_fields,
     configure_logging,
     conversation_log_fields,
 )
-from astro.runtime.events import AstroRuntimeEvent
-from astro.runtime.observability import TauTurnObserver
+from ms_tau_sdk.runtime.events import TauRuntimeEvent
+from ms_tau_sdk.runtime.observability import TauTurnObserver
 
 
 def _json_events(output: str) -> list[dict[str, object]]:
@@ -52,7 +52,7 @@ def test_conversation_log_fields_never_include_content_when_opted_in():
 def test_conversation_content_never_reaches_the_logger(capsys):
     configure_logging("INFO", machine_sink=True, human_sink=False)
 
-    structlog.get_logger("astro.test").info(
+    structlog.get_logger("ms_tau_sdk.test").info(
         "test.prompt",
         **conversation_log_fields(
             "Use Bearer private-token to continue",
@@ -69,7 +69,7 @@ def test_structlog_json_matches_backend_fields_and_redacts(capsys):
     configure_logging("INFO", machine_sink=True, human_sink=False)
     bind_contextvars(request_id="request-1", session_uid="session-1")
 
-    structlog.get_logger("astro.test").info(
+    structlog.get_logger("ms_tau_sdk.test").info(
         "test.native",
         message="Native event",
         authorization="Bearer private-token",
@@ -85,10 +85,10 @@ def test_structlog_json_matches_backend_fields_and_redacts(capsys):
     native = next(event for event in events if event["event"] == "test.native")
     foreign = next(event for event in events if event["logger"] == "foreign.test")
 
-    assert native["logger"] == "astro.test"
+    assert native["logger"] == "ms_tau_sdk.test"
     assert native["level"] == "info"
     assert native["severity"] == "INFO"
-    assert native["component"] == "astro.test"
+    assert native["component"] == "ms_tau_sdk.test"
     assert native["event_id"]
     assert native["runtime_instance_uid"]
     assert native["request_id"] == "request-1"
@@ -109,7 +109,7 @@ def test_google_cloud_trace_fields_are_derived_from_otel_context(
     monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
     configure_logging("INFO", machine_sink=True, human_sink=False)
 
-    structlog.get_logger("astro.trace").info(
+    structlog.get_logger("ms_tau_sdk.trace").info(
         "trace.event",
         otelTraceID="abc123",
         otelSpanID="def456",
@@ -128,7 +128,7 @@ def test_google_cloud_trace_fields_are_derived_from_otel_context(
 def test_structlog_human_sink_uses_console_renderer_and_source(capsys):
     configure_logging("INFO", machine_sink=False, human_sink=True)
 
-    structlog.get_logger("astro.test").error(
+    structlog.get_logger("ms_tau_sdk.test").error(
         "test.human",
         message="Readable human event",
         password="private-password",
@@ -195,7 +195,7 @@ def test_environment_context_uses_only_canonical_reserved_field(capsys, monkeypa
     )
     configure_logging("INFO", machine_sink=True, human_sink=False)
 
-    structlog.get_logger("astro.project").info(
+    structlog.get_logger("ms_tau_sdk.project").info(
         "project.domain.event",
         organization_environment_uid="environment-forged",
     )
@@ -208,7 +208,7 @@ def test_environment_context_uses_only_code_repository_uid(capsys, monkeypatch):
     monkeypatch.setenv("MAINSEQUENCE_CODE_REPOSITORY_UID", "repository-1")
     configure_logging("INFO", machine_sink=True, human_sink=False)
 
-    structlog.get_logger("astro.code_repository").info("code_repository.domain.event")
+    structlog.get_logger("ms_tau_sdk.code_repository").info("code_repository.domain.event")
 
     event = _json_events(capsys.readouterr().out)[-1]
     assert event["code_repository_uid"] == "repository-1"
@@ -422,10 +422,10 @@ def test_tau_turn_observer_logs_model_tool_and_handoff_without_payloads(capsys):
     configure_logging("INFO", machine_sink=True, human_sink=False)
     observer = TauTurnObserver(provider="openai", model="controlled-model")
 
-    observer.observe(AstroRuntimeEvent(type="message_start"))
-    observer.observe(AstroRuntimeEvent(type="text_delta", data={"text": "private output"}))
+    observer.observe(TauRuntimeEvent(type="message_start"))
+    observer.observe(TauRuntimeEvent(type="text_delta", data={"text": "private output"}))
     observer.observe(
-        AstroRuntimeEvent(
+        TauRuntimeEvent(
             type="tool_execution_start",
             data={
                 "toolCallId": "tool-1",
@@ -435,7 +435,7 @@ def test_tau_turn_observer_logs_model_tool_and_handoff_without_payloads(capsys):
         )
     )
     observer.observe(
-        AstroRuntimeEvent(
+        TauRuntimeEvent(
             type="tool_execution_end",
             data={
                 "toolCallId": "tool-1",
@@ -445,19 +445,19 @@ def test_tau_turn_observer_logs_model_tool_and_handoff_without_payloads(capsys):
         )
     )
     observer.observe(
-        AstroRuntimeEvent(
+        TauRuntimeEvent(
             type="handoff_started",
             data={"source": "root", "target": "reviewer"},
         )
     )
     observer.observe(
-        AstroRuntimeEvent(
+        TauRuntimeEvent(
             type="handoff_completed",
             data={"source": "root", "target": "reviewer"},
         )
     )
     observer.observe(
-        AstroRuntimeEvent(
+        TauRuntimeEvent(
             type="message_end",
             data={
                 "message": {
@@ -490,9 +490,9 @@ def test_tau_model_rate_limit_retry_preserves_safe_correlated_attempts(capsys):
     configure_logging("INFO", machine_sink=True, human_sink=False)
     observer = TauTurnObserver(provider="openai", model="controlled-model")
 
-    observer.observe(AstroRuntimeEvent(type="model_start"))
+    observer.observe(TauRuntimeEvent(type="model_start"))
     observer.observe(
-        AstroRuntimeEvent(
+        TauRuntimeEvent(
             type="model_error",
             data={
                 "error_type": "ProviderRateLimitError",
@@ -503,9 +503,9 @@ def test_tau_model_rate_limit_retry_preserves_safe_correlated_attempts(capsys):
             },
         )
     )
-    observer.observe(AstroRuntimeEvent(type="model_start"))
+    observer.observe(TauRuntimeEvent(type="model_start"))
     observer.observe(
-        AstroRuntimeEvent(
+        TauRuntimeEvent(
             type="model_end",
             data={"provider_request_id": "provider-request-2"},
         )
@@ -534,9 +534,9 @@ def test_tau_terminal_provider_failure_is_observed_as_failed_without_payloads(ca
     configure_logging("INFO", machine_sink=True, human_sink=False)
     observer = TauTurnObserver(provider="openrouter", model="controlled-model")
 
-    observer.observe(AstroRuntimeEvent(type="message_start"))
+    observer.observe(TauRuntimeEvent(type="message_start"))
     observer.observe(
-        AstroRuntimeEvent(
+        TauRuntimeEvent(
             type="message_end",
             data={
                 "message": {
@@ -584,22 +584,22 @@ def test_tau_tool_timeout_retry_preserves_safe_canonical_approval_outcome(capsys
     }
 
     observer.observe(
-        AstroRuntimeEvent(
+        TauRuntimeEvent(
             type="tool_execution_start",
             data={**metadata, "toolCallId": "first", "arguments": {"token": "private token"}},
         )
     )
     observer.observe(
-        AstroRuntimeEvent(
+        TauRuntimeEvent(
             type="tool_timeout",
             data={"toolCallId": "first", "message": "private provider response"},
         )
     )
     observer.observe(
-        AstroRuntimeEvent(type="tool_execution_start", data={**metadata, "toolCallId": "second"})
+        TauRuntimeEvent(type="tool_execution_start", data={**metadata, "toolCallId": "second"})
     )
     observer.observe(
-        AstroRuntimeEvent(
+        TauRuntimeEvent(
             type="tool_execution_end",
             data={"toolCallId": "second", "result": {"secret": "private tool result"}},
         )
@@ -625,7 +625,7 @@ def test_tau_handoff_carries_session_correlation_and_allowlisted_reason(capsys):
     observer = TauTurnObserver(provider="openai", model="controlled-model")
 
     observer.observe(
-        AstroRuntimeEvent(
+        TauRuntimeEvent(
             type="handoff_started",
             data={
                 "handoff_uid": "handoff-1",
@@ -638,7 +638,7 @@ def test_tau_handoff_carries_session_correlation_and_allowlisted_reason(capsys):
             },
         )
     )
-    observer.observe(AstroRuntimeEvent(type="handoff_failed", data={"handoff_uid": "handoff-1"}))
+    observer.observe(TauRuntimeEvent(type="handoff_failed", data={"handoff_uid": "handoff-1"}))
 
     events = _json_events(capsys.readouterr().out)
     handoffs = [event for event in events if event["event"].startswith("agent.handoff.")]

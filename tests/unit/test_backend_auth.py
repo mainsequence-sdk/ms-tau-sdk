@@ -1,9 +1,9 @@
 import httpx
 import pytest
 
-from astro.backend.auth import RuntimeCredentialAuth
-from astro.backend.client import MainSequenceClient
-from astro.settings import Settings
+from ms_tau_sdk.backend.auth import RuntimeCredentialAuth
+from ms_tau_sdk.backend.client import MainSequenceClient
+from ms_tau_sdk.settings import TauSDKSettings
 
 
 @pytest.mark.asyncio
@@ -18,7 +18,7 @@ async def test_runtime_credential_exchange_is_cached():
         )
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    settings = Settings(
+    settings = TauSDKSettings(
         _env_file=None,
         backend_url="http://backend:8000",
         runtime_credential_id="credential-id",
@@ -50,7 +50,7 @@ async def test_backend_client_binds_auth_to_shared_http_pool():
         base_url="http://backend:8000",
         transport=httpx.MockTransport(handler),
     )
-    settings = Settings(
+    settings = TauSDKSettings(
         _env_file=None,
         backend_url="http://backend:8000",
         runtime_credential_id="credential-id",
@@ -83,7 +83,7 @@ async def test_non_idempotent_request_retries_only_after_unauthorized():
         base_url="http://backend:8000",
         transport=httpx.MockTransport(handler),
     )
-    settings = Settings(
+    settings = TauSDKSettings(
         _env_file=None,
         backend_url="http://backend:8000",
         runtime_credential_id="credential-id",

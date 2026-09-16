@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import HTTPException
 
-from astro.api.a2a import (
+from ms_tau_sdk.api.a2a import (
     _execute_task,
     _output_contract,
     _resume_caller_delivery,
@@ -14,7 +14,7 @@ from astro.api.a2a import (
     task_caller_delivery_available,
     task_dispatch_available,
 )
-from astro.backend.models import (
+from ms_tau_sdk.backend.models import (
     AgentTask,
     AgentTaskCallerDelivery,
     AgentTaskEvent,
@@ -22,15 +22,15 @@ from astro.backend.models import (
     AgentTaskExecutionAttempt,
     AgentTaskSnapshot,
 )
-from astro.errors import BackendError
-from astro.runtime.events import AstroRuntimeEvent
-from astro.runtime.task_context import (
+from ms_tau_sdk.errors import BackendError
+from ms_tau_sdk.runtime.events import TauRuntimeEvent
+from ms_tau_sdk.runtime.task_context import (
     TaskExecutionContext,
     active_task_execution,
     task_execution_scope,
 )
-from astro.settings import Settings
-from astro.tools.task_control import create_task_control_tools
+from ms_tau_sdk.settings import TauSDKSettings
+from ms_tau_sdk.tools.task_control import create_task_control_tools
 
 
 def _task(status: str = "submitted", *, cancellation_requested: bool = False) -> AgentTask:
@@ -58,7 +58,7 @@ def _claimed_client(task: AgentTask) -> AsyncMock:
 
 
 class _ExecutionManager:
-    settings = Settings(_env_file=None)
+    settings = TauSDKSettings(_env_file=None)
 
     def __init__(self, *, draining: bool) -> None:
         self.draining = draining
@@ -190,7 +190,7 @@ async def test_dispatch_signal_pulls_durable_task_then_claims_before_execution()
     client.settle_task_attempt.return_value = completed
 
     class Manager:
-        settings = Settings(_env_file=None)
+        settings = TauSDKSettings(_env_file=None)
         draining = False
 
         def __init__(self) -> None:
@@ -210,7 +210,7 @@ async def test_dispatch_signal_pulls_durable_task_then_claims_before_execution()
         async def prompt(self, _context_id, _prompt, *, provenance=None):
             self.prompt_started = True
             assert client.claim_task_dispatch.await_count == 1
-            yield AstroRuntimeEvent(
+            yield TauRuntimeEvent(
                 type="message_end",
                 data={
                     "message": {
@@ -259,7 +259,7 @@ async def test_attempt_writes_refresh_the_rotating_canonical_session_lease_token
     client.settle_task_attempt.return_value = completed
 
     class Manager:
-        settings = Settings(_env_file=None)
+        settings = TauSDKSettings(_env_file=None)
         draining = False
 
         def __init__(self) -> None:
@@ -273,7 +273,7 @@ async def test_attempt_writes_refresh_the_rotating_canonical_session_lease_token
             )
 
         async def prompt(self, _context_id, _prompt, *, provenance=None):
-            yield AstroRuntimeEvent(
+            yield TauRuntimeEvent(
                 type="message_end",
                 data={
                     "message": {
@@ -315,7 +315,7 @@ async def test_structured_interruption_settles_attempt_without_requiring_text_ou
     client.settle_task_attempt.return_value = interrupted
 
     class Manager:
-        settings = Settings(_env_file=None)
+        settings = TauSDKSettings(_env_file=None)
         draining = False
 
         async def task_execution_fence(self, _session_uid):
@@ -374,14 +374,14 @@ async def test_streaming_terminal_agent_failure_settles_task_failed_not_complete
     client.settle_task_attempt.return_value = failed
 
     class Manager:
-        settings = Settings(_env_file=None)
+        settings = TauSDKSettings(_env_file=None)
         draining = False
 
         async def task_execution_fence(self, _session_uid):
             return SimpleNamespace(holder_id="holder-1", lease_token="lease-1")
 
         async def prompt(self, _context_id, _prompt, *, provenance=None):
-            yield AstroRuntimeEvent(
+            yield TauRuntimeEvent(
                 type="message_end",
                 data={
                     "message": {
@@ -579,7 +579,7 @@ async def test_caller_delivery_adds_bounded_platform_event_before_resuming():
             platform_event=None,
         ):
             self.platform_event = platform_event
-            yield AstroRuntimeEvent(type="agent_settled")
+            yield TauRuntimeEvent(type="agent_settled")
 
         async def task_execution_fence(self, _session_uid):
             return SimpleNamespace(holder_id="holder-1", lease_token="lease-2")

@@ -21,7 +21,8 @@ Source baseline: Astro Tau `v4.0.25`, commit `9b7a1c5`, branch `development`
 | Documentation | D0 — inventory and terminology map | Complete | Every tracked documentation family has an owner and destination. |
 | SDK code | C1 — internal library boundaries | Complete | Explicit application service graph owns startup/shutdown; CLI constructs an app instance; sessionless harness construction is isolated; all routes and contracts remain green. |
 | SDK code | C2 — Tau configuration | Complete | Tau 0.4.2 native project prompt precedence, skills, prompt templates, hooks, extensions, diagnostics, reload, and shutdown are exercised; no SDK extension gate or parallel prompt configuration remains. |
-| SDK code | C3 — new package and public API | In progress | Rename distribution/import/command, require the current project workspace, and remove Astro terminology from production surfaces. |
+| SDK code | C3 — new package and public API | Complete | `ms-tau-sdk` 0.1.0 builds and clean-installs; `ms_tau_sdk` exports `create_app` and `TauSDKSettings`; `ms-tau` starts from a validated project workspace and serves health/version with no retired import namespace. |
+| SDK code | C4 — project consumption | In progress | Turn the project fixture into a minimal consumer and exercise the installed public surface and native `.tau` ownership. |
 
 C1 may start when the local SDK-behavior, decision, test, and documentation inputs needed for that
 boundary are classified. No external repository inventory or modification is an ADR 56 gate.

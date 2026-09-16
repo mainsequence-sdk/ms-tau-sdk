@@ -4,15 +4,15 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import FastAPI
 
-from astro.api.a2a import RESPONSE_KIND_EXTENSION_URI, REST_BASE, router
-from astro.api.dependencies import backend, runtime_manager, settings
-from astro.backend.models import (
+from ms_tau_sdk.api.a2a import RESPONSE_KIND_EXTENSION_URI, REST_BASE, router
+from ms_tau_sdk.api.dependencies import backend, runtime_manager, settings
+from ms_tau_sdk.backend.models import (
     AgentCardEnvelope,
     AgentSession,
     AgentTask,
     AgentTaskCreateResult,
 )
-from astro.settings import Settings
+from ms_tau_sdk.settings import TauSDKSettings
 
 USER_CALLER_HEADERS = {
     "X-Caller-Kind": "user",
@@ -51,7 +51,7 @@ def _app(client: AsyncMock, manager: _BackgroundManager) -> FastAPI:
     app.include_router(router)
     app.dependency_overrides[backend] = lambda: client
     app.dependency_overrides[runtime_manager] = lambda: manager
-    app.dependency_overrides[settings] = lambda: Settings(_env_file=None)
+    app.dependency_overrides[settings] = lambda: TauSDKSettings(_env_file=None)
     return app
 
 

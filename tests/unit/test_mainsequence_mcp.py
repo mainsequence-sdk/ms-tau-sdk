@@ -11,12 +11,12 @@ from starlette.applications import Starlette
 from starlette.responses import StreamingResponse
 from starlette.routing import Route
 
-from astro.backend.mcp import (
+from ms_tau_sdk.backend.mcp import (
     MainSequenceMCPClient,
     _RuntimeCredentialHTTPXAuth,
 )
-from astro.settings import Settings
-from astro.tools.mainsequence_mcp import (
+from ms_tau_sdk.settings import TauSDKSettings
+from ms_tau_sdk.tools.mainsequence_mcp import (
     CALLER_SESSION_PROOF_META_KEY,
     CALLER_SESSION_PROOF_REQUIRED_META_KEY,
     create_mainsequence_mcp_tools,
@@ -24,8 +24,8 @@ from astro.tools.mainsequence_mcp import (
 )
 
 
-def _settings() -> Settings:
-    return Settings(
+def _settings() -> TauSDKSettings:
+    return TauSDKSettings(
         _env_file=None,
         backend_url="http://backend.test/",
         runtime_credential_id="credential-id",
@@ -158,12 +158,12 @@ async def test_mcp_transport_does_not_leak_cancel_scope_into_streaming_response(
 
     app = Starlette(routes=[Route("/", endpoint)])
     with (
-        patch("astro.backend.mcp.streamable_http_client", fake_transport),
-        patch("astro.backend.mcp.ClientSession", FakeClientSession),
+        patch("ms_tau_sdk.backend.mcp.streamable_http_client", fake_transport),
+        patch("ms_tau_sdk.backend.mcp.ClientSession", FakeClientSession),
     ):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
-            base_url="http://astro.test",
+            base_url="http://ms_tau_sdk.test",
         ) as http:
             response = await http.get("/")
 
