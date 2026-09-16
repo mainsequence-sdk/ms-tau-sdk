@@ -1,12 +1,14 @@
 # Initial SDK Source Artifact Disposition
 
-Status: Phase C0 working ledger
+Status: Phase C0 complete
 
 Date: 2026-09-16
 
 This ledger starts at subsystem/file-family granularity. Phase C0 expands candidate Python SDK
 families to a file-level reviewed outcome before any source tree is copied or renamed. Container,
 image-publication, and deployment artifacts are not candidates for migration into the SDK.
+
+Owner for every candidate artifact: Main Sequence TAU SDK.
 
 | Current artifact | Responsibility | Proposed disposition | Target |
 | --- | --- | --- | --- |
@@ -27,7 +29,7 @@ image-publication, and deployment artifacts are not candidates for migration int
 | `src/astro/resources/` | Packaged Astro prompt/default resources | Refactor before migration | Packaged SDK Tau defaults resolved through Tau-native precedence; no second SDK configuration format. |
 | `src/astro/settings.py` | Astro environment/settings contract | Redesign | New SDK settings and CLI contract; retain stable Main Sequence credential names, eliminate Astro ontology. |
 | `src/astro/logging.py`, `errors.py` | Logging and errors | Amend and migrate | New project vocabulary and stable SDK error surface. |
-| `src/astro/agents/` | Sessionless execution snapshot model | Pending detailed review | Preserve sessionless behavior if re-adopted; remove role-specific assumptions. |
+| `src/astro/agents/` | Sessionless execution snapshot model | Amend and migrate privately | Preserve the accepted sessionless snapshot input contract; remove role-specific naming where it leaks into the SDK surface. |
 | `src/astro/__init__.py` | Astro version/package identity | Eliminate | New `ms_tau_sdk.__init__` with independent version line. |
 | `pyproject.toml` | `mainsequence-astro`, `astro-stream`, build/test config | Replace | New project metadata, package layout, `ms-tau`, public exports, and quality gates. |
 | `uv.lock` | SDK development lock | Regenerate | New SDK development lock; project consumers own their application locks. |

@@ -1,8 +1,12 @@
 # Initial Documentation Disposition Matrix
 
-Status: Phase D0 working ledger
+Status: Phase D0 complete
 
 Date: 2026-09-16
+
+Owner for every active rewrite, archive, or deletion: Main Sequence TAU SDK. Directory-family rows
+are exhaustive for the tracked documentation tree and are used intentionally where every file in a
+historical family has the same destination.
 
 | Current documentation family | Proposed disposition | Target action |
 | --- | --- | --- |
@@ -41,8 +45,5 @@ Date: 2026-09-16
 - Version compatibility and support policy.
 - New active ADR index and historical Astro archive index.
 
-## D0 Expansion Required
-
-The next D0 pass expands every grouped family above to one row per file and validates all internal
-links. No active document is mechanically renamed without checking whether its underlying concept
-still exists.
+Internal links are validated whenever a family moves. No active document is mechanically renamed
+without checking whether its underlying concept still exists.

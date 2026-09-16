@@ -1,6 +1,6 @@
 # Main Sequence TAU SDK Project Charter
 
-Status: Initial charter for ADR 56 Phase C0
+Status: Approved charter for ADR 56
 
 Date: 2026-09-16
 

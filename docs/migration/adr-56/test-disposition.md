@@ -1,10 +1,13 @@
 # Initial Test Disposition Matrix
 
-Status: Phase T0 working ledger
+Status: Phase T0 complete
 
 Date: 2026-09-16
 
 Baseline: 271 passed, 1 live-credential test skipped.
+
+Owner for every retained or rewritten test: Main Sequence TAU SDK. The table covers every tracked
+test module and fixture family in this repository; deleted image-only tests are recorded below.
 
 | Current test or family | Proposed class | Target action |
 | --- | --- | --- |
