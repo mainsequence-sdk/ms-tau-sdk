@@ -28,18 +28,12 @@ RUN --mount=type=cache,id=astro-pip-v2,target=/root/.cache/pip \
     --wheel-dir /opt/wheels \
     --requirement /tmp/requirements-runtime.lock
 
-# Astro is a monorepo; both independently packageable tool distributions live
-# under packages/ and are built from this repository's Docker context.
-COPY packages/tau-file-tools /opt/src/tau-file-tools
-COPY packages/tau-web-access /opt/src/tau-web-access
 COPY . /app
 
 RUN --mount=type=cache,id=astro-pip-v2,target=/root/.cache/pip \
     python -m pip wheel \
     --no-deps \
     --wheel-dir /opt/wheels \
-    /opt/src/tau-file-tools \
-    /opt/src/tau-web-access \
     /app \
  && python -m pip install \
     --no-index \
@@ -112,7 +106,7 @@ RUN --mount=from=astro-build,source=/opt/wheels,target=/opt/wheels,ro \
       --find-links /opt/wheels \
       /opt/wheels/mainsequence_astro-*.whl \
  && python -m pip check \
- && python -c "import astro, tau_agent, tau_coding, tau_file_tools, tau_web_access"
+ && python -c "import astro, tau_agent, tau_coding"
 
 USER 10000:10000
 WORKDIR /workspace

@@ -19,8 +19,6 @@ dependencies = [
   "python-multipart>=0.0.20",
   "structlog>=26.1,<27",
   "tau-ai==0.3.1",
-  "tau-file-tools>=0.1.0",
-  "tau-web-access>=0.1.0",
   "uvicorn[standard]>=0.35",
 ]
 
@@ -42,16 +40,6 @@ dev = [
 [tool.hatch.build.targets.wheel]
 packages = ["src/astro"]
 
-[tool.uv.sources]
-tau-file-tools = { workspace = true }
-tau-web-access = { workspace = true }
-
-[tool.uv.workspace]
-members = [
-  "packages/tau-file-tools",
-  "packages/tau-web-access",
-]
-
 [tool.pytest.ini_options]
 addopts = [
   "--import-mode=importlib",
@@ -62,8 +50,6 @@ addopts = [
 asyncio_mode = "auto"
 testpaths = [
   "tests",
-  "packages/tau-file-tools/tests",
-  "packages/tau-web-access/tests",
 ]
 
 [tool.ruff]
@@ -81,13 +67,11 @@ python_version = "3.13"
 strict = true
 files = [
   "src/astro",
-  "packages/tau-file-tools/src",
-  "packages/tau-web-access/src",
 ]
 
 [tool.coverage.run]
 branch = true
-source = ["astro", "tau_file_tools", "tau_web_access"]
+source = ["astro"]
 
 [tool.coverage.report]
 fail_under = 74

@@ -4,9 +4,7 @@ Cloud Build receives the Astro monorepo:
 
 ```text
 astro/
-├── packages/
-│   ├── tau-file-tools/
-│   └── tau-web-access/
+├── src/astro/
 ├── Dockerfile
 └── pyproject.toml
 ```
@@ -43,11 +41,9 @@ for mutable executor state. It does not install Node.js, a second interpreter,
 or a compatibility path for the retired notebook image ABI.
 
 CodeRepository base images must provide Git. The Astro overlay installs and owns
-`ripgrep` for its file tools; it does not require FFmpeg or FFprobe from the lean
-application base. `yt-dlp` is intentionally absent from the release wheelhouse because
-its complete provider-extractor distribution embeds third-party client credentials.
-`tau-web-access[youtube-frames]` remains an explicit opt-in for environments that are
-not distributed through the developer image catalogue.
+`ripgrep` as a common repository utility available through Tau's core `bash` tool.
+Optional structured file tools, web access, media extraction, and their dependencies
+belong to project-owned `.tau/extensions`; they are absent from the Astro wheelhouse.
 
 The published remote-worker recipe is provider-neutral. Its
 `EXECUTOR_BUNDLE_IMAGE` is supplied by the backend as the exact digest-pinned

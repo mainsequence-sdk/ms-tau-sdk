@@ -112,20 +112,22 @@ def test_remote_worker_consumes_only_the_lean_python_runtime_abi() -> None:
     assert 'test "$(stat -c \'%u:%g\' /app)" = "0:0"' in recipe
 
 
-def test_release_wheelhouse_excludes_optional_youtube_frame_downloader() -> None:
-    web_project = tomllib.loads(
-        (REPOSITORY_ROOT / "packages/tau-web-access/pyproject.toml").read_text()
-    )
-    runtime_dependencies = web_project["project"]["dependencies"]
-    optional_dependencies = web_project["project"]["optional-dependencies"]
+def test_release_wheelhouse_excludes_removed_optional_tool_packages() -> None:
+    project = tomllib.loads((REPOSITORY_ROOT / "pyproject.toml").read_text())
     runtime_lock = (REPOSITORY_ROOT / "requirements-runtime.lock").read_text()
+    runtime_recipe = (REPOSITORY_ROOT / "Dockerfile").read_text()
 
-    assert all(not dependency.startswith("yt-dlp") for dependency in runtime_dependencies)
-    assert any(
-        dependency.startswith("yt-dlp")
-        for dependency in optional_dependencies["youtube-frames"]
+    assert all(
+        not dependency.startswith(("tau-file-tools", "tau-web-access"))
+        for dependency in project["project"]["dependencies"]
     )
+    assert not (REPOSITORY_ROOT / "packages/tau-file-tools").exists()
+    assert not (REPOSITORY_ROOT / "packages/tau-web-access").exists()
+    assert "tau-file-tools" not in runtime_lock
+    assert "tau-web-access" not in runtime_lock
     assert "\nyt-dlp==" not in runtime_lock
+    assert "tau_file_tools" not in runtime_recipe
+    assert "tau_web_access" not in runtime_recipe
 
 
 def test_runtime_verification_does_not_require_media_tools() -> None:

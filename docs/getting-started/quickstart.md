@@ -12,9 +12,7 @@ not install or launch Node.js.
 docker compose up --build astro
 ```
 
-Compose builds from the Astro monorepo root. The `tau-file-tools` and
-`tau-web-access` distributions are workspace packages under `packages/`. It
-publishes Astro on port `8787` and points
+Compose builds from the Astro repository root. It publishes Astro on port `8787` and points
 `MAINSEQUENCE_BACKEND` to `http://host.docker.internal:8000` by default.
 
 Check the service:

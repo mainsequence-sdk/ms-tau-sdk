@@ -6,6 +6,12 @@ Target runtime: Python 3.13+
 Tau baseline: `tau-ai==0.3.1`
 Tau source baseline: `edd4ccc6171420015fa0f04bec75d38fe32beb68`
 
+Superseded in part by ADR 55 on 2026-09-16: the migration's `tau-file-tools`,
+`tau-web-access`, and model-facing `get_runtime_info` requirements were compatibility baggage and
+are removed from the active Astro runtime. Tau core tools, Main Sequence MCP, A2A controls, and the
+project-owned `.tau/extensions` host contract remain. The historical design below is retained to
+explain commit `781ecf4`; it is not the current tool-catalog contract.
+
 ## Implementation Snapshot
 
 The code migration is implemented across Astro, Django, and the independent

@@ -24,8 +24,6 @@ for module_name in (
     "astro",
     "tau_agent",
     "tau_coding",
-    "tau_file_tools",
-    "tau_web_access",
     "mcp",
     "structlog",
 ):

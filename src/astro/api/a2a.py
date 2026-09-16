@@ -890,8 +890,7 @@ class _DurableArtifactWriter:
         now = time.monotonic()
         if (
             not force
-            and now - self.last_cancellation_check_at
-            < self.cancellation_poll_interval_seconds
+            and now - self.last_cancellation_check_at < self.cancellation_poll_interval_seconds
         ):
             return
         current = await self.client.get_task(self.task.uid)
@@ -1674,9 +1673,7 @@ def _durable_task_execution_input(
     contract = StrictJsonContract(
         mode=mode,  # type: ignore[arg-type]
         schema=(
-            raw_contract.get("schema")
-            if isinstance(raw_contract.get("schema"), dict)
-            else None
+            raw_contract.get("schema") if isinstance(raw_contract.get("schema"), dict) else None
         ),
         repair_attempts=max(0, min(int(raw_contract.get("repair_attempts", 3)), 10)),
     )
@@ -1783,9 +1780,7 @@ async def _resume_caller_delivery(
         raise
     except Exception as error:
         with contextlib.suppress(Exception):
-            fence = await manager.task_execution_fence(
-                delivery.caller_agent_session_uid
-            )
+            fence = await manager.task_execution_fence(delivery.caller_agent_session_uid)
             if fence.holder_id == holder_id:
                 await client.settle_task_caller_delivery(
                     delivery.uid,

@@ -706,6 +706,7 @@ async def test_message_send_task_waits_when_return_immediately_is_false():
     client.get_task_snapshot.side_effect = get_task_snapshot
     client.settle_task_attempt.side_effect = settle_task_attempt
     final = _assistant_message("Finished before returning.")
+
     class RunningManager(_TauEventManager):
         background = None
 
@@ -862,9 +863,7 @@ async def test_message_send_rejects_non_boolean_return_immediately():
         )
 
     assert response.status_code == 400
-    assert response.json()["detail"] == (
-        "configuration.returnImmediately must be a boolean"
-    )
+    assert response.json()["detail"] == ("configuration.returnImmediately must be a boolean")
     client.create_task.assert_not_awaited()
 
 

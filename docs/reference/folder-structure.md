@@ -28,33 +28,16 @@ astro/
 │   │   └── prompts/
 │   ├── runtime/
 │   │   ├── events.py
+│   │   ├── extensions.py
 │   │   ├── manager.py
 │   │   └── session.py
 │   ├── sessions/
 │   │   └── storage.py
 │   ├── tools/
 │   │   ├── mainsequence_mcp.py
-│   │   ├── runtime_info.py
-│   │   └── web_access.py
+│   │   └── task_control.py
 │   ├── app.py
 │   └── settings.py
-├── packages/
-│   ├── tau-file-tools/
-│   │   ├── src/tau_file_tools/
-│   │   │   ├── grep.py
-│   │   │   ├── find.py
-│   │   │   └── ls.py
-│   │   ├── tests/
-│   │   └── pyproject.toml
-│   └── tau-web-access/
-│       ├── src/tau_web_access/
-│       │   ├── extractors.py
-│       │   ├── providers.py
-│       │   ├── security.py
-│       │   ├── storage.py
-│       │   └── tools.py
-│       ├── tests/
-│       └── pyproject.toml
 ├── tests/
 ├── deployment/
 ├── Dockerfile
@@ -63,10 +46,9 @@ astro/
 └── pyproject.toml
 ```
 
-`tau-file-tools` and `tau-web-access` are independent Python distributions
-inside the Astro monorepo, not modules under the `astro` distribution. The root
-`uv` workspace resolves them as normal Python dependencies, and the container
-build installs all three distributions into the same Python 3.13 environment.
+Astro ships no optional model-tool distributions. Tau provides the core coding
+tools, Astro projects backend MCP and A2A protocol tools, and CodeRepositories
+own optional tools through `.tau/extensions` and their image dependencies.
 
 Tau session history is backend-owned. There is no local session-state folder,
 Pi JSONL, shared checkpoint volume, or sidecar.

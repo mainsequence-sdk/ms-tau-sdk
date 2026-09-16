@@ -72,13 +72,8 @@ payloads, credentials, and provider headers are never logged. Both sinks use
 the same Structlog event pipeline as `tdag-django`; see
 [logging](./logging.md).
 
-## Web tools
+## Project extension configuration
 
-The `packages/tau-web-access` workspace distribution can use:
-
-- `EXA_API_KEY`
-- `PERPLEXITY_API_KEY`
-- `GEMINI_API_KEY`
-- `GITHUB_TOKEN`
-
-These are optional. Available search backends depend on which values are set.
+Astro defines no environment variables for optional file-search, web-access, browser, media, or
+other project tools. A CodeRepository that installs a `.tau/extensions` capability owns its
+dependencies, credentials, egress policy, and configuration names.

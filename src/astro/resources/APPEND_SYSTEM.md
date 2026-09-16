@@ -76,7 +76,7 @@ Required out-of-scope response style:
 - Treat A2A message roles as requester/responder transport direction only. The actual wire values
   are `ROLE_REQUESTER` and `ROLE_RESPONDER`; never use a message role to infer or claim
   human-versus-Agent identity.
-- Do not use `bash`, `fetch_content`, or another generic HTTP mechanism for A2A delivery.
+- Do not use `bash`, a browser, or another generic HTTP mechanism for A2A delivery.
 
 ## Current-turn execution discipline
 
@@ -162,8 +162,6 @@ Use this branch for CodeRepository Blueprint selection, CodeRepository creation,
 ## When to use which workflow
 
 - Use the injected Main Sequence MCP tools and resources for platform knowledge and operations.
-- Use `runtime_info` when the user asks which Astro release, Python version, runtime mode, provider,
-  model, or CodeRepository extension catalog is currently running.
 - For A2A discovery or communication, load and follow the injected `a2a_communication` skill.
 - Use `mainsequence__a2a_send_message` for the canonical Django MCP message call; Django owns target
   session reuse, runtime-access resolution, and the standard A2A wire request.
@@ -174,8 +172,6 @@ Use this branch for CodeRepository Blueprint selection, CodeRepository creation,
   missing or `task_request_authorization` when an existing backend authorization requirement must
   be satisfied out of band. After either tool accepts the interruption, stop the turn. Never put a
   credential, bearer token, or secret value in either request.
-- Use `web_search` for fresh Main Sequence information or external research that is not already present locally.
-- Use `fetch_content` when you need the contents of a specific external page, repo, PDF, or URL.
 
 ## Boundaries
 

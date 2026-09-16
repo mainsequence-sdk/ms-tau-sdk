@@ -4,6 +4,9 @@ Status: Accepted and implemented
 
 Date: 2026-08-29
 
+Amended by ADR 55 on 2026-09-16: `ripgrep` remains a general repository utility available through
+Tau's core `bash` tool; Astro no longer ships structured file-tool or web-access packages.
+
 ## Context
 
 The CodeRepository Executor overlay inherited Jupyter base-image details that
@@ -35,7 +38,7 @@ wheels into it. The remote-worker overlay installs those same wheels into the
 base image's `/opt/venv`; it never creates another interpreter or venv. Before
 installation it verifies the base ABI and the clean Git branch, ref, and exact
 commit at `/workspace`. The base must provide Git, while the remote-worker
-overlay installs and owns `ripgrep` for Astro's file tools. FFmpeg and FFprobe
+overlay installs and owns `ripgrep` for repository work through Tau's core `bash` tool. FFmpeg and FFprobe
 are workload-specific media tools and are not part of either the lean base ABI
 or the Astro executor overlay. The final image ends as `USER 10000:10000` with
 `WORKDIR /workspace`.

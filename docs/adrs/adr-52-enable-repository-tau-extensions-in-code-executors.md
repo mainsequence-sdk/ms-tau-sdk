@@ -9,6 +9,11 @@ the tdag-django deployment override remains pending.
 
 Owners: Astro Tau, tdag-django CodeRepository Executor deployment, and Runtime Infrastructure
 
+Amended by ADR 55 on 2026-09-16: Astro's effective base catalog is Tau's core
+`read`/`write`/`edit`/`bash` tools, Main Sequence MCP tools, and protocol-required A2A task
+controls. The former `tau-file-tools`, `tau-web-access`, and `runtime_info` capabilities are no
+longer Astro-owned.
+
 Related decisions:
 
 - `docs/adrs/adr-50-lean-python-runtime-abi.md`
@@ -22,10 +27,8 @@ Related decisions:
 Astro constructs each durable Tau `CodingSession` with a fixed tool list:
 
 - Tau coding tools;
-- `tau-file-tools`;
-- `tau-web-access`;
 - tools and resources discovered from the Main Sequence Django MCP server; and
-- Astro runtime information.
+- protocol-required A2A task controls.
 
 The CodeRepository checkout is supplied as the Tau working directory, so project-local skills and
 prompt resources are discovered. Executable project extensions are different. Astro currently
@@ -320,10 +323,11 @@ Astro surfaces Tau's extension diagnostics through structured logs. The log cont
 extension name, repository-relative path, diagnostic severity, and error type, but never source
 contents, tool arguments/results, credentials, or environment values.
 
-The runtime health payload and `runtime_info` diagnostics expose the project-extension enablement
-state, loaded extension count, registered project-tool count, extension diagnostic and error
-counts, and a deterministic tool-catalog digest. This distinguishes a deployment where no
-extensions were present from one where discovery or loading failed.
+The runtime health payload and structured logs expose the project-extension enablement state,
+loaded extension count, registered project-tool count, extension diagnostic and error counts, and
+a deterministic tool-catalog digest. This distinguishes a deployment where no extensions were
+present from one where discovery or loading failed without adding an operator-diagnostics tool to
+the model catalog.
 
 The CodeRepository image verification suite includes a fixture extension that imports from the
 project environment and registers a tool. Extension errors follow Tau's native loading semantics;

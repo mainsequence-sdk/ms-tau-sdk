@@ -300,9 +300,10 @@ async def test_attempt_writes_refresh_the_rotating_canonical_session_lease_token
     )
 
     assert client.claim_task_dispatch.await_args.kwargs["lease_token"] == "lease-1"
-    assert [
-        call.kwargs["lease_token"] for call in client.mutate_task_output.await_args_list
-    ] == ["lease-2", "lease-3"]
+    assert [call.kwargs["lease_token"] for call in client.mutate_task_output.await_args_list] == [
+        "lease-2",
+        "lease-3",
+    ]
     assert client.add_task_attempt_message.await_args.kwargs["lease_token"] == "lease-4"
     assert client.settle_task_attempt.await_args.kwargs["lease_token"] == "lease-5"
 

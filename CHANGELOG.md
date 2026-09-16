@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Minimal bundled tool catalog
+
+- Removed the migration-era `tau-file-tools` and `tau-web-access` packages and their structured
+  `grep`, `find`, `ls`, search, fetch, YouTube, and extraction capabilities from Astro's default
+  model tool catalog and release wheelhouse.
+- Removed the model-facing `runtime_info` compatibility tool. Runtime and CodeRepository extension
+  diagnostics remain available through structured logs and health snapshots.
+- Kept Tau's core `read`, `write`, `edit`, and `bash` tools, Main Sequence MCP projection, A2A task
+  controls, and trusted project-owned `.tau/extensions` as the complete capability boundary.
+- Runtime eviction now closes each Tau `CodingSession` before the final persistence flush, ensuring
+  project `session_shutdown(reason="quit")` hooks run without blocking lease release or provider
+  cleanup when an extension fails.
+
 ### Downloadable executor dependency boundary
 
 - Removed `yt-dlp` from the mandatory `tau-web-access` runtime dependency set. The package is

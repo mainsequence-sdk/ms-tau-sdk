@@ -15,6 +15,10 @@ is superseded. Both standalone and CodeRepository Executor images now use
 `appuser` (`10000:10000`), `/home/appuser`, `/opt/venv`, `/workspace`, `/app`,
 and `/session-state`. No Jovyan, `NB_*`, or `user-skel` compatibility remains.
 
+Amended 2026-09-16 by ADR 55: runtime-profile and extension diagnostics remain
+operator-facing through structured logs and health state. The model-facing
+`get_runtime_info`/`runtime_info` compatibility tool is removed.
+
 ## Context
 
 Astro currently uses backend-visible `agent_type` values such as:
@@ -342,8 +346,8 @@ Audit result:
       `agent_type` first and treats `ASTRO_EXECUTION_MODE` as topology metadata, not identity.
 - [x] Validate fixed-worker env combinations early: `ASTRO_FIXED_AGENT_TYPE`,
       `ASTRO_EXECUTION_MODE`, `ASTRO_FIXED_CODE_REPOSITORY_CWD`, and any required code-repository-image metadata.
-- [x] Expose the resolved runtime profile in structured startup/request logs and `get_runtime_info`
-      output so deployment mistakes are visible.
+- [x] Expose the resolved runtime profile in structured startup/request logs and health state so
+      deployment mistakes are visible.
 - [x] Keep backend `agentType` / `agent_type` unchanged in request parsing, session metadata,
       A2A envelopes, checkpoint metadata, and backend registration.
 
@@ -368,15 +372,14 @@ Implemented in the first pass:
 - `interface/stream/server.ts` now resolves and validates a `RuntimeProfile` before launching chat
 - or A2A execution.
 - Runtime profile `kind` now uses `astro-orchestrator` / `code-repository-executor`; the retired
-  repository-worker label is absent from runtime logs and `get_runtime_info`.
+  repository-worker label is absent from runtime logs and health state.
 - Fixed CodeRepository-worker runtimes now treat request `agentType` as an assertion against
   `ASTRO_FIXED_AGENT_TYPE`; mismatches are rejected.
 - CodeRepository attachment now resolves cwd, repo root, CodeRepository id, and code repository image from one helper
   instead of scattered role checks.
 - Fixed CodeRepository-worker requests no longer use generic specialist discovery as their local behavior
   selector.
-- Runtime profile is emitted in startup/request logs, `/health`, available-model logs, and
-  `get_runtime_info`.
+- Runtime profile is emitted in startup/request logs, `/health`, and available-model logs.
 
 ### Prompt contract
 

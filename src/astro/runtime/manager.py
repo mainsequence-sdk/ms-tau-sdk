@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import httpx
 import structlog
 from structlog.contextvars import (
     bind_contextvars,
@@ -23,8 +22,6 @@ from structlog.contextvars import (
 from tau_coding import CodingSession, CodingSessionConfig
 from tau_coding.resources import TauResourcePaths
 from tau_coding.tools import create_coding_tools
-from tau_file_tools import create_file_tools
-from tau_web_access import MemorySearchResultStore
 
 from astro.backend.client import MainSequenceClient
 from astro.backend.mcp import MainSequenceMCPClient
@@ -57,9 +54,7 @@ from astro.tools.mainsequence_mcp import (
     create_mainsequence_mcp_tools,
     mainsequence_mcp_resource_prompt,
 )
-from astro.tools.runtime_info import create_runtime_info_tool
 from astro.tools.task_control import create_task_control_tools
-from astro.tools.web_access import build_web_tools
 
 from .session import ActiveSessionRuntime, PlatformEvent
 
@@ -121,7 +116,6 @@ class SessionRuntimeManager:
         self._background_tasks: set[asyncio.Task[object]] = set()
         self._a2a_task_executions: dict[str, asyncio.Task[object]] = {}
         self._a2a_caller_deliveries: dict[str, asyncio.Task[object]] = {}
-        self._web_client = httpx.AsyncClient(timeout=60)
         self._mcp_client: MainSequenceMCPClient | None = None
         self._mcp_lock = asyncio.Lock()
         self._startup_ready = False
@@ -373,14 +367,11 @@ class SessionRuntimeManager:
             )
             mcp_client = await self._get_mcp_client()
             cwd = self._resolve_cwd()
-            web_store = MemorySearchResultStore()
             project_extension_state = ProjectExtensionState(
                 enabled=self.settings.code_repository_extensions_enabled,
             )
             tools = [
                 *create_coding_tools(cwd=cwd),
-                *create_file_tools(cwd=cwd),
-                *build_web_tools(cwd=cwd, store=web_store, client=self._web_client),
                 *create_mainsequence_mcp_tools(
                     mcp_client,
                     caller_session_proof={
@@ -390,13 +381,6 @@ class SessionRuntimeManager:
                     },
                 ),
                 *create_task_control_tools(),
-                create_runtime_info_tool(
-                    session_uid=session_uid,
-                    cwd=cwd,
-                    provider=provider_runtime.name,
-                    model=provider_runtime.model,
-                    project_extensions=project_extension_state,
-                ),
             ]
             coding_session = await CodingSession.load(
                 CodingSessionConfig(
@@ -887,8 +871,7 @@ class SessionRuntimeManager:
     def session_turn_active(self, session_uid: str) -> bool:
         runtime = self._runtimes.get(session_uid)
         return bool(
-            runtime is not None
-            and (runtime.active_turn_uid is not None or runtime.lock.locked())
+            runtime is not None and (runtime.active_turn_uid is not None or runtime.lock.locked())
         )
 
     def mark_response_delivered(self, session_uid: str) -> bool:
@@ -1130,7 +1113,7 @@ class SessionRuntimeManager:
 
     async def _evict_with_context(self, session_uid: str) -> None:
         runtime = self._runtimes.get(session_uid)
-        if runtime is None:
+        if runtime is None or runtime.evicting:
             return
         runtime.evicting = True
         if runtime.lock.locked():
@@ -1139,6 +1122,17 @@ class SessionRuntimeManager:
                 async with asyncio.timeout(self.settings.shutdown_grace_seconds):
                     async with runtime.lock:
                         pass
+        try:
+            async with asyncio.timeout(self.settings.shutdown_grace_seconds):
+                await runtime.coding_session.aclose()
+        except Exception as error:
+            logger.exception(
+                "runtime.session.close_failed",
+                message="Could not close Tau coding session during runtime eviction",
+                session_uid=session_uid,
+                error_type=type(error).__name__,
+                error_message=str(error),
+            )
         persistence_flushed = False
         try:
             async with asyncio.timeout(self.settings.shutdown_grace_seconds):
@@ -1203,4 +1197,3 @@ class SessionRuntimeManager:
         if self._mcp_client is not None:
             with contextlib.suppress(Exception):
                 await self._mcp_client.aclose()
-        await self._web_client.aclose()

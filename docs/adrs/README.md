@@ -10,5 +10,6 @@ Active Astro architecture decisions live in this directory.
 - [ADR 52: Enable Repository Tau Extensions in CodeRepository Executors](./adr-52-enable-repository-tau-extensions-in-code-executors.md)
 - [ADR 53: Retire the Agent Capability Registry from Astro Tau](./adr-53-retire-agent-capability-registry.md)
 - [ADR 54: Durable Asynchronous A2A Task Lifecycle](./adr-54-durable-asynchronous-a2a-task-lifecycle.md)
+- [ADR 55: Minimize Astro's Bundled Tool Catalog](./adr-55-minimize-bundled-tool-catalog.md)
 
 Earlier records under `docs/reference/` are retained as historical design context.

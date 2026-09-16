@@ -12,7 +12,7 @@ from astro.runtime.snapshots import sha256_json
 
 @dataclass(slots=True)
 class ProjectExtensionState:
-    """Mutable diagnostics shared with the model-facing ``runtime_info`` tool."""
+    """Mutable extension diagnostics for health snapshots and structured logs."""
 
     enabled: bool
     loaded_extension_count: int = 0
@@ -47,7 +47,7 @@ class ProjectExtensionState:
         self.tool_catalog_digest = sha256_json(catalog)
 
     def details(self) -> dict[str, JSONValue]:
-        """Return the stable public diagnostics contract."""
+        """Return the stable operator-facing diagnostics contract."""
         return {
             "code_repository_extensions_enabled": self.enabled,
             "loaded_extension_count": self.loaded_extension_count,

@@ -40,7 +40,7 @@ CodeRepositoryBranch. Astro sends no Environment selector and hides that selecto
 Tau. One Astro CodeRepository Executor deployment serves exactly that one Environment;
 users and code repository code do not select or switch it.
 
-See [`.env.example`](./.env.example) for optional web-provider settings.
+See [`.env.example`](./.env.example) for the complete service configuration.
 
 ## CodeRepository Tau Extensions
 
@@ -61,9 +61,10 @@ layout and tool example.
 
 ## Container Startup
 
-The Compose build context is the Astro repository. The independently
-packageable `tau-file-tools` and `tau-web-access` distributions are workspace
-members under `packages/`.
+The Compose build context is the Astro repository. Astro ships Tau's core
+`read`, `write`, `edit`, and `bash` tools, Main Sequence MCP tools, and the
+protocol-required A2A task controls. Optional tools belong to CodeRepository
+`.tau/extensions` and their project image dependencies.
 
 `uv.lock` is the source dependency lock. `requirements-runtime.lock` is its
 hash-locked export used to build an offline wheelhouse for the runtime and
@@ -82,7 +83,7 @@ http://api.main-sequence.app:8000
 
 Override `ASTRO_CODE_REPOSITORY_PATH` when the mounted code repository is not the Astro checkout.
 
-Verify a built image's Python environment, runtime tools, Node absence, and
+Verify a built image's Python environment, core runtime, Node absence, and
 health endpoints with:
 
 ```bash
@@ -141,17 +142,18 @@ or compatibility routes for those control-plane operations.
 
 FastAPI publishes the full schema at `/docs` and `/openapi.json`.
 
-## Monorepo Packages
+## Repository Layout
 
 ```text
 astro/
-├── packages/
-│   ├── tau-file-tools/
-│   └── tau-web-access/
 ├── src/astro/
+├── tests/
+├── deployment/
+├── Dockerfile
+├── Dockerfile.remote-worker
 └── pyproject.toml
 ```
 
-The tool packages use only Tau's public tool contracts. They remain separately
-buildable and can later be released or upstreamed without being separate
-repositories today.
+Astro intentionally contains no optional file-search, web-access, or
+model-facing runtime-information package. Projects add any such tools through
+Tau's repository extension contract.

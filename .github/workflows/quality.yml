@@ -30,17 +30,15 @@ jobs:
       - name: Install runtime tool dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep
       - name: Check formatting
-        run: uv run ruff format --check src tests packages
+        run: uv run ruff format --check src tests
       - name: Lint
-        run: uv run ruff check src tests packages
+        run: uv run ruff check src tests
       - name: Type check
         run: uv run mypy
       - name: Test with branch coverage
         run: >-
           uv run pytest
           --cov=astro
-          --cov=tau_file_tools
-          --cov=tau_web_access
           --cov-branch
           --cov-report=term-missing:skip-covered
 

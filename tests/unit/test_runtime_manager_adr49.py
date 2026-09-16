@@ -1,5 +1,4 @@
 import asyncio
-import json
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -152,6 +151,7 @@ def _coding_session(
     session.extension_names = extension_names
     session.extension_tool_sources = extension_tool_sources or {}
     session.extension_runtime = SimpleNamespace(diagnostics=())
+    session.aclose = AsyncMock()
     return session
 
 
@@ -230,8 +230,6 @@ async def test_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
             return_value=[],
         ) as create_mcp_tools,
         patch("astro.runtime.manager.create_coding_tools", return_value=[]),
-        patch("astro.runtime.manager.create_file_tools", return_value=[]),
-        patch("astro.runtime.manager.build_web_tools", return_value=[]),
         patch(
             "astro.runtime.manager.CodingSession.load",
             AsyncMock(side_effect=coding_sessions),
@@ -261,7 +259,6 @@ async def test_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
         assert [tool.name for tool in load_call.args[0].tools] == [
             "task_request_input",
             "task_request_authorization",
-            "runtime_info",
         ]
         assert load_call.args[0].project_extensions_enabled is False
         assert load_call.args[0].resource_paths.agents_root is None
@@ -282,7 +279,54 @@ async def test_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
     assert second.storage.next_sequence == 0
 
     await manager.aclose()
+    for coding_session in coding_sessions:
+        coding_session.aclose.assert_awaited_once_with()
     mcp_client.aclose.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_default_catalog_keeps_tau_core_and_omits_removed_tools(tmp_path):
+    manager, _backend, _providers = _manager_dependencies(
+        tmp_path,
+        [_bootstrap("session-1")],
+    )
+    loaded_session = _coding_session()
+
+    with (
+        patch(
+            "astro.runtime.manager.MainSequenceMCPClient.connect",
+            AsyncMock(return_value=_mcp_client()),
+        ),
+        patch("astro.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
+        patch(
+            "astro.runtime.manager.CodingSession.load",
+            AsyncMock(return_value=loaded_session),
+        ) as load_coding_session,
+    ):
+        await manager.get("session-1")
+
+    tool_names = {tool.name for tool in load_coding_session.await_args.args[0].tools}
+    assert tool_names == {
+        "read",
+        "write",
+        "edit",
+        "bash",
+        "task_request_input",
+        "task_request_authorization",
+    }
+    assert tool_names.isdisjoint(
+        {
+            "grep",
+            "find",
+            "ls",
+            "runtime_info",
+            "web_search",
+            "code_search",
+            "fetch_content",
+            "get_search_content",
+        }
+    )
+    await manager.aclose()
 
 
 @pytest.mark.asyncio
@@ -317,8 +361,6 @@ async def test_executor_setting_enables_tau_extensions_and_reports_effective_cat
         ),
         patch("astro.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
         patch("astro.runtime.manager.create_coding_tools", return_value=[]),
-        patch("astro.runtime.manager.create_file_tools", return_value=[]),
-        patch("astro.runtime.manager.build_web_tools", return_value=[]),
         patch(
             "astro.runtime.manager.CodingSession.load",
             AsyncMock(side_effect=load_with_project_tool),
@@ -334,15 +376,15 @@ async def test_executor_setting_enables_tau_extensions_and_reports_effective_cat
     assert runtime.project_extension_state.extension_diagnostic_count == 0
     assert runtime.project_extension_state.extension_error_count == 0
     assert runtime.project_extension_state.tool_catalog_digest.startswith("sha256:")
-
-    runtime_info = config.tools[-1]
-    payload = json.loads((await runtime_info.execute("call-1", {})).text)
-    assert payload["code_repository_extensions_enabled"] is True
-    assert payload["loaded_extension_count"] == 1
-    assert payload["project_tool_count"] == 1
-    assert payload["extension_diagnostic_count"] == 0
-    assert payload["extension_error_count"] == 0
-    assert payload["tool_catalog_digest"] == runtime.project_extension_state.tool_catalog_digest
+    assert [tool.name for tool in config.tools] == [
+        "task_request_input",
+        "task_request_authorization",
+    ]
+    assert [tool.name for tool in runtime.coding_session.tools] == [
+        "task_request_input",
+        "task_request_authorization",
+        "project_tool",
+    ]
 
     snapshot = manager.snapshot()
     assert snapshot["code_repository_extensions_enabled"] is True
@@ -400,6 +442,62 @@ def test_extension_diagnostics_are_structured_and_repository_relative(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_eviction_closes_coding_session_once_before_releasing_runtime(tmp_path):
+    manager, backend, _providers = _manager_dependencies(tmp_path, [])
+    coding_session = _coding_session()
+    close_order = []
+    coding_session.aclose.side_effect = lambda: close_order.append("session")
+    storage = SimpleNamespace(
+        lease_token="lease-1",
+        flush=AsyncMock(side_effect=lambda: close_order.append("storage")),
+    )
+    backend.release_runtime_lease.side_effect = lambda *_args: close_order.append("lease")
+    provider_close = AsyncMock(side_effect=lambda: close_order.append("provider"))
+    manager._runtimes["session-1"] = ActiveSessionRuntime(
+        session_uid="session-1",
+        holder_id=manager.holder_id,
+        coding_session=coding_session,
+        storage=storage,
+        provider=SimpleNamespace(aclose=provider_close),
+    )
+
+    await asyncio.gather(manager.evict("session-1"), manager.evict("session-1"))
+
+    coding_session.aclose.assert_awaited_once_with()
+    storage.flush.assert_awaited_once_with()
+    backend.release_runtime_lease.assert_awaited_once()
+    provider_close.assert_awaited_once_with()
+    assert close_order == ["session", "storage", "lease", "provider"]
+    assert "session-1" not in manager._runtimes
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_extension_shutdown_failure_does_not_strand_runtime(tmp_path):
+    manager, backend, _providers = _manager_dependencies(tmp_path, [])
+    coding_session = _coding_session()
+    coding_session.aclose.side_effect = RuntimeError("extension shutdown failed")
+    storage = SimpleNamespace(lease_token="lease-1", flush=AsyncMock())
+    provider_close = AsyncMock()
+    manager._runtimes["session-1"] = ActiveSessionRuntime(
+        session_uid="session-1",
+        holder_id=manager.holder_id,
+        coding_session=coding_session,
+        storage=storage,
+        provider=SimpleNamespace(aclose=provider_close),
+    )
+
+    await manager.evict("session-1")
+
+    coding_session.aclose.assert_awaited_once_with()
+    storage.flush.assert_awaited_once_with()
+    backend.release_runtime_lease.assert_awaited_once()
+    provider_close.assert_awaited_once_with()
+    assert "session-1" not in manager._runtimes
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
 async def test_restores_compatible_snapshot_and_applies_only_delta(tmp_path):
     first = SessionInfoEntry(cwd="/snapshot")
     second = SessionInfoEntry(cwd="/delta")
@@ -431,8 +529,6 @@ async def test_restores_compatible_snapshot_and_applies_only_delta(tmp_path):
         ),
         patch("astro.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
         patch("astro.runtime.manager.create_coding_tools", return_value=[]),
-        patch("astro.runtime.manager.create_file_tools", return_value=[]),
-        patch("astro.runtime.manager.build_web_tools", return_value=[]),
         patch(
             "astro.runtime.manager.CodingSession.load",
             AsyncMock(return_value=_coding_session()),
@@ -478,8 +574,6 @@ async def test_corrupt_snapshot_falls_back_to_canonical_history(tmp_path):
         ),
         patch("astro.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
         patch("astro.runtime.manager.create_coding_tools", return_value=[]),
-        patch("astro.runtime.manager.create_file_tools", return_value=[]),
-        patch("astro.runtime.manager.build_web_tools", return_value=[]),
         patch(
             "astro.runtime.manager.CodingSession.load",
             AsyncMock(return_value=_coding_session()),

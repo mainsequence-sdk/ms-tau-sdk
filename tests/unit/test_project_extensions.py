@@ -150,6 +150,43 @@ async def test_tau_keeps_project_extensions_disabled_without_deployment_opt_in(m
     assert [tool.label for tool in session.tools] == ["Base Tool"]
 
 
+async def test_coding_session_close_delivers_project_shutdown_hook(tmp_path):
+    extension_dir = tmp_path / ".tau/extensions/shutdown_probe"
+    extension_dir.mkdir(parents=True)
+    (extension_dir / "extension.py").write_text(
+        """from pathlib import Path
+
+
+def setup(tau):
+    async def record_shutdown(event, context):
+        Path(context.cwd, "shutdown-reason.txt").write_text(event.reason)
+
+    tau.on("session_shutdown", record_shutdown)
+"""
+    )
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            provider_name="fake",
+            model="fake-model",
+            storage=_MemoryStorage(),
+            cwd=tmp_path,
+            tools=[],
+            resource_paths=TauResourcePaths(
+                root=tmp_path / ".runtime-tau",
+                cwd=tmp_path,
+                agents_root=None,
+            ),
+            project_extensions_enabled=True,
+        )
+    )
+
+    assert session.extension_names == ("shutdown_probe",)
+    await session.aclose()
+
+    assert (tmp_path / "shutdown-reason.txt").read_text() == "quit"
+
+
 def test_executor_import_fixture_covers_both_python_layouts_and_sibling_imports():
     extension = (FIXTURE_ROOT / ".tau/extensions/import_fixture/extension.py").read_text()
 

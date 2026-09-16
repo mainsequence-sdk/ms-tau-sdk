@@ -35,13 +35,14 @@ emits one final Message event.
 
 ## Tools and code repository context
 
-Tau core coding tools run against the mounted `/workspace`. Astro adds runtime
-information and the Main Sequence MCP tools and resources. File discovery
-comes from `tau-file-tools`; web search and extraction come from
-`tau-web-access`.
+Tau's core `read`, `write`, `edit`, and `bash` tools run against the mounted
+`/workspace`. Astro adds Main Sequence MCP tools/resources and protocol-required
+A2A task controls. Astro does not add structured `grep`/`find`/`ls`, web access,
+or a model-facing runtime-information tool.
 
 CodeRepository-owned skills are discovered directly from the mounted code repository's
 `.agents/skills` directory. CodeRepository-owned executable extensions are discovered from
 `.tau/extensions` when enabled by the executor deployment. General Main Sequence platform skills
 and operations come from Django `/mcp`; SDK skills are not copied into the code repository. Astro
-does not fetch or materialize backend AgentCapability/session-binding overlays.
+does not fetch or materialize backend AgentCapability/session-binding overlays and does not install
+or repair project extension dependencies at runtime.

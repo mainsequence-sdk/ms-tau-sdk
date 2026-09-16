@@ -8,7 +8,7 @@ services:
     env_file:
       - .env
     environment:
-      PYTHONPATH: /opt/astro-local/src:/opt/astro-local/packages/tau-file-tools/src:/opt/astro-local/packages/tau-web-access/src
+      PYTHONPATH: /opt/astro-local/src
       MAINSEQUENCE_BACKEND: ${MAINSEQUENCE_BACKEND:-http://host.docker.internal:8000}
       MAINSEQUENCE_AUTH_MODE: ${MAINSEQUENCE_AUTH_MODE:-runtime_credential}
       MAINSEQUENCE_RUNTIME_CREDENTIAL_ID: ${MAINSEQUENCE_RUNTIME_CREDENTIAL_ID}
@@ -25,8 +25,6 @@ services:
       - "api.main-sequence.app:host-gateway"
     volumes:
       - ./src:/opt/astro-local/src:ro
-      - ./packages/tau-file-tools/src:/opt/astro-local/packages/tau-file-tools/src:ro
-      - ./packages/tau-web-access/src:/opt/astro-local/packages/tau-web-access/src:ro
       - ${ASTRO_CODE_REPOSITORY_PATH:-.}:/workspace:rw
     ports:
       - "${ASTRO_PORT:-8787}:8787"

@@ -612,9 +612,7 @@ class MainSequenceClient:
         after_sequence: int,
         limit: int = 100,
     ) -> AgentTaskEventPage:
-        query = urlencode(
-            {"after_sequence": max(0, int(after_sequence)), "limit": int(limit)}
-        )
+        query = urlencode({"after_sequence": max(0, int(after_sequence)), "limit": int(limit)})
         data = await self._request(
             "GET",
             f"{agent_task_operation(task_uid, 'events')}?{query}",
