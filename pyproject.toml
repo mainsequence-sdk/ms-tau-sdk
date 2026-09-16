@@ -31,10 +31,10 @@ dependencies = [
 ]
 
 [project.urls]
-Changelog = "https://github.com/Main-Sequence-Server-Side/astro-tau/blob/development/CHANGELOG.md"
-Documentation = "https://github.com/Main-Sequence-Server-Side/astro-tau/tree/development/docs"
-Issues = "https://github.com/Main-Sequence-Server-Side/astro-tau/issues"
-Repository = "https://github.com/Main-Sequence-Server-Side/astro-tau"
+Changelog = "https://github.com/mainsequence-sdk/ms-tau-sdk/blob/development/CHANGELOG.md"
+Documentation = "https://github.com/mainsequence-sdk/ms-tau-sdk/tree/development/docs"
+Issues = "https://github.com/mainsequence-sdk/ms-tau-sdk/issues"
+Repository = "https://github.com/mainsequence-sdk/ms-tau-sdk"
 
 [project.scripts]
 ms-tau = "ms_tau_sdk.cli:main"

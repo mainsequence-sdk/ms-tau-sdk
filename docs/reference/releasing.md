@@ -31,17 +31,17 @@ distributions; it does not broaden the accepted runtime content.
 
 The generated checksum and JSON files describe the candidate; they are not imported by the SDK.
 GitHub Actions also produces an OIDC build-provenance attestation for the wheel and sdist. The
-protected publication job separately generates PEP 740 attestations that `uv publish` uploads with
-the Python distributions.
+official PyPA publishing action generates and uploads the PyPI PEP 740 attestations with the Python
+distributions.
 
 ## Registry Publication
 
-The `Python release` workflow supports two paths:
-
-- a manual run builds, verifies, attests, and uploads a downloadable candidate bundle without
-  publishing it; and
-- a tag exactly matching `v<pyproject version>` runs the same gates and then publishes the wheel
-  and sdist to PyPI with trusted publishing.
+The
+[`Publish Python package to PyPI`](../../.github/workflows/publis-to-pipy.yaml) workflow runs only
+when a `v*` tag is pushed. The tag must exactly match `v<pyproject version>` or the job fails before
+publication. A valid tag builds, verifies, clean-installs, and attests the wheel and source
+distribution before a protected job publishes them with the official PyPA action and trusted
+publishing. The full verified bundle is also retained as a workflow artifact.
 
 The repository must configure the protected `pypi` GitHub environment and PyPI trusted-publisher
 relationship before a tag can publish. There is no stored PyPI API token. Creating or pushing a tag

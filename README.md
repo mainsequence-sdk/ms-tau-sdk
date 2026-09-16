@@ -1,37 +1,114 @@
-# Main Sequence TAU SDK
+<p align="center">
+  <a href="https://www.main-sequence.io">
+    <img src="https://www.main-sequence.io/images/logos/MS_logo_long_black.png" alt="Main Sequence" width="460">
+  </a>
+</p>
 
-Main Sequence TAU SDK is the Python library that supplies the prepackaged Tau and Main Sequence
-integration used by a normal project repository. The target distribution is `ms-tau-sdk`, the
-import namespace is `ms_tau_sdk`, and the command is `ms-tau`.
+<h1 align="center">Main Sequence TAU SDK</h1>
 
-This repository does not publish or own a runtime image. It contains no Dockerfile, Compose stack,
-Kubernetes manifest, executor bundle, remote-worker overlay, or image-publication pipeline. A
-consuming project declares and locks the SDK and owns its resulting deployable artifact.
+<p align="center">
+  <strong>Run Tau as a workspace-native Main Sequence coding agent.</strong>
+</p>
 
-The new project identity and migration are governed by
-[ADR 56](./docs/adrs/adr-56-main-sequence-tau-sdk-workspace-bound-library-deployment.md), with
-gate evidence in the [migration workspace](./docs/migration/adr-56/README.md).
+<p align="center">
+  <a href="https://pypi.org/project/ms-tau-sdk/"><img src="https://img.shields.io/pypi/v/ms-tau-sdk.svg?logo=pypi&amp;logoColor=white" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/ms-tau-sdk/"><img src="https://img.shields.io/pypi/pyversions/ms-tau-sdk.svg" alt="Supported Python versions"></a>
+  <a href="https://github.com/mainsequence-sdk/ms-tau-sdk/actions/workflows/quality.yml"><img src="https://github.com/mainsequence-sdk/ms-tau-sdk/actions/workflows/quality.yml/badge.svg?branch=development" alt="Quality checks"></a>
+  <a href="https://github.com/mainsequence-sdk/ms-tau-sdk/actions/workflows/publis-to-pipy.yaml"><img src="https://github.com/mainsequence-sdk/ms-tau-sdk/actions/workflows/publis-to-pipy.yaml/badge.svg" alt="PyPI publication"></a>
+  <a href="https://github.com/mainsequence-sdk/ms-tau-sdk/issues"><img src="https://img.shields.io/github/issues/mainsequence-sdk/ms-tau-sdk.svg" alt="Open issues"></a>
+</p>
 
-## SDK Responsibilities
+`ms-tau-sdk` packages the Tau runtime integration, Main Sequence authentication and transports,
+and durable agent-session machinery as a normal Python dependency. A project installs the SDK and
+runs it from its own workspace—there is no separate Astro image, executor overlay, or second
+deployment model.
 
-The SDK provides:
+| Contract | Value |
+| --- | --- |
+| PyPI distribution | `ms-tau-sdk` |
+| Python package | `ms_tau_sdk` |
+| Command | `ms-tau` |
+| Python entry point | `ms_tau_sdk.app:create_app` |
+| Required Python | 3.13 or newer |
+| Project customization | Standard workspace `.tau/` configuration |
 
-- FastAPI application construction and lifecycle;
-- Main Sequence runtime-credential exchange and backend access;
-- provider validation and credential hydration;
-- durable Tau sessions, leases, restore, persistence, cancellation, eviction, and shutdown;
-- sessionless Tau execution;
-- chat, responses, SSE, A2A, health, and readiness transports;
-- Main Sequence MCP and protocol-required task controls; and
-- packaged Tau defaults integrated with Tau's normal project configuration.
+## Quick start
 
-The consuming project owns its dependency lock, source and system dependencies, `.tau` overrides,
-skills, prompts, hooks, extensions, and extension dependencies. Project code and the SDK execute in
-the same trust boundary.
+Add the SDK to the project that will host the agent:
+
+```bash
+uv add ms-tau-sdk
+```
+
+Provide the runtime credential that Main Sequence assigned to the deployment:
+
+```bash
+export MAINSEQUENCE_BACKEND="https://api.main-sequence.app"
+export MAINSEQUENCE_RUNTIME_CREDENTIAL_ID="<runtime-credential-id>"
+export MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET="<runtime-credential-secret>"
+```
+
+Start the service from the project workspace:
+
+```bash
+uv run ms-tau
+```
+
+The credential pair is exchanged for short-lived Main Sequence access tokens. Do not commit it or
+place it in `.tau` configuration. For an embedded ASGI deployment, construct the same application
+in Python:
+
+```python
+from ms_tau_sdk import create_app
+
+app = create_app()
+```
+
+## Workspace-owned Tau behavior
+
+The consuming repository owns the effective Tau configuration. It can override the packaged Tau
+defaults and install project-specific tools through the normal `.tau/` structure:
+
+```text
+your-project/
+├── .tau/
+│   ├── SYSTEM.md
+│   ├── settings.json
+│   └── extensions/
+├── pyproject.toml
+└── uv.lock
+```
+
+Extensions run as project code in the same process and trust boundary as the rest of the
+repository. Optional capabilities such as general web access belong in a project extension; they
+are not bundled into the SDK. Main Sequence transport and protocol behavior remains SDK-owned.
+
+## Included capabilities
+
+- FastAPI application construction and lifecycle management
+- runtime-credential exchange and authenticated Main Sequence backend access
+- provider validation and credential hydration
+- durable Tau sessions, leases, restore, persistence, cancellation, eviction, and shutdown
+- sessionless Tau execution
+- chat, responses, SSE, A2A, health, and readiness transports
+- Main Sequence MCP and protocol-required task controls
+- packaged defaults that participate in Tau's normal workspace configuration
+
+## Deployment boundary
+
+This repository publishes Python distributions only. It contains no Dockerfile, Compose stack,
+Kubernetes manifest, runtime image, executor bundle, or container-publication pipeline. The
+consuming project owns its dependency lock, deployable artifact, system dependencies, project
+code, prompts, skills, hooks, and extensions.
+
+The project identity and migration are defined by
+[ADR 56](./docs/adrs/adr-56-main-sequence-tau-sdk-workspace-bound-library-deployment.md). See the
+[quickstart](./docs/getting-started/quickstart.md), [documentation index](./docs/README.md), and
+[release guide](./docs/reference/releasing.md) for the complete contracts.
 
 ## Development
 
-The repository currently requires Python 3.13 and `uv`:
+The repository uses Python 3.13 and `uv`:
 
 ```bash
 uv sync --frozen
@@ -40,31 +117,18 @@ uv run ruff check .
 uv run mypy
 ```
 
-The application can be exercised from the project workspace with:
+Releases are immutable and tag-driven. Pushing a tag that exactly matches the package version—for
+example, `v1.0.0`—builds and verifies the wheel and source distribution, then publishes them to
+PyPI through OIDC trusted publishing. No PyPI API token or container registry is involved.
 
-```bash
-export MAINSEQUENCE_BACKEND="https://api.main-sequence.app"
-export MAINSEQUENCE_RUNTIME_CREDENTIAL_ID="<development-runtime-credential-id>"
-export MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET="<redeemed-once-secret>"
+## Built on Tau
 
-uv run ms-tau
-```
+<p align="center">
+  <a href="https://github.com/huggingface/tau">
+    <img src="https://raw.githubusercontent.com/huggingface/tau/main/docs/assets/tau-header.svg" alt="Tau" width="760">
+  </a>
+</p>
 
-Runtime credentials are exchanged for short-lived Main Sequence access tokens. Secrets must not be
-committed to the repository or placed in `.tau` configuration.
-
-## Target Project Usage
-
-A project will declare and lock the SDK as a normal dependency:
-
-```bash
-uv add "ms-tau-sdk==1.0.0"
-uv run ms-tau
-```
-
-The command runs from the project workspace. SDK-packaged Tau defaults are resolved with the
-project's normal `.tau` configuration, including any project-owned extensions. There is no second
-Main Sequence prompt or extension configuration system.
-
-See the [source quickstart](./docs/getting-started/quickstart.md) and
-[documentation index](./docs/README.md).
+Main Sequence TAU SDK integrates the open-source
+[Tau coding agent](https://github.com/huggingface/tau) into the Main Sequence platform while
+preserving Tau's workspace-native configuration and extension model.
