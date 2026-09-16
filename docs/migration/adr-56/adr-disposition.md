@@ -1,11 +1,11 @@
-# Initial ADR Disposition Matrix
+# ADR Disposition Matrix
 
-Status: Phase A0 complete
+Status: Phases A0 through A4 complete
 
 Date: 2026-09-16
 
-These are proposed dispositions, not silent adoption. Final re-adoption or amendment occurs in the
-new Main Sequence TAU SDK ADR index.
+The active outcomes are expressed by SDK ADRs 0001 through 0004. Records that were not reissued are
+historical and have no independent authority over the SDK.
 
 Owner for every row: Main Sequence TAU SDK. Records outside this repository are not in scope.
 
@@ -50,6 +50,17 @@ Owner for every row: Main Sequence TAU SDK. Records outside this repository are 
 
 The matrix covers every active ADR, the numbered historical records referenced by active decisions,
 and the unnumbered runtime decisions used by the current Python implementation.
+
+## Final Decision Homes
+
+- ADR 0001 owns the library identity, public API, workspace, lifecycle, and artifact boundary.
+- ADR 0002 re-adopts the reviewed transport, authentication, provider, durable/sessionless,
+  persistence, A2A, MCP, observability, and shutdown contracts.
+- ADR 0003 amends configuration ownership around native project Tau resources and trust.
+- ADR 0004 reissues the minimal bundled-tool boundary.
+- Eliminated image, overlay, optional-workspace, runtime-role, parallel prompt, interactive sign-in,
+  and optional-tool decisions remain only under `docs/history/astro`.
+- `docs/adrs/README.md` is the sole active decision index.
 
 ## Decision Rules
 

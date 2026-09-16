@@ -1,6 +1,6 @@
-# Initial Documentation Disposition Matrix
+# Documentation Disposition Matrix
 
-Status: Phase D0 complete
+Status: Phases D0 through D5 complete
 
 Date: 2026-09-16
 
@@ -26,7 +26,7 @@ historical family has the same destination.
 | `docs/reference/a2a-standard-client-examples.md` | Revalidate and amend | Run examples against the new service and remove Astro deployment assumptions. |
 | `docs/implemenation_task/` | Archive or replace | Existing tasks are Astro migration history. New SDK implementation work is tracked under this ADR 56 migration workspace or new-project tasks. |
 | `docs/bugs/` and `docs/investigations/` | Historical with explicit relevance review | Reopen only unresolved product behavior; do not treat old topology as normative. |
-| `docs/reserach_guide/` | Pending scope review | Keep only if it is part of accepted SDK/product documentation; otherwise move to project-specific guidance. |
+| Former `docs/reserach_guide/` | Historical | Archived with the former project; it is not SDK product documentation. |
 | Former GCP, Kubernetes, Docker, and Compose material | Eliminate from SDK docs | The SDK documents installation and process startup only; project artifact construction and external deployment are out of scope. |
 | `.env.example` | Rewrite and verify | New SDK variables and stable Main Sequence credential names; remove obsolete Astro settings. |
 
@@ -47,3 +47,12 @@ historical family has the same destination.
 
 Internal links are validated whenever a family moves. No active document is mechanically renamed
 without checking whether its underlying concept still exists.
+
+## Cutover Outcome
+
+- `docs/README.md` and `docs/adrs/README.md` are the normative documentation and decision roots.
+- Project-author, maintainer, configuration, runtime, settings, testing, compatibility, scope, and
+  troubleshooting documents describe the implemented SDK.
+- The explicit migration guide records removed and renamed surfaces.
+- Former decisions, plans, references, investigations, bugs, and changelog are under
+  `docs/history/astro` with a non-normative archive notice.

@@ -58,7 +58,7 @@ from ms_tau_sdk.tools.task_control import create_task_control_tools
 from .session import ActiveSessionRuntime, PlatformEvent
 
 logger = structlog.get_logger(__name__)
-ADR49_RUNTIME_CAPABILITIES = {
+RUNTIME_CAPABILITIES = {
     "tau_runtime_bootstrap": "v3",
     "tau_resume_snapshot": "v2",
     "tau_activity_sequence": "v1",
@@ -263,7 +263,7 @@ class SessionRuntimeManager:
         )
         missing_capabilities = {
             name: version
-            for name, version in ADR49_RUNTIME_CAPABILITIES.items()
+            for name, version in RUNTIME_CAPABILITIES.items()
             if bootstrap.runtime_capabilities.get(name) != version
         }
         if missing_capabilities:

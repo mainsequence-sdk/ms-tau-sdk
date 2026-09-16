@@ -18,7 +18,6 @@ def test_fixture_declares_and_locks_the_sdk() -> None:
     assert project["project"]["dependencies"] == ["ms-tau-sdk==0.1.0"]
     locked = {package["name"]: package for package in lock["package"]}
     assert locked["ms-tau-sdk"]["version"] == "0.1.0"
-    assert "astro" not in locked
 
 
 def test_fixture_shim_builds_the_sdk_app_from_its_workspace(monkeypatch) -> None:

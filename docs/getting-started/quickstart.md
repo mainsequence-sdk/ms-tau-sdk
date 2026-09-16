@@ -1,33 +1,65 @@
-# Source Quickstart During the SDK Migration
+# Quickstart
 
-This repository is becoming the `ms-tau-sdk` Python library. It does not own a Docker image,
-Compose environment, Kubernetes manifest, or project deployment recipe.
+Main Sequence TAU SDK runs inside your project environment and uses the current directory as its
+workspace.
 
-Until Phase C3 changes the package and command names, install and test the current source checkout:
+## Install and lock
 
-```bash
-uv sync --frozen
-uv run pytest
-```
-
-To exercise the current application locally, provide the Main Sequence backend and scoped runtime
-credential variables, then run the temporary compatibility command from the repository root:
+With `uv`:
 
 ```bash
-uv run astro-stream
+uv add ms-tau-sdk
 ```
 
-Phase C3 replaces that command with the project-installed SDK entrypoint:
+The project lockfile is the record of the exact SDK, Tau, provider, and transport versions that
+will execute.
+
+## Configure runtime authentication
+
+Set the runtime credential supplied for the process:
+
+```bash
+export MAINSEQUENCE_RUNTIME_CREDENTIAL_ID="<runtime-credential-id>"
+export MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET="<runtime-credential-secret>"
+```
+
+The SDK exchanges this pair for short-lived access credentials. Do not put either value in source
+control or `.tau` files.
+
+Set `MAINSEQUENCE_BACKEND` only when the project must use a non-default Main Sequence API URL.
+
+## Run
+
+From the project root:
 
 ```bash
 uv run ms-tau
 ```
 
-Check the service:
+The process listens on `0.0.0.0:8787` by default. `/health`, `/ready`, and `/version` report process
+state without exposing secrets.
 
-```bash
-curl http://localhost:8787/health
+## Compose with an existing ASGI application
+
+Create a project-owned shim such as `api/tau/main.py`:
+
+```python
+from ms_tau_sdk import create_app
+
+app = create_app()
 ```
 
-A consuming project owns its dependency lock, `.tau` configuration, operating-system dependencies,
-and deployable image. The SDK supplies the application and Tau/Main Sequence integration behavior.
+Then run the same application through your chosen ASGI server:
+
+```bash
+uv run uvicorn api.tau.main:app --host 0.0.0.0 --port 8787
+```
+
+Both entry paths use the same settings, routers, authentication client, Tau lifecycle, persistence,
+streaming, and shutdown behavior.
+
+## Customize Tau
+
+Add a project `.tau/SYSTEM.md` to replace the packaged behavioral default. Add project skills,
+prompt templates, hooks, or extensions using Tau's native layout. See
+[project configuration](../guides/project-configuration.md).

@@ -230,6 +230,33 @@ The existing SDK contract suite supplies the auth-client, provider, durable/sess
 MCP, transport, persistence, cancellation, and shutdown coverage; the consuming project writes no
 replacement integration layer for those capabilities.
 
+### C5, A1–A4, T1–T5, and D1–D5 gates
+
+The final production package tree is only `src/ms_tau_sdk`. Migration-numbered test modules and
+runtime constants were renamed around supported SDK behavior. The active decision set is ADRs 0001
+through 0004; earlier decisions and documents were moved under a non-normative historical archive.
+
+The new documentation root covers installation, public API, settings, credentials, project Tau
+configuration, extension ownership, runtime/HTTP behavior, repository structure, testing,
+compatibility, scope, troubleshooting, and the explicit migration mapping.
+
+Active source and tests contain no retired import or command invocation. Historical terms appear
+only in the transition ADR, migration evidence/guide, and `docs/history/astro` archive.
+
+```text
+.venv/bin/pytest -q
+270 passed, 1 skipped
+
+.venv/bin/ruff format --check src tests
+91 files already formatted
+
+.venv/bin/ruff check src tests
+All checks passed!
+
+.venv/bin/mypy src/ms_tau_sdk
+Success: no issues found in 49 source files
+```
+
 ## Current Runtime Characterization
 
 ### OpenAPI surface

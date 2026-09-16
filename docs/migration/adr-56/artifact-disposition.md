@@ -1,6 +1,6 @@
 # SDK Source Artifact Disposition
 
-Status: Phase C0 complete
+Status: Phases C0 through C5 complete
 
 Date: 2026-09-16
 

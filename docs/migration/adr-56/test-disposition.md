@@ -1,6 +1,6 @@
-# Initial Test Disposition Matrix
+# Test Disposition Matrix
 
-Status: Phase T0 complete
+Status: Phases T0 through T5 complete
 
 Date: 2026-09-16
 
@@ -11,10 +11,10 @@ test module and fixture family in this repository; deleted image-only tests are 
 
 | Current test or family | Proposed class | Target action |
 | --- | --- | --- |
-| `tests/contract/test_adr56_runtime_surface.py` | Migration compatibility contract | Freeze the accepted HTTP operation set before source movement; rewrite only its import/construction boundary, then retain it as a public SDK surface test. |
+| `tests/contract/test_http_surface.py` | SDK HTTP contract | Freeze the accepted operation set through the public application fixture. |
 | `tests/contract/test_app.py` | Rewritten SDK contract | Exercise the built `ms_tau_sdk` application factory and route surface without importing `astro`. |
 | `tests/contract/test_backend_client.py` | Portable contract + rewritten imports | Preserve backend wire/error/auth behavior through the new private client boundary. |
-| `tests/contract/test_adr48_backend_client.py` | Portable persistence contract | Move under the reissued persistence ADR and SDK storage/client boundary. |
+| `tests/contract/test_session_persistence_client.py` | Portable persistence contract | Verify the SDK storage/client batch contract. |
 | `tests/contract/test_task_creation_replay.py` | Portable A2A contract | Preserve replay/idempotency behavior through the new A2A service. |
 | `tests/e2e/test_real_conversation.py` | Rewritten SDK end-to-end | Docker/Compose control removed in C0. Keep the credential-gated HTTP/SSE behavior test, then rename its environment contract and run it against `ms-tau`. |
 | `tests/unit/test_a2a.py` | Rewritten SDK test | Preserve accepted A2A behavior through new package paths. |
@@ -31,7 +31,7 @@ test module and fixture family in this repository; deleted image-only tests are 
 | `tests/unit/test_project_extensions.py` | Rewrite for one Tau configuration | Remove enable-flag contract; test verified-workspace native `.tau` precedence and lifecycle. |
 | `tests/unit/test_provider_credentials.py` | Portable provider-control test | Preserve validation, refresh, and provider-construction behavior. |
 | `tests/unit/test_real_conversation_ux.py` | Rewritten SDK behavior test | Preserve user-visible event sequencing and error behavior. |
-| `tests/unit/test_runtime_manager_adr49.py` | Split and rewrite | Keep accepted bootstrap/lease/critical-path behavior; remove Astro names and extension-gate assumptions. |
+| `tests/unit/test_runtime_manager.py` | SDK runtime test | Cover bootstrap, leases, snapshots, extensions, cancellation, and the conversational critical path. |
 | `tests/unit/test_runtime_provenance.py` | Rewritten SDK test | Preserve provenance entries and durability behavior. |
 | `tests/unit/test_session_api.py` | Rewritten SDK transport test | Preserve accepted session API behavior. |
 | `tests/unit/test_session_storage.py` | Portable persistence test | Govern under reissued ADR 48 and SDK storage primitive. |
@@ -64,6 +64,12 @@ settings, no-workspace operation, or legacy roles.
 
 ## T0 Evidence Added
 
-- `tests/contract/test_adr56_runtime_surface.py` makes the documented OpenAPI operation list
-  executable. It deliberately excludes product title and package version because those must
-  change, while failing on an unreviewed route or method addition/removal.
+- The original migration surface test captured the documented OpenAPI operation list before source
+  movement. Its reviewed successor is the permanent SDK HTTP surface contract.
+
+## Cutover Evidence
+
+- The bounded migration contract is now the permanent `test_http_surface.py` SDK contract.
+- Production tests import only `ms_tau_sdk`; no compatibility namespace or command is exercised.
+- The locked `sdk-consumer-project` fixture and clean-wheel run cover project and distribution use.
+- The root suite, branch coverage, lint, formatting, and strict typing are the active gates.

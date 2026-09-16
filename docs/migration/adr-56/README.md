@@ -23,7 +23,11 @@ Source baseline: Astro Tau `v4.0.25`, commit `9b7a1c5`, branch `development`
 | SDK code | C2 — Tau configuration | Complete | Tau 0.4.2 native project prompt precedence, skills, prompt templates, hooks, extensions, diagnostics, reload, and shutdown are exercised; no SDK extension gate or parallel prompt configuration remains. |
 | SDK code | C3 — new package and public API | Complete | `ms-tau-sdk` 0.1.0 builds and clean-installs; `ms_tau_sdk` exports `create_app` and `TauSDKSettings`; `ms-tau` starts from a validated project workspace and serves health/version with no retired import namespace. |
 | SDK code | C4 — project consumption | Complete | The locked fixture project depends on `ms-tau-sdk==0.1.0`, owns a three-line ASGI shim and `.tau`, loads its extension in its own environment, runs installed `ms-tau`, serves health, and shuts down cleanly. |
-| SDK code | C5 — remove retired surface | In progress | Remove migration-only tests and move old decisions/documentation out of the active SDK authority surface. |
+| SDK code | C5 — remove retired surface | Complete | Production source/tests use only the SDK identity; compatibility test names are gone; former decisions/docs are in a non-normative historical archive. |
+| SDK code | C6 — release candidate | In progress | Harden artifact contents, automate build/provenance/checksums, and verify clean installation. |
+| Architecture decisions | A1–A4 — re-adopt, amend, eliminate, index | Complete | ADRs 0001–0004 are the reviewed SDK decision set; the former decision corpus is historical only. |
+| Tests | T1–T5 — contracts through cutover | Complete | Black-box, SDK unit, project Tau configuration, distribution, and clean consumer coverage are active; migration-only test names are removed. |
+| Documentation | D1–D5 — maintainer, author, reference, migration, cutover | Complete | New SDK documentation is normative; migration and former-project material are explicitly separated. |
 
 C1 may start when the local SDK-behavior, decision, test, and documentation inputs needed for that
 boundary are classified. No external repository inventory or modification is an ADR 56 gate.

@@ -22,7 +22,7 @@ from ms_tau_sdk.backend.models import (
     TauTurnCommit,
 )
 from ms_tau_sdk.errors import BackendConflictError
-from ms_tau_sdk.runtime.manager import ADR49_RUNTIME_CAPABILITIES, SessionRuntimeManager
+from ms_tau_sdk.runtime.manager import RUNTIME_CAPABILITIES, SessionRuntimeManager
 from ms_tau_sdk.runtime.session import ActiveSessionRuntime
 from ms_tau_sdk.runtime.snapshots import SNAPSHOT_SCHEMA_VERSION, build_snapshot_upload
 from ms_tau_sdk.sessions.storage import SESSION_ENTRY_ADAPTER
@@ -79,7 +79,7 @@ def _bootstrap(
             runtime_activity="loading",
             activity_revision=1,
             activity_sequence=0,
-            runtime_capabilities=ADR49_RUNTIME_CAPABILITIES,
+            runtime_capabilities=RUNTIME_CAPABILITIES,
         ),
         history=history or SessionEntryList(entries=[], next_sequence=0),
         resume_snapshot=snapshot,
@@ -96,7 +96,7 @@ def _bootstrap(
                 "thinking_levels": [],
             },
         ),
-        runtime_capabilities=ADR49_RUNTIME_CAPABILITIES,
+        runtime_capabilities=RUNTIME_CAPABILITIES,
     )
 
 
@@ -118,7 +118,7 @@ def _manager_dependencies(tmp_path, bootstraps):
         activity_revision=2,
         activity_sequence=1,
         applied=True,
-        runtime_capabilities=ADR49_RUNTIME_CAPABILITIES,
+        runtime_capabilities=RUNTIME_CAPABILITIES,
     )
     providers = Mock()
     provider_runtime = SimpleNamespace(
@@ -155,8 +155,8 @@ def _coding_session(
     return session
 
 
-def test_django_adr32_runtime_contract_versions():
-    assert ADR49_RUNTIME_CAPABILITIES == {
+def test_runtime_contract_versions():
+    assert RUNTIME_CAPABILITIES == {
         "tau_runtime_bootstrap": "v3",
         "tau_resume_snapshot": "v2",
         "tau_activity_sequence": "v1",

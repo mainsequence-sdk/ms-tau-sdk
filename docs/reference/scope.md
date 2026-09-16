@@ -1,15 +1,16 @@
-# Scope
+# Project Scope
 
-Astro is a Python 3.13 service that embeds Tau for Main Sequence project
-execution. It owns HTTP/A2A protocol translation, backend session durability,
-provider hydration, project policy,
-automatic Main Sequence MCP integration, and protocol-required A2A task controls.
+Main Sequence TAU SDK packages the Python primitives required to run Tau as a Main Sequence coding
+agent inside a project workspace.
 
-Tau owns the coding agent loop and its core `read`, `write`, `edit`, and `bash` tools. The project
-owns its local `.agents/skills`, `.tau/extensions`, optional tool dependencies, credentials, and
-behavior. Django MCP owns general Main Sequence platform resources and operations. Backend
-`runtime_capabilities` remain protocol version negotiation and A2A Agent Card capabilities remain
-protocol metadata; neither is a materialized capability registry.
+The SDK owns application construction and lifecycle, authenticated Main Sequence clients, provider
+evidence validation, durable and sessionless Tau execution, persistence, transports, protocol tools,
+resource defaults, diagnostics, and shutdown.
 
-Astro does not contain a Node runtime, a Pi compatibility layer, a browser UI,
-or a generic retrieval database.
+Tau owns the agent loop, native project resource resolution, extension lifecycle, provider
+interfaces, and core coding tools. The consuming project owns its source, Python environment,
+dependency lock, `.tau` resources and extensions, optional tools, and deployable artifact.
+
+External Main Sequence services own their APIs, session/task records, credential issuance, and MCP
+operations. This repository consumes those contracts but does not define changes to external
+repositories, schemas, or deployment systems.

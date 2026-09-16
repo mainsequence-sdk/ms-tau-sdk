@@ -1,14 +1,17 @@
 # Main Sequence TAU SDK Documentation
 
-- [Architecture decision records](./adrs/README.md)
-- [ADR 56 Main Sequence TAU SDK migration workspace](./migration/adr-56/README.md)
-- [Issue 6: Direct A2A Message origin-timeout investigation](./investigations/issue-6-a2a-front-door-origin-timeout/README.md)
-- [Tau migration implementation plan](./implemenation_task/remove-node-pi-migrate-to-tau.md)
-- [A2A interface](./a2a/README.md)
-- [Provider authentication](./interface/model-provider-auth.md)
-- [Logging](./interface/logging.md)
-- [Folder structure](./reference/folder-structure.md)
+Start with the [quickstart](./getting-started/quickstart.md), then use the focused references:
 
-Historical checkpoint and Pi ADRs under `reference/` and `bugs/` describe the
-removed v3 runtime. They are retained only as design history and are not active
-runtime documentation.
+- [Public Python API](./reference/public-api.md)
+- [Settings and credentials](./reference/settings.md)
+- [Tau project configuration and extensions](./guides/project-configuration.md)
+- [Runtime and HTTP contract](./reference/runtime-contract.md)
+- [Repository structure](./reference/folder-structure.md)
+- [Project scope](./reference/scope.md)
+- [Troubleshooting](./reference/troubleshooting.md)
+- [Testing and release gates](./reference/testing.md)
+- [Compatibility policy](./reference/compatibility.md)
+- [Active architecture decisions](./adrs/README.md)
+
+The [ADR 56 migration workspace](./migration/adr-56/README.md) records the project cutover. Material
+under [`history/astro`](./history/astro/README.md) is non-normative historical context.

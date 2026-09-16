@@ -1,9 +1,4 @@
-"""Executable compatibility baseline for the ADR 56 migration.
-
-This test intentionally imports the current Main Sequence TAU SDK application factory. During the
-migration, only the import and construction boundary should change; any change to
-the externally visible operation set must be an explicit contract decision.
-"""
+"""Executable contract for the Main Sequence TAU SDK HTTP operation surface."""
 
 from fastapi import FastAPI
 
@@ -39,7 +34,7 @@ EXPECTED_OPERATIONS = frozenset(
 )
 
 
-def test_adr56_freezes_current_http_operation_surface(sdk_app: FastAPI) -> None:
+def test_http_operation_surface_is_explicit(sdk_app: FastAPI) -> None:
     schema = sdk_app.openapi()
     actual_operations = frozenset(
         (method.upper(), path)
