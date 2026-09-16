@@ -16,10 +16,10 @@ dependencies = [
   "pypdf>=5.8",
   "tau-ai==0.3.1",
   "youtube-transcript-api>=1.2",
-  "yt-dlp>=2025.6.30",
 ]
 
 [project.optional-dependencies]
+youtube-frames = ["yt-dlp>=2025.6.30"]
 dev = [
   "pytest>=8.4",
   "pytest-asyncio>=1.1",

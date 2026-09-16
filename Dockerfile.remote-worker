@@ -61,8 +61,7 @@ RUN --mount=from=astro-executor-bundle,source=/opt/wheels,target=/opt/astro-whee
     --find-links /opt/astro-wheels \
     /opt/astro-wheels/mainsequence_astro-*.whl \
  && python -m pip check \
- && python -c "import astro, tau_agent, tau_coding, tau_file_tools, tau_web_access" \
- && command -v yt-dlp
+ && python -c "import astro, tau_agent, tau_coding, tau_file_tools, tau_web_access"
 
 ENV ASTRO_RELEASE_VERSION=${ASTRO_EXECUTOR_BUNDLE_REF} \
     APP_HOME=/home/appuser \

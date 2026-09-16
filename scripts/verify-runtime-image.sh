@@ -58,7 +58,6 @@ if command -v node >/dev/null 2>&1; then
 fi
 command -v git
 command -v rg
-command -v yt-dlp
 '
 
 extensions_enabled="$(

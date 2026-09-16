@@ -108,8 +108,24 @@ def test_remote_worker_consumes_only_the_lean_python_runtime_abi() -> None:
     assert "command -v rg" in recipe
     assert "ffmpeg" not in recipe
     assert "ffprobe" not in recipe
-    assert "command -v yt-dlp" in recipe
+    assert "yt-dlp" not in recipe
     assert 'test "$(stat -c \'%u:%g\' /app)" = "0:0"' in recipe
+
+
+def test_release_wheelhouse_excludes_optional_youtube_frame_downloader() -> None:
+    web_project = tomllib.loads(
+        (REPOSITORY_ROOT / "packages/tau-web-access/pyproject.toml").read_text()
+    )
+    runtime_dependencies = web_project["project"]["dependencies"]
+    optional_dependencies = web_project["project"]["optional-dependencies"]
+    runtime_lock = (REPOSITORY_ROOT / "requirements-runtime.lock").read_text()
+
+    assert all(not dependency.startswith("yt-dlp") for dependency in runtime_dependencies)
+    assert any(
+        dependency.startswith("yt-dlp")
+        for dependency in optional_dependencies["youtube-frames"]
+    )
+    assert "\nyt-dlp==" not in runtime_lock
 
 
 def test_runtime_verification_does_not_require_media_tools() -> None:
@@ -119,6 +135,7 @@ def test_runtime_verification_does_not_require_media_tools() -> None:
     assert "command -v git" in verification
     assert "ffmpeg" not in verification
     assert "ffprobe" not in verification
+    assert "yt-dlp" not in verification
 
 
 def test_runtime_verification_exercises_project_extension_import_contract() -> None:

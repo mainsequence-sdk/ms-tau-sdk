@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Downloadable executor dependency boundary
+
+- Removed `yt-dlp` from the mandatory `tau-web-access` runtime dependency set. The package is
+  available only through the `youtube-frames` extra because its full provider-extractor bundle
+  contains embedded third-party client credentials unrelated to the executor's YouTube-only use.
+- Astro and CodeRepository Executor release images no longer install or verify `yt-dlp`. YouTube
+  transcript extraction remains available; requesting YouTube frames without the optional extra
+  returns the existing explicit missing-tool error.
+- Added a release-contract test that prevents the optional media downloader from re-entering the
+  hash-locked executor wheelhouse.
+
 ### Durable asynchronous A2A Task lifecycle
 
 - Added explicit Task result selection and standard `returnImmediately` handling while preserving
