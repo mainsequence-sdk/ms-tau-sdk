@@ -40,6 +40,7 @@ jobs:
           uv build --no-sources --out-dir release-dist
           uv run python scripts/verify_distribution.py \
             --dist-dir release-dist \
+            --require-clean-source \
             --write-release-metadata
       - name: Verify clean wheel installation
         run: uv run python scripts/verify_clean_install.py release-dist/ms_tau_sdk-*.whl

@@ -25,13 +25,13 @@ Source baseline: Astro Tau `v4.0.25`, commit `9b7a1c5`, branch `development`
 | SDK code | C4 — project consumption | Complete | The locked fixture project depends on `ms-tau-sdk==0.1.0`, owns a three-line ASGI shim and `.tau`, loads its extension in its own environment, runs installed `ms-tau`, serves health, and shuts down cleanly. |
 | SDK code | C5 — remove retired surface | Complete | Production source/tests use only the SDK identity; compatibility test names are gone; former decisions/docs are in a non-normative historical archive. |
 | SDK code | C6 — release candidate | Complete | Allowlisted wheel/sdist contents, dependency metadata, checksums, provenance, CI attestation, protected PyPI automation, and a live clean-install process gate. |
-| SDK code | C7 — stable SDK release | In progress | Review the stable public contract, promote version/fixture metadata, and repeat the complete clean-room and contract gates. |
+| SDK code | C7 — stable SDK release | Complete | `1.0.0` metadata, public/compatibility/ownership docs, root and consumer locks, full tests/coverage, allowlisted artifacts, and isolated installed-process checks pass; tag/registry publication remains an explicit release-owner action. |
 | Architecture decisions | A1–A4 — re-adopt, amend, eliminate, index | Complete | ADRs 0001–0004 are the reviewed SDK decision set; the former decision corpus is historical only. |
 | Tests | T1–T5 — contracts through cutover | Complete | Black-box, SDK unit, project Tau configuration, distribution, and clean consumer coverage are active; migration-only test names are removed. |
 | Documentation | D1–D5 — maintainer, author, reference, migration, cutover | Complete | New SDK documentation is normative; migration and former-project material are explicitly separated. |
 
-C1 may start when the local SDK-behavior, decision, test, and documentation inputs needed for that
-boundary are classified. No external repository inventory or modification is an ADR 56 gate.
+All repository implementation tracks are complete. No external repository inventory or
+modification was an ADR 56 gate.
 
 ## Ledgers
 

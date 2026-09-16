@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.0 — Unreleased
+## 1.0.0 — 2026-09-16
 
 - Established Main Sequence TAU SDK as the `ms-tau-sdk` Python distribution, `ms_tau_sdk`
   namespace, and `ms-tau` process command.
@@ -14,6 +14,8 @@
   tool ownership from this project.
 - Added allowlisted wheel/sdist verification, isolated installed-process checks, release checksums,
   dependency/provenance metadata, build attestation, and PyPI trusted-publishing automation.
+- Declared the reviewed Python API, command, settings, project-configuration, and tested wire
+  contracts as the first stable compatibility surface.
 
 The changelog for the retired deployment project is retained as
 [historical context](./docs/history/astro/CHANGELOG.md).

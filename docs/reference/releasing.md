@@ -13,6 +13,7 @@ uv sync --frozen
 uv build --no-sources --out-dir release-dist
 uv run python scripts/verify_distribution.py \
   --dist-dir release-dist \
+  --require-clean-source \
   --write-release-metadata
 uv run python scripts/verify_clean_install.py release-dist/ms_tau_sdk-*.whl
 ```
@@ -20,6 +21,7 @@ uv run python scripts/verify_clean_install.py release-dist/ms_tau_sdk-*.whl
 The distribution verifier checks the package identity, Python requirement, dependency metadata,
 Tau pin, `ms-tau` entry point, required packaged resources, and an allowlist for wheel/sdist
 contents. It rejects retired namespaces, bytecode, tests, and deployment/container paths. The
+release workflow also rejects tracked changes relative to the provenance commit. The
 clean-install verifier creates an isolated environment and workspace outside the checkout, imports
 the public API with user and source paths disabled, starts the installed `ms-tau` command, calls
 health and version, and verifies graceful shutdown.
@@ -53,4 +55,5 @@ Published stable consumers pin the normal distribution version, for example
 
 Before a stable tag, verify the documented public API, settings, HTTP/wire contracts, project
 configuration behavior, complete test suite, fixture lock, compatibility notes, and changelog. See
-the [compatibility policy](./compatibility.md) and [test gates](./testing.md).
+the [compatibility policy](./compatibility.md), [ownership boundary](./ownership.md), and
+[test gates](./testing.md).

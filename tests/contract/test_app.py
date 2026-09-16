@@ -2,12 +2,15 @@ from importlib.metadata import version
 
 from httpx import AsyncClient
 
-from ms_tau_sdk import TauSDKSettings, create_app
+import ms_tau_sdk
+from ms_tau_sdk import TauSDKSettings, __version__, create_app
 
 
 def test_public_sdk_construction_surface():
     assert callable(create_app)
     assert TauSDKSettings.__name__ == "TauSDKSettings"
+    assert set(ms_tau_sdk.__all__) == {"TauSDKSettings", "__version__", "create_app"}
+    assert __version__ == version("ms-tau-sdk")
 
 
 async def test_health_reports_tau_runtime(sdk_client: AsyncClient):

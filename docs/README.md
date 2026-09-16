@@ -12,6 +12,7 @@ Start with the [quickstart](./getting-started/quickstart.md), then use the focus
 - [Testing and release gates](./reference/testing.md)
 - [Python release process](./reference/releasing.md)
 - [Compatibility policy](./reference/compatibility.md)
+- [Ownership and release authority](./reference/ownership.md)
 - [Active architecture decisions](./adrs/README.md)
 
 The [ADR 56 migration workspace](./migration/adr-56/README.md) records the project cutover. Material

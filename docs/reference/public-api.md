@@ -3,7 +3,7 @@
 The intentionally small public surface is exported from `ms_tau_sdk`:
 
 ```python
-from ms_tau_sdk import TauSDKSettings, create_app
+from ms_tau_sdk import TauSDKSettings, __version__, create_app
 ```
 
 ## `create_app`
@@ -35,6 +35,11 @@ app = create_app(settings)
 
 The backend client, routers, provider adapters, session storage, and runtime manager are internal
 implementation boundaries. Importing them does not create a compatibility promise.
+
+## `__version__`
+
+The installed distribution version. Runtime health/version reporting reads the same package
+metadata, so a project can correlate Python composition with the serving process.
 
 ## Command
 

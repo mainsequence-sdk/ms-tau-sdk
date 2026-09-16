@@ -58,7 +58,7 @@ committed to the repository or placed in `.tau` configuration.
 A project will declare and lock the SDK as a normal dependency:
 
 ```bash
-uv add ms-tau-sdk
+uv add "ms-tau-sdk==1.0.0"
 uv run ms-tau
 ```
 

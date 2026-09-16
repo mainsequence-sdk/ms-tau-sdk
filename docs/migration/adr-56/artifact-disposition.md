@@ -1,6 +1,6 @@
 # SDK Source Artifact Disposition
 
-Status: Phases C0 through C6 complete
+Status: Phases C0 through C7 complete
 
 Date: 2026-09-16
 
@@ -66,11 +66,23 @@ Owner for every candidate artifact: Main Sequence TAU SDK.
   buildable SDK source and root packaging files required by Hatchling.
 - The release bundle adds explicit dependency metadata, checksums, source/artifact provenance, and
   CI-generated GitHub plus PEP 740 attestations.
+- Automated candidate/release builds reject tracked source changes relative to the provenance
+  commit.
 - `scripts/verify_clean_install.py` installs the wheel outside the checkout, disables source and
   user path leakage, starts installed `ms-tau` in a fresh workspace, probes health/version, and
   verifies graceful shutdown.
 - Quality and release workflows run the distribution gates. Manual release runs create candidates;
   exact version tags alone may enter the protected PyPI trusted-publishing job.
+
+## C7 Stable Outcome
+
+- Distribution and consumer-fixture metadata/locks select `ms-tau-sdk==1.0.0`.
+- The stable compatibility surface is the root exports, command, documented settings, tested wire
+  contracts, Tau-native project configuration, and documented packaging/tool boundary.
+- Ownership and release authority are explicit. Repository implementation never creates or pushes
+  a release tag as a side effect.
+- Full static, contract, coverage, distribution, and installed-process gates pass for the `1.0.0`
+  artifacts.
 
 ## C0 Container and Deployment Deletion
 

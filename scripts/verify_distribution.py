@@ -192,6 +192,7 @@ def _write_release_metadata(
     wheel: Path,
     sdist: Path,
     dependencies: list[str],
+    require_clean_source: bool,
 ) -> None:
     package = project["project"]
     dependency_document = {
@@ -208,6 +209,8 @@ def _write_release_metadata(
 
     revision = _git_output("rev-parse", "HEAD")
     status = _git_output("status", "--porcelain", "--untracked-files=no")
+    if require_clean_source and status:
+        raise DistributionError("release provenance requires a clean tracked source tree")
     provenance = {
         "artifacts": {
             wheel.name: {"sha256": _sha256(wheel), "size": wheel.stat().st_size},
@@ -239,6 +242,7 @@ def _write_release_metadata(
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dist-dir", type=Path, default=ROOT / "release-dist")
+    parser.add_argument("--require-clean-source", action="store_true")
     parser.add_argument("--write-release-metadata", action="store_true")
     args = parser.parse_args()
 
@@ -261,6 +265,7 @@ def main() -> None:
             wheel=wheel,
             sdist=sdist,
             dependencies=dependencies,
+            require_clean_source=args.require_clean_source,
         )
     print(f"verified {wheel.name} and {sdist.name}")
 

@@ -20,6 +20,7 @@ Main Sequence TAU SDK is a Python library with these identities:
 | Import namespace | `ms_tau_sdk` |
 | Process command | `ms-tau` |
 | Initial version | `0.1.0` |
+| First stable version | `1.0.0` |
 
 The supported public construction surface is:
 

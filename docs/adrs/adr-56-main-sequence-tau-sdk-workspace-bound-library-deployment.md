@@ -4,8 +4,10 @@ Status: Accepted
 
 Date: 2026-09-16
 
-Implementation Status: In progress — C0 through C6, A0 through A4, T0 through T5, and D0 through
-D5 complete; C7 started.
+Implementation Status: Complete — C0 through C7, A0 through A4, T0 through T5, and D0 through D5
+are implemented and verified in this repository. Version `1.0.0` artifacts passed the stable gates.
+Creating/pushing the release tag and publishing to PyPI remain explicit release-owner operations,
+not implementation-side effects.
 Repository-owned container and image assets were removed during C0.
 
 Owner: Main Sequence TAU SDK

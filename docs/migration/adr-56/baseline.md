@@ -294,6 +294,50 @@ uv run mypy
 Success: no issues found in 49 source files
 ```
 
+### C7 gate
+
+The reviewed stable surface is documented in the public API, compatibility, ownership, settings,
+runtime, configuration, testing, and release references. Root and independent consumer locks both
+resolve `ms-tau-sdk==1.0.0`. The consumer fixture imports the installed version from its own
+environment and constructs the same application from its project workspace.
+
+The final artifacts were built without project-only source overrides. The same allowlist and
+metadata verifier accepted the wheel and sdist, and the clean-install verifier installed and ran
+the wheel from a separate environment/workspace with no checkout on `PYTHONPATH`.
+
+```text
+uv sync --project tests/fixtures/sdk-consumer-project --frozen
+Updated ms-tau-sdk==0.1.0 to ms-tau-sdk==1.0.0
+fixture app: Main Sequence TAU SDK, workspace=<fixture>
+
+uv build --no-sources --out-dir /tmp/ms-tau-sdk-c7.gwBE77
+Successfully built ms_tau_sdk-1.0.0.tar.gz
+Successfully built ms_tau_sdk-1.0.0-py3-none-any.whl
+
+uv run python scripts/verify_distribution.py --dist-dir <stable> --write-release-metadata
+verified ms_tau_sdk-1.0.0-py3-none-any.whl and ms_tau_sdk-1.0.0.tar.gz
+
+uv run python scripts/verify_clean_install.py <stable wheel>
+clean install verified: 1.0.0 from ms_tau_sdk-1.0.0-py3-none-any.whl
+
+uv run pytest --cov=ms_tau_sdk --cov-branch --cov-report=term-missing:skip-covered
+272 passed, 1 skipped
+Total coverage: 81.55% (required: 74%)
+
+uv run ruff format --check src tests scripts
+94 files already formatted
+
+uv run ruff check src tests scripts
+All checks passed!
+
+uv run mypy
+Success: no issues found in 49 source files
+```
+
+No tag was created, no branch was pushed, and no registry was mutated by the implementation. The
+protected release workflow performs those external operations only after a release owner explicitly
+creates and pushes the exact `v1.0.0` tag.
+
 ## Current Runtime Characterization
 
 ### OpenAPI surface

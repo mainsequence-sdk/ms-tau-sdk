@@ -19,6 +19,8 @@
 │   ├── fixtures/sdk-consumer-project/
 │   └── unit/
 ├── docs/
+├── scripts/            # distribution and clean-install release gates
+├── .github/workflows/  # quality and protected Python release automation
 ├── pyproject.toml
 └── uv.lock
 ```
