@@ -1,11 +1,12 @@
 import json
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.responses import StreamingResponse
 from starlette.requests import Request
 
-from astro.api.a2a import (
+from ms_tau_sdk.api.a2a import (
     RESPONSE_KIND_EXTENSION_URI,
     _output_contract,
     _stream_task_events,
@@ -16,14 +17,15 @@ from astro.api.a2a import (
     list_push_configs,
     set_push_config,
 )
-from astro.backend.models import (
+from ms_tau_sdk.backend.models import (
     AgentCardEnvelope,
     AgentSession,
     AgentTask,
     AgentTaskCreateResult,
+    AgentTaskExecutionAttempt,
 )
-from astro.runtime.events import AstroRuntimeEvent
-from astro.settings import Settings
+from ms_tau_sdk.runtime.events import TauRuntimeEvent
+from ms_tau_sdk.settings import TauSDKSettings
 
 
 def _request() -> Request:
@@ -32,7 +34,10 @@ def _request() -> Request:
             "type": "http",
             "method": "POST",
             "path": "/api/a2a/rpc",
-            "headers": [],
+            "headers": [
+                (b"x-caller-kind", b"user"),
+                (b"x-user-uid", b"2b7f1c48-3d1e-4a5b-9c6d-0e1f2a3b4c5d"),
+            ],
             "query_string": b"",
         }
     )
@@ -79,7 +84,7 @@ async def test_push_notification_json_rpc_operations_are_explicitly_unsupported(
         {"jsonrpc": "2.0", "id": "rpc-1", "method": method, "params": {}},
         client,
         AsyncMock(),
-        Settings(_env_file=None),
+        TauSDKSettings(_env_file=None),
         _request(),
     )
 
@@ -167,7 +172,7 @@ async def test_json_rpc_message_stream_returns_sse_response():
         created=True,
     )
     manager = AsyncMock()
-    config = Settings(_env_file=None)
+    config = TauSDKSettings(_env_file=None)
 
     response = await json_rpc(
         {
@@ -205,15 +210,29 @@ async def test_a2a_stream_emits_incremental_artifact_and_final_task():
     working = task.model_copy(update={"status": "working"})
     completed = task.model_copy(update={"status": "completed"})
     client = AsyncMock()
-    client.update_task_status.side_effect = [working, completed]
+    client.claim_task_dispatch.return_value = AgentTaskExecutionAttempt(
+        uid="attempt-1",
+        dispatch_uid="dispatch-1",
+        attempt_number=1,
+        state="running",
+    )
+    client.get_task.return_value = working
+    client.mutate_task_output.side_effect = [{"revision": 1}, {"revision": 2}]
+    client.settle_task_attempt.return_value = completed
 
     class Manager:
-        async def prompt(self, _context_id, _prompt):
-            yield AstroRuntimeEvent(
+        draining = False
+        settings = TauSDKSettings(_env_file=None)
+
+        async def task_execution_fence(self, _context_id):
+            return SimpleNamespace(holder_id="holder-1", lease_token="lease-1")
+
+        async def prompt(self, _context_id, _prompt, *, provenance=None):
+            yield TauRuntimeEvent(
                 type="text_delta",
                 data={"contentIndex": 0, "delta": "hel"},
             )
-            yield AstroRuntimeEvent(
+            yield TauRuntimeEvent(
                 type="text_delta",
                 data={"contentIndex": 0, "delta": "lo"},
             )
@@ -230,6 +249,7 @@ async def test_a2a_stream_emits_incremental_artifact_and_final_task():
             prompt="hello",
             output_contract=_output_contract({}),
             max_output_bytes=1024,
+            provenance={"channel": "a2a", "origin": "agent", "actorKind": "agent"},
         )
     ]
 
@@ -241,4 +261,11 @@ async def test_a2a_stream_emits_incremental_artifact_and_final_task():
     ]
     assert events[-1]["final"] is True
     assert events[-1]["task"]["status"]["state"] == "TASK_STATE_COMPLETED"
-    client.add_task_message.assert_awaited_once()
+    client.add_task_attempt_message.assert_awaited_once()
+    client.settle_task_attempt.assert_awaited_once_with(
+        task.uid,
+        attempt_uid="attempt-1",
+        holder_id="holder-1",
+        lease_token="lease-1",
+        status="completed",
+    )

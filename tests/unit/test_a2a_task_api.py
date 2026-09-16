@@ -3,11 +3,22 @@ from unittest.mock import AsyncMock
 
 from fastapi import FastAPI
 
-from astro.api.a2a import RESPONSE_KIND_EXTENSION_URI, REST_BASE, router
-from astro.api.dependencies import backend, runtime_manager, settings
-from astro.backend.models import AgentTask
-from astro.runtime.events import AstroRuntimeEvent
-from astro.settings import Settings
+from ms_tau_sdk.api.a2a import RESPONSE_KIND_EXTENSION_URI, REST_BASE, router
+from ms_tau_sdk.api.dependencies import backend, runtime_manager, settings
+from ms_tau_sdk.backend.models import (
+    AgentTask,
+    AgentTaskEvent,
+    AgentTaskEventPage,
+    AgentTaskSnapshot,
+)
+from ms_tau_sdk.runtime.events import TauRuntimeEvent
+from ms_tau_sdk.settings import TauSDKSettings
+
+USER_CALLER_HEADERS = {
+    "X-Caller-Kind": "user",
+    "X-User-UID": "2b7f1c48-3d1e-4a5b-9c6d-0e1f2a3b4c5d",
+    "X-Username": "jose",
+}
 
 
 def _task(status: str = "submitted") -> AgentTask:
@@ -26,15 +37,18 @@ def _app(client: AsyncMock, manager: object) -> FastAPI:
     app.include_router(router)
     app.dependency_overrides[backend] = lambda: client
     app.dependency_overrides[runtime_manager] = lambda: manager
-    app.dependency_overrides[settings] = lambda: Settings(_env_file=None)
+    app.dependency_overrides[settings] = lambda: TauSDKSettings(_env_file=None)
     return app
 
 
 class _DirectManager:
-    settings = Settings(_env_file=None)
+    settings = TauSDKSettings(_env_file=None)
 
-    async def prompt(self, _context_id: str, _prompt: str):
-        yield AstroRuntimeEvent(
+    def __init__(self) -> None:
+        self.delivered_sessions: list[str] = []
+
+    async def prompt(self, _context_id: str, _prompt: str, *, provenance=None):
+        yield TauRuntimeEvent(
             type="message_end",
             data={
                 "message": {
@@ -48,6 +62,10 @@ class _DirectManager:
     async def cancel(self, _context_id: str) -> bool:
         return True
 
+    def mark_response_delivered(self, session_uid: str) -> bool:
+        self.delivered_sessions.append(session_uid)
+        return True
+
 
 async def test_rest_task_list_get_cancel_and_subscribe_contract(asgi_client):
     submitted = _task()
@@ -57,9 +75,27 @@ async def test_rest_task_list_get_cancel_and_subscribe_contract(asgi_client):
     client.list_tasks.return_value = [submitted]
     client.get_task_by_protocol_id.return_value = completed
     client.cancel_task.return_value = canceled
+    client.get_task_snapshot_by_protocol_id.return_value = AgentTaskSnapshot(
+        task=submitted,
+        event_cursor=0,
+    )
+    client.list_task_events.return_value = AgentTaskEventPage(
+        events=[
+            AgentTaskEvent(
+                sequence=1,
+                event_type="status_changed",
+                status="completed",
+            )
+        ],
+        next_cursor=1,
+    )
+    client.get_task_snapshot.return_value = AgentTaskSnapshot(
+        task=completed,
+        event_cursor=1,
+    )
     manager = AsyncMock()
 
-    async with asgi_client(_app(client, manager)) as http:
+    async with asgi_client(_app(client, manager), headers=USER_CALLER_HEADERS) as http:
         listed = await http.get(f"{REST_BASE}/tasks", params={"contextId": "session-1"})
         fetched = await http.get(f"{REST_BASE}/tasks/task-1")
         cancelled = await http.post(f"{REST_BASE}/tasks/task-1:cancel")
@@ -69,17 +105,48 @@ async def test_rest_task_list_get_cancel_and_subscribe_contract(asgi_client):
     assert fetched.json()["task"]["status"]["state"] == "TASK_STATE_COMPLETED"
     assert cancelled.json()["task"]["status"]["state"] == "TASK_STATE_CANCELED"
     assert subscribed.headers["content-type"].startswith("text/event-stream")
+    assert '"eventCursor":0' in subscribed.text
     assert '"state":"TASK_STATE_COMPLETED"' in subscribed.text
     client.list_tasks.assert_awaited_once_with(context_id="session-1")
     manager.cancel.assert_awaited_once_with("session-1")
     client.cancel_task.assert_awaited_once_with("backend-task-1")
 
 
+async def test_terminal_task_subscription_is_unsupported_for_rest_and_json_rpc(
+    asgi_client,
+):
+    completed = _task("completed")
+    client = AsyncMock()
+    client.get_task_snapshot_by_protocol_id.return_value = AgentTaskSnapshot(
+        task=completed,
+        event_cursor=7,
+    )
+    manager = AsyncMock()
+
+    async with asgi_client(_app(client, manager), headers=USER_CALLER_HEADERS) as http:
+        rest = await http.get(f"{REST_BASE}/tasks/task-1:subscribe")
+        rpc = await http.post(
+            "/api/a2a/rpc",
+            json={
+                "jsonrpc": "2.0",
+                "id": "subscribe-1",
+                "method": "SubscribeToTask",
+                "params": {"id": "task-1"},
+            },
+        )
+
+    assert rest.status_code == 400
+    assert rest.json()["error"]["details"][0]["reason"] == "UNSUPPORTED_OPERATION"
+    assert rpc.status_code == 200
+    assert rpc.json()["error"]["code"] == -32004
+    assert "terminal Task" in rpc.json()["error"]["message"]
+
+
 async def test_json_rpc_direct_message_does_not_create_a_task(asgi_client):
     client = AsyncMock()
     manager = _DirectManager()
 
-    async with asgi_client(_app(client, manager)) as http:
+    async with asgi_client(_app(client, manager), headers=USER_CALLER_HEADERS) as http:
         response = await http.post(
             "/api/a2a/rpc",
             json={
@@ -90,7 +157,7 @@ async def test_json_rpc_direct_message_does_not_create_a_task(asgi_client):
                     "message": {
                         "messageId": "message-1",
                         "contextId": "session-1",
-                        "role": "ROLE_USER",
+                        "role": "ROLE_REQUESTER",
                         "parts": [{"text": "Answer directly."}],
                     }
                 },
@@ -101,8 +168,8 @@ async def test_json_rpc_direct_message_does_not_create_a_task(asgi_client):
     assert response.json()["result"]["message"]["parts"] == [{"text": "Direct RPC answer."}]
     client.get_session.assert_not_awaited()
     client.create_task.assert_not_awaited()
-    client.add_task_message.assert_not_awaited()
-    client.update_task_status.assert_not_awaited()
+    client.add_task_attempt_message.assert_not_awaited()
+    client.settle_task_attempt.assert_not_awaited()
 
 
 async def test_json_rpc_task_operations_use_the_canonical_rest_implementation(asgi_client):
@@ -115,7 +182,7 @@ async def test_json_rpc_task_operations_use_the_canonical_rest_implementation(as
     manager = AsyncMock()
     app = _app(client, manager)
 
-    async with asgi_client(app) as http:
+    async with asgi_client(app, headers=USER_CALLER_HEADERS) as http:
         listed = await http.post(
             "/api/a2a/rpc",
             json={
@@ -158,12 +225,12 @@ async def test_response_kind_requires_extension_and_is_rejected_for_streaming(as
         "message": {
             "messageId": "message-1",
             "contextId": "session-1",
-            "role": "ROLE_USER",
+            "role": "ROLE_REQUESTER",
             "parts": [{"text": "Hello"}],
         },
         "configuration": {"responseKind": "message"},
     }
-    async with asgi_client(_app(client, manager)) as http:
+    async with asgi_client(_app(client, manager), headers=USER_CALLER_HEADERS) as http:
         missing_extension = await http.post(f"{REST_BASE}/message:send", json=body)
         streaming = await http.post(
             f"{REST_BASE}/message:stream",

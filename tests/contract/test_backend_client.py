@@ -4,17 +4,17 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from astro.backend.auth import RuntimeCredentialAuth
-from astro.backend.client import MainSequenceClient
-from astro.backend.models import (
+from ms_tau_sdk.backend.auth import RuntimeCredentialAuth
+from ms_tau_sdk.backend.client import MainSequenceClient
+from ms_tau_sdk.backend.models import (
     RuntimeLeaseReleaseRequest,
     RuntimeLeaseRenewRequest,
     RuntimeLeaseRequest,
     RuntimeStatePatch,
     SessionEntryAppendRequest,
 )
-from astro.errors import BackendError
-from astro.settings import Settings
+from ms_tau_sdk.errors import BackendError
+from ms_tau_sdk.settings import TauSDKSettings
 
 
 @pytest.mark.asyncio
@@ -67,33 +67,7 @@ async def test_python_client_matches_existing_django_session_contract():
                 json={
                     "agent_session_uid": session_uid,
                     "agent_uid": "agent-1",
-                    "agent_card": {"name": "Astro"},
-                },
-            )
-        if path == f"/api/v1/agent-sessions/{session_uid}/capabilities/":
-            return httpx.Response(
-                200,
-                json=[
-                    {
-                        "uid": "binding-1",
-                        "capability_uid": "capability-1",
-                        "source_type": "repository",
-                        "capability": {
-                            "uid": "capability-1",
-                            "kind": "skill",
-                            "source_type": "repository",
-                        },
-                    }
-                ],
-            )
-        if path == "/api/v1/agent-capabilities/capability-1/content/":
-            return httpx.Response(
-                200,
-                json={
-                    "content": "# Skill",
-                    "content_sha256": "sha256:test",
-                    "content_mime_type": "text/markdown",
-                    "content_size": 7,
+                    "agent_card": {"name": "Main Sequence TAU SDK"},
                 },
             )
         if path == f"/api/v1/agent-sessions/{session_uid}/entries/" and request.method == "GET":
@@ -143,7 +117,7 @@ async def test_python_client_matches_existing_django_session_contract():
             )
         if path == f"/api/v1/agent-sessions/{session_uid}/checkpoint-lease/acquire/":
             assert payload == {
-                "holder_id": "astro-1",
+                "holder_id": "ms-tau-1",
                 "ttl_seconds": 90,
                 "lease_purpose": "runtime_run",
             }
@@ -151,7 +125,7 @@ async def test_python_client_matches_existing_django_session_contract():
                 200,
                 json={
                     "agent_session_uid": session_uid,
-                    "holder_id": "astro-1",
+                    "holder_id": "ms-tau-1",
                     "lease_token": "lease-token",
                     "lease_expires_at": "2026-07-24T00:00:00Z",
                     "checkpoint_version": 0,
@@ -166,7 +140,7 @@ async def test_python_client_matches_existing_django_session_contract():
         if path == f"/api/v1/agent-sessions/{session_uid}/checkpoint-lease/renew/":
             assert payload == {
                 "lease_token": "lease-token",
-                "holder_id": "astro-1",
+                "holder_id": "ms-tau-1",
                 "ttl_seconds": 90,
                 "lease_purpose": "runtime_run",
             }
@@ -189,7 +163,7 @@ async def test_python_client_matches_existing_django_session_contract():
         if path == f"/api/v1/agent-sessions/{session_uid}/checkpoint-lease/release/":
             assert payload == {
                 "lease_token": "lease-token",
-                "holder_id": "astro-1",
+                "holder_id": "ms-tau-1",
                 "reason": "runtime_eviction",
             }
             return httpx.Response(
@@ -238,7 +212,7 @@ async def test_python_client_matches_existing_django_session_contract():
             assert payload == {
                 "reason": "user_requested",
                 "message": "stop",
-                "requested_by_holder_id": "astro-1",
+                "requested_by_holder_id": "ms-tau-1",
             }
             return httpx.Response(
                 200,
@@ -257,7 +231,7 @@ async def test_python_client_matches_existing_django_session_contract():
             )
         return httpx.Response(404)
 
-    settings = Settings(
+    settings = TauSDKSettings(
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="credential-id",
@@ -272,8 +246,6 @@ async def test_python_client_matches_existing_django_session_contract():
 
         session = await client.get_session(session_uid)
         card = await client.get_agent_card(session_uid)
-        capabilities = await client.list_session_capabilities(session_uid)
-        content = await client.get_capability_content("capability-1")
         entries = await client.get_entries(session_uid)
         updated = await client.update_session_config(
             session_uid,
@@ -283,7 +255,7 @@ async def test_python_client_matches_existing_django_session_contract():
         )
         lease = await client.acquire_runtime_lease(
             session_uid,
-            RuntimeLeaseRequest(holder_id="astro-1", ttl_seconds=90),
+            RuntimeLeaseRequest(holder_id="ms-tau-1", ttl_seconds=90),
         )
         appended = await client.append_entry(
             session_uid,
@@ -303,13 +275,13 @@ async def test_python_client_matches_existing_django_session_contract():
         cancelled = await client.request_runtime_cancel(
             session_uid,
             message="stop",
-            requested_by_holder_id="astro-1",
+            requested_by_holder_id="ms-tau-1",
         )
         renewed = await client.renew_runtime_lease(
             session_uid,
             RuntimeLeaseRenewRequest(
                 lease_token=lease.lease_token,
-                holder_id="astro-1",
+                holder_id="ms-tau-1",
                 ttl_seconds=90,
             ),
         )
@@ -324,7 +296,7 @@ async def test_python_client_matches_existing_django_session_contract():
             session_uid,
             RuntimeLeaseReleaseRequest(
                 lease_token=lease.lease_token,
-                holder_id="astro-1",
+                holder_id="ms-tau-1",
                 reason="runtime_eviction",
             ),
         )
@@ -333,9 +305,7 @@ async def test_python_client_matches_existing_django_session_contract():
     assert session.active_provider == "openai"
     assert session.active_model == "gpt-5.4"
     assert session.active_thinking == "high"
-    assert card.agent_card == {"name": "Astro"}
-    assert capabilities[0].capability.uid == "capability-1"
-    assert content.content == "# Skill"
+    assert card.agent_card == {"name": "Main Sequence TAU SDK"}
     assert entries.next_sequence == 1
     assert entries.entries[0].entry_json["label"] == "Session label"
     assert appended.sequence == 1
@@ -349,8 +319,6 @@ async def test_python_client_matches_existing_django_session_contract():
         "/api/v1/runtime-credentials/token/",
         f"/api/v1/agent-sessions/{session_uid}/",
         f"/api/v1/agent-sessions/{session_uid}/agent-card/",
-        f"/api/v1/agent-sessions/{session_uid}/capabilities/",
-        "/api/v1/agent-capabilities/capability-1/content/",
         f"/api/v1/agent-sessions/{session_uid}/entries/",
         f"/api/v1/agent-sessions/{session_uid}/",
         f"/api/v1/agent-sessions/{session_uid}/checkpoint-lease/acquire/",
@@ -389,38 +357,76 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
                             "credential_kind": "api_key",
                             "credential": {"api_key": "provider-secret"},
                         }
-                    }
+                    },
+                    "provider_control": {
+                        "schema_version": 1,
+                        "catalog_digest": f"sha256:{'0' * 64}",
+                        "provider": "openai",
+                        "model": {
+                            "model": "gpt-5.4",
+                            "api": "openai-responses",
+                            "input": ["text", "image"],
+                            "reasoning": True,
+                            "thinking_levels": [
+                                "off",
+                                "low",
+                                "medium",
+                                "high",
+                                "xhigh",
+                            ],
+                        },
+                    },
                 },
             )
-        if path == "/api/v1/model-provider-credentials/status/":
-            return httpx.Response(
-                200,
-                json={
-                    "providers": {
-                        "openai": {
-                            "status": "active",
-                            "credential_kind": "api_key",
-                        }
-                    }
-                },
-            )
-        if path == "/api/v1/model-provider-credentials/flush/":
-            return httpx.Response(200, json={"accepted": True})
-        if path == "/api/v1/model-provider-credentials/revoke/":
-            return httpx.Response(200, json={"revoked": True})
         if path == "/api/v1/agent-tasks/" and request.method == "POST":
             return httpx.Response(201, json=task)
         if path == "/api/v1/agent-tasks/" and request.method == "GET":
             return httpx.Response(200, json={"results": [task]})
-        if path == "/api/v1/agent-tasks/task-uid-1/status/":
+        if path == "/api/v1/agent-tasks/task-uid-1/":
             return httpx.Response(200, json={**task, "status": "working"})
-        if path == "/api/v1/agent-tasks/task-uid-1/messages/":
+        if path == "/api/v1/agent-tasks/task-uid-1/snapshot/":
+            return httpx.Response(
+                200,
+                json={"task": {**task, "status": "working"}, "event_cursor": 3},
+            )
+        if path == "/api/v1/agent-tasks/task-uid-1/events/":
+            return httpx.Response(
+                200,
+                json={
+                    "events": [
+                        {
+                            "sequence": 3,
+                            "event_type": "status_changed",
+                            "status": "working",
+                        }
+                    ],
+                    "next_cursor": 3,
+                    "has_more": False,
+                },
+            )
+        if path == "/api/v1/agent-tasks/task-uid-1/claim-dispatch/":
+            return httpx.Response(
+                200,
+                json={
+                    "uid": "attempt-1",
+                    "dispatch_uid": "dispatch-1",
+                    "attempt_number": 1,
+                    "state": "running",
+                },
+            )
+        if path == "/api/v1/agent-tasks/task-uid-1/attempt-messages/":
             return httpx.Response(201, json={"stored": True})
+        if path == "/api/v1/agent-tasks/task-uid-1/attempt-outputs/":
+            return httpx.Response(200, json={"revision": 1})
+        if path == "/api/v1/agent-tasks/task-uid-1/settle-attempt/":
+            return httpx.Response(200, json={**task, "status": "completed"})
+        if path == "/api/v1/agent-tasks/task-uid-1/continue/":
+            return httpx.Response(200, json=task)
         if path == "/api/v1/agent-tasks/task-uid-1/cancel/":
             return httpx.Response(200, json={**task, "status": "canceled"})
         return httpx.Response(404)
 
-    settings = Settings(
+    settings = TauSDKSettings(
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="credential-id",
@@ -435,59 +441,82 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
             RuntimeCredentialAuth(settings, exchange_client=http),
             client=http,
         )
-        credential = await client.hydrate_provider_credential(
+        evidence = await client.hydrate_provider_credential(
             "openai",
+            model="gpt-5.4",
             session_uid="session-1",
-            holder_id="astro-1",
-        )
-        statuses = await client.list_provider_statuses(
-            session_uid="session-1",
-        )
-        flushed = await client.flush_provider_credential(
-            provider="openai",
-            session_uid="session-1",
-            credential={"type": "api_key", "api_key": "provider-secret"},
-        )
-        revoked = await client.revoke_provider_credential(
-            provider="openai",
-            session_uid="session-1",
+            holder_id="ms-tau-1",
         )
         created = await client.create_task({"task_id": "task-1"})
         found = await client.get_task_by_protocol_id("task-1")
-        updated = await client.update_task_status(
+        loaded = await client.get_task("task-uid-1")
+        snapshot = await client.get_task_snapshot("task-uid-1")
+        events = await client.list_task_events(
             "task-uid-1",
-            status="working",
+            after_sequence=2,
         )
-        message = await client.add_task_message(
+        attempt = await client.claim_task_dispatch(
             "task-uid-1",
-            {"message_id": "message-1"},
+            holder_id="holder-1",
+            lease_token="lease-1",
+            dispatch_uid="dispatch-1",
+            executor_instance_id="ms-tau-1",
+        )
+        message = await client.add_task_attempt_message(
+            "task-uid-1",
+            attempt_uid="attempt-1",
+            holder_id="holder-1",
+            lease_token="lease-1",
+            message={"message_id": "message-1"},
+        )
+        output = await client.mutate_task_output(
+            "task-uid-1",
+            attempt_uid="attempt-1",
+            holder_id="holder-1",
+            lease_token="lease-1",
+            operation="create",
+            artifact_id="artifact-1",
+            parts=[{"text": "answer"}],
+        )
+        settled = await client.settle_task_attempt(
+            "task-uid-1",
+            attempt_uid="attempt-1",
+            holder_id="holder-1",
+            lease_token="lease-1",
+            status="completed",
+        )
+        continued = await client.continue_task(
+            "task-uid-1",
+            {"message_id": "message-2"},
         )
         cancelled = await client.cancel_task("task-uid-1")
 
-    assert credential.secret() == "provider-secret"
-    assert statuses[0].status == "active"
-    assert flushed == {"accepted": True}
-    assert revoked == {"revoked": True}
-    assert requests[2][2] == "agent_session_uid=session-1"
+    assert evidence.credential.secret() == "provider-secret"
+    assert evidence.provider_control.model.model == "gpt-5.4"
     assert created.created is True
     assert created.task.uid == found.uid == "task-uid-1"
-    assert updated.status == "working"
+    assert loaded.status == "working"
+    assert snapshot.event_cursor == 3
+    assert events.events[0].sequence == 3
+    assert attempt.uid == "attempt-1"
     assert message == {"stored": True}
+    assert output == {"revision": 1}
+    assert settled.status == "completed"
+    assert continued.status == "submitted"
     assert cancelled.status == "canceled"
     assert requests == [
         ("POST", "/api/v1/runtime-credentials/token/", ""),
         ("POST", "/api/v1/model-provider-credentials/hydrate/", ""),
-        (
-            "GET",
-            "/api/v1/model-provider-credentials/status/",
-            "agent_session_uid=session-1",
-        ),
-        ("POST", "/api/v1/model-provider-credentials/flush/", ""),
-        ("POST", "/api/v1/model-provider-credentials/revoke/", ""),
         ("POST", "/api/v1/agent-tasks/", ""),
         ("GET", "/api/v1/agent-tasks/", "task_id=task-1"),
-        ("POST", "/api/v1/agent-tasks/task-uid-1/status/", ""),
-        ("POST", "/api/v1/agent-tasks/task-uid-1/messages/", ""),
+        ("GET", "/api/v1/agent-tasks/task-uid-1/", ""),
+        ("GET", "/api/v1/agent-tasks/task-uid-1/snapshot/", ""),
+        ("GET", "/api/v1/agent-tasks/task-uid-1/events/", "after_sequence=2&limit=100"),
+        ("POST", "/api/v1/agent-tasks/task-uid-1/claim-dispatch/", ""),
+        ("POST", "/api/v1/agent-tasks/task-uid-1/attempt-messages/", ""),
+        ("POST", "/api/v1/agent-tasks/task-uid-1/attempt-outputs/", ""),
+        ("POST", "/api/v1/agent-tasks/task-uid-1/settle-attempt/", ""),
+        ("POST", "/api/v1/agent-tasks/task-uid-1/continue/", ""),
         ("POST", "/api/v1/agent-tasks/task-uid-1/cancel/", ""),
     ]
 
@@ -518,7 +547,7 @@ async def test_idempotent_session_get_retries_transient_backend_failure():
             )
         return httpx.Response(404)
 
-    settings = Settings(
+    settings = TauSDKSettings(
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="credential-id",
@@ -530,7 +559,7 @@ async def test_idempotent_session_get_retries_transient_backend_failure():
     ) as http:
         auth = RuntimeCredentialAuth(settings, exchange_client=http)
         client = MainSequenceClient(settings, auth, client=http)
-        with patch("astro.backend.client.asyncio.sleep", AsyncMock()) as sleep:
+        with patch("ms_tau_sdk.backend.client.asyncio.sleep", AsyncMock()) as sleep:
             session = await client.get_session(session_uid)
 
     assert session.uid == session_uid
@@ -545,7 +574,7 @@ async def test_session_get_rejects_missing_harness_contract():
             return httpx.Response(200, json={"access": "runtime-token"})
         return httpx.Response(200, json={"uid": "session-1"})
 
-    settings = Settings(
+    settings = TauSDKSettings(
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="credential-id",
@@ -579,7 +608,7 @@ async def test_session_get_rejects_contradictory_harness_protocol():
             },
         )
 
-    settings = Settings(
+    settings = TauSDKSettings(
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="credential-id",

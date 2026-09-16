@@ -8,23 +8,42 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from astro.app import create_app
-from astro.settings import Settings
+from ms_tau_sdk.app import create_app
+from ms_tau_sdk.settings import TauSDKSettings
+
+# Gateway-verified caller identity headers (ADR-28 amendment 2). Protected
+# message routes reject requests without them; tests that exercise those routes
+# pass `headers=USER_CALLER_HEADERS` (or the agent variant) to `asgi_client`, or
+# per request. The shared client sends no identity by default.
+USER_CALLER_HEADERS = {
+    "X-Caller-Kind": "user",
+    "X-User-UID": "2b7f1c48-3d1e-4a5b-9c6d-0e1f2a3b4c5d",
+    "X-Username": "jose",
+}
+AGENT_CALLER_HEADERS = {
+    "X-Caller-Kind": "agent",
+    "X-User-UID": "2b7f1c48-3d1e-4a5b-9c6d-0e1f2a3b4c5d",
+    "X-Username": "jose",
+    "X-Caller-Agent-UID": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
+    "X-Caller-Coding-Agent-Service-UID": "f0e1d2c3-b4a5-4968-8776-655443322110",
+    "X-Caller-Agent-Session-UID": "11111111-2222-4333-8444-555555555555",
+}
 
 
 @pytest.fixture
-def test_settings(tmp_path) -> Settings:
-    return Settings(
+def test_settings(tmp_path) -> TauSDKSettings:
+    return TauSDKSettings(
         _env_file=None,
         backend_url="http://backend:8000",
         runtime_credential_id="credential-id",
         runtime_credential_secret="credential-secret",
-        project_root=tmp_path,
+        workspace=tmp_path,
+        startup_dependencies_enabled=False,
     )
 
 
 @pytest.fixture
-def astro_app(test_settings: Settings) -> FastAPI:
+def sdk_app(test_settings: TauSDKSettings) -> FastAPI:
     return create_app(test_settings)
 
 
@@ -34,13 +53,16 @@ async def _asgi_client(
     *,
     lifespan: bool = False,
     raise_app_exceptions: bool = True,
+    headers: dict[str, str] | None = None,
 ) -> AsyncIterator[AsyncClient]:
     async def client_context() -> AsyncIterator[AsyncClient]:
         transport = ASGITransport(
             app=app,
             raise_app_exceptions=raise_app_exceptions,
         )
-        async with AsyncClient(transport=transport, base_url="http://test") as client:
+        async with AsyncClient(
+            transport=transport, base_url="http://test", headers=dict(headers or {})
+        ) as client:
             yield client
 
     if lifespan:
@@ -59,6 +81,6 @@ def asgi_client() -> Callable[..., Any]:
 
 
 @pytest.fixture
-async def astro_client(astro_app: FastAPI) -> AsyncIterator[AsyncClient]:
-    async with _asgi_client(astro_app, lifespan=True) as client:
+async def sdk_client(sdk_app: FastAPI) -> AsyncIterator[AsyncClient]:
+    async with _asgi_client(sdk_app, lifespan=True) as client:
         yield client

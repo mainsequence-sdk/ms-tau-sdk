@@ -4,11 +4,11 @@
   "result": {
     "message": {
       "messageId": "msg-agent-1",
-      "role": "ROLE_AGENT",
+      "role": "ROLE_RESPONDER",
       "contextId": "agent-session-uid-1",
       "parts": [
         {
-          "text": "Hello from Astro."
+          "text": "Hello from Main Sequence TAU SDK."
         }
       ]
     }

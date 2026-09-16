@@ -1,6 +1,6 @@
 import pytest
 
-from astro.protocols.strict_json import (
+from ms_tau_sdk.protocols.strict_json import (
     StrictJsonError,
     build_repair_prompt,
     build_strict_json_contract,

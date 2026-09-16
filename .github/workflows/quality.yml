@@ -18,7 +18,7 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
@@ -27,39 +27,33 @@ jobs:
         run: uv python install 3.13
       - name: Sync locked workspace
         run: uv sync --frozen
+      - name: Install runtime tool dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep
       - name: Check formatting
-        run: uv run ruff format --check src tests packages
+        run: uv run ruff format --check src tests scripts
       - name: Lint
-        run: uv run ruff check src tests packages
+        run: uv run ruff check src tests scripts
       - name: Type check
         run: uv run mypy
+      - name: Build and inspect distributions
+        run: |
+          uv build --no-sources --out-dir release-dist
+          uv run python scripts/verify_distribution.py \
+            --dist-dir release-dist \
+            --require-clean-source \
+            --write-release-metadata
+      - name: Verify clean wheel installation
+        run: uv run python scripts/verify_clean_install.py release-dist/ms_tau_sdk-*.whl
+      - name: Verify locked SDK consumer project
+        working-directory: tests/fixtures/sdk-consumer-project
+        env:
+          MAINSEQUENCE_TAU_STARTUP_DEPENDENCIES_ENABLED: "false"
+        run: |
+          uv sync --frozen
+          uv run --frozen python -c 'from api.tau.main import app; assert app.title == "Main Sequence TAU SDK"'
       - name: Test with branch coverage
         run: >-
           uv run pytest
-          --cov=astro
-          --cov=tau_file_tools
-          --cov=tau_web_access
+          --cov=ms_tau_sdk
           --cov-branch
           --cov-report=term-missing:skip-covered
-
-  container-smoke:
-    needs: quality
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-      - name: Build and verify runtime image
-        shell: bash
-        run: |
-          set -euo pipefail
-          version="$(sed -n 's/^version = "\(.*\)"/\1/p' pyproject.toml | head -n1)"
-          test -n "${version}"
-          docker build \
-            --target astro \
-            --build-arg "ASTRO_RELEASE_VERSION=${version}" \
-            --tag astro-tau:quality \
-            .
-          docker run --rm \
-            --env "EXPECTED_ASTRO_VERSION=${version}" \
-            --entrypoint python \
-            astro-tau:quality \
-            -c "import os; from importlib.metadata import version; assert version('mainsequence-astro') == os.environ['EXPECTED_ASTRO_VERSION']"

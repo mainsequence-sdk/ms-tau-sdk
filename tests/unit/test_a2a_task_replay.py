@@ -4,15 +4,21 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import FastAPI
 
-from astro.api.a2a import RESPONSE_KIND_EXTENSION_URI, REST_BASE, router
-from astro.api.dependencies import backend, runtime_manager, settings
-from astro.backend.models import (
+from ms_tau_sdk.api.a2a import RESPONSE_KIND_EXTENSION_URI, REST_BASE, router
+from ms_tau_sdk.api.dependencies import backend, runtime_manager, settings
+from ms_tau_sdk.backend.models import (
     AgentCardEnvelope,
     AgentSession,
     AgentTask,
     AgentTaskCreateResult,
 )
-from astro.settings import Settings
+from ms_tau_sdk.settings import TauSDKSettings
+
+USER_CALLER_HEADERS = {
+    "X-Caller-Kind": "user",
+    "X-User-UID": "2b7f1c48-3d1e-4a5b-9c6d-0e1f2a3b4c5d",
+    "X-Username": "jose",
+}
 
 
 class _BackgroundManager:
@@ -45,7 +51,7 @@ def _app(client: AsyncMock, manager: _BackgroundManager) -> FastAPI:
     app.include_router(router)
     app.dependency_overrides[backend] = lambda: client
     app.dependency_overrides[runtime_manager] = lambda: manager
-    app.dependency_overrides[settings] = lambda: Settings(_env_file=None)
+    app.dependency_overrides[settings] = lambda: TauSDKSettings(_env_file=None)
     return app
 
 
@@ -84,11 +90,14 @@ def _body() -> dict:
         "taskId": "task-1",
         "message": {
             "messageId": "message-1",
-            "role": "ROLE_USER",
+            "role": "ROLE_REQUESTER",
             "contextId": "session-1",
             "parts": [{"text": "Run this once."}],
         },
-        "configuration": {"responseKind": "task"},
+        "configuration": {
+            "responseKind": "task",
+            "returnImmediately": True,
+        },
     }
 
 
@@ -101,7 +110,7 @@ async def test_message_send_returns_replayed_task_without_scheduling_execution(
     client = _client(task)
     manager = _BackgroundManager()
 
-    async with asgi_client(_app(client, manager)) as http:
+    async with asgi_client(_app(client, manager), headers=USER_CALLER_HEADERS) as http:
         response = await http.post(
             f"{REST_BASE}/message:send",
             headers={"A2A-Extensions": RESPONSE_KIND_EXTENSION_URI},
@@ -112,7 +121,7 @@ async def test_message_send_returns_replayed_task_without_scheduling_execution(
     assert response.json()["task"]["status"]["state"] == f"TASK_STATE_{status.upper()}"
     assert response.json()["task"]["artifacts"][0]["parts"] == [{"text": "Stored answer."}]
     assert manager.background is None
-    client.update_task_status.assert_not_awaited()
+    client.settle_task_attempt.assert_not_awaited()
 
 
 async def test_message_stream_returns_replayed_terminal_task_without_execution(
@@ -124,11 +133,11 @@ async def test_message_stream_returns_replayed_terminal_task_without_execution(
     body = _body()
     body["configuration"] = {}
 
-    async with asgi_client(_app(client, manager)) as http:
+    async with asgi_client(_app(client, manager), headers=USER_CALLER_HEADERS) as http:
         response = await http.post(f"{REST_BASE}/message:stream", json=body)
 
     assert response.status_code == 200
     assert '"state":"TASK_STATE_COMPLETED"' in response.text
     assert '"final":true' in response.text
     assert manager.background is None
-    client.update_task_status.assert_not_awaited()
+    client.settle_task_attempt.assert_not_awaited()

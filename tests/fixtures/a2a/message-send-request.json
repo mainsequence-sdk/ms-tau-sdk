@@ -1,11 +1,11 @@
 {
   "message": {
     "messageId": "msg-client-1",
-    "role": "ROLE_USER",
+    "role": "ROLE_REQUESTER",
     "contextId": "agent-session-uid-1",
     "parts": [
       {
-        "text": "What can this Astro agent do?"
+        "text": "What can this Main Sequence TAU SDK agent do?"
       }
     ]
   },

@@ -1,113 +1,161 @@
-# Astro
+<p align="center">
+  <a href="https://www.main-sequence.io">
+    <img src="https://www.main-sequence.io/images/logos/MS_logo_long_black.png" alt="Main Sequence" width="460">
+  </a>
+</p>
 
-Astro is Main Sequence's Python 3.13 agent service built on
-[Hugging Face Tau](https://github.com/huggingface/tau). It exposes durable
-Assistant UI chat, agent-targeted sessionless responses, and standard A2A transports.
+<h1 align="center">Main Sequence TAU SDK</h1>
 
-Astro is container-only. Do not run a second host Python or Node runtime.
+<p align="center">
+  <strong>Run Tau as a workspace-native Main Sequence coding agent.</strong>
+</p>
 
-## Runtime
+<p align="center">
+  <a href="https://pypi.org/project/ms-tau-sdk/"><img src="https://img.shields.io/pypi/v/ms-tau-sdk.svg?logo=pypi&amp;logoColor=white" alt="PyPI version"></a>
+  <a href="https://pypi.org/project/ms-tau-sdk/"><img src="https://img.shields.io/pypi/pyversions/ms-tau-sdk.svg" alt="Supported Python versions"></a>
+  <a href="https://github.com/mainsequence-sdk/ms-tau-sdk/actions/workflows/quality.yml"><img src="https://github.com/mainsequence-sdk/ms-tau-sdk/actions/workflows/quality.yml/badge.svg?branch=development" alt="Quality checks"></a>
+  <a href="https://github.com/mainsequence-sdk/ms-tau-sdk/actions/workflows/publish-to-pipy.yml"><img src="https://github.com/mainsequence-sdk/ms-tau-sdk/actions/workflows/publish-to-pipy.yml/badge.svg" alt="PyPI publication"></a>
+  <a href="https://github.com/mainsequence-sdk/ms-tau-sdk/issues"><img src="https://img.shields.io/github/issues/mainsequence-sdk/ms-tau-sdk.svg" alt="Open issues"></a>
+</p>
 
-- Python `>=3.13`
-- Tau `0.3.1`
-- FastAPI/Uvicorn on port `8787`
-- Django backend on `MAINSEQUENCE_BACKEND`
-- Main Sequence MCP automatically loaded from `{MAINSEQUENCE_BACKEND}/mcp`
-- Native Tau session entries persisted by Django
-- One process and one Python environment
-- Hash-locked runtime wheelhouse generated from `uv.lock`
-- No Node.js, Pi runtime, JSONL checkpoint, or checkpoint sidecar
+`ms-tau-sdk` packages the Tau runtime integration, Main Sequence authentication and transports,
+and durable agent-session machinery as a normal Python dependency. A project installs the SDK and
+runs it from its own workspace—there is no separate Astro image, executor overlay, or second
+deployment model.
 
-## Required Environment
+| Contract | Value |
+| --- | --- |
+| PyPI distribution | `ms-tau-sdk` |
+| Python package | `ms_tau_sdk` |
+| Command | `ms-tau` |
+| Python entry point | `ms_tau_sdk.app:create_app` |
+| Required Python | 3.13 or newer |
+| Project customization | Standard workspace `.tau/` configuration |
 
-```dotenv
-MAINSEQUENCE_BACKEND=http://api.main-sequence.app:8000
-MAINSEQUENCE_AUTH_MODE=runtime_credential
-MAINSEQUENCE_RUNTIME_CREDENTIAL_ID=replace-with-coding-agent-service-credential-id
-MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET=replace-with-coding-agent-service-credential-secret
-```
+## Quick start
 
-The runtime credential pair is required because Astro authenticates every
-session, task, provider credential, lease request, and MCP call to Django.
-It must belong to the deployed coding-agent service; organization-test and
-project runtime credentials are not valid for MCP.
-Provider API keys remain backend-owned and are hydrated for the exact session
-or Agent execution identity.
-
-For a Project Executor deployment, Django derives Agent discovery scope from
-the authenticated service credential and the service's persisted
-ProjectBranch. Astro sends no Environment selector and hides that selector from
-Tau. One Astro Project Executor deployment serves exactly that one Environment;
-users and project code do not select or switch it.
-
-See [`.env.example`](./.env.example) for optional web-provider settings.
-
-## Container Startup
-
-The Compose build context is the Astro repository. The independently
-packageable `tau-file-tools` and `tau-web-access` distributions are workspace
-members under `packages/`.
-
-`uv.lock` is the source dependency lock. `requirements-runtime.lock` is its
-hash-locked export used to build an offline wheelhouse for the runtime and
-project-executor images.
+Add the SDK to the project that will host the agent:
 
 ```bash
-docker compose up --build astro
+uv add ms-tau-sdk
 ```
 
-Compose always runs Astro in the container and points it at Django on host port
-`8000` by default:
-
-```text
-http://api.main-sequence.app:8000
-```
-
-Override `ASTRO_PROJECT_PATH` when the mounted project is not the Astro checkout.
-
-Verify a built image's Python environment, runtime tools, Node absence, and
-health endpoints with:
+Provide the runtime credential that Main Sequence assigned to the deployment:
 
 ```bash
-./scripts/verify-runtime-image.sh astro:tau
+export MAINSEQUENCE_BACKEND="https://api.main-sequence.app"
+export MAINSEQUENCE_RUNTIME_CREDENTIAL_ID="<runtime-credential-id>"
+export MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET="<runtime-credential-secret>"
 ```
 
-## Public APIs
+Start the service from the project workspace:
 
-- `GET /health`
-- `GET /ready`
-- `GET /version`
-- `POST /api/chat`
-- `POST /api/agents/{agent_uid}/responses`
-- `POST /api/agents/{agent_uid}/responses/stream`
-- `GET /api/models/catalog`
-- `GET /api/model-providers`
-- `POST /api/model-providers/{provider}/signin`
-- `GET /api/model-providers/{provider}/signin/{attempt_id}`
-- `POST /api/model-providers/{provider}/signin/{attempt_id}/manual`
-- `POST /api/model-providers/{provider}/signin/{attempt_id}/cancel`
-- `POST /api/model-providers/{provider}/signoff`
-- `POST /api/a2a/v1/message:send`
-- `POST /api/a2a/v1/message:stream`
-- `GET /api/a2a/v1/tasks`
-- `POST /api/a2a/rpc`
+```bash
+uv run ms-tau
+```
 
-The unscoped LLM chat surface is not exposed. Agent identity is mandatory for
-all one-shot model execution.
+The credential pair is exchanged for short-lived Main Sequence access tokens. Do not commit it or
+place it in `.tau` configuration. For an embedded ASGI deployment, construct the same application
+in Python:
 
-FastAPI publishes the full schema at `/docs` and `/openapi.json`.
+```python
+from ms_tau_sdk import create_app
 
-## Monorepo Packages
+app = create_app()
+```
+
+## Local development without platform sessions
+
+Local mode runs the same workspace Tau runtime without registering an Agent or AgentSession. The
+project selects a provider and model explicitly, while Main Sequence still authorizes and hydrates
+the provider credential and supplies the live MCP catalog:
+
+```bash
+export MAINSEQUENCE_AUTH_MODE=jwt
+export MAINSEQUENCE_ACCESS_TOKEN="<exported-user-access-token>"
+export MAINSEQUENCE_REFRESH_TOKEN="<exported-user-refresh-token>"
+export TAU_LOCAL_MODE=true
+export TAU_LOCAL_PROVIDER=openai
+export TAU_LOCAL_MODEL=gpt-5.4
+
+uv run ms-tau
+```
+
+The normal Main Sequence login or project launcher may provision those JWT variables, but
+`ms-tau-sdk` does not install, import, or invoke the `mainsequence` Python package. It consumes the
+environment handoff and public refresh API directly. Provider secrets are never environment
+settings and are never persisted locally.
+
+Local conversations are stored at
+`~/.tau/mainsequence/<workspace-hash>/runtime.sqlite3`; an omitted chat `sessionUid` uses the
+workspace default. Local mode binds to `127.0.0.1` unless a host was explicitly configured. Main
+Sequence MCP remains live, so its tools can still read or mutate real platform resources.
+
+## Workspace-owned Tau behavior
+
+The consuming repository owns the effective Tau configuration. It can override the packaged Tau
+defaults and install project-specific tools through the normal `.tau/` structure:
 
 ```text
-astro/
-├── packages/
-│   ├── tau-file-tools/
-│   └── tau-web-access/
-├── src/astro/
-└── pyproject.toml
+your-project/
+├── .tau/
+│   ├── SYSTEM.md
+│   ├── settings.json
+│   └── extensions/
+├── pyproject.toml
+└── uv.lock
 ```
 
-The tool packages use only Tau's public tool contracts. They remain separately
-buildable and can later be released or upstreamed without being separate
-repositories today.
+Extensions run as project code in the same process and trust boundary as the rest of the
+repository. Optional capabilities such as general web access belong in a project extension; they
+are not bundled into the SDK. Main Sequence transport and protocol behavior remains SDK-owned.
+
+## Included capabilities
+
+- FastAPI application construction and lifecycle management
+- runtime-credential exchange, local user-JWT refresh, and authenticated Main Sequence access
+- provider validation and credential hydration
+- durable Tau sessions, leases, restore, persistence, cancellation, eviction, and shutdown
+- sessionless Tau execution
+- chat, responses, SSE, A2A, health, and readiness transports
+- Main Sequence MCP and protocol-required task controls
+- packaged defaults that participate in Tau's normal workspace configuration
+
+## Deployment boundary
+
+This repository publishes Python distributions only. It contains no Dockerfile, Compose stack,
+Kubernetes manifest, runtime image, executor bundle, or container-publication pipeline. The
+consuming project owns its dependency lock, deployable artifact, system dependencies, project
+code, prompts, skills, hooks, and extensions.
+
+The project identity and migration are defined by
+[ADR 56](./docs/adrs/adr-56-main-sequence-tau-sdk-workspace-bound-library-deployment.md). See the
+[quickstart](./docs/getting-started/quickstart.md), [documentation index](./docs/README.md), and
+[release guide](./docs/reference/releasing.md) for the complete contracts.
+
+## Development
+
+The repository uses Python 3.13 and `uv`:
+
+```bash
+uv sync --frozen
+uv run pytest
+uv run ruff check .
+uv run mypy
+```
+
+Releases are immutable and tag-driven. Pushing a tag that exactly matches the package version—for
+example, `v1.0.0`—builds and verifies the wheel and source distribution, then publishes them to
+PyPI through OIDC trusted publishing. No PyPI API token or container registry is involved.
+
+## Built on Tau
+
+<p align="center">
+  <a href="https://github.com/huggingface/tau">
+    <img src="https://raw.githubusercontent.com/huggingface/tau/main/docs/assets/tau-header.svg" alt="Tau" width="760">
+  </a>
+</p>
+
+Main Sequence TAU SDK integrates the open-source
+[Tau coding agent](https://github.com/huggingface/tau) into the Main Sequence platform while
+preserving Tau's workspace-native configuration and extension model.

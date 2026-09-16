@@ -3,10 +3,18 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "mainsequence-astro"
-version = "4.0.1"
-description = "Main Sequence Tau agent runtime"
+name = "ms-tau-sdk"
+version = "1.1.0"
+description = "Workspace-bound Tau application primitives for Main Sequence projects"
+readme = "README.md"
 requires-python = ">=3.13"
+keywords = ["agents", "main-sequence", "sdk", "tau"]
+classifiers = [
+  "Development Status :: 5 - Production/Stable",
+  "Framework :: FastAPI",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.13",
+]
 dependencies = [
   "anyio>=4.10",
   "fastapi>=0.116",
@@ -18,14 +26,18 @@ dependencies = [
   "pypdf>=6.0,<7",
   "python-multipart>=0.0.20",
   "structlog>=26.1,<27",
-  "tau-ai==0.3.1",
-  "tau-file-tools>=0.1.0",
-  "tau-web-access>=0.1.0",
+  "tau-ai==0.4.2",
   "uvicorn[standard]>=0.35",
 ]
 
+[project.urls]
+Changelog = "https://github.com/mainsequence-sdk/ms-tau-sdk/blob/development/CHANGELOG.md"
+Documentation = "https://github.com/mainsequence-sdk/ms-tau-sdk/tree/development/docs"
+Issues = "https://github.com/mainsequence-sdk/ms-tau-sdk/issues"
+Repository = "https://github.com/mainsequence-sdk/ms-tau-sdk"
+
 [project.scripts]
-astro-stream = "astro.app:main"
+ms-tau = "ms_tau_sdk.cli:main"
 
 [dependency-groups]
 dev = [
@@ -40,16 +52,14 @@ dev = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["src/astro"]
+packages = ["src/ms_tau_sdk"]
 
-[tool.uv.sources]
-tau-file-tools = { workspace = true }
-tau-web-access = { workspace = true }
-
-[tool.uv.workspace]
-members = [
-  "packages/tau-file-tools",
-  "packages/tau-web-access",
+[tool.hatch.build.targets.sdist]
+include = [
+  "/CHANGELOG.md",
+  "/README.md",
+  "/pyproject.toml",
+  "/src/ms_tau_sdk",
 ]
 
 [tool.pytest.ini_options]
@@ -62,8 +72,6 @@ addopts = [
 asyncio_mode = "auto"
 testpaths = [
   "tests",
-  "packages/tau-file-tools/tests",
-  "packages/tau-web-access/tests",
 ]
 
 [tool.ruff]
@@ -80,14 +88,12 @@ select = ["E", "F", "I", "UP", "B", "ASYNC", "RUF"]
 python_version = "3.13"
 strict = true
 files = [
-  "src/astro",
-  "packages/tau-file-tools/src",
-  "packages/tau-web-access/src",
+  "src/ms_tau_sdk",
 ]
 
 [tool.coverage.run]
 branch = true
-source = ["astro", "tau_file_tools", "tau_web_access"]
+source = ["ms_tau_sdk"]
 
 [tool.coverage.report]
 fail_under = 74

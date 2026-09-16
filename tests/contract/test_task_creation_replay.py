@@ -1,8 +1,8 @@
 import httpx
 
-from astro.backend.auth import RuntimeCredentialAuth
-from astro.backend.client import MainSequenceClient
-from astro.settings import Settings
+from ms_tau_sdk.backend.auth import RuntimeCredentialAuth
+from ms_tau_sdk.backend.client import MainSequenceClient
+from ms_tau_sdk.settings import TauSDKSettings
 
 
 async def test_task_creation_preserves_backend_replay_signal():
@@ -21,7 +21,7 @@ async def test_task_creation_preserves_backend_replay_signal():
             return httpx.Response(200, json=task)
         return httpx.Response(404)
 
-    config = Settings(
+    config = TauSDKSettings(
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="credential-id",

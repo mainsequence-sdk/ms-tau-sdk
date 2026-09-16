@@ -1,0 +1,332 @@
+# ADR 39: Unified Pi Runtime Context
+
+Status: Accepted
+Date: 2026-06-19
+Implementation Status: Implemented in Astro runtime on 2026-06-20.
+
+This ADR records the target runtime shape that should precede the broader Astro package-boundary
+split in ADR 40.
+
+## Context
+
+Astro currently exposes Main Sequence backend-visible identities such as:
+
+- `astro-orchestrator`
+- `code-repository-executor`
+
+Historically, those identities leaked into local runtime behavior. The stream server, bootstrap
+code, docs, and deployment settings started treating them as two different Astro runtime
+architectures:
+
+- `astro-orchestrator` as a control-plane runtime with no fixed code repository cwd by default
+- `code-repository-executor` as a fixed code repository runtime that requires a prepared code repository cwd
+
+That distinction is too heavy. It makes the code branch on product role names when the real runtime
+difference is just which workspace Pi is started in and which skill layers are available.
+
+The intended product model is simpler:
+
+- the same Astro runtime can run with or without a prepared code repository cwd
+- an `astro-orchestrator` session may also run inside a fixed cwd
+- a code-repository-attached runtime may still use the same Main Sequence package skills as the orchestrator
+- code-repository-local `.agents/skills` may add or override behavior when they exist
+- backend `agent_type` remains useful metadata, but it must not decide the local runtime
+  architecture
+
+In other words, the orchestrator is an edge case of the same Pi runtime with no user project
+attached.
+
+## Problem
+
+The current split creates unnecessary implementation noise:
+
+- runtime profile names mirror Main Sequence product roles instead of describing runtime state
+- request handling checks `code-repository-executor` when it often means "has fixed cwd"
+- bootstrap names and paths imply an orchestrator-only runtime workspace
+- docs describe the executor as a separate runtime architecture even though the prompt and Pi launch
+  mechanics are already converging
+- package-boundary work becomes harder because Astro Core appears to own Main Sequence product roles
+
+This also blocks the cleaner separation in ADR 40. Astro Core should be a general Pi deployment
+runtime. Main Sequence roles should be supplied by adapter/session metadata and package skill
+layers, not by hard-coded Astro runtime branches.
+
+## Decision
+
+Astro should converge on one internal runtime shape:
+
+```text
+Pi runtime workspace
+  cwd
+  package/runtime skills
+  optional code-repository-local skills
+  optional project files
+  optional backend session
+```
+
+The local runtime distinction is:
+
+```text
+project_attached = true | false
+```
+
+not:
+
+```text
+runtime_kind = astro-orchestrator | code-repository-executor
+```
+
+Backend-visible `agent_type` values remain valid, but they are not Astro Core runtime kinds.
+
+## Target Runtime Context
+
+Astro should resolve one runtime context before launching Pi:
+
+```ts
+type RuntimeContext = {
+  cwd: string;
+  codeRepositoryAttached: boolean;
+  codeRepositoryId: string | null;
+  codeRepositoryImageRef: string | null;
+  backendAgentType: string | null;
+  backendAgentSessionUid: string | null;
+  skillLayers: RuntimeSkillLayer[];
+};
+```
+
+The important fields are:
+
+- `cwd`: the directory where Pi runs.
+- `codeRepositoryAttached`: whether this cwd represents a prepared user/code repository workspace.
+- `codeRepositoryId`: optional backend code repository identity.
+- `codeRepositoryImageRef`: optional image identity for prepared code repository workers.
+- `backendAgentType`: backend/session identity such as `astro-orchestrator` or `code-repository-executor`.
+- `backendAgentSessionUid`: backend session uid when a backend session exists.
+- `skillLayers`: ordered skill/prompt/tool layers available to this runtime.
+
+The current names can still appear in logs and backend payloads, but Astro Core should route local
+runtime behavior through this context.
+
+## Skill Layering
+
+Skill injection should be the real extension point.
+
+Target layering:
+
+```text
+1. Astro Core runtime skills
+2. Main Sequence package skills
+3. backend/session-provided capability skills
+4. code-repository-local .agents/skills, if present
+```
+
+CodeRepository-local skills may override or augment package skills according to Pi's normal package/project
+precedence. That is acceptable and expected.
+
+This means the difference between "orchestrator" and "executor" is not a separate prompt/runtime
+architecture. The difference is whether the runtime context includes a prepared code repository cwd and
+code-repository-local skill layer.
+
+## Orchestrator As Repository-Independent Runtime
+
+The default orchestrator deployment becomes:
+
+```text
+cwd = default Astro runtime workspace
+codeRepositoryAttached = false
+skillLayers = Astro Core + Main Sequence package
+backendAgentType = astro-orchestrator
+```
+
+If the orchestrator is launched with a fixed cwd, that is also valid:
+
+```text
+cwd = configured workspace
+codeRepositoryAttached = true or false depending on code repository metadata
+skillLayers = Astro Core + Main Sequence package + code-repository-local skills when present
+backendAgentType = astro-orchestrator
+```
+
+`astro-orchestrator` must therefore not imply "no fixed code repository cwd."
+
+## CodeRepository-Attached Runtime
+
+A code-repository-attached runtime becomes:
+
+```text
+cwd = prepared code repository workspace
+codeRepositoryAttached = true
+skillLayers = Astro Core + Main Sequence package + code-repository-local skills
+backendAgentType = astro-orchestrator | code-repository-executor | custom adapter identity
+```
+
+`code-repository-executor` may remain a backend/session identity, but it must not imply a separate Astro
+runtime architecture. It is one possible backend label for a code-repository-attached runtime.
+
+## What Must Stop Being Runtime-Core Logic
+
+Astro Core should stop treating these as architectural branches:
+
+- `agent_type=astro-orchestrator` means no fixed code repository cwd
+- `agent_type=code-repository-executor` means fixed code repository cwd is required
+- executor and orchestrator need separate Pi launch paths
+- executor and orchestrator need separate base prompt architectures
+- code repository attachment should be inferred from product role name
+
+Instead:
+
+- cwd comes from runtime context resolution
+- code repository attachment is derived from configured/requested/backend CodeRepository context
+- skills come from ordered runtime/package/session/project layers
+- backend `agent_type` is metadata and adapter/session policy
+
+## Relationship To Backend Identity
+
+This ADR does not delete backend identities.
+
+Main Sequence may continue using:
+
+```text
+astro-orchestrator
+code-repository-executor
+```
+
+for backend `Agent.agent_type`, session ownership, analytics, routing, and product policy.
+
+The change is internal to Astro Core: those names must not be used as separate local runtime
+architectures.
+
+## Relationship To ADR 40
+
+ADR 40 splits Astro Core from Main Sequence packages and adapters.
+
+This ADR must come first because it defines the Astro Core boundary:
+
+- Astro Core owns the generic Pi runtime context.
+- Main Sequence package/adapters may provide skill layers, backend session policy, and product
+  metadata.
+- Main Sequence role names must not leak into Astro Core as hard-coded runtime architectures.
+
+## Migration Direction
+
+The migration should happen in small steps:
+
+- introduce a runtime-context concept beside the current runtime-profile code
+- rename bootstrap concepts away from orchestrator-only names where they describe generic runtime
+  workspaces
+- replace `code-repository-executor` conditionals with `codeRepositoryAttached`, `fixedCwd`, or adapter-policy
+  checks where that is what the branch actually means
+- keep backend `agent_type` validation at the backend/session boundary
+- keep public API compatibility while removing local runtime branching by role name
+- only after this is stable, continue the ADR 40 package/adapter split
+
+## Implementation Tasks
+
+- [x] Replace the old runtime-profile kind implementation with a `RuntimeContext` shape that
+  includes `cwd`, `codeRepositoryAttached`, `codeRepositoryId`, `codeRepositoryImageRef`, `backendAgentType`,
+  `backendAgentSessionUid`, and `skillLayers`.
+- [x] Add `resolveRuntimeContext(...)` so `cwd` and `codeRepositoryAttached` come from configured runtime
+  state instead of deriving local runtime architecture from `agent_type`.
+- [x] Stop inferring `RuntimeProfileKind="code-repository-executor"` from `ASTRO_FIXED_CODE_REPOSITORY_CWD`.
+  A fixed cwd now means code repository attachment, not a separate runtime kind.
+- [x] Allow `astro-orchestrator` backend sessions to run with `ASTRO_FIXED_CODE_REPOSITORY_CWD` when the
+  backend/session policy permits it.
+- [x] Reclassify `ASTRO_FIXED_AGENT_TYPE` as backend/session identity policy, not required local
+  runtime architecture selection.
+- [x] Remove the retired repository-worker topology environment contract from new and existing deployment guidance.
+- [x] Replace `code-repository-executor` conditionals in request handling with checks for
+  `codeRepositoryAttached`, fixed cwd, backend agent/session policy, or code repository metadata.
+- [x] Replace the retired attachment helper logic that treated
+  `agentType === "code-repository-executor"` as image-backed CodeRepository execution. Prepared CodeRepository behavior
+  now comes from runtime context fields such as `codeRepositoryAttached`, `fixedCodeRepositoryCwd`, and
+  `codeRepositoryImageRef`.
+- [x] Preserve the prepared code repository runtime behavior where `codeRepositoryId` may be omitted when the
+  runtime is already pinned to a prepared image/cwd, but move that rule onto runtime
+  CodeRepository-attachment policy.
+- [x] Replace `fixedWorkerRequiresBackendSessionAuthority` checks based on
+  `runtimeProfile.kind === "code-repository-executor"` with prepared-CodeRepository/session-authority policy on
+  the runtime context.
+- [x] Preserve backend-authority-first model binding for prepared code-repository-attached runtimes while
+  expressing that as runtime context/session-authority policy instead of `code-repository-executor` role
+  logic.
+- [x] Remove the `code-repository-executor` exception around `ensureMainsequenceCliAuthReady()`. Main
+  Sequence CLI auth preflight now runs for repository-independent and code-repository-attached runtimes when the Main
+  Sequence adapter/package is active.
+- [x] Remove the deprecated semantic Agent identity special handling from the unified runtime
+  context path.
+- [x] Reclassify A2A current-agent identity resolution so defaulting to `astro-orchestrator` or
+  using `ASTRO_FIXED_AGENT_TYPE` is backend/session identity resolution, not local runtime-context
+  selection.
+- [x] Replace validation messages and error codes based on runtime profile with runtime-context
+  validation for missing or invalid fixed cwd/code repository attachment.
+- [x] Rename bootstrap helpers and generated paths that describe generic runtime workspaces as
+  orchestrator-only, including `ensureOrchestratorRuntimeProject(...)`, while keeping existing
+  path/env fallbacks such as `astro-orchestrator-runtime` working.
+- [x] Rewrite Main Sequence package prompt branches that used
+  `ASTRO_FIXED_AGENT_TYPE=code-repository-executor` to describe code-repository-attached vs repository-independent
+  runtime behavior.
+- [x] Update launch/preflight logging to include both backend identity and runtime context fields:
+  `backendAgentType`, `codeRepositoryAttached`, `cwd`, `codeRepositoryId`, and `codeRepositoryImageRef`.
+- [x] Update Astro-owned deployment env shapes so code-repository-attached deployments only require
+  `ASTRO_FIXED_CODE_REPOSITORY_CWD`; legacy backend env combinations remain tolerated.
+- [x] Keep `BUILD_AGENTS_IN_BACKEND`, `MAINSEQUENCE_BACKEND`,
+  `ASTRO_MAINSEQUENCE_CONFIG_DIR`, and `MAINSEQUENCE_PROJECTS_BASE` classified as Main Sequence
+  adapter/session-authority env, not Astro Core runtime identity env.
+- [x] Ensure `ASTRO_PI_PACKAGE_PATHS` is present in repository-independent and code-repository-attached Astro-owned
+  deployment images/examples so package skills load consistently.
+- [x] Update current docs that described `code-repository-executor` as a separate local runtime
+  architecture so they describe backend identity plus code repository attachment instead.
+- [x] Update `Dockerfile.remote-worker` and deployment examples so
+  code-repository-attached deployments use only canonical attachment and Agent
+  identity inputs.
+- [x] Add focused regression tests for the unified runtime-context contract, code-repository-attached image
+  env, and preserved Main Sequence `code-repository-executor` unique-id behavior.
+- [x] Mark this ADR implemented after code no longer uses backend role names as the deciding local
+  runtime architecture branch.
+
+## Backward Compatibility Requirements
+
+The migration must preserve existing deployed behavior while removing the internal role/runtime
+coupling.
+
+- Existing backend sessions with `agent_type=astro-orchestrator` remain valid.
+- Existing backend sessions with `agent_type=code-repository-executor` remain valid.
+- Existing requests that send `agentType="code-repository-executor"` continue to work.
+- Existing requests that send `agentType="astro-orchestrator"` continue to work.
+- Existing `Dockerfile.remote-worker` images must provide
+  `ASTRO_FIXED_AGENT_TYPE=code-repository-executor` and
+  `ASTRO_FIXED_CODE_REPOSITORY_CWD`; no retired topology fallback is consumed.
+- Existing prepared image-backed code repository runtimes may still omit `codeRepositoryId` when a fixed cwd/image
+  context already supplies the code repository workspace.
+- Existing Main Sequence backend identity behavior for `code-repository-executor`, including the stable
+  adapter-level unique id currently produced as `code-repository-executor`, is preserved.
+- Existing backend-owned session hydration, checkpoint, provider credential, capability, and model
+  binding behavior remains available for both repository-independent and code-repository-attached runtimes.
+- Existing public A2A request/response contracts remain unchanged in this ADR.
+- New deployments should use the unified env shape, but old env combinations must be tolerated
+  until a separate deprecation ADR or migration removes them.
+
+## Non-Goals
+
+- Do not remove Main Sequence backend `agent_type`.
+- Do not remove `astro-orchestrator` or `code-repository-executor` from backend/session payloads.
+- Do not require a public runtime attachment protocol.
+- Do not make code-repository-local skills mandatory.
+- Do not move all Main Sequence package/adapter code in this ADR.
+- Do not change the public A2A contract in this ADR.
+
+## Consequences
+
+Positive consequences:
+
+- Astro Core becomes a real Pi deployment runtime instead of a Main Sequence role runtime.
+- Orchestrator and code-repository-attached execution share the same Pi launch and skill-layer model.
+- Main Sequence-specific behavior can move into package/adapters without duplicating runtime code.
+- The code-repository-executor/orchestrator distinction becomes product metadata, not runtime architecture.
+
+Tradeoffs:
+
+- Existing docs and code that use `RuntimeProfileKind` need careful migration.
+- Some current validation rules must be reclassified as adapter policy or runtime-context validation.
+- Logs should keep backend identity while adding clearer runtime-context fields such as
+  `codeRepositoryAttached` and `cwd`.
