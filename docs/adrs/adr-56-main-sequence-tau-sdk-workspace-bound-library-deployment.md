@@ -4,8 +4,8 @@ Status: Accepted
 
 Date: 2026-09-16
 
-Implementation Status: In progress — C0/A0/T0/D0 and C1 complete; C2 started. Repository-owned
-container and image assets were removed during C0.
+Implementation Status: In progress — C0/A0/T0/D0, C1, and C2 complete; C3 started.
+Repository-owned container and image assets were removed during C0.
 
 Owner: Main Sequence TAU SDK
 

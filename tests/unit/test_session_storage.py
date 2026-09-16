@@ -101,6 +101,28 @@ async def test_storage_batches_native_tau_entries_with_expected_sequence():
     assert backend.get_entries_calls == 1
 
 
+async def test_storage_append_batch_uses_one_atomic_backend_request():
+    backend = FakeBackend()
+    storage = BackendSessionStorage(
+        backend=backend,
+        session_uid="session-1",
+        lease_token="lease-token",
+        initial_entries=[],
+        initial_next_sequence=0,
+    )
+    first = SessionInfoEntry(cwd="/workspace")
+    second = SessionInfoEntry(cwd="/workspace/two")
+
+    await storage.append_batch((first, second))
+
+    assert len(backend.requests) == 1
+    assert [item.idempotency_key for item in backend.requests[0].entries] == [
+        first.id,
+        second.id,
+    ]
+    assert [entry.id for entry in await storage.read_all()] == [first.id, second.id]
+
+
 async def test_storage_writes_behind_and_flushes_at_the_durability_boundary():
     write_started = asyncio.Event()
     release_write = asyncio.Event()

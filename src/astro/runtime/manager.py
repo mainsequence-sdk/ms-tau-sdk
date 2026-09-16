@@ -20,7 +20,6 @@ from structlog.contextvars import (
     get_contextvars,
 )
 from tau_coding import CodingSession, CodingSessionConfig
-from tau_coding.resources import TauResourcePaths
 from tau_coding.tools import create_coding_tools
 
 from astro.backend.client import MainSequenceClient
@@ -37,7 +36,7 @@ from astro.backend.models import (
 from astro.errors import BackendConflictError, ConfigurationError, LeaseLostError
 from astro.logging import conversation_log_fields
 from astro.providers.factory import ProviderFactory
-from astro.resources.loader import append_system_prompt, resource_root
+from astro.resources.loader import tau_resource_paths
 from astro.runtime.events import AstroRuntimeEvent
 from astro.runtime.extensions import ProjectExtensionState
 from astro.runtime.observability import TauTurnObserver
@@ -158,9 +157,7 @@ class SessionRuntimeManager:
             "snapshot_restore_count": self._snapshot_restore_count,
             "snapshot_fallback_count": self._snapshot_fallback_count,
             "snapshot_upload_count": self._snapshot_upload_count,
-            "code_repository_extensions_enabled": (
-                self.settings.code_repository_extensions_enabled
-            ),
+            "project_extensions_enabled": True,
             "loaded_extension_count": max(
                 (state.loaded_extension_count for state in extension_states),
                 default=0,
@@ -367,9 +364,7 @@ class SessionRuntimeManager:
             )
             mcp_client = await self._get_mcp_client()
             cwd = self._resolve_cwd()
-            project_extension_state = ProjectExtensionState(
-                enabled=self.settings.code_repository_extensions_enabled,
-            )
+            project_extension_state = ProjectExtensionState(enabled=True)
             tools = [
                 *create_coding_tools(cwd=cwd),
                 *create_mainsequence_mcp_tools(
@@ -392,15 +387,10 @@ class SessionRuntimeManager:
                     cwd=cwd,
                     tools=tools,
                     session_id=session_uid,
-                    append_system_prompt=append_system_prompt(
-                        extra_context=mainsequence_mcp_resource_prompt(mcp_client),
-                    ),
-                    resource_paths=TauResourcePaths(
-                        root=resource_root(),
-                        cwd=cwd,
-                        agents_root=None,
-                    ),
-                    project_extensions_enabled=(self.settings.code_repository_extensions_enabled),
+                    append_system_prompt=mainsequence_mcp_resource_prompt(mcp_client),
+                    resource_paths=tau_resource_paths(cwd),
+                    project_extensions_enabled=True,
+                    trust_override="approve",
                 )
             )
             project_extension_state.update_from_session(coding_session)
@@ -452,7 +442,7 @@ class SessionRuntimeManager:
                 mcp_resource_count=len(mcp_client.resources),
                 provider_control_schema=bootstrap.provider_control.schema_version,
                 catalog_digest=bootstrap.provider_control.catalog_digest,
-                code_repository_extensions_enabled=project_extension_state.enabled,
+                project_extensions_enabled=project_extension_state.enabled,
                 loaded_extension_count=project_extension_state.loaded_extension_count,
                 project_tool_count=project_extension_state.project_tool_count,
                 extension_diagnostic_count=(project_extension_state.extension_diagnostic_count),

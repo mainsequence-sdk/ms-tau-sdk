@@ -33,7 +33,7 @@ class ProjectExtensionState:
                 "execution_mode": tool.execution_mode,
                 "prompt_snippet": tool.prompt_snippet,
                 "prompt_guidelines": list(tool.prompt_guidelines),
-                "source": extension_tool_sources.get(tool.name, "astro"),
+                "source": extension_tool_sources.get(tool.name, "ms-tau-sdk"),
             }
             for tool in sorted(session.tools, key=lambda item: item.name)
         ]
@@ -49,7 +49,7 @@ class ProjectExtensionState:
     def details(self) -> dict[str, JSONValue]:
         """Return the stable operator-facing diagnostics contract."""
         return {
-            "code_repository_extensions_enabled": self.enabled,
+            "project_extensions_enabled": self.enabled,
             "loaded_extension_count": self.loaded_extension_count,
             "project_tool_count": self.project_tool_count,
             "extension_diagnostic_count": self.extension_diagnostic_count,

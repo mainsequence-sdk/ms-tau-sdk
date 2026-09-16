@@ -26,7 +26,7 @@ class _MemoryStorage:
 
 async def _load_fixture_session(
     *,
-    enabled: bool,
+    runtime_root: Path,
     provider: FakeProvider | None = None,
 ) -> CodingSession:
     async def execute_base(tool_call_id, arguments, signal=None, on_update=None):
@@ -50,20 +50,22 @@ async def _load_fixture_session(
                 )
             ],
             resource_paths=TauResourcePaths(
-                root=FIXTURE_ROOT / ".runtime-tau",
+                root=runtime_root,
                 cwd=FIXTURE_ROOT,
                 agents_root=None,
             ),
-            project_extensions_enabled=enabled,
+            project_extensions_enabled=True,
+            trust_override="approve",
+            defer_authoritative_writes=True,
         )
     )
 
 
-async def test_tau_loads_and_invokes_code_repository_extension(monkeypatch):
+async def test_tau_loads_and_invokes_code_repository_extension(monkeypatch, tmp_path):
     monkeypatch.syspath_prepend(str(FIXTURE_ROOT))
     monkeypatch.syspath_prepend(str(FIXTURE_ROOT / "src"))
 
-    session = await _load_fixture_session(enabled=True)
+    session = await _load_fixture_session(runtime_root=tmp_path / ".runtime-tau")
 
     assert session.extension_names == ("import_fixture",)
     assert session.extension_tool_sources == {
@@ -87,7 +89,7 @@ async def test_tau_loads_and_invokes_code_repository_extension(monkeypatch):
     assert len(state.tool_catalog_digest) == 71
 
 
-async def test_durable_tau_turn_invokes_the_project_extension_tool(monkeypatch):
+async def test_durable_tau_turn_invokes_the_project_extension_tool(monkeypatch, tmp_path):
     monkeypatch.syspath_prepend(str(FIXTURE_ROOT))
     monkeypatch.syspath_prepend(str(FIXTURE_ROOT / "src"))
     provider = FakeProvider(
@@ -120,7 +122,10 @@ async def test_durable_tau_turn_invokes_the_project_extension_tool(monkeypatch):
             ],
         ]
     )
-    session = await _load_fixture_session(enabled=True, provider=provider)
+    session = await _load_fixture_session(
+        runtime_root=tmp_path / ".runtime-tau",
+        provider=provider,
+    )
 
     events = [event async for event in session.prompt("Verify the project imports.")]
 
@@ -139,15 +144,17 @@ async def test_durable_tau_turn_invokes_the_project_extension_tool(monkeypatch):
     }
 
 
-async def test_tau_keeps_project_extensions_disabled_without_deployment_opt_in(monkeypatch):
+async def test_tau_loads_project_extensions_without_an_sdk_opt_in(monkeypatch, tmp_path):
     monkeypatch.syspath_prepend(str(FIXTURE_ROOT))
     monkeypatch.syspath_prepend(str(FIXTURE_ROOT / "src"))
 
-    session = await _load_fixture_session(enabled=False)
+    session = await _load_fixture_session(runtime_root=tmp_path / ".runtime-tau")
 
-    assert session.extension_names == ()
-    assert session.extension_tool_sources == {}
-    assert [tool.label for tool in session.tools] == ["Base Tool"]
+    assert session.extension_names == ("import_fixture",)
+    assert session.extension_tool_sources == {
+        "verify_project_imports": "import_fixture",
+    }
+    assert [tool.label for tool in session.tools] == ["Verify Project Imports"]
 
 
 async def test_coding_session_close_delivers_project_shutdown_hook(tmp_path):
@@ -178,6 +185,7 @@ def setup(tau):
                 agents_root=None,
             ),
             project_extensions_enabled=True,
+            trust_override="approve",
         )
     )
 
@@ -185,6 +193,53 @@ def setup(tau):
     await session.aclose()
 
     assert (tmp_path / "shutdown-reason.txt").read_text() == "quit"
+
+
+async def test_project_tau_skills_prompts_and_reload_are_native(tmp_path):
+    skill = tmp_path / ".tau/skills/review/SKILL.md"
+    prompt = tmp_path / ".tau/prompts/explain.md"
+    skill.parent.mkdir(parents=True)
+    prompt.parent.mkdir(parents=True)
+    skill.write_text("# Review\nReview the current change.", encoding="utf-8")
+    prompt.write_text("Explain $ARGUMENTS", encoding="utf-8")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            provider_name="fake",
+            model="fake-model",
+            storage=_MemoryStorage(),
+            cwd=tmp_path,
+            tools=[],
+            resource_paths=TauResourcePaths(
+                root=tmp_path / ".runtime-tau",
+                cwd=tmp_path,
+                agents_root=None,
+            ),
+            project_extensions_enabled=True,
+            trust_override="approve",
+        )
+    )
+
+    assert [item.name for item in session.skills] == ["review"]
+    assert [item.name for item in session.prompt_templates] == ["explain"]
+
+    added_skill = tmp_path / ".tau/skills/test/SKILL.md"
+    added_prompt = tmp_path / ".tau/prompts/verify.md"
+    added_skill.parent.mkdir(parents=True)
+    added_skill.write_text("# Test\nRun the project checks.", encoding="utf-8")
+    added_prompt.write_text("Verify $ARGUMENTS", encoding="utf-8")
+
+    summary = await session.reload()
+
+    assert [item.name for item in session.skills] == ["review", "test"]
+    assert [item.name for item in session.prompt_templates] == ["explain", "verify"]
+    assert (summary.skills.before, summary.skills.after, summary.skills.changed) == (1, 2, True)
+    assert (
+        summary.prompt_templates.before,
+        summary.prompt_templates.after,
+        summary.prompt_templates.changed,
+    ) == (1, 2, True)
+    await session.aclose()
 
 
 def test_executor_import_fixture_covers_both_python_layouts_and_sibling_imports():

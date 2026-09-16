@@ -20,7 +20,8 @@ Source baseline: Astro Tau `v4.0.25`, commit `9b7a1c5`, branch `development`
 | Tests | T0 — inventory and classify | Complete | Every tracked test module and fixture family is classified; image-only tests are deleted. |
 | Documentation | D0 — inventory and terminology map | Complete | Every tracked documentation family has an owner and destination. |
 | SDK code | C1 — internal library boundaries | Complete | Explicit application service graph owns startup/shutdown; CLI constructs an app instance; sessionless harness construction is isolated; all routes and contracts remain green. |
-| SDK code | C2 — Tau configuration | In progress | Upgrade to Tau's native project prompt/configuration precedence and remove the extension enable gate. |
+| SDK code | C2 — Tau configuration | Complete | Tau 0.4.2 native project prompt precedence, skills, prompt templates, hooks, extensions, diagnostics, reload, and shutdown are exercised; no SDK extension gate or parallel prompt configuration remains. |
+| SDK code | C3 — new package and public API | In progress | Rename distribution/import/command, require the current project workspace, and remove Astro terminology from production surfaces. |
 
 C1 may start when the local SDK-behavior, decision, test, and documentation inputs needed for that
 boundary are classified. No external repository inventory or modification is an ADR 56 gate.

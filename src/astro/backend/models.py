@@ -27,7 +27,7 @@ type TauEntryType = Literal[
     "session_info",
     "custom",
 ]
-type TauThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh"]
+type TauThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh", "max"]
 type AgentRuntimeActivity = Literal["loading", "idle", "working", "persisting"]
 type AgentTaskStatus = Literal[
     "submitted",

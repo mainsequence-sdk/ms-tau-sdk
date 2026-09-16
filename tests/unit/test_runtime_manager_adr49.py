@@ -260,7 +260,8 @@ async def test_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
             "task_request_input",
             "task_request_authorization",
         ]
-        assert load_call.args[0].project_extensions_enabled is False
+        assert load_call.args[0].project_extensions_enabled is True
+        assert load_call.args[0].trust_override == "approve"
         assert load_call.args[0].resource_paths.agents_root is None
     assert create_mcp_tools.call_args_list == [
         (
@@ -330,13 +331,10 @@ async def test_default_catalog_keeps_tau_core_and_omits_removed_tools(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_executor_setting_enables_tau_extensions_and_reports_effective_catalog(tmp_path):
+async def test_workspace_tau_extensions_are_enabled_and_report_effective_catalog(tmp_path):
     manager, _backend, _providers = _manager_dependencies(
         tmp_path,
         [_bootstrap("session-1")],
-    )
-    manager.settings = manager.settings.model_copy(
-        update={"code_repository_extensions_enabled": True}
     )
     project_tool = AgentTool(
         name="project_tool",
@@ -387,7 +385,7 @@ async def test_executor_setting_enables_tau_extensions_and_reports_effective_cat
     ]
 
     snapshot = manager.snapshot()
-    assert snapshot["code_repository_extensions_enabled"] is True
+    assert snapshot["project_extensions_enabled"] is True
     assert snapshot["loaded_extension_count"] == 1
     assert snapshot["project_tool_count"] == 1
     assert snapshot["extension_diagnostic_count"] == 0

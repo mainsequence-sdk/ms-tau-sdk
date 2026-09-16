@@ -1,4 +1,4 @@
-# Initial SDK Source Artifact Disposition
+# SDK Source Artifact Disposition
 
 Status: Phase C0 complete
 
@@ -36,6 +36,16 @@ Owner for every candidate artifact: Main Sequence TAU SDK.
 | `.env.example` | Astro environment contract | Rewrite | SDK/local-project variables with no obsolete Astro settings. |
 | `.github/workflows/quality.yml` | Current source quality | Amend | New package, clean install, distribution inspection, docs, contract, and project-fixture gates. |
 | `README.md`, `CHANGELOG.md` | Astro product identity/history | Replace active surface; preserve history | New SDK README/changelog plus explicit Astro migration/history links. |
+
+## C2 Configuration Outcome
+
+- `src/astro/resources/SYSTEM.md` is the temporary-namespace packaged Tau default.
+- Tau's own resolver selects project `.tau/SYSTEM.md` and composes project
+  `.tau/APPEND_SYSTEM.md`; the SDK has no parallel prompt manifest or prompt loader.
+- Project Tau resources and extensions are always enabled with explicit host trust.
+- The deployment extension flag, Astro prompt assembler, child prompt branch, and their resources
+  are eliminated.
+- Tau 0.4.2's atomic storage batch contract is implemented by the existing backend batch endpoint.
 
 ## C0 Container and Deployment Deletion
 

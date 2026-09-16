@@ -123,6 +123,31 @@ All checks passed!
 Success: no issues found in 49 source files
 ```
 
+### C2 gate
+
+Tau is upgraded to `tau-ai==0.4.2`. Packaged behavior is now a Tau-native `SYSTEM.md`; a project
+`.tau/SYSTEM.md` replaces it through Tau's resolver, while project `APPEND_SYSTEM.md`, skills,
+prompt templates, hooks, extensions, diagnostics, reload, and shutdown remain native Tau features.
+The SDK always trusts and enables the workspace's project resources because the consuming project
+already owns and runs its code. The former deployment opt-in and child-prompt branch are removed.
+
+Tau 0.4.2 also makes atomic `SessionStorage.append_batch` part of its storage contract. The backend
+storage adapter now maps that transaction to one existing batch-append request.
+
+```text
+.venv/bin/pytest -q
+264 passed, 1 skipped
+
+.venv/bin/ruff check src tests
+All checks passed!
+
+.venv/bin/ruff format --check src tests
+86 files already formatted
+
+.venv/bin/mypy src/astro
+Success: no issues found in 49 source files
+```
+
 ## Current Runtime Characterization
 
 ### OpenAPI surface

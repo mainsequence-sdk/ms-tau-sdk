@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any, cast
 
@@ -52,6 +53,7 @@ class BackendSessionStorage(SessionStorage):
         self._next_sequence = initial_next_sequence
         self._entries = list(initial_entries) if initial_entries is not None else None
         self._pending: deque[_PendingEntry] = deque()
+        self._mutation_lock = asyncio.Lock()
         self._state_lock = asyncio.Lock()
         self._write_task: asyncio.Task[None] | None = None
         self._persistence_error: Exception | None = None
@@ -148,6 +150,25 @@ class BackendSessionStorage(SessionStorage):
             return list(self._entries[:sequence])
 
     async def append(self, entry: SessionEntry) -> None:
+        async with self._mutation_lock:
+            await self._queue_entries((entry,))
+
+    async def append_batch(self, entries: Sequence[SessionEntry]) -> None:
+        """Persist one Tau transaction through one backend batch request."""
+        batch = tuple(entries)
+        if not batch:
+            return
+        async with self._mutation_lock:
+            await self.flush()
+            await self._queue_entries(batch, require_single_batch=True)
+            await self.flush()
+
+    async def _queue_entries(
+        self,
+        entries: Sequence[SessionEntry],
+        *,
+        require_single_batch: bool = False,
+    ) -> None:
         async with self._state_lock:
             self._raise_persistence_error()
             if not self._lease_valid:
@@ -157,32 +178,55 @@ class BackendSessionStorage(SessionStorage):
             assert self._entries is not None
             assert self._next_sequence is not None
 
-            payload = SESSION_ENTRY_ADAPTER.dump_python(
-                entry,
-                mode="json",
-                exclude_none=True,
-            )
-            canonical_bytes = len(
-                json.dumps(
-                    payload,
-                    ensure_ascii=False,
-                    separators=(",", ":"),
-                    sort_keys=True,
-                ).encode("utf-8")
-            )
-            expected_sequence = self._next_sequence
-            self._entries.append(entry)
-            self._next_sequence += 1
-            self._pending.append(
-                _PendingEntry(
-                    item=SessionEntryBatchItem(
-                        idempotency_key=entry.id,
-                        entry=payload,
-                    ),
-                    expected_sequence=expected_sequence,
-                    canonical_bytes=canonical_bytes,
+            pending_entries: list[_PendingEntry] = []
+            for offset, entry in enumerate(entries):
+                payload = SESSION_ENTRY_ADAPTER.dump_python(
+                    entry,
+                    mode="json",
+                    exclude_none=True,
                 )
-            )
+                canonical_bytes = len(
+                    json.dumps(
+                        payload,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                        sort_keys=True,
+                    ).encode("utf-8")
+                )
+                pending_entries.append(
+                    _PendingEntry(
+                        item=SessionEntryBatchItem(
+                            idempotency_key=entry.id,
+                            entry=payload,
+                        ),
+                        expected_sequence=self._next_sequence + offset,
+                        canonical_bytes=canonical_bytes,
+                    )
+                )
+
+            if require_single_batch:
+                backend_settings = getattr(self.backend, "settings", None)
+                maximum_count = getattr(
+                    backend_settings,
+                    "session_entry_batch_max_entries",
+                    100,
+                )
+                maximum_bytes = getattr(
+                    backend_settings,
+                    "session_entry_batch_max_bytes",
+                    8 * 1024 * 1024,
+                )
+                if (
+                    len(pending_entries) > maximum_count
+                    or sum(pending.canonical_bytes for pending in pending_entries) > maximum_bytes
+                ):
+                    raise ValueError(
+                        "Atomic Tau session batch exceeds the configured backend batch limit"
+                    )
+
+            self._entries.extend(entries)
+            self._next_sequence += len(entries)
+            self._pending.extend(pending_entries)
             if self._write_task is None and not self._defer_pending_until_commit:
                 self._write_task = asyncio.create_task(
                     self._persist_pending(),
