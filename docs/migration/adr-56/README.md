@@ -19,7 +19,8 @@ Source baseline: Astro Tau `v4.0.25`, commit `9b7a1c5`, branch `development`
 | Architecture decisions | A0 — inventory and dependency map | Complete | Active and referenced repository-local decisions have an owner and disposition. |
 | Tests | T0 — inventory and classify | Complete | Every tracked test module and fixture family is classified; image-only tests are deleted. |
 | Documentation | D0 — inventory and terminology map | Complete | Every tracked documentation family has an owner and destination. |
-| SDK code | C1 — internal library boundaries | In progress | Application, settings, lifecycle, durable/sessionless, and integration construction boundaries are being extracted. |
+| SDK code | C1 — internal library boundaries | Complete | Explicit application service graph owns startup/shutdown; CLI constructs an app instance; sessionless harness construction is isolated; all routes and contracts remain green. |
+| SDK code | C2 — Tau configuration | In progress | Upgrade to Tau's native project prompt/configuration precedence and remove the extension enable gate. |
 
 C1 may start when the local SDK-behavior, decision, test, and documentation inputs needed for that
 boundary are classified. No external repository inventory or modification is an ADR 56 gate.

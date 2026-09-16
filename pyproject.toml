@@ -23,7 +23,7 @@ dependencies = [
 ]
 
 [project.scripts]
-astro-stream = "astro.app:main"
+astro-stream = "astro.cli:main"
 
 [dependency-groups]
 dev = [

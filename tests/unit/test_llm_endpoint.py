@@ -5,7 +5,7 @@ from unittest.mock import ANY, AsyncMock, Mock, call
 from fastapi import FastAPI
 from tau_agent.messages import AssistantMessage
 
-import astro.api.responses as responses_api
+import astro.agents.sessionless as sessionless
 from astro.agents import AgentExecutionSnapshot
 from astro.api.dependencies import backend, provider_factory, settings
 from astro.api.responses import INFERENCE_EXTENSION_URI, router
@@ -84,7 +84,7 @@ def _fake_harness(monkeypatch, outputs: list[AssistantMessage]) -> list[object]:
             self.messages.append(outputs.pop(0))
             yield object()
 
-    monkeypatch.setattr(responses_api, "AgentHarness", FakeHarness)
+    monkeypatch.setattr(sessionless, "AgentHarness", FakeHarness)
     return instances
 
 

@@ -102,6 +102,27 @@ The lower test count is the explicit deletion of Dockerfile, overlay, Compose, K
 publication, and container-identity assertions. No Python SDK behavior test was removed for the
 count itself.
 
+### C1 gate
+
+The application now constructs an explicit `ApplicationServices` graph without import-time
+application creation. That graph owns authentication, the Main Sequence client, provider factory,
+durable runtime manager, startup, and shutdown. The CLI runs a constructed ASGI instance, and
+sessionless `AgentHarness` construction has its own boundary.
+
+```text
+.venv/bin/pytest -q
+261 passed, 1 skipped
+
+.venv/bin/ruff check .
+All checks passed!
+
+.venv/bin/ruff format --check src tests
+87 files already formatted
+
+.venv/bin/mypy
+Success: no issues found in 49 source files
+```
+
 ## Current Runtime Characterization
 
 ### OpenAPI surface

@@ -16,10 +16,11 @@ import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from pypdf import PdfReader
-from tau_agent.harness import AgentHarness, AgentHarnessConfig
+from tau_agent.harness import AgentHarness
 from tau_agent.messages import AssistantMessage, ImageContent, TextContent, UserMessage
 
 from astro.agents import AgentExecutionSnapshot
+from astro.agents.sessionless import create_sessionless_harness
 from astro.backend.client import MainSequenceClient
 from astro.backend.models import ProviderCredential
 from astro.logging import bind_request_log_fields, conversation_log_fields
@@ -405,14 +406,11 @@ async def _execute(
             system = (
                 f"{system}\n\n" if system else ""
             ) + "Return only valid JSON. Do not wrap it in Markdown fences."
-        harness = AgentHarness(
-            AgentHarnessConfig(
-                provider=provider,
-                model=model,
-                system=system,
-                tools=[],
-                max_turns=snapshot.max_turns,
-            )
+        harness = create_sessionless_harness(
+            provider=provider,
+            model=model,
+            system=system,
+            max_turns=snapshot.max_turns,
         )
         user_message = await _user_message(
             prepared,
