@@ -9,6 +9,7 @@ venv/
 .env.*
 !.env.example
 .astro/
+release-dist/
 
 # OS files
 .DS_Store

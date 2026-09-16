@@ -1,6 +1,6 @@
 # SDK Source Artifact Disposition
 
-Status: Phases C0 through C5 complete
+Status: Phases C0 through C6 complete
 
 Date: 2026-09-16
 
@@ -57,6 +57,20 @@ Owner for every candidate artifact: Main Sequence TAU SDK.
 - `workspace` defaults to the current directory and is validated as an existing readable directory.
 - The obsolete image-only project-extension verification script is eliminated; native project
   extension behavior remains covered by the Python fixture tests.
+
+## C6 Distribution Outcome
+
+- Wheel and sdist selection, metadata, dependencies, command entry point, required resources, and
+  contents are checked by `scripts/verify_distribution.py`.
+- The wheel contains only the SDK package and distribution metadata; the sdist contains only the
+  buildable SDK source and root packaging files required by Hatchling.
+- The release bundle adds explicit dependency metadata, checksums, source/artifact provenance, and
+  CI-generated GitHub plus PEP 740 attestations.
+- `scripts/verify_clean_install.py` installs the wheel outside the checkout, disables source and
+  user path leakage, starts installed `ms-tau` in a fresh workspace, probes health/version, and
+  verifies graceful shutdown.
+- Quality and release workflows run the distribution gates. Manual release runs create candidates;
+  exact version tags alone may enter the protected PyPI trusted-publishing job.
 
 ## C0 Container and Deployment Deletion
 

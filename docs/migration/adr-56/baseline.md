@@ -257,6 +257,43 @@ All checks passed!
 Success: no issues found in 49 source files
 ```
 
+### C6 gate
+
+The SDK now builds a deliberately narrow Python release bundle. Artifact verification checks the
+package identity, metadata, dependency count and exact Tau pin, console entry point, required Tau
+resources, and allowlisted wheel/sdist paths. It generates `DEPENDENCIES.json`, `PROVENANCE.json`,
+and `SHA256SUMS`. CI adds GitHub artifact provenance, generates PEP 740 attestations in the isolated
+publish job, and keeps PyPI publication behind an exact version tag and protected environment.
+
+The clean-install verifier created a separate Python 3.13 environment and empty project workspace,
+installed only the built wheel and its declared dependencies, confirmed that the installed module
+came from that environment and that `astro` could not be imported, started installed `ms-tau`,
+received successful health/version responses, and observed clean SIGINT shutdown.
+
+```text
+uv build --no-sources --out-dir /tmp/ms-tau-sdk-c6.TyT5bu
+Successfully built ms_tau_sdk-0.1.0.tar.gz
+Successfully built ms_tau_sdk-0.1.0-py3-none-any.whl
+
+uv run python scripts/verify_distribution.py --dist-dir <candidate> --write-release-metadata
+verified ms_tau_sdk-0.1.0-py3-none-any.whl and ms_tau_sdk-0.1.0.tar.gz
+
+uv run python scripts/verify_clean_install.py <candidate wheel>
+clean install verified: 0.1.0 from ms_tau_sdk-0.1.0-py3-none-any.whl
+
+uv run pytest
+272 passed, 1 skipped
+
+uv run ruff format --check src tests scripts
+94 files already formatted
+
+uv run ruff check src tests scripts
+All checks passed!
+
+uv run mypy
+Success: no issues found in 49 source files
+```
+
 ## Current Runtime Characterization
 
 ### OpenAPI surface

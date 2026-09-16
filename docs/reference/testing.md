@@ -22,5 +22,10 @@ Distribution gates build both artifacts, inspect their names and contents, insta
 clean environment, construct the public API without source-path leakage, run `ms-tau` from a project
 workspace, call health/version, and verify graceful shutdown.
 
+The quality workflow runs those gates for every pull request and development/main push. The
+separate [Python release process](./releasing.md) emits dependency metadata, checksums, provenance,
+and an attested candidate bundle; only an exact version tag can enter the protected PyPI publication
+job.
+
 The project fixture has its own `pyproject.toml` and `uv.lock`. CI synchronizes it separately and
 imports its three-line ASGI shim to prevent accidental reliance on repository-only integration code.

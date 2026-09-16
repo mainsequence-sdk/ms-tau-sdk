@@ -10,6 +10,7 @@ Start with the [quickstart](./getting-started/quickstart.md), then use the focus
 - [Project scope](./reference/scope.md)
 - [Troubleshooting](./reference/troubleshooting.md)
 - [Testing and release gates](./reference/testing.md)
+- [Python release process](./reference/releasing.md)
 - [Compatibility policy](./reference/compatibility.md)
 - [Active architecture decisions](./adrs/README.md)
 

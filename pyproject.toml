@@ -6,7 +6,15 @@ build-backend = "hatchling.build"
 name = "ms-tau-sdk"
 version = "0.1.0"
 description = "Workspace-bound Tau application primitives for Main Sequence projects"
+readme = "README.md"
 requires-python = ">=3.13"
+keywords = ["agents", "main-sequence", "sdk", "tau"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Framework :: FastAPI",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.13",
+]
 dependencies = [
   "anyio>=4.10",
   "fastapi>=0.116",
@@ -21,6 +29,12 @@ dependencies = [
   "tau-ai==0.4.2",
   "uvicorn[standard]>=0.35",
 ]
+
+[project.urls]
+Changelog = "https://github.com/Main-Sequence-Server-Side/astro-tau/blob/development/CHANGELOG.md"
+Documentation = "https://github.com/Main-Sequence-Server-Side/astro-tau/tree/development/docs"
+Issues = "https://github.com/Main-Sequence-Server-Side/astro-tau/issues"
+Repository = "https://github.com/Main-Sequence-Server-Side/astro-tau"
 
 [project.scripts]
 ms-tau = "ms_tau_sdk.cli:main"
@@ -39,6 +53,14 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ms_tau_sdk"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "/CHANGELOG.md",
+  "/README.md",
+  "/pyproject.toml",
+  "/src/ms_tau_sdk",
+]
 
 [tool.pytest.ini_options]
 addopts = [

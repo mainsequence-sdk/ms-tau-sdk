@@ -12,6 +12,8 @@
   prompt configuration or deployment enable flag.
 - Removed container, Compose, Kubernetes, image, overlay, wheelhouse, and optional web/search/video
   tool ownership from this project.
+- Added allowlisted wheel/sdist verification, isolated installed-process checks, release checksums,
+  dependency/provenance metadata, build attestation, and PyPI trusted-publishing automation.
 
 The changelog for the retired deployment project is retained as
 [historical context](./docs/history/astro/CHANGELOG.md).
