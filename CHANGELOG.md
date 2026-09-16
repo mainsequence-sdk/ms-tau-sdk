@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.1.1 — 2026-09-17
+
+- Fixed local-mode provider hydration to preserve the canonical credential envelope consumed by
+  the shared Tau runtime parser, so a hydrated credential reaches provider execution.
+- Added focused parser coverage and an end-to-end local chat regression through the real Tau
+  session runtime.
+
 ## 1.1.0 — 2026-09-17
 
 - Added authenticated local development mode: workspace-scoped SQLite Tau state, lazy local chat

@@ -133,7 +133,15 @@ async def test_local_backend_lazily_persists_session_history_and_not_credentials
     assert first.session.uid == session_uid
     assert first.session.active_provider == "openai"
     assert first.session.active_model == "gpt-5.4"
-    assert first.provider_credentials["openai"]["credential"]["api_key"] == ("provider-secret")
+    assert first.provider_credentials["credentials"]["openai"]["credential"]["api_key"] == (
+        "provider-secret"
+    )
+    parsed = backend.provider_credential_from_hydration(
+        "openai",
+        first.provider_credentials,
+    )
+    assert parsed.provider == "openai"
+    assert parsed.secret() == "provider-secret"
     assert appended.next_sequence == 1
     assert committed.turn_commit is not None
     assert resumed.history.next_sequence == 1

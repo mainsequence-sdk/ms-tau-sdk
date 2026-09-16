@@ -247,11 +247,13 @@ class LocalDevelopmentBackend(MainSequenceClient):
             "headers": credential.headers,
         }
         return {
-            credential.provider: {
-                "credential_kind": credential.credential_kind,
-                "credential": {key: value for key, value in raw.items() if value is not None},
-                "version": credential.metadata.get("version"),
-                "credential_hash": credential.metadata.get("credential_hash"),
+            "credentials": {
+                credential.provider: {
+                    "credential_kind": credential.credential_kind,
+                    "credential": {key: value for key, value in raw.items() if value is not None},
+                    "version": credential.metadata.get("version"),
+                    "credential_hash": credential.metadata.get("credential_hash"),
+                }
             }
         }
 
