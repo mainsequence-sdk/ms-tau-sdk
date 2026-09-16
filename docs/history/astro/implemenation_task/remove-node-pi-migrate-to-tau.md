@@ -1075,24 +1075,6 @@ Add:
 - runtime lease release during shutdown
 - a termination grace period that covers active-turn draining
 
-### Cloud Build
-
-Remove:
-
-- Node version detection
-- Node image tags
-- package.json version extraction
-- Node labels
-- Pi image and target names
-
-Publish:
-
-- Astro version tag
-- Python runtime tag
-- Tau version label
-- Main Sequence SDK version tag
-- code-repository-executor wheel/bundle artifact
-
 ## Environment Variable Cleanup
 
 Replace Pi and process-runner variables instead of supporting aliases.
@@ -1401,7 +1383,6 @@ Exit criteria:
 - [x] Replace the remote-worker Dockerfile.
 - [x] Reduce Docker Compose to one Astro service.
 - [x] Reduce Kubernetes to one Astro container.
-- [x] Remove Node tags and labels from Cloud Build.
 - [x] Add container single-environment assertions.
 
 Exit criteria:

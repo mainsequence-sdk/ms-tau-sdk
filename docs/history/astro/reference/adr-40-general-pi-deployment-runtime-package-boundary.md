@@ -11,7 +11,7 @@ only supported implementation, and auth, identity, sessions, checkpoints, provid
 session capabilities, and model catalog access now enter through that adapter. Main Sequence
 CLI/config/shim bootstrap now enters through `adapter.bootstrap`. The Dockerfile now has a
 backend-neutral `astro-core` build stage and explicit `astro-mainsequence-*` deployment targets;
-current Compose and GCP deployment still intentionally select the Main Sequence target. The
+the then-current deployment still intentionally selected the Main Sequence target. The
 previous standalone external package cutover direction is superseded. CodeRepository attachment, A2A
 backend policy, a runnable null/custom backend, backend-neutral startup, and adapter-driven
 checkpoint sidecar behavior are still not complete.
@@ -1090,12 +1090,12 @@ The immediate rule for implementation is:
 - [x] Keep Main Sequence runtime-specific prompts/tools/hooks out of root `pi/`.
 - [x] Move or rename the overlay into the Main Sequence adapter area:
   `adapters/mainsequence/pi-overlay`.
-- [x] Update Docker, Compose, GCP, and remote-worker bundle configuration so
+- [x] Update the retired container/deployment and remote-worker bundle configuration so
   `ASTRO_PI_PACKAGE_PATHS` points at `/app/adapters/mainsequence/pi-overlay`.
 - [x] Rename package metadata/descriptions so the overlay is not described as a standalone external
   package.
-- [ ] Ensure adapter overlay loading remains behavior-compatible for local, GCP, and code-repository-attached
-  Main Sequence deployments.
+- [ ] Ensure adapter overlay loading remains behavior-compatible for local and
+  code-repository-attached Main Sequence deployments.
 
 ### Image And Deployment Split
 
@@ -1107,9 +1107,6 @@ The immediate rule for implementation is:
 - [x] Keep current compatibility target aliases:
   `astro-base`, `astro-runtime`, `astro-pi-stream`, `astro-session-checkpoint-sidecar`, and
   `astro-pi`.
-- [x] Keep the current GCP deployment Main Sequence-backed by selecting
-  `astro-mainsequence-pi-stream` while preserving the published image name
-  `astro/astro-pi-stream`.
 - [x] Keep local Compose Main Sequence-backed by selecting the explicit Main Sequence Docker targets
   and setting `ASTRO_BACKEND=mainsequence`.
 - [ ] Make a backend-neutral Astro stream runtime boot and serve backend-free endpoints with no

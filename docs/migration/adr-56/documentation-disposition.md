@@ -27,7 +27,7 @@ historical family has the same destination.
 | `docs/implemenation_task/` | Archive or replace | Existing tasks are Astro migration history. New SDK implementation work is tracked under this ADR 56 migration workspace or new-project tasks. |
 | `docs/bugs/` and `docs/investigations/` | Historical with explicit relevance review | Reopen only unresolved product behavior; do not treat old topology as normative. |
 | Former `docs/reserach_guide/` | Historical | Archived with the former project; it is not SDK product documentation. |
-| Former GCP, Kubernetes, Docker, and Compose material | Eliminate from SDK docs | The SDK documents installation and process startup only; project artifact construction and external deployment are out of scope. |
+| Former cloud-image, Kubernetes, Docker, and Compose material | Eliminate from SDK docs | The SDK documents installation and process startup only; project artifact construction and external deployment are out of scope. |
 | `.env.example` | Rewrite and verify | New SDK variables and stable Main Sequence credential names; remove obsolete Astro settings. |
 
 ## New Documentation Required

@@ -242,9 +242,6 @@ src/astro/resources/APPEND_SYSTEM.md
 
 pyproject.toml
   mainsequence dependency
-
-deployment/gcp/cloudbuild.yaml
-  ms-sdk-<version> tag and push
 ```
 
 Remove these environment variables everywhere:

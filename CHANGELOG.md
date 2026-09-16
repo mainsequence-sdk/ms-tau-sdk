@@ -16,6 +16,7 @@
   dependency/provenance metadata, build attestation, and PyPI trusted-publishing automation.
 - Declared the reviewed Python API, command, settings, project-configuration, and tested wire
   contracts as the first stable compatibility surface.
+- Removed residual provider-specific image-build and push material from the historical archive.
 
 The changelog for the retired deployment project is retained as
 [historical context](./docs/history/astro/CHANGELOG.md).

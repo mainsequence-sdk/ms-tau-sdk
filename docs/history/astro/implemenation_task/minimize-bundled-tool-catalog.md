@@ -304,7 +304,6 @@ docs/reference/*
 docs/adrs/adr-50-lean-python-runtime-abi.md
 docs/adrs/adr-52-enable-repository-tau-extensions-in-code-executors.md
 docs/implemenation_task/remove-node-pi-migrate-to-tau.md
-deployment/gcp/README.md
 ```
 
 The implementation must inspect current ownership before editing because some of these files may

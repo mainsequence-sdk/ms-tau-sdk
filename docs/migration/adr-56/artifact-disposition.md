@@ -86,7 +86,7 @@ Owner for every candidate artifact: Main Sequence TAU SDK.
 
 ## C0 Container and Deployment Deletion
 
-The former Dockerfiles, Docker ignore files, Compose file, runtime wheelhouse lock, Kubernetes/GCP
-deployment assets, image verifier, and deployment-only test were deleted at C0. They are not
-assigned migration owners or replacement SDK artifacts. Project artifact construction and external
-deployment systems are outside ADR 56.
+The former Dockerfiles, Docker ignore files, Compose file, runtime wheelhouse lock, Kubernetes and
+cloud-image publication assets, image verifier, and deployment-only test were deleted at C0. They
+are not assigned migration owners or replacement SDK artifacts. Project artifact construction and
+external deployment systems are outside ADR 56.

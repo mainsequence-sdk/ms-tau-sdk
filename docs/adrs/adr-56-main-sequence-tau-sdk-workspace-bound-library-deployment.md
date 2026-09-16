@@ -9,6 +9,8 @@ are implemented and verified in this repository. Version `1.0.0` artifacts passe
 Creating/pushing the release tag and publishing to PyPI remain explicit release-owner operations,
 not implementation-side effects.
 Repository-owned container and image assets were removed during C0.
+Post-cutover cleanup also removed archived provider-specific image-build/push procedures and added
+a contract preventing that publication surface from returning.
 
 Owner: Main Sequence TAU SDK
 
@@ -564,6 +566,7 @@ ADR 56 is complete only when:
 - project extensions work without an Astro enable flag;
 - optional web/video/search/runtime-information tools are absent from the base package;
 - wheel and sdist contain required code/resources and no container/deployment artifacts;
+- no provider-specific cloud image-build or push pipeline remains in the repository;
 - a clean fixture project installs and runs the package without source-checkout leakage;
 - production source and tests contain no `astro` import or `astro-stream` invocation;
 - active documentation uses only the new SDK ontology; and

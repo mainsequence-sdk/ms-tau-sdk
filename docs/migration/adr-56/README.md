@@ -33,6 +33,9 @@ Source baseline: Astro Tau `v4.0.25`, commit `9b7a1c5`, branch `development`
 All repository implementation tracks are complete. No external repository inventory or
 modification was an ADR 56 gate.
 
+Post-cutover cleanup removed the remaining archived provider-specific image-build/push procedure
+references and added a repository-scope regression contract.
+
 ## Ledgers
 
 - [Project charter](./project-charter.md)

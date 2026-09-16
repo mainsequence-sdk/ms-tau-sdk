@@ -338,6 +338,33 @@ No tag was created, no branch was pushed, and no registry was mutated by the imp
 protected release workflow performs those external operations only after a release owner explicitly
 creates and pushes the exact `v1.0.0` tag.
 
+### Post-C7 provider-specific image-publication cleanup
+
+The live GCP build/push configuration had already been deleted during C0. The post-cutover cleanup
+removed its remaining archived procedure/path references and deleted the empty local deployment
+directories. Unrelated historical GCP provider-query and logging context remains because it is not
+an image-publication surface.
+
+`tests/contract/test_repository_scope.py` now rejects a deployment directory and known Cloud Build,
+registry, and Docker-push markers across active and historical repository text.
+
+```text
+repository publication-marker scan
+no matches
+
+uv run pytest
+273 passed, 1 skipped
+
+uv run ruff format --check src tests scripts
+95 files already formatted
+
+uv run ruff check src tests scripts
+All checks passed!
+
+uv run mypy
+Success: no issues found in 49 source files
+```
+
 ## Current Runtime Characterization
 
 ### OpenAPI surface
