@@ -37,7 +37,7 @@ distributions.
 ## Registry Publication
 
 The
-[`Publish Python package to PyPI`](../../.github/workflows/publis-to-pipy.yaml) workflow runs only
+[`Publish Python package to PyPI`](../../.github/workflows/publish-to-pipy.yml) workflow runs only
 when a `v*` tag is pushed. The tag must exactly match `v<pyproject version>` or the job fails before
 publication. A valid tag builds, verifies, clean-installs, and attests the wheel and source
 distribution before a protected job publishes them with the official PyPA action and trusted

@@ -25,11 +25,12 @@ def test_distribution_metadata_and_sdist_allowlist_are_explicit() -> None:
 
 
 def test_release_automation_builds_inspects_clean_installs_and_uses_oidc() -> None:
-    workflow_path = ROOT / ".github/workflows/publis-to-pipy.yaml"
+    workflow_path = ROOT / ".github/workflows/publish-to-pipy.yml"
     workflow = workflow_path.read_text(encoding="utf-8")
 
     assert workflow_path.is_file()
     assert not (ROOT / ".github/workflows/release.yml").exists()
+    assert not (ROOT / ".github/workflows/publis-to-pipy.yaml").exists()
     assert "scripts/verify_distribution.py" in workflow
     assert "scripts/verify_clean_install.py" in workflow
     assert "--require-clean-source" in workflow

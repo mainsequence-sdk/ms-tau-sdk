@@ -1,4 +1,4 @@
-# Build and publish ms-tau-sdk to PyPI from an exact version tag.
+# Build, verify, and publish ms-tau-sdk to PyPI from an exact version tag.
 # PyPI authentication uses GitHub OIDC trusted publishing; no API token is stored.
 name: Publish Python package to PyPI
 
