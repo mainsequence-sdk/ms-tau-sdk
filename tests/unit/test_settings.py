@@ -68,3 +68,66 @@ def test_settings_reject_invalid_lease_and_logging_contracts():
             log_machine_sink=False,
             log_human_sink=False,
         )
+
+
+def test_local_mode_requires_jwt_auth_and_explicit_selection(tmp_path):
+    with pytest.raises(ValueError, match="MAINSEQUENCE_AUTH_MODE=jwt"):
+        TauSDKSettings(
+            _env_file=None,
+            workspace=tmp_path,
+            local_mode=True,
+        )
+
+    settings = TauSDKSettings(
+        _env_file=None,
+        workspace=tmp_path,
+        auth_mode="jwt",
+        local_mode=True,
+        access_token="access-token",
+        refresh_token="refresh-token",
+    )
+    with pytest.raises(ConfigurationError, match="TAU_LOCAL_PROVIDER, TAU_LOCAL_MODEL"):
+        settings.validate_runtime_auth()
+
+
+def test_local_mode_is_workspace_scoped_and_loopback_by_default(tmp_path):
+    settings = TauSDKSettings(
+        _env_file=None,
+        workspace=tmp_path,
+        auth_mode="jwt",
+        local_mode=True,
+        access_token="access-token",
+        refresh_token="refresh-token",
+        local_provider=" openai ",
+        local_model=" gpt-5.4 ",
+        local_state_root=tmp_path / "state",
+    )
+
+    settings.validate_runtime_auth()
+
+    assert settings.host == "127.0.0.1"
+    assert settings.local_provider == "openai"
+    assert settings.local_model == "gpt-5.4"
+    assert settings.local_state_path.parent == (tmp_path / "state" / settings.workspace_digest)
+    assert settings.local_session_uid(None) == (f"local-{settings.workspace_digest}-default")
+    assert settings.local_session_uid("demo") == settings.local_session_uid("demo")
+    assert settings.local_session_uid("demo") != settings.local_session_uid("other")
+
+    external = TauSDKSettings(
+        _env_file=None,
+        workspace=tmp_path,
+        auth_mode="jwt",
+        local_mode=True,
+        access_token="access-token",
+        refresh_token="refresh-token",
+        local_provider="openai",
+        local_model="gpt-5.4",
+        host="0.0.0.0",
+    )
+    assert external.host == "0.0.0.0"
+    assert external.loopback_bind is False
+
+
+def test_managed_mode_rejects_user_jwt_auth():
+    with pytest.raises(ValueError, match="supported only when TAU_LOCAL_MODE=true"):
+        TauSDKSettings(_env_file=None, auth_mode="jwt")

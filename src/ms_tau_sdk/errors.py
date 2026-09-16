@@ -50,3 +50,8 @@ class SessionBusyError(TauSDKError):
 class SessionNotFoundError(TauSDKError):
     code = "session_not_found"
     status_code = 404
+
+
+class LocalModeUnsupportedError(TauSDKError):
+    code = "local_mode_capability_unsupported"
+    status_code = 409

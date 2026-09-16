@@ -112,6 +112,43 @@ async def test_chat_streams_real_runtime_events_with_assistant_ui_contract(asgi_
     assert manager.delivered_sessions == ["session-1"]
 
 
+async def test_local_chat_lazily_uses_workspace_session_without_gateway_headers(
+    asgi_client,
+    tmp_path,
+):
+    manager = _ChatManager()
+    manager.settings = TauSDKSettings(
+        _env_file=None,
+        workspace=tmp_path,
+        local_state_root=tmp_path / "state",
+        auth_mode="jwt",
+        local_mode=True,
+        access_token="access-token",
+        refresh_token="refresh-token",
+        local_provider="openai",
+        local_model="gpt-5.4",
+    )
+    expected_session_uid = manager.settings.local_session_uid(None)
+
+    async with asgi_client(_app(manager)) as http:
+        response = await http.post(
+            "/api/chat",
+            json={"messages": [{"role": "user", "content": "Answer locally."}]},
+        )
+
+    assert response.status_code == 200
+    assert response.headers["x-agent-session-uid"] == expected_session_uid
+    assert manager.prompts == [(expected_session_uid, "Answer locally.")]
+    assert manager.provenances == [
+        {
+            "channel": "chat",
+            "origin": "user",
+            "actorKind": "user",
+            "actorUid": "local-mainsequence-user",
+        }
+    ]
+
+
 async def test_chat_rejects_missing_user_prompt_before_runtime_execution(asgi_client):
     manager = _ChatManager()
 

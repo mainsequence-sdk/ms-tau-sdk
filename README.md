@@ -64,6 +64,33 @@ from ms_tau_sdk import create_app
 app = create_app()
 ```
 
+## Local development without platform sessions
+
+Local mode runs the same workspace Tau runtime without registering an Agent or AgentSession. The
+project selects a provider and model explicitly, while Main Sequence still authorizes and hydrates
+the provider credential and supplies the live MCP catalog:
+
+```bash
+export MAINSEQUENCE_AUTH_MODE=jwt
+export MAINSEQUENCE_ACCESS_TOKEN="<exported-user-access-token>"
+export MAINSEQUENCE_REFRESH_TOKEN="<exported-user-refresh-token>"
+export TAU_LOCAL_MODE=true
+export TAU_LOCAL_PROVIDER=openai
+export TAU_LOCAL_MODEL=gpt-5.4
+
+uv run ms-tau
+```
+
+The normal Main Sequence login or project launcher may provision those JWT variables, but
+`ms-tau-sdk` does not install, import, or invoke the `mainsequence` Python package. It consumes the
+environment handoff and public refresh API directly. Provider secrets are never environment
+settings and are never persisted locally.
+
+Local conversations are stored at
+`~/.tau/mainsequence/<workspace-hash>/runtime.sqlite3`; an omitted chat `sessionUid` uses the
+workspace default. Local mode binds to `127.0.0.1` unless a host was explicitly configured. Main
+Sequence MCP remains live, so its tools can still read or mutate real platform resources.
+
 ## Workspace-owned Tau behavior
 
 The consuming repository owns the effective Tau configuration. It can override the packaged Tau
@@ -86,7 +113,7 @@ are not bundled into the SDK. Main Sequence transport and protocol behavior rema
 ## Included capabilities
 
 - FastAPI application construction and lifecycle management
-- runtime-credential exchange and authenticated Main Sequence backend access
+- runtime-credential exchange, local user-JWT refresh, and authenticated Main Sequence access
 - provider validation and credential hydration
 - durable Tau sessions, leases, restore, persistence, cancellation, eviction, and shutdown
 - sessionless Tau execution

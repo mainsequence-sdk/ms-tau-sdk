@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import json
 import time
 from dataclasses import dataclass
+from typing import Protocol
 
 import httpx
 import structlog
@@ -15,6 +18,17 @@ from ms_tau_sdk.settings import TauSDKSettings
 from .routes import RUNTIME_CREDENTIAL_TOKEN
 
 logger = structlog.get_logger(__name__)
+JWT_REFRESH_PATH = "/auth/jwt-token/token/refresh/"
+
+
+class BackendAuth(Protocol):
+    """Authentication boundary shared by backend HTTP and MCP transports."""
+
+    def bind_client(self, client: httpx.AsyncClient) -> None: ...
+
+    async def headers(self, *, force: bool = False) -> dict[str, str]: ...
+
+    async def prefetch(self) -> None: ...
 
 
 @dataclass(slots=True)
@@ -104,3 +118,95 @@ class RuntimeCredentialAuth:
                 outcome="success",
             )
             return self._token
+
+
+def _jwt_expiry(token: str) -> int | None:
+    """Read an unverified expiry only to decide when authenticated refresh is due."""
+
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        payload = parts[1] + "=" * (-len(parts[1]) % 4)
+        decoded = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
+        expiry = decoded.get("exp")
+        return int(expiry) if expiry is not None else None
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return None
+
+
+class JWTAuth:
+    """Dependency-free Main Sequence user JWT authentication for local mode."""
+
+    def __init__(
+        self,
+        settings: TauSDKSettings,
+        *,
+        exchange_client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self.settings = settings
+        self._client = exchange_client
+        self._access_token = (
+            settings.access_token.get_secret_value().strip() if settings.access_token else ""
+        )
+        self._refresh_token = (
+            settings.refresh_token.get_secret_value().strip() if settings.refresh_token else ""
+        )
+        self._lock = asyncio.Lock()
+
+    def bind_client(self, client: httpx.AsyncClient) -> None:
+        if self._client is None:
+            self._client = client
+
+    def _needs_refresh(self, *, skew_seconds: int = 60) -> bool:
+        if not self._access_token:
+            return True
+        expiry = _jwt_expiry(self._access_token)
+        return expiry is not None and expiry <= int(time.time()) + skew_seconds
+
+    async def headers(self, *, force: bool = False) -> dict[str, str]:
+        if force or self._needs_refresh():
+            await self._refresh(force=force)
+        if not self._access_token:
+            raise ConfigurationError("MAINSEQUENCE_ACCESS_TOKEN is not configured")
+        return {"Authorization": f"Bearer {self._access_token}"}
+
+    async def prefetch(self) -> None:
+        self.settings.validate_runtime_auth()
+        await self.headers()
+
+    async def _refresh(self, *, force: bool) -> None:
+        async with self._lock:
+            if not force and not self._needs_refresh():
+                return
+            if not self._refresh_token:
+                raise ConfigurationError("MAINSEQUENCE_REFRESH_TOKEN is not configured")
+            client = self._client or httpx.AsyncClient(timeout=10)
+            close_client = self._client is None
+            started_at = time.monotonic()
+            try:
+                response = await client.post(
+                    f"{self.settings.backend_url.rstrip('/')}{JWT_REFRESH_PATH}",
+                    json={"refresh": self._refresh_token},
+                )
+            finally:
+                if close_client:
+                    await client.aclose()
+            if not response.is_success:
+                raise BackendError(
+                    "Main Sequence JWT refresh failed",
+                    status_code=response.status_code,
+                )
+            data = response.json()
+            access = str(data.get("access") or "").strip()
+            if not access:
+                raise BackendError("Main Sequence JWT refresh returned no access token")
+            refresh = str(data.get("refresh") or "").strip()
+            self._access_token = access
+            if refresh:
+                self._refresh_token = refresh
+            logger.info(
+                "local.auth.refresh.completed",
+                duration_ms=round((time.monotonic() - started_at) * 1000, 3),
+                outcome="success",
+            )

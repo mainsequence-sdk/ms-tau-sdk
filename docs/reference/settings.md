@@ -3,22 +3,44 @@
 Settings are case-sensitive. SDK-specific names use `MAINSEQUENCE_TAU_*`; established Main Sequence
 connection and credential names remain unprefixed by the SDK product name.
 
-## Required for authenticated startup
+## Managed authenticated startup
 
 | Environment variable | Meaning |
 | --- | --- |
 | `MAINSEQUENCE_RUNTIME_CREDENTIAL_ID` | Runtime credential identifier. |
 | `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET` | One process's runtime credential secret. |
 
-`MAINSEQUENCE_AUTH_MODE` accepts only `runtime_credential`. `MAINSEQUENCE_BACKEND` defaults to
-`https://api.main-sequence.app`.
+Managed mode uses `MAINSEQUENCE_AUTH_MODE=runtime_credential` and remains the default.
+`MAINSEQUENCE_BACKEND` defaults to `https://api.main-sequence.app`.
+
+## Authenticated local development
+
+| Environment variable | Meaning |
+| --- | --- |
+| `TAU_LOCAL_MODE` | Set to `true` to keep Tau runtime state local. |
+| `MAINSEQUENCE_AUTH_MODE` | Must be `jwt` in local mode. |
+| `MAINSEQUENCE_ACCESS_TOKEN` | User access JWT exported by the normal Main Sequence login flow. |
+| `MAINSEQUENCE_REFRESH_TOKEN` | User refresh JWT used through the public refresh endpoint. |
+| `TAU_LOCAL_PROVIDER` | Required exact provider selection; contains no secret. |
+| `TAU_LOCAL_MODEL` | Required exact model selection; contains no secret. |
+| `TAU_LOCAL_THINKING` | Optional Tau thinking level. |
+| `TAU_LOCAL_STATE_ROOT` | Local state root; defaults to `~/.tau/mainsequence`. |
+
+The SDK consumes the JWT environment handoff directly. It does not depend on, import, dynamically
+load, or call the `mainsequence` Python package/CLI. The JWT authenticates Main Sequence provider
+hydration and MCP; it is never sent to the selected model provider. Provider credentials are
+hydrated remotely and kept out of the environment and local database.
+
+Local mode and managed authentication are mutually exclusive. Local startup fails if any JWT,
+provider, or model setting is absent; managed startup fails if either runtime credential setting is
+absent.
 
 ## Process and workspace
 
 | Environment variable | Default |
 | --- | --- |
 | `MAINSEQUENCE_TAU_WORKSPACE` | Current directory |
-| `MAINSEQUENCE_TAU_HOST` | `0.0.0.0` |
+| `MAINSEQUENCE_TAU_HOST` | `0.0.0.0` managed; `127.0.0.1` local unless explicitly set |
 | `MAINSEQUENCE_TAU_PORT` | `8787` |
 | `MAINSEQUENCE_TAU_TRUSTED_ORIGINS` | Empty |
 | `MAINSEQUENCE_TAU_STARTUP_DEPENDENCIES_ENABLED` | `true` |

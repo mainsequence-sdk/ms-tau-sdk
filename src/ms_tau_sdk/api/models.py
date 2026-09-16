@@ -12,13 +12,14 @@ class ApiModel(BaseModel):
 
 
 class ChatRequest(ApiModel):
-    session_uid: str = Field(
+    session_uid: str | None = Field(
+        default=None,
         validation_alias=AliasChoices(
             "sessionUid",
             "runtime_session_uid",
             "runtimeSessionUid",
             "agent_session_uid",
-        )
+        ),
     )
     message: str | None = None
     messages: list[dict[str, Any]] = Field(default_factory=list)

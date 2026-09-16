@@ -7,6 +7,7 @@ from pydantic import ValidationError
 from ms_tau_sdk.api.models import CancelRequest
 from ms_tau_sdk.api.sessions import cancel_session, session_model
 from ms_tau_sdk.backend.models import AgentSession, RuntimeState, RuntimeStatePatch
+from ms_tau_sdk.settings import TauSDKSettings
 
 
 def test_runtime_state_patch_rejects_worker_state_fields():
@@ -32,7 +33,7 @@ async def test_session_model_reads_provider_selection_from_session():
         llm_thinking="high",
     )
 
-    result = await session_model(client, "session-1")
+    result = await session_model(client, TauSDKSettings(_env_file=None), "session-1")
 
     assert result == {
         "sessionUid": "session-1",
@@ -67,6 +68,7 @@ async def test_session_cancel_uses_backend_cancel_request():
         CancelRequest(sessionUid="session-1", message="stop"),
         manager,
         client,
+        TauSDKSettings(_env_file=None),
     )
 
     client.request_runtime_cancel.assert_awaited_once_with(

@@ -1,7 +1,8 @@
 # Runtime and HTTP Contract
 
-`ms-tau` and `create_app` expose the same FastAPI application. Durable requests require an existing
-backend session identifier; session allocation is not performed implicitly by chat or A2A routes.
+`ms-tau` and `create_app` expose the same FastAPI application. Managed durable requests require an
+existing backend session identifier. Local mode instead creates a workspace-scoped local session
+lazily and never registers an Agent or AgentSession.
 
 ## Execution paths
 
@@ -24,6 +25,20 @@ agent-targeted response request
   -> one response (the SSE form currently emits the completed result)
 ```
 
+Local development execution:
+
+```text
+chat request with an optional local session uid
+  -> user-JWT-authenticated provider evidence and credential hydration
+  -> workspace-bound Tau CodingSession with live Main Sequence MCP
+  -> SQLite entries, leases, activity, cancellation, and snapshots
+  -> no Agent/AgentSession/task persistence calls
+```
+
+Local state defaults to `~/.tau/mainsequence/<workspace-hash>/runtime.sqlite3`. It is never
+uploaded when local mode is disabled. Main Sequence authentication, provider hydration, model
+inference, and MCP remain remote; MCP side effects are real platform side effects.
+
 ## Operations
 
 The executable operation contract covers:
@@ -37,6 +52,20 @@ The executable operation contract covers:
 
 The exact methods and paths are frozen in `tests/contract/test_http_surface.py`. Wire examples and
 schema behavior are tested rather than duplicated manually here.
+
+### Local-mode route boundary
+
+| Surface | Local behavior |
+| --- | --- |
+| Health, readiness, version | Supported; reports local mode and dependency readiness. |
+| Chat stream | Supported; `sessionUid` may be omitted. |
+| Session model and cancellation | Supported for an existing local session. |
+| Mock chat | Supported. |
+| Agent-targeted responses | `local_mode_capability_unsupported`. |
+| A2A, task dispatch, caller delivery, discovery | `local_mode_capability_unsupported`. |
+
+The unsupported surfaces require registered platform identity or task coordination. Local mode
+does not create hidden platform records to satisfy them.
 
 ## Effective composition diagnostics
 

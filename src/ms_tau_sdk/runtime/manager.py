@@ -50,6 +50,7 @@ from ms_tau_sdk.runtime.snapshots import (
 from ms_tau_sdk.sessions.storage import SESSION_ENTRY_ADAPTER, BackendSessionStorage
 from ms_tau_sdk.settings import TauSDKSettings
 from ms_tau_sdk.tools.mainsequence_mcp import (
+    CALLER_SESSION_PROOF_REQUIRED_META_KEY,
     create_mainsequence_mcp_tools,
     mainsequence_mcp_resource_prompt,
 )
@@ -118,6 +119,9 @@ class SessionRuntimeManager:
         self._mcp_client: MainSequenceMCPClient | None = None
         self._mcp_lock = asyncio.Lock()
         self._startup_ready = False
+        self._local_state_ready = False
+        self._auth_ready = False
+        self._provider_control_ready = False
         self._snapshot_restore_count = 0
         self._snapshot_fallback_count = 0
         self._snapshot_upload_count = 0
@@ -125,8 +129,16 @@ class SessionRuntimeManager:
         self._closed = False
 
     async def start(self) -> None:
+        state_ready = getattr(self.backend, "state_ready", None)
+        if state_ready is not None:
+            self._local_state_ready = bool(await state_ready())
         if self.settings.startup_dependencies_enabled:
             await self.backend.auth.prefetch()
+            self._auth_ready = True
+            prefetch_provider = getattr(self.backend, "prefetch_provider", None)
+            if prefetch_provider is not None:
+                await prefetch_provider()
+                self._provider_control_ready = True
             await self._get_mcp_client()
         self._startup_ready = True
         if self._eviction_task is None:
@@ -145,6 +157,8 @@ class SessionRuntimeManager:
             state.tool_catalog_digest for state in extension_states if state.tool_catalog_digest
         }
         return {
+            "mode": "local" if self.settings.local_mode else "managed",
+            "workspace_digest": self.settings.workspace_digest,
             "holder_id": self.holder_id,
             "loaded_sessions": len(self._runtimes),
             "working_sessions": sum(
@@ -152,8 +166,22 @@ class SessionRuntimeManager:
             ),
             "lease_lost_sessions": sum(runtime.lease_lost for runtime in self._runtimes.values()),
             "startup_ready": self._startup_ready,
+            "local_store_ready": (self._local_state_ready if self.settings.local_mode else None),
+            "mainsequence_auth_ready": self._auth_ready,
+            "provider_control_ready": (
+                self._provider_control_ready if self.settings.local_mode else None
+            ),
+            "mcp_connected": self._mcp_client is not None,
             "mcp_tool_count": len(self._mcp_client.tools) if self._mcp_client else 0,
             "mcp_resource_count": len(self._mcp_client.resources) if self._mcp_client else 0,
+            "mcp_session_proof_limited_tool_count": (
+                sum(
+                    (tool.meta or {}).get(CALLER_SESSION_PROOF_REQUIRED_META_KEY) is True
+                    for tool in self._mcp_client.tools
+                )
+                if self.settings.local_mode and self._mcp_client is not None
+                else 0
+            ),
             "snapshot_restore_count": self._snapshot_restore_count,
             "snapshot_fallback_count": self._snapshot_fallback_count,
             "snapshot_upload_count": self._snapshot_upload_count,
@@ -365,15 +393,19 @@ class SessionRuntimeManager:
             mcp_client = await self._get_mcp_client()
             cwd = self._resolve_cwd()
             project_extension_state = ProjectExtensionState(enabled=True)
+            caller_session_proof = None
+            if not self.settings.local_mode:
+                caller_session_proof = {
+                    "caller_agent_session_uid": session_uid,
+                    "lease_holder_id": lease.holder_id,
+                    "lease_token": lease.lease_token,
+                }
             tools = [
                 *create_coding_tools(cwd=cwd),
                 *create_mainsequence_mcp_tools(
                     mcp_client,
-                    caller_session_proof={
-                        "caller_agent_session_uid": session_uid,
-                        "lease_holder_id": lease.holder_id,
-                        "lease_token": lease.lease_token,
-                    },
+                    caller_session_proof=caller_session_proof,
+                    allow_missing_session_proof=self.settings.local_mode,
                 ),
                 *create_task_control_tools(),
             ]

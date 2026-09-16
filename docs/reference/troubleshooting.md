@@ -7,9 +7,37 @@ directory. Files, missing paths, and inaccessible directories are rejected befor
 
 ## Runtime authentication fails
 
-Verify both runtime credential variables are present. Do not substitute a user token: this process
-uses the runtime-credential exchange contract. Backend URL, response status, and safe error detail
-may be logged; credential values are always redacted.
+In managed mode, verify both runtime credential variables are present and
+`MAINSEQUENCE_AUTH_MODE=runtime_credential`. Do not substitute a user token.
+
+In local mode, verify `MAINSEQUENCE_AUTH_MODE=jwt`, the access/refresh JWT variables, and the
+explicit `TAU_LOCAL_PROVIDER`/`TAU_LOCAL_MODEL` selection. The Main Sequence login or launcher must
+export the JWT pair before `ms-tau` starts. The TAU SDK deliberately does not import the
+`mainsequence` package or read its private auth store. Backend URL, response status, and safe error
+detail may be logged; credential values are always redacted.
+
+## Local provider hydration is rejected
+
+Local mode requires the Main Sequence backend's authenticated-user hydration contract. The
+request intentionally contains no Agent or AgentSession UID. A rejection can mean that the
+provider/model is unauthorized, the user's stored provider credential is unavailable, or the
+backend environment has not deployed that contract. The SDK never falls back to an environment
+provider API key.
+
+## Reset or inspect local conversations
+
+Health reports the workspace digest. Local state lives under
+`~/.tau/mainsequence/<workspace-hash>/runtime.sqlite3` unless `TAU_LOCAL_STATE_ROOT` is set. Stop
+all `ms-tau` processes for that workspace before moving or deleting its workspace-hash directory.
+Removing local state cannot remove a platform AgentSession because local state is never attached
+to one.
+
+## An MCP tool fails only in local mode
+
+Main Sequence MCP remains connected with user JWT authentication. Tools marked as requiring a real
+caller AgentSession proof are still visible, but local mode does not fabricate that proof. Such a
+tool may return a typed server-side capability/authorization failure. Other MCP tools and resources
+remain live and may mutate real platform resources.
 
 ## A project extension fails
 

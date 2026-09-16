@@ -136,11 +136,15 @@ def _tau_tool_input_schema(tool: types.Tool) -> Mapping[str, JSONValue]:
 def _caller_session_meta(
     tool: types.Tool,
     proof: Mapping[str, JSONValue] | None,
+    *,
+    allow_missing_proof: bool = False,
 ) -> Mapping[str, JSONValue] | None:
     tool_meta = tool.meta or {}
     if tool_meta.get(CALLER_SESSION_PROOF_REQUIRED_META_KEY) is not True:
         return None
     if proof is None:
+        if allow_missing_proof:
+            return None
         raise ValueError(f"Main Sequence MCP tool requires caller-session proof: {tool.name}")
     return {CALLER_SESSION_PROOF_META_KEY: dict(proof)}
 
@@ -270,6 +274,7 @@ def create_mainsequence_mcp_tools(
     client: MainSequenceMCPClient,
     *,
     caller_session_proof: Mapping[str, JSONValue] | None = None,
+    allow_missing_session_proof: bool = False,
 ) -> list[AgentTool]:
     tools: list[AgentTool] = []
     names: set[str] = set()
@@ -283,7 +288,11 @@ def create_mainsequence_mcp_tools(
                 client=client,
                 tool=tool,
                 tau_name=tau_name,
-                private_meta=_caller_session_meta(tool, caller_session_proof),
+                private_meta=_caller_session_meta(
+                    tool,
+                    caller_session_proof,
+                    allow_missing_proof=allow_missing_session_proof,
+                ),
             )
         )
     if client.resources:

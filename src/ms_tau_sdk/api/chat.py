@@ -14,7 +14,11 @@ from ms_tau_sdk.errors import BackendConflictError
 from ms_tau_sdk.logging import bind_request_log_fields, conversation_log_fields
 from ms_tau_sdk.protocols.assistant_ui import AssistantUiEncoder
 from ms_tau_sdk.runtime.manager import SessionRuntimeManager
-from ms_tau_sdk.runtime.provenance import CallerIdentityError, turn_provenance_from_request
+from ms_tau_sdk.runtime.provenance import (
+    CallerIdentityError,
+    build_turn_provenance,
+    turn_provenance_from_request,
+)
 
 from .dependencies import runtime_manager
 from .models import ChatRequest
@@ -49,16 +53,32 @@ async def chat(
     request: Request,
     manager: RuntimeManagerDep,
 ) -> StreamingResponse:
-    try:
-        provenance = turn_provenance_from_request("chat", request.headers)
-    except CallerIdentityError as error:
-        logger.warning(
-            "turn.caller_identity_rejected",
-            message="Chat route rejected a request without a valid caller identity",
-            route=request.url.path,
-            failing_headers=list(error.failing_headers),
-        )
-        return JSONResponse(status_code=error.status_code, content=error.body())  # type: ignore[return-value]
+    if manager.settings.local_mode:
+        provenance = {
+            **build_turn_provenance("chat"),
+            "actorKind": "user",
+            "actorUid": "local-mainsequence-user",
+        }
+    else:
+        try:
+            provenance = turn_provenance_from_request("chat", request.headers)
+        except CallerIdentityError as error:
+            logger.warning(
+                "turn.caller_identity_rejected",
+                message="Chat route rejected a request without a valid caller identity",
+                route=request.url.path,
+                failing_headers=list(error.failing_headers),
+            )
+            return JSONResponse(  # type: ignore[return-value]
+                status_code=error.status_code,
+                content=error.body(),
+            )
+    if manager.settings.local_mode:
+        session_uid = manager.settings.local_session_uid(body.session_uid)
+    elif body.session_uid:
+        session_uid = body.session_uid
+    else:
+        raise HTTPException(status_code=422, detail="sessionUid is required")
     try:
         prompt = body.prompt_text()
     except ValueError as error:
@@ -66,8 +86,8 @@ async def chat(
 
     bind_request_log_fields(
         request.scope,
-        session_uid=body.session_uid,
-        agent_session_uid=body.session_uid,
+        session_uid=session_uid,
+        agent_session_uid=session_uid,
         is_streaming=True,
         **conversation_log_fields(
             prompt,
@@ -79,7 +99,7 @@ async def chat(
     async def stream() -> AsyncIterator[bytes]:
         encoder = AssistantUiEncoder()
         try:
-            async for event in manager.prompt(body.session_uid, prompt, provenance=provenance):
+            async for event in manager.prompt(session_uid, prompt, provenance=provenance):
                 for payload in encoder.encode(event):
                     yield encoder.sse(payload)
             try:
@@ -87,17 +107,17 @@ async def chat(
                     yield encoder.sse(payload)
                 yield encoder.done()
             finally:
-                manager.mark_response_delivered(body.session_uid)
+                manager.mark_response_delivered(session_uid)
         except asyncio.CancelledError:
             if not encoder.finished:
-                await manager.cancel(body.session_uid)
+                await manager.cancel(session_uid)
             raise
         except Exception as error:
             logger.exception(
                 "chat.stream.failed",
                 message="Chat stream failed",
-                session_uid=body.session_uid,
-                agent_session_uid=body.session_uid,
+                session_uid=session_uid,
+                agent_session_uid=session_uid,
                 error_type=type(error).__name__,
             )
             user_message = _backend_user_message(error) if not encoder.finished else None
@@ -132,6 +152,7 @@ async def chat(
             "Cache-Control": "no-cache, no-transform",
             "X-Accel-Buffering": "no",
             "x-vercel-ai-ui-message-stream": "v1",
+            "X-Agent-Session-Uid": session_uid,
         },
     )
 

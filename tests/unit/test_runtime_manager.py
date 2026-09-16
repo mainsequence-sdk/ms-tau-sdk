@@ -271,7 +271,8 @@ async def test_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
                     "caller_agent_session_uid": session_uid,
                     "lease_holder_id": "holder",
                     "lease_token": f"lease-{session_uid}",
-                }
+                },
+                "allow_missing_session_proof": False,
             },
         )
         for session_uid in ("session-1", "session-2")

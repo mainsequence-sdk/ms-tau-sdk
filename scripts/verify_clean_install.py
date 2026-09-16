@@ -84,8 +84,15 @@ def main() -> None:
             "path = pathlib.Path(ms_tau_sdk.__file__).resolve(); "
             "assert pathlib.Path(sys.prefix).resolve() in path.parents, path; "
             "assert importlib.util.find_spec('astro') is None; "
+            "assert importlib.util.find_spec('mainsequence') is None; "
             "settings = TauSDKSettings(workspace=pathlib.Path.cwd()); "
-            "assert create_app(settings).title == 'Main Sequence TAU SDK'"
+            "assert create_app(settings).title == 'Main Sequence TAU SDK'; "
+            "local = TauSDKSettings("
+            "workspace=pathlib.Path.cwd(), auth_mode='jwt', local_mode=True, "
+            "access_token='verification-access', refresh_token='verification-refresh', "
+            "local_provider='openai', local_model='verification-model'); "
+            "assert local.host == '127.0.0.1'; "
+            "assert create_app(local).state.settings.local_mode is True"
         )
         subprocess.run(
             [str(python), "-P", "-c", import_check],

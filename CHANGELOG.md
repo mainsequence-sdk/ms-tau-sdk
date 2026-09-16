@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.1.0 — 2026-09-17
+
+- Added authenticated local development mode: workspace-scoped SQLite Tau state, lazy local chat
+  sessions, explicit provider/model selection, dependency-free user-JWT refresh, real Main
+  Sequence provider hydration and MCP, and typed rejection of registered-agent orchestration.
+- Added a release guard that forbids a `mainsequence` distribution dependency or package import;
+  the local authentication boundary is environment variables plus the public HTTP refresh API.
+
 ## 1.0.0 — 2026-09-16
 
 - Established Main Sequence TAU SDK as the `ms-tau-sdk` Python distribution, `ms_tau_sdk`

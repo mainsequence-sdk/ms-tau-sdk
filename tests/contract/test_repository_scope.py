@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import re
+import tomllib
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -33,3 +35,23 @@ def test_repository_has_no_provider_specific_image_publication_surface() -> None
                     violations.append(f"{path.relative_to(ROOT)}: {marker}")
 
     assert violations == []
+
+
+def test_sdk_does_not_depend_on_or_import_mainsequence_python_package() -> None:
+    project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    dependencies = project["project"]["dependencies"]
+    normalized = [
+        re.split(r"[<>=!~ ;\[]", dependency.lower().replace("_", "-"), maxsplit=1)[0]
+        for dependency in dependencies
+    ]
+
+    assert not any(dependency == "mainsequence" for dependency in normalized)
+
+    imports: list[str] = []
+    for path in (ROOT / "src").rglob("*.py"):
+        for line_number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.strip()
+            if stripped == "import mainsequence" or stripped.startswith("from mainsequence "):
+                imports.append(f"{path.relative_to(ROOT)}:{line_number}")
+
+    assert imports == []

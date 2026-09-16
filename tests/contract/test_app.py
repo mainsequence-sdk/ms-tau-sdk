@@ -38,3 +38,32 @@ async def test_mock_chat_uses_assistant_ui_sse(sdk_client: AsyncClient):
     assert '"type":"text-delta"' in response.text
     assert '"textDelta":"hello"' in response.text
     assert "data: [DONE]" in response.text
+
+
+async def test_local_mode_rejects_registered_agent_orchestration_routes(
+    asgi_client,
+    tmp_path,
+):
+    settings = TauSDKSettings(
+        _env_file=None,
+        workspace=tmp_path,
+        auth_mode="jwt",
+        local_mode=True,
+        access_token="access-token",
+        refresh_token="refresh-token",
+        local_provider="openai",
+        local_model="gpt-5.4",
+    )
+    app = create_app(settings)
+
+    async with asgi_client(app) as http:
+        a2a = await http.get("/api/a2a/v1/tasks")
+        response = await http.post(
+            "/api/agents/agent-1/responses",
+            json={},
+        )
+
+    for rejected in (a2a, response):
+        assert rejected.status_code == 409
+        assert rejected.json()["error"] == "local_mode_capability_unsupported"
+        assert rejected.json()["detail"]["mode"] == "local"

@@ -17,7 +17,7 @@ from tau_ai import (
 )
 from tau_coding.provider_catalog import BUILTIN_PROVIDER_CATALOG
 
-from ms_tau_sdk.backend.auth import RuntimeCredentialAuth
+from ms_tau_sdk.backend.auth import JWTAuth, RuntimeCredentialAuth
 from ms_tau_sdk.backend.client import MainSequenceClient
 from ms_tau_sdk.backend.models import (
     AgentSession,
@@ -142,6 +142,73 @@ async def test_hydration_uses_django_tau_credential_contract():
                 "provider": "openai",
                 "model": "gpt-5.4",
             },
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_local_hydration_uses_authenticated_user_without_agent_identity(tmp_path):
+    requests: list[dict[str, object]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(json.loads(request.content))
+        assert request.headers["authorization"] == "Bearer user-access-token"
+        return httpx.Response(
+            200,
+            json={
+                "credentials": {
+                    "openai": {
+                        "status": "active",
+                        "credential_kind": "api_key",
+                        "credential": {
+                            "type": "api_key",
+                            "api_key": "provider-secret",
+                        },
+                    }
+                },
+                "provider_control": _provider_control(
+                    "openai",
+                    "gpt-5.4",
+                ).model_dump(mode="json"),
+            },
+        )
+
+    settings = TauSDKSettings(
+        _env_file=None,
+        workspace=tmp_path,
+        backend_url="http://backend.test",
+        auth_mode="jwt",
+        local_mode=True,
+        access_token="user-access-token",
+        refresh_token="user-refresh-token",
+        local_provider="openai",
+        local_model="gpt-5.4",
+        local_thinking="high",
+    )
+    async with httpx.AsyncClient(
+        base_url=settings.backend_url,
+        transport=httpx.MockTransport(handler),
+    ) as http:
+        client = MainSequenceClient(settings, JWTAuth(settings), client=http)
+        evidence = await client.hydrate_local_provider_credential(
+            "openai",
+            model="gpt-5.4",
+            thinking_level="high",
+            holder_id="local-process",
+        )
+
+    assert evidence.credential.secret() == "provider-secret"
+    assert requests == [
+        {
+            "providers": ["openai"],
+            "holder_id": "local-process",
+            "supported_provider_control_schema_versions": [1],
+            "execution_selection": {
+                "provider": "openai",
+                "model": "gpt-5.4",
+                "thinking_level": "high",
+            },
+            "execution_context": "local_development",
         }
     ]
 

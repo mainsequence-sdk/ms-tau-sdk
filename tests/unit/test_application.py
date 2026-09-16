@@ -1,6 +1,8 @@
 from unittest.mock import AsyncMock, Mock
 
 from ms_tau_sdk.application import ApplicationServices
+from ms_tau_sdk.backend.auth import JWTAuth
+from ms_tau_sdk.backend.local import LocalDevelopmentBackend
 from ms_tau_sdk.cli import run
 from ms_tau_sdk.settings import TauSDKSettings
 
@@ -56,3 +58,23 @@ def test_cli_runs_constructed_application(monkeypatch, tmp_path):
         log_config=None,
         access_log=False,
     )
+
+
+def test_application_builds_local_state_and_remote_service_composite(tmp_path):
+    settings = TauSDKSettings(
+        _env_file=None,
+        workspace=tmp_path,
+        local_state_root=tmp_path / "state",
+        auth_mode="jwt",
+        local_mode=True,
+        access_token="access-token",
+        refresh_token="refresh-token",
+        local_provider="openai",
+        local_model="gpt-5.4",
+    )
+
+    services = ApplicationServices.create(settings)
+
+    assert isinstance(services.auth, JWTAuth)
+    assert isinstance(services.backend, LocalDevelopmentBackend)
+    assert services.backend.auth is services.auth

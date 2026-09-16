@@ -18,7 +18,7 @@ from tau_coding.oauth import account_id_from_access_token
 from ms_tau_sdk.errors import BackendConflictError, BackendError, SessionNotFoundError
 from ms_tau_sdk.settings import TauSDKSettings
 
-from .auth import RuntimeCredentialAuth
+from .auth import BackendAuth
 from .models import (
     AgentCardEnvelope,
     AgentSession,
@@ -85,7 +85,7 @@ class MainSequenceClient:
     def __init__(
         self,
         settings: TauSDKSettings,
-        auth: RuntimeCredentialAuth,
+        auth: BackendAuth,
         *,
         client: httpx.AsyncClient | None = None,
     ) -> None:
@@ -511,6 +511,36 @@ class MainSequenceClient:
             },
             idempotent=True,
         )
+        return self._provider_evidence(provider, data)
+
+    async def hydrate_local_provider_credential(
+        self,
+        provider: str,
+        *,
+        model: str,
+        thinking_level: str | None,
+        holder_id: str,
+    ) -> ProviderExecutionEvidence:
+        """Hydrate one explicit selection for the authenticated local user."""
+
+        selection: dict[str, str] = {"provider": provider, "model": model}
+        if thinking_level:
+            selection["thinking_level"] = thinking_level
+        data = await self._request(
+            "POST",
+            model_provider_credentials("hydrate"),
+            json={
+                "providers": [provider],
+                "holder_id": holder_id,
+                "supported_provider_control_schema_versions": [1],
+                "execution_selection": selection,
+                "execution_context": "local_development",
+            },
+            idempotent=True,
+        )
+        return self._provider_evidence(provider, data)
+
+    def _provider_evidence(self, provider: str, data: object) -> ProviderExecutionEvidence:
         if not isinstance(data, dict):
             raise BackendError("Backend provider hydration response is invalid")
         try:

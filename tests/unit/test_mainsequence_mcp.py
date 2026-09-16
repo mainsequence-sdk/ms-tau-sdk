@@ -440,6 +440,28 @@ def test_marked_mcp_tool_fails_closed_without_caller_session_proof():
 
 
 @pytest.mark.asyncio
+async def test_local_mode_keeps_marked_mcp_tool_without_fabricating_session_proof():
+    client = AsyncMock()
+    client.tools = (
+        types.Tool(
+            name="asset.list",
+            inputSchema={"type": "object"},
+            _meta={CALLER_SESSION_PROOF_REQUIRED_META_KEY: True},
+        ),
+    )
+    client.resources = ()
+    client.call_tool.return_value = types.CallToolResult(content=[])
+
+    tools = create_mainsequence_mcp_tools(
+        client,
+        allow_missing_session_proof=True,
+    )
+    await tools[0].execute("call-1", {})
+
+    client.call_tool.assert_awaited_once_with("asset.list", {})
+
+
+@pytest.mark.asyncio
 async def test_unmarked_mcp_tool_does_not_receive_caller_session_proof():
     client = AsyncMock()
     client.tools = (types.Tool(name="agent.get", inputSchema={"type": "object"}),)

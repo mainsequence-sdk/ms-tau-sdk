@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 import structlog
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
@@ -18,6 +18,11 @@ from ms_tau_sdk.logging import RequestContextMiddleware, configure_logging
 from ms_tau_sdk.settings import TauSDKSettings, get_settings
 
 logger = structlog.get_logger(__name__)
+LOCAL_UNSUPPORTED_PATH_PREFIXES = (
+    "/api/a2a",
+    "/api/agents",
+    "/internal/a2a",
+)
 
 
 def create_app(
@@ -32,6 +37,15 @@ def create_app(
         machine_sink=resolved.log_machine_sink,
         human_sink=resolved.log_human_sink,
     )
+    if resolved.local_mode and not resolved.loopback_bind:
+        logger.warning(
+            "local_mode.external_bind",
+            message=(
+                "Local mode is bound beyond loopback; accepted requests act with the "
+                "authenticated Main Sequence user's live platform authority"
+            ),
+            host=resolved.host,
+        )
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -88,6 +102,25 @@ def create_app(
             allow_headers=["*"],
         )
     app.add_middleware(RequestContextMiddleware)
+
+    @app.middleware("http")
+    async def local_mode_capability_boundary(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        if resolved.local_mode and request.url.path.startswith(LOCAL_UNSUPPORTED_PATH_PREFIXES):
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "ok": False,
+                    "error": "local_mode_capability_unsupported",
+                    "message": (
+                        "This route requires a registered Main Sequence Agent or AgentSession"
+                    ),
+                    "detail": {"mode": "local", "path": request.url.path},
+                },
+            )
+        return await call_next(request)
 
     @app.exception_handler(TauSDKError)
     async def sdk_error_handler(request: Request, error: TauSDKError) -> JSONResponse:

@@ -17,7 +17,7 @@ from structlog.contextvars import bound_contextvars, get_contextvars
 
 from ms_tau_sdk.settings import TauSDKSettings
 
-from .auth import RuntimeCredentialAuth
+from .auth import BackendAuth
 
 
 def _actionable_cleanup_error(error: BaseException) -> Exception | None:
@@ -33,7 +33,7 @@ def _actionable_cleanup_error(error: BaseException) -> Exception | None:
 class _RuntimeCredentialHTTPXAuth(httpx.Auth):
     requires_request_body = True
 
-    def __init__(self, runtime_auth: RuntimeCredentialAuth) -> None:
+    def __init__(self, runtime_auth: BackendAuth) -> None:
         self.runtime_auth = runtime_auth
 
     async def async_auth_flow(
@@ -79,7 +79,7 @@ class MainSequenceMCPClient:
         self,
         *,
         settings: TauSDKSettings,
-        auth: RuntimeCredentialAuth,
+        auth: BackendAuth,
     ) -> None:
         self.url = f"{settings.backend_url.rstrip('/')}/mcp"
         self._settings = settings
@@ -98,7 +98,7 @@ class MainSequenceMCPClient:
         cls,
         *,
         settings: TauSDKSettings,
-        auth: RuntimeCredentialAuth,
+        auth: BackendAuth,
     ) -> MainSequenceMCPClient:
         client = cls(settings=settings, auth=auth)
         try:
