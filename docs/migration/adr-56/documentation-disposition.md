@@ -23,21 +23,21 @@ Date: 2026-09-16
 | `docs/implemenation_task/` | Archive or replace | Existing tasks are Astro migration history. New SDK implementation work is tracked under this ADR 56 migration workspace or new-project tasks. |
 | `docs/bugs/` and `docs/investigations/` | Historical with explicit relevance review | Reopen only unresolved product behavior; do not treat old topology as normative. |
 | `docs/reserach_guide/` | Pending scope review | Keep only if it is part of accepted SDK/product documentation; otherwise move to project-specific guidance. |
-| Former GCP, Kubernetes, Docker, and Compose material | Eliminate from SDK docs | Platform/project repositories own image-build and deployment runbooks; the SDK documents installation and process startup only. |
+| Former GCP, Kubernetes, Docker, and Compose material | Eliminate from SDK docs | The SDK documents installation and process startup only; project artifact construction and external deployment are out of scope. |
 | `.env.example` | Rewrite and verify | New SDK variables and stable Main Sequence credential names; remove obsolete Astro settings. |
 
 ## New Documentation Required
 
 - Main Sequence TAU SDK project charter.
 - Install and lock the SDK in a project.
-- Run `ms-tau` locally and in a project image.
+- Run `ms-tau` from a project environment.
 - Public Python API and embedding guide.
 - Single Tau `.tau` configuration and precedence guide.
 - Project extension responsibility and shared trust-boundary guide.
 - Durable `CodingSession` versus sessionless `AgentHarness` execution guide.
-- SDK/platform integration contract; concrete image deployment operations remain in the owning platform documentation.
+- External integration contract limited to what a host must provide to the SDK process.
 - Runtime composition and troubleshooting guide.
-- Astro-to-SDK migration guide with package/import/command/settings/deployment mappings.
+- Astro-to-SDK migration guide with package/import/command/settings/resource mappings.
 - Version compatibility and support policy.
 - New active ADR index and historical Astro archive index.
 

@@ -49,11 +49,9 @@ Baseline: 271 passed, 1 live-credential test skipped.
 - CLI startup/readiness/shutdown tests.
 - Runtime composition/version reporting tests.
 - Active ADR/docs terminology checks.
-- Cross-repository Django direct-deployment contract tests.
 
 The former Docker/overlay recipe test was deleted with those assets during C0. It has no SDK test
-replacement. Direct project-image behavior belongs to the project-builder and Django deployment
-test suites.
+replacement. Project-image and external deployment behavior are outside this test suite.
 
 ## Deletion Rule
 

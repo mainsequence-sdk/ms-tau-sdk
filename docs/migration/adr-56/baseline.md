@@ -216,6 +216,5 @@ Active ADRs before ADR 56: 9 (ADR 47 through ADR 55)
 - Run the credential-gated real-conversation test in an authorized environment.
 - Complete candidate Python SDK artifact ownership and disposition.
 
-The tdag-django implementation ledger, consumer-project inventory, package publication ownership,
-and deployment performance measurements are required by their later platform/cutover phases, not
-by SDK C0.
+External repository implementation, service deployment, data migration, and operational inventory
+are outside ADR 56 and are not SDK phase gates.

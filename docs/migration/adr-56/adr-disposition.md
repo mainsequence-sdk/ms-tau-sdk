@@ -15,7 +15,7 @@ new Main Sequence TAU SDK ADR index.
 | ADR 48 | Batched Tau persistence and two-phase settlement | Amend/reissue | Preserve durability semantics, backend contracts, failure handling, and limits through SDK storage primitives. Remove image/runtime-role assumptions. |
 | ADR 49 | Decoupled conversational critical path | Amend/reissue | Preserve latency and dependency-decoupling requirements; express them through SDK startup/session primitives and direct project deployment. |
 | ADR 50 | Lean Python runtime ABI owned by standalone/bundle/overlay images | Supersede and eliminate image-specific decision | Extract only project-image prerequisites such as compatible Python, non-root operation, workspace, Git, and `rg` into a new project-runtime contract. Delete bundle/overlay ownership. |
-| ADR 51 | Consume Django provider control | Amend/reissue | Preserve backend-authoritative provider/model/credential evidence and validation in the SDK provider primitive. |
+| ADR 51 | Consume provider control through the existing external API | Amend/reissue | Preserve provider/model/credential evidence and validation in the SDK client primitive without prescribing external implementation changes. |
 | ADR 52 | Repository Tau extensions in CodeRepository Executors behind a deployment flag | Supersede | Reissue Tau-native project extension semantics under the single `.tau` configuration model. Remove executor terminology and the enable flag. |
 | ADR 53 | Retire the agent capability registry | Amend/reissue | Preserve the absence of a duplicated capability registry and the separation of protocol metadata from project resources. Rewrite ownership for the SDK. |
 | ADR 54 | Durable asynchronous A2A lifecycle | Amend/reissue | Preserve accepted wire, task, persistence, replay, cancellation, and streaming behavior after contract verification. Rewrite runtime/deployment ownership. |
@@ -31,7 +31,7 @@ Phase A0 must also classify the older records referenced by active decisions, in
 - checkpoint/compaction retention;
 - interactive provider sign-in;
 - workspace analysis; and
-- the coordinated tdag-django and deployment-orchestrator ADRs.
+- any repository-local historical decisions referenced by the current Python implementation.
 
 ## Decision Rules
 

@@ -23,14 +23,13 @@ Provide the complete, prepackaged Python primitives required to run Tau with Mai
 normal project repository, without requiring that project to implement transports, authentication,
 provider hydration, session management, persistence, streaming, A2A, or Tau lifecycle glue.
 
-## Deployment Unit
+## Execution Context
 
-The deployment unit is one verified project image built once from one CodeRepository revision and
-its dependency lock. The project declares `ms-tau-sdk` and starts `ms-tau` from the repository
-workspace.
+The project declares and locks `ms-tau-sdk`, then starts `ms-tau` from a concrete repository
+workspace. How that project environment is built, supervised, or deployed is outside this charter.
 
 There is no Main Sequence TAU SDK runtime image, executor bundle, remote-worker overlay, generic
-no-workspace service, `astro-orchestrator`, or `code-repository-executor` product role.
+no-workspace SDK mode, `astro-orchestrator` SDK type, or `code-repository-executor` SDK type.
 
 ## What the SDK Owns
 
@@ -52,16 +51,16 @@ no-workspace service, `astro-orchestrator`, or `code-repository-executor` produc
 - Its source, Python dependencies, and operating-system dependencies.
 - Its normal Tau `.tau` overrides, skills, prompts, extensions, hooks, and extension dependencies.
 - The behavior and risk of arbitrary code it installs in the shared project/SDK workload boundary.
-- Its project image, subject to Main Sequence deployment and protocol compatibility requirements.
+- How its application artifact is built, supervised, or deployed.
 
-## What the Platform Owns
+## What the Host Environment Owns
 
-- CodeRepository, branch/ref, commit, workspace, image, and service identity.
-- Runtime credential issuance and scope.
-- Backend authorization, session ownership, leases, provider control, and credential exchange.
-- Container, network, workload, and control-plane isolation.
-- Direct deployment of the already built project image and injection of secrets/configuration.
-- Compatibility rejection when a project-selected SDK cannot speak the active backend protocol.
+- Providing the project workspace and process environment.
+- Supplying scoped runtime credentials without committing them to project files.
+- External authorization, session ownership, leases, provider control, and credential issuance.
+- Any artifact construction, process supervision, network policy, or deployment mechanism.
+
+These are integration assumptions, not implementation work authorized by ADR 56.
 
 ## Non-Goals
 
@@ -76,9 +75,9 @@ no-workspace service, `astro-orchestrator`, or `code-repository-executor` produc
 
 ## Founding Invariants
 
-1. Every deployed service is bound to exactly one verified workspace revision.
+1. Every SDK process starts from exactly one concrete, readable project workspace.
 2. The project explicitly declares and locks `ms-tau-sdk`.
-3. One normal project build produces the final deployable image.
+3. The SDK publishes Python distributions and no deployment artifact.
 4. `ms-tau` runs from the repository workspace and supplies all accepted prepackaged runtime
    primitives.
 5. Tau resolves one effective configuration with SDK defaults and project `.tau` overrides.

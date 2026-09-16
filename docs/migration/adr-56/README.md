@@ -21,18 +21,16 @@ Source baseline: Astro Tau `v4.0.25`, commit `9b7a1c5`, branch `development`
 | Documentation | D0 — inventory and terminology map | In progress | Initial document-family dispositions recorded; file-level expansion remains. |
 
 C1 may start when the local SDK-behavior, decision, test, and documentation inputs needed for that
-boundary are classified. Production consumer and platform inventories gate later cutover/deletion
-phases; they do not block internal Python extraction.
+boundary are classified. No external repository inventory or modification is an ADR 56 gate.
 
 ## Ledgers
 
 - [Project charter](./project-charter.md)
 - [Baseline evidence](./baseline.md)
 - [ADR disposition](./adr-disposition.md)
-- [Source and deployment artifact disposition](./artifact-disposition.md)
+- [SDK source artifact disposition](./artifact-disposition.md)
 - [Test disposition](./test-disposition.md)
 - [Documentation disposition](./documentation-disposition.md)
-- [tdag-django cross-repository inventory](./django-inventory.md)
 
 ## Disposition Vocabulary
 
@@ -52,7 +50,7 @@ Every migration input uses one of these outcomes:
 For each completed phase:
 
 1. update the relevant disposition rows;
-2. link code, test, documentation, or deployment evidence;
+2. link code, test, documentation, or package evidence;
 3. record verification commands and results in `baseline.md` or a phase-specific evidence file;
 4. update ADR 56 implementation status; and
 5. do not mark the phase complete while an exit-gate item remains pending.

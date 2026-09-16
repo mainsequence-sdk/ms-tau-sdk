@@ -39,15 +39,5 @@ image-publication, and deployment artifacts are not candidates for migration int
 
 The former Dockerfiles, Docker ignore files, Compose file, runtime wheelhouse lock, Kubernetes/GCP
 deployment assets, image verifier, and deployment-only test were deleted at C0. They are not
-assigned migration owners or replacement SDK artifacts. Platform repositories own any future
-project-image build or deployment implementation.
-
-## Later Cross-Repository Cutover Inventory
-
-An initial read-only tdag-django inventory is recorded in
-[`django-inventory.md`](./django-inventory.md). The following require implementation in that owning
-repository or additional external inventory before the platform cutover phases, not before SDK C1:
-
-- project templates and existing TAU-enabled consumer repositories;
-- package-index publication and credential ownership; and
-- dashboards, alerts, and inventory queries keyed by Astro release or legacy roles.
+assigned migration owners or replacement SDK artifacts. Project artifact construction and external
+deployment systems are outside ADR 56.
