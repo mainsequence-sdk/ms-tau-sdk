@@ -8,7 +8,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ms_tau_sdk.agents import AgentExecutionSnapshot
@@ -27,10 +27,7 @@ class TauSDKSettings(BaseSettings):
 
     backend_url: str = Field(
         default="https://api.main-sequence.app",
-        validation_alias=AliasChoices(
-            "MAINSEQUENCE_ENDPOINT",
-            "MAINSEQUENCE_BACKEND",
-        ),
+        validation_alias="MAINSEQUENCE_ENDPOINT",
     )
     auth_mode: Literal["runtime_credential", "jwt"] = Field(
         default="runtime_credential",

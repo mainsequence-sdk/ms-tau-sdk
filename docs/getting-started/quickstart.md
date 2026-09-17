@@ -37,8 +37,6 @@ The SDK exchanges this pair for short-lived access credentials. Do not put eithe
 control or `.tau` files.
 
 Set `MAINSEQUENCE_ENDPOINT` only when the project must use a non-default Main Sequence API URL.
-`MAINSEQUENCE_BACKEND` remains accepted as a compatibility alias, but the established platform
-endpoint variable takes precedence when both are present.
 
 ## Run
 

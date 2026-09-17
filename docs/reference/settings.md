@@ -12,8 +12,6 @@ connection and credential names remain unprefixed by the SDK product name.
 
 Managed mode uses `MAINSEQUENCE_AUTH_MODE=runtime_credential` and remains the default.
 `MAINSEQUENCE_ENDPOINT` defaults to `https://api.main-sequence.app`.
-`MAINSEQUENCE_BACKEND` remains accepted as a compatibility alias. When both are present,
-`MAINSEQUENCE_ENDPOINT` wins.
 
 ## Authenticated local development
 

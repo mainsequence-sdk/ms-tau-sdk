@@ -18,20 +18,10 @@ def test_settings_normalize_backend_and_origins(tmp_path):
 
 def test_settings_use_canonical_mainsequence_endpoint(monkeypatch):
     monkeypatch.setenv("MAINSEQUENCE_ENDPOINT", "https://development.example.test/")
-    monkeypatch.setenv("MAINSEQUENCE_BACKEND", "https://legacy.example.test")
 
     settings = TauSDKSettings(_env_file=None)
 
     assert settings.backend_url == "https://development.example.test"
-
-
-def test_settings_accept_legacy_backend_alias(monkeypatch):
-    monkeypatch.delenv("MAINSEQUENCE_ENDPOINT", raising=False)
-    monkeypatch.setenv("MAINSEQUENCE_BACKEND", "https://legacy.example.test/")
-
-    settings = TauSDKSettings(_env_file=None)
-
-    assert settings.backend_url == "https://legacy.example.test"
 
 
 def test_settings_default_to_current_workspace_and_accept_explicit_env(monkeypatch, tmp_path):

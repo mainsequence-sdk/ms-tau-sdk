@@ -28,7 +28,7 @@ export TAU_LOCAL_THINKING="<thinking-level>"
 uv run ms-tau
 ```
 
-Set `MAINSEQUENCE_BACKEND` only for a non-default platform endpoint. Never place JWTs or provider
+Set `MAINSEQUENCE_ENDPOINT` only for a non-default platform endpoint. Never place JWTs or provider
 credentials in source control, `.tau`, copied skills, command output, or debugging artifacts.
 
 `TAU_LOCAL_PROVIDER` and `TAU_LOCAL_MODEL` select an exact execution target but do not authorize
