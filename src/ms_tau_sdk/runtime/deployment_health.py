@@ -15,9 +15,7 @@ from ms_tau_sdk.runtime.manager import SessionRuntimeManager
 logger = structlog.get_logger(__name__)
 
 RUNTIME_HEALTH_ABI_VERSION = "1"
-DEPLOYMENT_READINESS_CHECK_STATE_ATTRIBUTE = (
-    "mainsequence_deployment_readiness_check"
-)
+DEPLOYMENT_READINESS_CHECK_STATE_ATTRIBUTE = "mainsequence_deployment_readiness_check"
 TAU_READINESS_HOOK_STATE_ATTRIBUTE = "mainsequence_tau_readiness_hook"
 READINESS_HOOK_TIMEOUT_SECONDS = 3.0
 
