@@ -53,6 +53,21 @@ The executable operation contract covers:
 The exact methods and paths are frozen in `tests/contract/test_http_surface.py`. Wire examples and
 schema behavior are tested rather than duplicated manually here.
 
+### Deployment readiness
+
+Managed deployments expose the platform-owned `GET /ms-health-deployment`
+endpoint through Pod Deployment Orchestrator. Projects do not create or
+scaffold that route. `ms-tau-sdk` automatically publishes the Tau readiness
+predicate consumed by the launcher: ASGI startup must be complete, the runtime
+manager must be ready and not draining, and an optional project readiness hook
+must return true.
+
+Applications may register that optional, side-effect-free predicate once with
+`register_deployment_readiness_hook(app, hook)`. Hook failures and timeouts are
+reported only as sanitized not-ready responses. The existing `/ready` route is
+a compatibility alias over the same Tau predicate; the reserved platform route
+remains outside the SDK's public FastAPI operation surface.
+
 ### Local-mode route boundary
 
 | Surface | Local behavior |

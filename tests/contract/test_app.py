@@ -9,7 +9,13 @@ from ms_tau_sdk import TauSDKSettings, __version__, create_app
 def test_public_sdk_construction_surface():
     assert callable(create_app)
     assert TauSDKSettings.__name__ == "TauSDKSettings"
-    assert set(ms_tau_sdk.__all__) == {"TauSDKSettings", "__version__", "create_app"}
+    assert set(ms_tau_sdk.__all__) == {
+        "RUNTIME_HEALTH_ABI_VERSION",
+        "TauSDKSettings",
+        "__version__",
+        "create_app",
+        "register_deployment_readiness_hook",
+    }
     assert __version__ == version("ms-tau-sdk")
 
 

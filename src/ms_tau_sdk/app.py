@@ -15,6 +15,9 @@ from ms_tau_sdk.api import a2a, chat, health, responses, sessions
 from ms_tau_sdk.application import ApplicationServices
 from ms_tau_sdk.errors import TauSDKError
 from ms_tau_sdk.logging import RequestContextMiddleware, configure_logging
+from ms_tau_sdk.runtime.deployment_health import (
+    install_tau_deployment_readiness_adapter,
+)
 from ms_tau_sdk.settings import TauSDKSettings, get_settings
 
 logger = structlog.get_logger(__name__)
@@ -93,6 +96,7 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.settings = resolved
+    install_tau_deployment_readiness_adapter(app)
     if resolved.trusted_origins:
         app.add_middleware(
             CORSMiddleware,

@@ -211,6 +211,12 @@ class SessionRuntimeManager:
     def draining(self) -> bool:
         return self._draining or self._closed
 
+    @property
+    def deployment_ready(self) -> bool:
+        """Whether TAU bootstrap completed and the runtime still accepts work."""
+
+        return self._startup_ready and not self.draining
+
     async def task_execution_fence(self, session_uid: str) -> RuntimeExecutionFence:
         """Acquire/load the canonical runtime and expose its existing session lease."""
 

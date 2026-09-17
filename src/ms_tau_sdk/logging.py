@@ -69,7 +69,7 @@ CORRELATION_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 TRACEPARENT_PATTERN = re.compile(r"^[0-9a-f]{2}-([0-9a-f]{32})-([0-9a-f]{16})-([0-9a-f]{2})$")
 RUNTIME_INSTANCE_UID = str(uuid.uuid4())
 PROCESS_STARTED_AT = time.monotonic()
-PLATFORM_PROBE_PATHS = frozenset({"/health", "/ready"})
+PLATFORM_PROBE_PATHS = frozenset({"/health", "/ready", "/ms-health-deployment"})
 PROBE_FAILURE_LOG_INTERVAL_SECONDS = 60.0
 PLATFORM_EVENT_PREFIXES = (
     "http.request.",
