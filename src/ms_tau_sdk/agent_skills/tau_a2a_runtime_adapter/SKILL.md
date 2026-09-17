@@ -38,6 +38,16 @@ For a protected call, the active session must provide its exact UID, lease holde
 The SDK attaches that proof only to the individual MCP call that requested it. It must not expose,
 log, persist, or reuse the proof as general authorization.
 
+## Send Work To Another Agent
+
+For a deployed Agent, use the projected `a2a.send_message` MCP operation. Django creates or
+resolves the target `AgentSession`, waits for its runtime to become ready, and dispatches the
+message. For asynchronous work, use the returned Task handle with `a2a.wait_task`.
+
+For local Tau development, start `ms-tau`, wait for its local `/ready` result, and run local chat
+requests against that process. Agent-to-Agent execution uses the deployed flow because it requires
+platform Agent and AgentSession identities.
+
 If proof is unavailable or stale, surface the platform error. Never fabricate an AgentSession,
 lease, target identity, or Environment selection. The SDK does not reinterpret requester/responder
 wire direction as caller identity.

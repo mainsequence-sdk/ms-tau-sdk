@@ -30,6 +30,15 @@ def test_packaged_skill_catalog_is_complete() -> None:
         assert path.is_file()
 
 
+def test_a2a_skill_explains_deployed_and_local_readiness() -> None:
+    skill = resolve_packaged_skill("tau_a2a_runtime_adapter").read_text(encoding="utf-8")
+
+    assert "use the projected `a2a.send_message` MCP operation" in skill
+    assert "waits for its runtime to become ready" in skill
+    assert "use the returned Task handle with `a2a.wait_task`" in skill
+    assert "wait for its local `/ready` result" in skill
+
+
 def test_sync_replaces_only_sdk_namespace_and_removes_retired_skills(tmp_path: Path) -> None:
     mainsequence_skill = tmp_path / ".agents/skills/mainsequence/keep/SKILL.md"
     mainsequence_skill.parent.mkdir(parents=True)
