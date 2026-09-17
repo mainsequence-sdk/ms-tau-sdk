@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.0 — 2026-09-17
+
+- Added explicit `ms-tau skills sync`, `list`, and `path` commands with an atomically managed
+  `.agents/skills/ms_tau_sdk/` namespace and version provenance.
+- Moved TAU repository integration, local development, project customization, and A2A host-adapter
+  guidance into skills packaged with the SDK.
+- Defined the hard ownership boundary that leaves platform ontology and canonical A2A semantics in
+  Django while keeping SDK-versioned implementation mechanics in this distribution.
+
 ## 1.1.1 — 2026-09-17
 
 - Fixed local-mode provider hydration to preserve the canonical credential envelope consumed by

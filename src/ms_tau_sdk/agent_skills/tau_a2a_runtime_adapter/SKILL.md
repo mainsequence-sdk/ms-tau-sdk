@@ -1,0 +1,64 @@
+---
+name: tau-a2a-runtime-adapter
+description: Implement and diagnose the TAU host side of Main Sequence A2A without duplicating the Django-owned protocol, authorization, discovery, and task-lifecycle contract.
+---
+
+# TAU A2A Runtime Adapter
+
+Use this skill only for `ms-tau-sdk` host behavior. Read the platform-owned `a2a_communication`
+skill first for canonical tool inputs, discovery, authorization, wire envelopes, task lifecycle,
+idempotency, and retry semantics.
+
+## Ownership boundary
+
+Django owns:
+
+- canonical `a2a.*` MCP schemas and platform discovery;
+- AgentSession and AgentTask lifecycle;
+- exact runtime-access authorization;
+- caller-session proof validation; and
+- direct-runtime protocol and response-kind semantics.
+
+The SDK owns:
+
+- projecting the authenticated Main Sequence MCP catalog into a TAU session;
+- preserving each tool's canonical name and metadata through host normalization;
+- privately attaching active caller-session proof when a tool advertises
+  `mainsequence.ai/requires-caller-session-proof/v1: true`;
+- translating inbound A2A requests into the shared TAU runtime; and
+- translating runtime events and results into validated A2A responses.
+
+Do not hard-code behavior from a rendered host-tool name. Inspect the canonical tool record and its
+`_meta` marker. The proof belongs under request `_meta` key
+`mainsequence.ai/caller-session-proof/v1`; it is never a model-visible argument.
+
+## Managed runtime behavior
+
+For a protected call, the active session must provide its exact UID, lease holder, and lease token.
+The SDK attaches that proof only to the individual MCP call that requested it. It must not expose,
+log, persist, or reuse the proof as general authorization.
+
+If proof is unavailable or stale, surface the platform error. Never fabricate an AgentSession,
+lease, target identity, or Environment selection. The SDK does not reinterpret requester/responder
+wire direction as caller identity.
+
+## Local-mode behavior
+
+Local mode has no registered Agent or AgentSession and therefore cannot supply deployed caller
+proof or act as a discoverable A2A target. A2A discovery, dispatch, task coordination, and caller
+delivery return the documented local-mode capability error. Main Sequence MCP remains available
+for operations whose contracts support authenticated-user semantics.
+
+## Diagnostics
+
+When an A2A operation fails, identify the boundary before changing code:
+
+1. Catalog projection: canonical tool or `_meta` marker missing.
+2. Host adaptation: private proof not attached to the marked call.
+3. Platform authorization: proof rejected, target disallowed, or Environment mismatch.
+4. Runtime access: endpoint, token, or release bundle stale.
+5. Wire validation: request/response role, context, extension, or payload invalid.
+6. Task lifecycle: fence, lease, cancellation, event order, or retry semantics violated.
+
+Change this SDK only for catalog projection, proof attachment, runtime execution, or transport
+translation defects. Platform contract changes belong to Django.

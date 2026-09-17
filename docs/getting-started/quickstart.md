@@ -8,11 +8,21 @@ workspace.
 With `uv`:
 
 ```bash
-uv add "ms-tau-sdk==1.1.0"
+uv add "ms-tau-sdk==1.2.0"
 ```
 
 The project lockfile is the record of the exact SDK, Tau, provider, and transport versions that
 will execute.
+
+When a coding agent will develop or debug the TAU integration, explicitly copy the skills from the
+installed SDK version:
+
+```bash
+uv run ms-tau skills sync --path .
+```
+
+The managed copies are written to `.agents/skills/ms_tau_sdk/`. Re-run the same command after an
+SDK update. Installing the package and starting the runtime do not copy files automatically.
 
 ## Configure runtime authentication
 

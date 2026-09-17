@@ -33,9 +33,14 @@ FORBIDDEN_PARTS = {
 }
 REQUIRED_WHEEL_PATHS = {
     "ms_tau_sdk/__init__.py",
+    "ms_tau_sdk/agent_skills/tau_a2a_runtime_adapter/SKILL.md",
+    "ms_tau_sdk/agent_skills/tau_local_development/SKILL.md",
+    "ms_tau_sdk/agent_skills/tau_project_customization/SKILL.md",
+    "ms_tau_sdk/agent_skills/tau_repository_integration/SKILL.md",
     "ms_tau_sdk/cli.py",
     "ms_tau_sdk/resources/SYSTEM.md",
     "ms_tau_sdk/resources/prompts/review-code-repository.md",
+    "ms_tau_sdk/skills.py",
 }
 
 
@@ -167,7 +172,9 @@ def _validate_sdist(sdist: Path, *, distribution: str, version: str) -> None:
         f"{expected_root}/README.md",
         f"{expected_root}/pyproject.toml",
         f"{expected_root}/src/ms_tau_sdk/__init__.py",
+        f"{expected_root}/src/ms_tau_sdk/agent_skills/tau_local_development/SKILL.md",
         f"{expected_root}/src/ms_tau_sdk/resources/SYSTEM.md",
+        f"{expected_root}/src/ms_tau_sdk/skills.py",
     }
     missing = sorted(required - set(paths))
     if missing:

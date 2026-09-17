@@ -54,6 +54,16 @@ Start the service from the project workspace:
 uv run ms-tau
 ```
 
+Install the version-matched development skills when a coding agent will work on the TAU
+integration:
+
+```bash
+uv run ms-tau skills sync --path .
+```
+
+This explicit command owns only `.agents/skills/ms_tau_sdk/`; package installation and runtime
+startup never modify the repository automatically.
+
 The credential pair is exchanged for short-lived Main Sequence access tokens. Do not commit it or
 place it in `.tau` configuration. For an embedded ASGI deployment, construct the same application
 in Python:
@@ -120,6 +130,8 @@ are not bundled into the SDK. Main Sequence transport and protocol behavior rema
 - chat, responses, SSE, A2A, health, and readiness transports
 - Main Sequence MCP and protocol-required task controls
 - packaged defaults that participate in Tau's normal workspace configuration
+- explicit, version-matched development skills for repository integration, local debugging,
+  project customization, and TAU's A2A host adapter
 
 ## Deployment boundary
 
