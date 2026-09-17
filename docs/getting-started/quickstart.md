@@ -36,7 +36,9 @@ export MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET="<runtime-credential-secret>"
 The SDK exchanges this pair for short-lived access credentials. Do not put either value in source
 control or `.tau` files.
 
-Set `MAINSEQUENCE_BACKEND` only when the project must use a non-default Main Sequence API URL.
+Set `MAINSEQUENCE_ENDPOINT` only when the project must use a non-default Main Sequence API URL.
+`MAINSEQUENCE_BACKEND` remains accepted as a compatibility alias, but the established platform
+endpoint variable takes precedence when both are present.
 
 ## Run
 

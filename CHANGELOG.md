@@ -2,6 +2,8 @@
 
 ## 1.2.0 — 2026-09-17
 
+- Unified managed and local backend selection on the established `MAINSEQUENCE_ENDPOINT`
+  environment variable while retaining `MAINSEQUENCE_BACKEND` as a compatibility alias.
 - Added explicit `ms-tau skills sync`, `list`, and `path` commands with an atomically managed
   `.agents/skills/ms_tau_sdk/` namespace and version provenance.
 - Moved TAU repository integration, local development, project customization, and A2A host-adapter

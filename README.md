@@ -43,7 +43,7 @@ uv add ms-tau-sdk
 Provide the runtime credential that Main Sequence assigned to the deployment:
 
 ```bash
-export MAINSEQUENCE_BACKEND="https://api.main-sequence.app"
+export MAINSEQUENCE_ENDPOINT="https://api.main-sequence.app"
 export MAINSEQUENCE_RUNTIME_CREDENTIAL_ID="<runtime-credential-id>"
 export MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET="<runtime-credential-secret>"
 ```

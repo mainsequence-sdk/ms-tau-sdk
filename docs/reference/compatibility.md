@@ -5,7 +5,8 @@ semantic versioning for these supported surfaces:
 
 - `ms_tau_sdk.create_app`, `ms_tau_sdk.TauSDKSettings`, and `ms_tau_sdk.__version__`;
 - the `ms-tau` command and its workspace-bound startup behavior;
-- documented `MAINSEQUENCE_TAU_*`, `MAINSEQUENCE_BACKEND`, `MAINSEQUENCE_AUTH_MODE`, and
+- documented `MAINSEQUENCE_TAU_*`, `MAINSEQUENCE_ENDPOINT`, the compatible
+  `MAINSEQUENCE_BACKEND` alias, `MAINSEQUENCE_AUTH_MODE`, and
   `MAINSEQUENCE_RUNTIME_CREDENTIAL_*`, `MAINSEQUENCE_ACCESS_TOKEN`,
   `MAINSEQUENCE_REFRESH_TOKEN`, and `TAU_LOCAL_*` settings;
 - documented health, readiness, chat, response, session, and A2A HTTP/wire behavior;
