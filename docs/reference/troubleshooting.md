@@ -32,6 +32,14 @@ all `ms-tau` processes for that workspace before moving or deleting its workspac
 Removing local state cannot remove a platform AgentSession because local state is never attached
 to one.
 
+## Local A2A returns a capability error
+
+Public `/api/a2a` Message and Task routes are supported in local mode. A capability error is valid
+only for agent-targeted Responses, `/internal/a2a` backend delivery hooks, platform discovery of
+the unregistered local process, push notifications, or `resume_caller`. For local Task completion,
+use polling. Incoming local calls do not need managed-gateway `X-Caller-*` headers. If a public
+Message or Task route returns this error, the running SDK is stale.
+
 ## An MCP tool fails only in local mode
 
 Main Sequence MCP remains connected with user JWT authentication. Tools marked as requiring a real

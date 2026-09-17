@@ -96,10 +96,19 @@ The normal Main Sequence login or project launcher may provision those JWT varia
 environment handoff and public refresh API directly. Provider secrets are never environment
 settings and are never persisted locally.
 
-Local conversations are stored at
+Local conversations and public A2A Tasks are stored at
 `~/.tau/mainsequence/<workspace-hash>/runtime.sqlite3`; an omitted chat `sessionUid` uses the
-workspace default. Local mode binds to `127.0.0.1` unless a host was explicitly configured. Main
-Sequence MCP remains live, so its tools can still read or mutate real platform resources.
+workspace default. Public A2A Message, Task, streaming, continuation, list/get/cancel, and
+subscription flows run without creating a platform AgentSession. Incoming local A2A calls do not
+need managed-gateway caller headers: supplied context IDs are mapped into the workspace-local
+session namespace and local provenance is recorded. Task records and event streams survive process
+restart.
+
+Platform discovery of the unregistered process, internal backend dispatch/caller-delivery hooks,
+push notifications, and `resume_caller` remain unavailable. Outbound A2A through Main Sequence MCP
+supports Messages and Tasks with polling under authenticated-user semantics. Local mode binds to
+`127.0.0.1` unless a host was explicitly configured. Main Sequence MCP remains live, so its tools
+can still read or mutate real platform resources.
 
 ## Workspace-owned Tau behavior
 

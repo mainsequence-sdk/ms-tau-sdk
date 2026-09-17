@@ -46,7 +46,7 @@ async def test_mock_chat_uses_assistant_ui_sse(sdk_client: AsyncClient):
     assert "data: [DONE]" in response.text
 
 
-async def test_local_mode_rejects_registered_agent_orchestration_routes(
+async def test_local_mode_rejects_only_registered_agent_orchestration_routes(
     asgi_client,
     tmp_path,
 ):
@@ -63,13 +63,16 @@ async def test_local_mode_rejects_registered_agent_orchestration_routes(
     app = create_app(settings)
 
     async with asgi_client(app) as http:
-        a2a = await http.get("/api/a2a/v1/tasks")
         response = await http.post(
             "/api/agents/agent-1/responses",
             json={},
         )
+        dispatch = await http.post(
+            "/internal/a2a/dispatches:available",
+            json={},
+        )
 
-    for rejected in (a2a, response):
+    for rejected in (response, dispatch):
         assert rejected.status_code == 409
         assert rejected.json()["error"] == "local_mode_capability_unsupported"
         assert rejected.json()["detail"]["mode"] == "local"

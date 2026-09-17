@@ -44,9 +44,14 @@ For a deployed Agent, use the projected `a2a.send_message` MCP operation. Django
 resolves the target `AgentSession`, waits for its runtime to become ready, and dispatches the
 message. For asynchronous work, use the returned Task handle with `a2a.wait_task`.
 
-For local Tau development, start `ms-tau`, wait for its local `/ready` result, and run local chat
-requests against that process. Agent-to-Agent execution uses the deployed flow because it requires
-platform Agent and AgentSession identities.
+For local Tau development, start `ms-tau` and wait for its local `/ready` result. The public A2A
+REST and JSON-RPC surfaces support Message and Task execution against the workspace-local SQLite
+store, including streaming, list/get/cancel/subscribe, and continuation. An A2A protocol Task does
+not require a platform AgentSession.
+
+Outbound work to a deployed Agent still uses `a2a.send_message` through Main Sequence MCP. Message
+and Task-with-polling flows use the authenticated user. `resume_caller` requires a registered
+platform callback target and is therefore unavailable to an unregistered local process.
 
 If proof is unavailable or stale, surface the platform error. Never fabricate an AgentSession,
 lease, target identity, or Environment selection. The SDK does not reinterpret requester/responder
@@ -55,9 +60,10 @@ wire direction as caller identity.
 ## Local-mode behavior
 
 Local mode has no registered Agent or AgentSession and therefore cannot supply deployed caller
-proof or act as a discoverable A2A target. A2A discovery, dispatch, task coordination, and caller
-delivery return the documented local-mode capability error. Main Sequence MCP remains available
-for operations whose contracts support authenticated-user semantics.
+proof or appear in platform discovery. Public local Message and Task coordination is nevertheless
+supported through local context identities and SQLite persistence. Only internal backend dispatch,
+caller delivery, push notifications, platform discovery, and `resume_caller` retain the documented
+capability boundary. Main Sequence MCP remains available for authenticated-user A2A semantics.
 
 ## Diagnostics
 

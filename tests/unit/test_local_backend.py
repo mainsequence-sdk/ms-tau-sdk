@@ -209,3 +209,154 @@ async def test_local_backend_serializes_concurrent_idempotent_writes(tmp_path):
 
     await first_backend.aclose()
     await second_backend.aclose()
+
+
+@pytest.mark.asyncio
+async def test_local_backend_persists_complete_a2a_task_lifecycle(tmp_path):
+    settings = _settings(tmp_path)
+    services = _services(_evidence())
+    backend = LocalDevelopmentBackend(settings, services)
+    session_uid = settings.local_session_uid("a2a-context")
+    bootstrap = await backend.bootstrap_tau_runtime(session_uid, _bootstrap("holder-1"))
+    payload = {
+        "task_id": "task-1",
+        "context_id": session_uid,
+        "agent_uid": f"local-agent-{settings.workspace_digest}",
+        "agent_session_uid": session_uid,
+        "initial_message": {
+            "message_id": "message-1",
+            "role": "user",
+            "parts": [{"text": "Do local work."}],
+        },
+        "metadata": {"transport": "a2a"},
+    }
+
+    created = await backend.create_task(payload)
+    replayed = await backend.create_task(payload)
+    attempt = await backend.claim_task_dispatch(
+        created.task.uid,
+        holder_id="holder-1",
+        lease_token=bootstrap.lease.lease_token,
+        dispatch_uid=created.task.dispatch_uid,
+    )
+    first_output = await backend.mutate_task_output(
+        created.task.uid,
+        attempt_uid=attempt.uid,
+        holder_id="holder-1",
+        lease_token=bootstrap.lease.lease_token,
+        operation="create",
+        artifact_id="artifact-1",
+        parts=[{"text": "Local "}],
+        name="Agent response",
+    )
+    final_output = await backend.mutate_task_output(
+        created.task.uid,
+        attempt_uid=attempt.uid,
+        holder_id="holder-1",
+        lease_token=bootstrap.lease.lease_token,
+        operation="finalize",
+        artifact_id="artifact-1",
+        parts=[{"text": "result."}],
+        expected_revision=1,
+    )
+    await backend.add_task_attempt_message(
+        created.task.uid,
+        attempt_uid=attempt.uid,
+        holder_id="holder-1",
+        lease_token=bootstrap.lease.lease_token,
+        message={
+            "message_id": "message-2",
+            "role": "agent",
+            "parts": [{"text": "Local result."}],
+        },
+    )
+    completed = await backend.settle_task_attempt(
+        created.task.uid,
+        attempt_uid=attempt.uid,
+        holder_id="holder-1",
+        lease_token=bootstrap.lease.lease_token,
+        status="completed",
+    )
+    snapshot = await backend.get_task_snapshot(created.task.uid)
+    events = await backend.list_task_events(
+        created.task.uid,
+        after_sequence=0,
+        limit=100,
+    )
+
+    assert created.created is True
+    assert replayed.created is False
+    assert replayed.task.uid == created.task.uid
+    assert attempt.attempt_number == 1
+    assert first_output["revision"] == 1
+    assert final_output["revision"] == 2
+    assert completed.status == "completed"
+    assert completed.latest_message is not None
+    assert completed.latest_message["message_id"] == "message-2"
+    assert completed.outputs[0]["parts"] == [
+        {"text": "Local "},
+        {"text": "result."},
+    ]
+    assert snapshot.event_cursor == completed.last_event_sequence
+    assert events.next_cursor == completed.last_event_sequence
+    assert events.events[-1].event_type == "status_changed"
+    assert events.events[-1].status == "completed"
+
+    restarted = LocalDevelopmentBackend(settings, _services(_evidence()))
+    persisted = await restarted.get_task_by_protocol_id("task-1")
+    listed = await restarted.list_tasks(context_id="a2a-context")
+    assert persisted.status == "completed"
+    assert [task.task_id for task in listed] == ["task-1"]
+
+    await backend.aclose()
+    await restarted.aclose()
+
+
+@pytest.mark.asyncio
+async def test_local_backend_continues_and_cancels_interrupted_a2a_task(tmp_path):
+    settings = _settings(tmp_path)
+    backend = LocalDevelopmentBackend(settings, _services(_evidence()))
+    session_uid = settings.local_session_uid("continuation")
+    bootstrap = await backend.bootstrap_tau_runtime(session_uid, _bootstrap("holder-1"))
+    creation = await backend.create_task(
+        {
+            "task_id": "task-input",
+            "context_id": session_uid,
+            "initial_message": {
+                "message_id": "message-1",
+                "role": "user",
+                "parts": [{"text": "Start."}],
+            },
+        }
+    )
+    attempt = await backend.claim_task_dispatch(
+        creation.task.uid,
+        holder_id="holder-1",
+        lease_token=bootstrap.lease.lease_token,
+    )
+    interrupted = await backend.settle_task_attempt(
+        creation.task.uid,
+        attempt_uid=attempt.uid,
+        holder_id="holder-1",
+        lease_token=bootstrap.lease.lease_token,
+        status="input_required",
+        status_message={"message": "Choose a value."},
+    )
+    continued = await backend.continue_task(
+        creation.task.uid,
+        {
+            "message_id": "message-2",
+            "role": "user",
+            "parts": [{"text": "Use 42."}],
+        },
+    )
+    canceled = await backend.cancel_task(creation.task.uid)
+
+    assert interrupted.status == "input_required"
+    assert continued.status == "submitted"
+    assert continued.latest_message is not None
+    assert continued.latest_message["message_id"] == "message-2"
+    assert canceled.status == "canceled"
+    assert canceled.cancellation_requested is True
+
+    await backend.aclose()

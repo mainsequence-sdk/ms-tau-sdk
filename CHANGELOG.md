@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.1 — 2026-09-17
+
+- Added durable local-mode A2A Message and Task execution across REST, JSON-RPC, and SSE, backed by
+  the workspace SQLite store without creating platform Agent or AgentSession records.
+- Narrowed `local_mode_capability_unsupported` to agent-targeted responses and internal/platform
+  routing features that genuinely require registered identity or callback delivery.
+- Expanded the packaged local-development skill and public documentation with the exact local A2A
+  persistence, identity, restart, polling, and unsupported-routing boundaries.
+
 ## 1.2.0 — 2026-09-17
 
 - Unified managed and local backend selection on the established `MAINSEQUENCE_ENDPOINT`

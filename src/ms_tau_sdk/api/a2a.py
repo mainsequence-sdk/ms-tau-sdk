@@ -420,6 +420,13 @@ def _request_parts(body: dict[str, Any], config: TauSDKSettings) -> tuple[dict[s
             **body["message"],
             "role": A2AMessageDirection.REQUESTER.value,
         }
+    if config.local_mode and isinstance(normalized_body.get("message"), dict):
+        normalized_body = dict(normalized_body)
+        local_message = dict(normalized_body["message"])
+        requested_context = str(local_message.get("contextId") or "").strip()
+        if requested_context:
+            local_message["contextId"] = config.local_session_uid(requested_context)
+        normalized_body["message"] = local_message
     prepared = prepare_a2a_input(
         normalized_body,
         config,
@@ -427,6 +434,20 @@ def _request_parts(body: dict[str, Any], config: TauSDKSettings) -> tuple[dict[s
         allowed_media_types={"application/pdf"},
     )
     return prepared.message, prepared.prompt()
+
+
+def _a2a_turn_provenance(
+    config: TauSDKSettings,
+    request: Request,
+) -> TurnProvenance:
+    if config.local_mode:
+        return {
+            "channel": "a2a",
+            "origin": "agent",
+            "actorKind": "agent",
+            "actorUid": f"local-a2a-client-{config.workspace_digest}",
+        }
+    return turn_provenance_from_request("a2a", request.headers)
 
 
 def _output_contract(body: dict[str, Any]) -> StrictJsonContract:
@@ -1847,7 +1868,7 @@ async def message_send(
     ] = None,
 ) -> dict[str, Any]:
     try:
-        provenance = turn_provenance_from_request("a2a", request.headers)
+        provenance = _a2a_turn_provenance(config, request)
     except CallerIdentityError as error:
         return _caller_identity_rejection(request, error)  # type: ignore[return-value]
     message, prompt = _request_parts(body, config)
@@ -1869,6 +1890,8 @@ async def message_send(
             response_kind=response_kind,
         )
     continuation_task_id = str(message.get("taskId") or "").strip()
+    if config.local_mode and (continuation_task_id or response_kind is ResponseKind.TASK):
+        await manager.get(str(message["contextId"]))
     if continuation_task_id:
         if response_kind is not ResponseKind.TASK:
             raise HTTPException(
@@ -1964,7 +1987,7 @@ async def message_stream(
     ] = None,
 ) -> StreamingResponse:
     try:
-        provenance = turn_provenance_from_request("a2a", request.headers)
+        provenance = _a2a_turn_provenance(config, request)
     except CallerIdentityError as error:
         return _caller_identity_rejection(request, error)  # type: ignore[return-value]
     _response_kind(
@@ -1981,6 +2004,8 @@ async def message_stream(
         streaming=True,
     )
     output_contract = _output_contract(body)
+    if config.local_mode:
+        await manager.get(str(message["contextId"]))
     creation = await _create_backend_task(
         client,
         message=message,
@@ -2138,7 +2163,7 @@ async def json_rpc(
     provenance: TurnProvenance | None = None
     if method in PROTECTED_MESSAGE_RPC_METHODS:
         try:
-            provenance = turn_provenance_from_request("a2a", request.headers)
+            provenance = _a2a_turn_provenance(config, request)
         except CallerIdentityError as error:
             return _caller_identity_json_rpc_error(request, request_id, error)
 
@@ -2168,6 +2193,8 @@ async def json_rpc(
                 streaming=True,
             )
             output_contract = _output_contract(params)
+            if config.local_mode:
+                await manager.get(str(message["contextId"]))
             creation = await _create_backend_task(
                 client,
                 message=message,

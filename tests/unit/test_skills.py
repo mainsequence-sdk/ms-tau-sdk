@@ -39,6 +39,26 @@ def test_a2a_skill_explains_deployed_and_local_readiness() -> None:
     assert "wait for its local `/ready` result" in skill
 
 
+def test_local_development_skill_defines_the_complete_a2a_boundary() -> None:
+    skill = resolve_packaged_skill("tau_local_development").read_text(encoding="utf-8")
+    normalized = " ".join(skill.split())
+
+    required_contract_terms = (
+        "not an offline, mock-provider, or mock-MCP mode",
+        "does not require a platform AgentSession",
+        "`POST /api/a2a/v1/message:send` and JSON-RPC `message/send`",
+        "`POST /api/a2a/v1/message:stream` and JSON-RPC `message/stream`",
+        "`input_required` or `auth_required`",
+        "surviving process restart",
+        "do not need managed-gateway `X-Caller-*` headers",
+        '`completion_policy: "poll"`',
+        '`completion_policy: "resume_caller"`',
+        "must not return `local_mode_capability_unsupported`",
+    )
+    for term in required_contract_terms:
+        assert term in normalized
+
+
 def test_sync_replaces_only_sdk_namespace_and_removes_retired_skills(tmp_path: Path) -> None:
     mainsequence_skill = tmp_path / ".agents/skills/mainsequence/keep/SKILL.md"
     mainsequence_skill.parent.mkdir(parents=True)

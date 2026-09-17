@@ -28,11 +28,11 @@ agent-targeted response request
 Local development execution:
 
 ```text
-chat request with an optional local session uid
+chat or public A2A request with a local context
   -> user-JWT-authenticated provider evidence and credential hydration
   -> workspace-bound Tau CodingSession with live Main Sequence MCP
-  -> SQLite entries, leases, activity, cancellation, and snapshots
-  -> no Agent/AgentSession/task persistence calls
+  -> SQLite entries, leases, snapshots, and A2A Task/message/artifact/event state
+  -> no Agent/AgentSession or platform task-persistence calls
 ```
 
 Local state defaults to `~/.tau/mainsequence/<workspace-hash>/runtime.sqlite3`. It is never
@@ -76,11 +76,21 @@ remains outside the SDK's public FastAPI operation surface.
 | Chat stream | Supported; `sessionUid` may be omitted. |
 | Session model and cancellation | Supported for an existing local session. |
 | Mock chat | Supported. |
+| A2A Message send | Supported with a workspace-local context identity. |
+| A2A Task send/stream/list/get/cancel/subscribe/continue | Supported through local SQLite. |
+| Local Agent Card | Supported; advertises Message, Task, and streaming without platform registration. |
+| Outbound A2A through MCP | Message and polled Task flows use authenticated-user semantics. |
 | Agent-targeted responses | `local_mode_capability_unsupported`. |
-| A2A, task dispatch, caller delivery, discovery | `local_mode_capability_unsupported`. |
+| Internal backend dispatch/caller delivery | `local_mode_capability_unsupported`. |
+| Platform discovery, push notifications, `resume_caller` | Unsupported without explicit platform registration/callback support. |
 
-The unsupported surfaces require registered platform identity or task coordination. Local mode
-does not create hidden platform records to satisfy them.
+An A2A protocol Task does not require a platform AgentSession. Only the remaining unsupported
+surfaces require registered platform routing or callback identity, and local mode does not create
+hidden records to satisfy them. Incoming local Message and Task calls do not require managed
+gateway `X-Caller-*` headers: the runtime records workspace-local provenance, canonicalizes each
+caller-supplied `contextId` into the workspace session namespace, and preserves the caller's public
+`taskId`. Local Task rows, messages, artifacts, attempts, and event sequences survive process
+restart. Outbound MCP Task workflows use `poll`; `resume_caller` is rejected in local mode.
 
 ## Effective composition diagnostics
 

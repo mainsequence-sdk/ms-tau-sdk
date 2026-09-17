@@ -22,7 +22,6 @@ from ms_tau_sdk.settings import TauSDKSettings, get_settings
 
 logger = structlog.get_logger(__name__)
 LOCAL_UNSUPPORTED_PATH_PREFIXES = (
-    "/api/a2a",
     "/api/agents",
     "/internal/a2a",
 )
