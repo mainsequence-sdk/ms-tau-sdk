@@ -68,7 +68,7 @@ async def test_local_mode_rejects_only_registered_agent_orchestration_routes(
             json={},
         )
         dispatch = await http.post(
-            "/internal/a2a/dispatches:available",
+            "/internal/a2a/task-dispatch",
             json={},
         )
 

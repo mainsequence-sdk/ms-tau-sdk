@@ -226,7 +226,7 @@ async def test_dispatch_signal_pulls_durable_task_then_claims_before_execution()
 
     manager = Manager()
     result = await task_dispatch_available(
-        {"taskUid": submitted.uid, "dispatchUid": "dispatch-1"},
+        {"task_uid": submitted.uid, "dispatch_uid": "dispatch-1"},
         client,
         manager,  # type: ignore[arg-type]
         manager.settings,
@@ -235,7 +235,7 @@ async def test_dispatch_signal_pulls_durable_task_then_claims_before_execution()
     assert result == {
         "accepted": True,
         "scheduled": True,
-        "taskUid": submitted.uid,
+        "task_uid": submitted.uid,
     }
     assert manager.background is not None
     assert manager.prompt_started is False
@@ -538,7 +538,7 @@ async def test_active_caller_turn_leaves_durable_delivery_queued():
     )
 
     result = await task_caller_delivery_available(
-        {"deliveryUid": delivery.uid},
+        {"delivery_uid": delivery.uid},
         client,
         manager,
     )
@@ -547,7 +547,7 @@ async def test_active_caller_turn_leaves_durable_delivery_queued():
         "accepted": True,
         "scheduled": False,
         "queued": True,
-        "deliveryUid": delivery.uid,
+        "delivery_uid": delivery.uid,
     }
     client.claim_task_caller_delivery.assert_not_awaited()
     manager.task_execution_fence.assert_not_awaited()

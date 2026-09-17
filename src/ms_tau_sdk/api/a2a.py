@@ -1709,7 +1709,7 @@ def _durable_task_execution_input(
     return prompt, contract, provenance
 
 
-@router.post("/internal/a2a/dispatches:available", status_code=202)
+@router.post("/internal/a2a/task-dispatch", status_code=200)
 async def task_dispatch_available(
     body: dict[str, Any],
     client: BackendDep,
@@ -1718,13 +1718,13 @@ async def task_dispatch_available(
 ) -> dict[str, Any]:
     """Handle the bounded post-wake hint; the backend claim is the authority."""
 
-    task_uid = str(body.get("taskUid") or "").strip()
-    dispatch_uid = str(body.get("dispatchUid") or "").strip()
+    task_uid = str(body.get("task_uid") or "").strip()
+    dispatch_uid = str(body.get("dispatch_uid") or "").strip()
     if not task_uid or not dispatch_uid:
-        raise HTTPException(status_code=400, detail="taskUid and dispatchUid are required")
+        raise HTTPException(status_code=400, detail="task_uid and dispatch_uid are required")
     task = await client.get_task(task_uid)
     if task.status != "submitted":
-        return {"accepted": True, "scheduled": False, "taskUid": task.uid}
+        return {"accepted": True, "scheduled": False, "task_uid": task.uid}
     prompt, output_contract, provenance = _durable_task_execution_input(task, config)
     claim = await _claim_backend_task(
         client,
@@ -1747,7 +1747,7 @@ async def task_dispatch_available(
         ),
         name=f"a2a-task-{task.task_id}",
     )
-    return {"accepted": True, "scheduled": scheduled, "taskUid": task.uid}
+    return {"accepted": True, "scheduled": scheduled, "task_uid": task.uid}
 
 
 async def _resume_caller_delivery(
@@ -1813,24 +1813,24 @@ async def _resume_caller_delivery(
         raise
 
 
-@router.post("/internal/a2a/caller-deliveries:available", status_code=202)
+@router.post("/internal/a2a/task-caller-delivery", status_code=200)
 async def task_caller_delivery_available(
     body: dict[str, Any],
     client: BackendDep,
     manager: RuntimeManagerDep,
 ) -> dict[str, Any]:
-    delivery_uid = str(body.get("deliveryUid") or "").strip()
+    delivery_uid = str(body.get("delivery_uid") or "").strip()
     if not delivery_uid:
-        raise HTTPException(status_code=400, detail="deliveryUid is required")
+        raise HTTPException(status_code=400, detail="delivery_uid is required")
     delivery = await client.get_task_caller_delivery(delivery_uid)
     if delivery.state == "delivered":
-        return {"accepted": True, "scheduled": False, "deliveryUid": delivery.uid}
+        return {"accepted": True, "scheduled": False, "delivery_uid": delivery.uid}
     if manager.session_turn_active(delivery.caller_agent_session_uid):
         return {
             "accepted": True,
             "scheduled": False,
             "queued": True,
-            "deliveryUid": delivery.uid,
+            "delivery_uid": delivery.uid,
         }
     fence = await manager.task_execution_fence(delivery.caller_agent_session_uid)
     delivery = await client.claim_task_caller_delivery(
@@ -1851,7 +1851,7 @@ async def task_caller_delivery_available(
     return {
         "accepted": True,
         "scheduled": scheduled,
-        "deliveryUid": delivery.uid,
+        "delivery_uid": delivery.uid,
     }
 
 

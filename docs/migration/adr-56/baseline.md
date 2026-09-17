@@ -400,8 +400,8 @@ POST /api/chat/mock
 GET /api/chat/session-model
 POST /api/chat/session/cancel
 GET /health
-POST /internal/a2a/caller-deliveries:available
-POST /internal/a2a/dispatches:available
+POST /internal/a2a/task-caller-delivery
+POST /internal/a2a/task-dispatch
 GET /ready
 GET /version
 ```
