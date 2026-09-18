@@ -8,7 +8,7 @@ workspace.
 With `uv`:
 
 ```bash
-uv add "ms-tau-sdk==1.2.1"
+uv add "ms-tau-sdk==1.2.2"
 ```
 
 The project lockfile is the record of the exact SDK, Tau, provider, and transport versions that

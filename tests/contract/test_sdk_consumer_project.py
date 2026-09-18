@@ -15,9 +15,9 @@ def test_fixture_declares_and_locks_the_sdk() -> None:
     project = tomllib.loads((FIXTURE_ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     lock = tomllib.loads((FIXTURE_ROOT / "uv.lock").read_text(encoding="utf-8"))
 
-    assert project["project"]["dependencies"] == ["ms-tau-sdk==1.2.1"]
+    assert project["project"]["dependencies"] == ["ms-tau-sdk==1.2.2"]
     locked = {package["name"]: package for package in lock["package"]}
-    assert locked["ms-tau-sdk"]["version"] == "1.2.1"
+    assert locked["ms-tau-sdk"]["version"] == "1.2.2"
 
 
 def test_fixture_shim_builds_the_sdk_app_from_its_workspace(monkeypatch) -> None:

@@ -13,6 +13,7 @@ from ms_tau_sdk.backend.models import (
     RuntimeStatePatch,
     SessionEntryAppendRequest,
 )
+from ms_tau_sdk.backend.routes import RuntimeLeaseOperation, agent_session_runtime_lease
 from ms_tau_sdk.errors import BackendError
 from ms_tau_sdk.settings import TauSDKSettings
 
@@ -115,7 +116,7 @@ async def test_python_client_matches_existing_django_session_contract():
                     "idempotency_key": "entry-2",
                 },
             )
-        if path == f"/api/v1/agent-sessions/{session_uid}/checkpoint-lease/acquire/":
+        if path == f"/api/v1/agent-sessions/{session_uid}/runtime-lease/acquire/":
             assert payload == {
                 "holder_id": "ms-tau-1",
                 "ttl_seconds": 90,
@@ -137,7 +138,7 @@ async def test_python_client_matches_existing_django_session_contract():
                     "cancellation": None,
                 },
             )
-        if path == f"/api/v1/agent-sessions/{session_uid}/checkpoint-lease/renew/":
+        if path == f"/api/v1/agent-sessions/{session_uid}/runtime-lease/renew/":
             assert payload == {
                 "lease_token": "lease-token",
                 "holder_id": "ms-tau-1",
@@ -160,7 +161,7 @@ async def test_python_client_matches_existing_django_session_contract():
                     "cancellation": None,
                 },
             )
-        if path == f"/api/v1/agent-sessions/{session_uid}/checkpoint-lease/release/":
+        if path == f"/api/v1/agent-sessions/{session_uid}/runtime-lease/release/":
             assert payload == {
                 "lease_token": "lease-token",
                 "holder_id": "ms-tau-1",
@@ -321,14 +322,24 @@ async def test_python_client_matches_existing_django_session_contract():
         f"/api/v1/agent-sessions/{session_uid}/agent-card/",
         f"/api/v1/agent-sessions/{session_uid}/entries/",
         f"/api/v1/agent-sessions/{session_uid}/",
-        f"/api/v1/agent-sessions/{session_uid}/checkpoint-lease/acquire/",
+        f"/api/v1/agent-sessions/{session_uid}/runtime-lease/acquire/",
         f"/api/v1/agent-sessions/{session_uid}/entries/append/",
         f"/api/v1/agent-sessions/{session_uid}/runtime-cancel-request/",
-        f"/api/v1/agent-sessions/{session_uid}/checkpoint-lease/renew/",
+        f"/api/v1/agent-sessions/{session_uid}/runtime-lease/renew/",
         f"/api/v1/agent-sessions/{session_uid}/runtime-state/",
         f"/api/v1/agent-sessions/{session_uid}/runtime-state/",
-        f"/api/v1/agent-sessions/{session_uid}/checkpoint-lease/release/",
+        f"/api/v1/agent-sessions/{session_uid}/runtime-lease/release/",
     ]
+
+
+@pytest.mark.parametrize("operation", ["acquire", "renew", "release"])
+def test_runtime_lease_route_uses_harness_neutral_contract(
+    operation: RuntimeLeaseOperation,
+) -> None:
+    route = agent_session_runtime_lease("session-1", operation)
+
+    assert route == f"/api/v1/agent-sessions/session-1/runtime-lease/{operation}/"
+    assert "checkpoint-lease" not in route
 
 
 @pytest.mark.asyncio

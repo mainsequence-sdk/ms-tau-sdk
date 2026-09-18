@@ -52,11 +52,11 @@ from .routes import (
     AGENT_TASKS,
     agent_session,
     agent_session_agent_card,
-    agent_session_checkpoint_lease,
     agent_session_entries,
     agent_session_entries_append,
     agent_session_entries_append_batch,
     agent_session_runtime_cancel_request,
+    agent_session_runtime_lease,
     agent_session_runtime_state,
     agent_session_tau_resume_snapshot,
     agent_session_tau_runtime_activity,
@@ -411,7 +411,7 @@ class MainSequenceClient:
     ) -> RuntimeLease:
         data = await self._request(
             "POST",
-            agent_session_checkpoint_lease(session_uid, "acquire"),
+            agent_session_runtime_lease(session_uid, "acquire"),
             json=self._dump(request),
         )
         return RuntimeLease.model_validate(data)
@@ -423,7 +423,7 @@ class MainSequenceClient:
     ) -> RuntimeLease:
         data = await self._request(
             "POST",
-            agent_session_checkpoint_lease(session_uid, "renew"),
+            agent_session_runtime_lease(session_uid, "renew"),
             json=self._dump(request),
             idempotent=True,
         )
@@ -436,7 +436,7 @@ class MainSequenceClient:
     ) -> None:
         await self._request(
             "POST",
-            agent_session_checkpoint_lease(session_uid, "release"),
+            agent_session_runtime_lease(session_uid, "release"),
             json=self._dump(request),
             idempotent=True,
         )

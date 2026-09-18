@@ -12,7 +12,7 @@ MODEL_PROVIDER_CREDENTIALS = f"{API_V1_PREFIX}/model-provider-credentials/"
 AGENT_TASKS = f"{API_V1_PREFIX}/agent-tasks/"
 AGENT_TASK_CALLER_DELIVERIES = f"{API_V1_PREFIX}/agent-task-caller-deliveries/"
 
-type CheckpointLeaseOperation = Literal["acquire", "renew", "release"]
+type RuntimeLeaseOperation = Literal["acquire", "renew", "release"]
 type ModelProviderCredentialOperation = Literal["hydrate", "status", "flush", "revoke"]
 type AgentTaskOperation = Literal[
     "cancel",
@@ -46,11 +46,11 @@ def agent_session_entries_append_batch(session_uid: str) -> str:
     return f"{agent_session_entries(session_uid)}append-batch/"
 
 
-def agent_session_checkpoint_lease(
+def agent_session_runtime_lease(
     session_uid: str,
-    operation: CheckpointLeaseOperation,
+    operation: RuntimeLeaseOperation,
 ) -> str:
-    return f"{agent_session(session_uid)}checkpoint-lease/{operation}/"
+    return f"{agent_session(session_uid)}runtime-lease/{operation}/"
 
 
 def agent_session_runtime_state(session_uid: str) -> str:

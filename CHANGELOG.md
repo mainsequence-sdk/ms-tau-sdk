@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.2 — 2026-09-18
+
+- Replaced the retired AgentSession `checkpoint-lease/*` client routes with the canonical
+  harness-neutral `runtime-lease/*` acquire, renew, and release routes.
+- Aligned internal A2A task-dispatch and caller-delivery signals with the current Django contract.
+
 ## 1.2.1 — 2026-09-17
 
 - Added durable local-mode A2A Message and Task execution across REST, JSON-RPC, and SSE, backed by

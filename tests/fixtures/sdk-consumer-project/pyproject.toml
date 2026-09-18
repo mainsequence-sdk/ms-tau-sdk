@@ -7,7 +7,7 @@ name = "ms-tau-sdk-consumer-fixture"
 version = "0.1.0"
 requires-python = ">=3.13"
 dependencies = [
-  "ms-tau-sdk==1.2.1",
+  "ms-tau-sdk==1.2.2",
 ]
 
 [tool.hatch.build.targets.wheel]
