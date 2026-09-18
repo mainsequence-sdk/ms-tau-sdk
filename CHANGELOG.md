@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Hard-cut the managed runtime contract to the canonical Tau 0.4.2 handshake: lease acquire and
+  renew requests no longer send the retired `lease_purpose` field, and `tau_runtime_version`
+  identifies the installed `tau-ai` distribution instead of the SDK package version.
+- Added the Tau 0.4.2 `custom_message` discriminator to typed durable-entry responses.
+
 ## 1.2.2 — 2026-09-18
 
 - Replaced the retired AgentSession `checkpoint-lease/*` client routes with the canonical

@@ -5,10 +5,10 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass
+from importlib.metadata import version
 
 from tau_agent.session import SessionEntry
 
-from ms_tau_sdk import __version__
 from ms_tau_sdk.backend.models import (
     SessionEntryList,
     TauResumeSnapshot,
@@ -18,7 +18,7 @@ from ms_tau_sdk.errors import BackendConflictError
 from ms_tau_sdk.sessions.storage import SESSION_ENTRY_ADAPTER, serialize_entry
 
 SNAPSHOT_SCHEMA_VERSION = 2
-TAU_RUNTIME_VERSION = __version__
+TAU_RUNTIME_VERSION = version("tau-ai")
 
 
 def canonical_json_bytes(value: object) -> bytes:

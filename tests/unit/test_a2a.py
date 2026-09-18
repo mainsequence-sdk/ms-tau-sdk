@@ -105,7 +105,7 @@ def _direct_message_client() -> tuple[AsyncMock, AgentTask]:
         agent_uid="agent-1",
         harness="tau",
         harness_protocol="tau-session-v1",
-        harness_version="0.3.1",
+        harness_version="0.4.2",
     )
     client.get_agent_card.return_value = AgentCardEnvelope(
         agent_session_uid="session-1",

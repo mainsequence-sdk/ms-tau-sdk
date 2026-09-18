@@ -45,7 +45,7 @@ async def test_batch_append_and_tau_activity_match_django_contract():
                     "agent_session_uid": session_uid,
                     "harness": "tau",
                     "harness_protocol": "tau-session-v1",
-                    "harness_version": "0.3.1",
+                    "harness_version": "0.4.2",
                     "status": "running",
                     "runtime_state": "working",
                     "working": True,

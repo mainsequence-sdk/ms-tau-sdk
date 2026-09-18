@@ -159,7 +159,7 @@ async def test_json_rpc_message_stream_returns_sse_response():
         agent_uid="agent-1",
         harness="tau",
         harness_protocol="tau-session-v1",
-        harness_version="0.3.1",
+        harness_version="0.4.2",
     )
     client.create_task.return_value = AgentTaskCreateResult(
         task=AgentTask(

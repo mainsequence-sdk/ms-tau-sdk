@@ -81,6 +81,38 @@ def _dependency_operation(method: str, path: str) -> str:
     return f"{method.upper()} {normalized_path[:192]}"
 
 
+def _field_error_paths(value: object, *, prefix: str = "") -> list[str]:
+    if isinstance(value, Mapping):
+        paths: list[str] = []
+        for key, child in value.items():
+            child_prefix = f"{prefix}.{key}" if prefix else str(key)
+            paths.extend(_field_error_paths(child, prefix=child_prefix))
+        return paths
+    if isinstance(value, list):
+        paths = []
+        for index, child in enumerate(value):
+            child_prefix = f"{prefix}.{index}" if prefix else str(index)
+            paths.extend(_field_error_paths(child, prefix=child_prefix))
+        return paths
+    return [prefix] if prefix else []
+
+
+def _backend_rejection_log_fields(detail: object) -> dict[str, object]:
+    if not isinstance(detail, Mapping):
+        return {}
+    fields: dict[str, object] = {}
+    error_code = detail.get("error_code")
+    error_detail = detail.get("error_detail")
+    if isinstance(error_code, str):
+        fields["backend_error_code"] = error_code[:128]
+    if isinstance(error_detail, str):
+        fields["backend_error_detail"] = error_detail[:500]
+    paths = sorted(set(_field_error_paths(detail.get("field_errors"))))
+    if paths:
+        fields["backend_field_error_paths"] = paths[:64]
+    return fields
+
+
 class MainSequenceClient:
     def __init__(
         self,
@@ -134,6 +166,7 @@ class MainSequenceClient:
                     headers=await self.auth.headers(force=force_auth),
                     json=json,
                 )
+                response_detail = self._safe_body(response) if not response.is_success else None
                 status_outcome = (
                     "success"
                     if response.is_success
@@ -155,6 +188,7 @@ class MainSequenceClient:
                     outcome=status_outcome,
                     retryable=response.status_code in RETRYABLE_BACKEND_STATUS_CODES,
                     circuit_breaker_state="not_configured",
+                    **_backend_rejection_log_fields(response_detail),
                     **dict(dependency_fields or {}),
                 )
                 if response.status_code == 401 and not auth_retried:
@@ -183,13 +217,13 @@ class MainSequenceClient:
                     raise BackendConflictError(
                         f"Backend conflict for {path}",
                         status_code=response.status_code,
-                        detail=self._safe_body(response),
+                        detail=response_detail,
                     )
                 if not response.is_success:
                     raise BackendError(
                         f"Backend request failed: {method} {path}",
                         status_code=response.status_code,
-                        detail=self._safe_body(response),
+                        detail=response_detail,
                     )
                 if len(response.content) > self.settings.backend_max_response_bytes:
                     raise BackendError("Backend response exceeded configured size limit")

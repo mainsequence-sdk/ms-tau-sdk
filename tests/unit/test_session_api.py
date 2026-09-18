@@ -27,7 +27,7 @@ async def test_session_model_reads_provider_selection_from_session():
         uid="session-1",
         harness="tau",
         harness_protocol="tau-session-v1",
-        harness_version="0.3.1",
+        harness_version="0.4.2",
         llm_provider="openai",
         llm_model="gpt-5.4",
         llm_thinking="high",
@@ -52,7 +52,7 @@ async def test_session_cancel_uses_backend_cancel_request():
     client.request_runtime_cancel.return_value = RuntimeState(
         harness="tau",
         harness_protocol="tau-session-v1",
-        harness_version="0.3.1",
+        harness_version="0.4.2",
         status="working",
         runtime_state="working",
         working=True,

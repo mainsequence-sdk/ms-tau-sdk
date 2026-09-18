@@ -24,7 +24,11 @@ from ms_tau_sdk.backend.models import (
 from ms_tau_sdk.errors import BackendConflictError
 from ms_tau_sdk.runtime.manager import RUNTIME_CAPABILITIES, SessionRuntimeManager
 from ms_tau_sdk.runtime.session import ActiveSessionRuntime
-from ms_tau_sdk.runtime.snapshots import SNAPSHOT_SCHEMA_VERSION, build_snapshot_upload
+from ms_tau_sdk.runtime.snapshots import (
+    SNAPSHOT_SCHEMA_VERSION,
+    TAU_RUNTIME_VERSION,
+    build_snapshot_upload,
+)
 from ms_tau_sdk.sessions.storage import SESSION_ENTRY_ADAPTER
 from ms_tau_sdk.settings import TauSDKSettings
 
@@ -255,6 +259,7 @@ async def test_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
         request = call.args[1]
         assert "known_capability_hashes" not in request.model_dump()
         assert request.supported_snapshot_schema_versions == [2]
+        assert request.tau_runtime_version == TAU_RUNTIME_VERSION == "0.4.2"
     for load_call in load_coding_session.await_args_list:
         assert [tool.name for tool in load_call.args[0].tools] == [
             "task_request_input",
