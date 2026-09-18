@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.3 — 2026-09-18
 
 - Hard-cut the managed runtime contract to the canonical Tau 0.4.2 handshake: lease acquire and
   renew requests no longer send the retired `lease_purpose` field, and `tau_runtime_version`

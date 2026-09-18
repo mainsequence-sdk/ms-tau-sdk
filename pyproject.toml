@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ms-tau-sdk"
-version = "1.2.2"
+version = "1.2.3"
 description = "Workspace-bound Tau application primitives for Main Sequence projects"
 readme = "README.md"
 requires-python = ">=3.13"
