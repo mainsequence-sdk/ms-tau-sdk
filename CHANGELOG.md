@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Aligned managed AgentTask execution with Django's canonical ADR-034 actions for dispatch claim,
+  attempt start and settlement, and output create, append, and finalize. Removed the nonexistent
+  attempt-Message and caller-delivery backend routes; signed caller delivery now persists its
+  idempotent platform event before the runtime acknowledges Django's push.
+
 ## 1.2.3 — 2026-09-18
 
 - Hard-cut the managed runtime contract to the canonical Tau 0.4.2 handshake: lease acquire and

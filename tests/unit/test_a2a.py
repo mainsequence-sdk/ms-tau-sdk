@@ -27,6 +27,7 @@ from ms_tau_sdk.backend.models import (
     AgentSession,
     AgentTask,
     AgentTaskCreateResult,
+    AgentTaskDispatch,
     AgentTaskExecutionAttempt,
     AgentTaskSnapshot,
 )
@@ -113,15 +114,28 @@ def _direct_message_client() -> tuple[AsyncMock, AgentTask]:
         agent_card=None,
     )
     client.create_task.return_value = AgentTaskCreateResult(task=task, created=True)
-    client.claim_task_dispatch.return_value = AgentTaskExecutionAttempt(
+    claimed = AgentTaskExecutionAttempt(
         uid="attempt-1",
         dispatch_uid="dispatch-1",
         attempt_number=1,
-        state="running",
+        state="claimed",
     )
-    client.mutate_task_output.side_effect = [{"revision": 1}, {"revision": 2}]
-    client.get_task.return_value = task.model_copy(update={"status": "working"})
-    client.settle_task_attempt.return_value = task.model_copy(update={"status": "completed"})
+    client.list_task_dispatches.return_value = [
+        AgentTaskDispatch(uid="dispatch-1", state="pending")
+    ]
+    client.claim_task_dispatch.return_value = claimed
+    client.start_task_attempt.return_value = claimed.model_copy(update={"state": "running"})
+    client.create_task_output.return_value = {"uid": "output-1", "revision": 1}
+    client.append_task_output.return_value = {"uid": "output-1", "revision": 2}
+    client.finalize_task_output.return_value = {"uid": "output-1", "revision": 2}
+    working = task.model_copy(update={"status": "working"})
+    completed = task.model_copy(update={"status": "completed"})
+
+    async def get_task(_task_uid):
+        return completed if client.settle_task_attempt.await_count else working
+
+    client.get_task.side_effect = get_task
+    client.settle_task_attempt.return_value = claimed.model_copy(update={"state": "completed"})
     return client, task
 
 
@@ -429,7 +443,6 @@ async def test_direct_message_send_returns_final_tau_answer():
         {"text": "The two DataNodes load and transform the tutorial data."}
     ]
     client.create_task.assert_not_awaited()
-    client.add_task_attempt_message.assert_not_awaited()
     client.settle_task_attempt.assert_not_awaited()
 
 
@@ -450,7 +463,6 @@ async def test_omitted_response_kind_defaults_to_direct_message_without_task():
     client.get_agent_card.assert_not_awaited()
     client.get_session.assert_not_awaited()
     client.create_task.assert_not_awaited()
-    client.add_task_attempt_message.assert_not_awaited()
     client.settle_task_attempt.assert_not_awaited()
 
 
@@ -467,7 +479,6 @@ async def test_direct_message_send_rejects_empty_tau_answer():
     assert response.status_code == 502
     assert response.json()["detail"] == "Agent turn produced no textual answer"
     client.create_task.assert_not_awaited()
-    client.add_task_attempt_message.assert_not_awaited()
     client.settle_task_attempt.assert_not_awaited()
 
 
@@ -487,7 +498,6 @@ async def test_direct_message_send_surfaces_tau_terminal_failure():
     assert response.status_code == 502
     assert response.json()["detail"] == ("Agent turn failed: Provider could not complete the turn")
     client.create_task.assert_not_awaited()
-    client.add_task_attempt_message.assert_not_awaited()
     client.settle_task_attempt.assert_not_awaited()
 
 
@@ -600,10 +610,12 @@ async def test_message_send_task_requires_advertised_task_and_returns_task():
         task.uid,
         holder_id="holder-1",
         lease_token="lease-1",
-        dispatch_uid=None,
+        dispatch_uid="dispatch-1",
         executor_instance_id="holder-1",
     )
-    client.add_task_attempt_message.assert_awaited_once()
+    client.start_task_attempt.assert_awaited_once()
+    client.create_task_output.assert_awaited_once()
+    client.finalize_task_output.assert_awaited_once()
     client.settle_task_attempt.assert_awaited_once()
 
 

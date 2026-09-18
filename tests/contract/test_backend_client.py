@@ -366,6 +366,7 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
 
     def handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
+        payload = json.loads(request.content) if request.content else None
         requests.append((request.method, path, request.url.query.decode()))
         if path == "/api/v1/runtime-credentials/token/":
             return httpx.Response(200, json={"access": "runtime-token"})
@@ -425,7 +426,40 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
                     "has_more": False,
                 },
             )
-        if path == "/api/v1/agent-tasks/task-uid-1/claim-dispatch/":
+        if path == "/api/v1/agent-tasks/task-uid-1/dispatches/":
+            return httpx.Response(
+                200,
+                json=[
+                    {
+                        "uid": "dispatch-1",
+                        "state": "pending",
+                        "current_attempt_uid": None,
+                    }
+                ],
+            )
+        if path == "/api/v1/agent-tasks/task-uid-1/dispatches/claim/":
+            assert payload == {
+                "holder_id": "holder-1",
+                "lease_token": "lease-1",
+                "dispatch_uid": "dispatch-1",
+                "executor_runtime_id": "",
+                "executor_instance_id": "ms-tau-1",
+            }
+            return httpx.Response(
+                201,
+                json={
+                    "uid": "attempt-1",
+                    "dispatch_uid": "dispatch-1",
+                    "attempt_number": 1,
+                    "state": "claimed",
+                },
+            )
+        if path == "/api/v1/agent-tasks/task-uid-1/attempts/start/":
+            assert payload == {
+                "attempt_uid": "attempt-1",
+                "holder_id": "holder-1",
+                "lease_token": "lease-1",
+            }
             return httpx.Response(
                 200,
                 json={
@@ -435,12 +469,53 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
                     "state": "running",
                 },
             )
-        if path == "/api/v1/agent-tasks/task-uid-1/attempt-messages/":
-            return httpx.Response(201, json={"stored": True})
-        if path == "/api/v1/agent-tasks/task-uid-1/attempt-outputs/":
-            return httpx.Response(200, json={"revision": 1})
-        if path == "/api/v1/agent-tasks/task-uid-1/settle-attempt/":
-            return httpx.Response(200, json={**task, "status": "completed"})
+        if path == "/api/v1/agent-tasks/task-uid-1/outputs/create/":
+            assert payload == {
+                "attempt_uid": "attempt-1",
+                "holder_id": "holder-1",
+                "lease_token": "lease-1",
+                "artifact_id": "artifact-1",
+                "parts": [{"text": "answer"}],
+                "name": "",
+                "description": "",
+            }
+            return httpx.Response(201, json={"uid": "output-1", "revision": 1})
+        if path == "/api/v1/agent-tasks/task-uid-1/outputs/append/":
+            assert payload == {
+                "attempt_uid": "attempt-1",
+                "holder_id": "holder-1",
+                "lease_token": "lease-1",
+                "output_uid": "output-1",
+                "expected_revision": 1,
+                "parts": [{"text": " continues"}],
+                "last_chunk": False,
+            }
+            return httpx.Response(200, json={"uid": "output-1", "revision": 2})
+        if path == "/api/v1/agent-tasks/task-uid-1/outputs/finalize/":
+            assert payload == {
+                "attempt_uid": "attempt-1",
+                "holder_id": "holder-1",
+                "lease_token": "lease-1",
+                "output_uid": "output-1",
+                "expected_revision": 2,
+            }
+            return httpx.Response(200, json={"uid": "output-1", "revision": 3})
+        if path == "/api/v1/agent-tasks/task-uid-1/attempts/settle/":
+            assert payload == {
+                "attempt_uid": "attempt-1",
+                "holder_id": "holder-1",
+                "lease_token": "lease-1",
+                "status": "completed",
+            }
+            return httpx.Response(
+                200,
+                json={
+                    "uid": "attempt-1",
+                    "dispatch_uid": "dispatch-1",
+                    "attempt_number": 1,
+                    "state": "completed",
+                },
+            )
         if path == "/api/v1/agent-tasks/task-uid-1/continue/":
             return httpx.Response(200, json=task)
         if path == "/api/v1/agent-tasks/task-uid-1/cancel/":
@@ -476,6 +551,7 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
             "task-uid-1",
             after_sequence=2,
         )
+        dispatches = await client.list_task_dispatches("task-uid-1")
         attempt = await client.claim_task_dispatch(
             "task-uid-1",
             holder_id="holder-1",
@@ -483,21 +559,36 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
             dispatch_uid="dispatch-1",
             executor_instance_id="ms-tau-1",
         )
-        message = await client.add_task_attempt_message(
+        started = await client.start_task_attempt(
             "task-uid-1",
             attempt_uid="attempt-1",
             holder_id="holder-1",
             lease_token="lease-1",
-            message={"message_id": "message-1"},
         )
-        output = await client.mutate_task_output(
+        output = await client.create_task_output(
             "task-uid-1",
             attempt_uid="attempt-1",
             holder_id="holder-1",
             lease_token="lease-1",
-            operation="create",
             artifact_id="artifact-1",
             parts=[{"text": "answer"}],
+        )
+        appended = await client.append_task_output(
+            "task-uid-1",
+            attempt_uid="attempt-1",
+            holder_id="holder-1",
+            lease_token="lease-1",
+            output_uid="output-1",
+            expected_revision=1,
+            parts=[{"text": " continues"}],
+        )
+        finalized = await client.finalize_task_output(
+            "task-uid-1",
+            attempt_uid="attempt-1",
+            holder_id="holder-1",
+            lease_token="lease-1",
+            output_uid="output-1",
+            expected_revision=2,
         )
         settled = await client.settle_task_attempt(
             "task-uid-1",
@@ -519,10 +610,13 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
     assert loaded.status == "working"
     assert snapshot.event_cursor == 3
     assert events.events[0].sequence == 3
+    assert dispatches[0].uid == "dispatch-1"
     assert attempt.uid == "attempt-1"
-    assert message == {"stored": True}
-    assert output == {"revision": 1}
-    assert settled.status == "completed"
+    assert started.state == "running"
+    assert output == {"uid": "output-1", "revision": 1}
+    assert appended == {"uid": "output-1", "revision": 2}
+    assert finalized == {"uid": "output-1", "revision": 3}
+    assert settled.state == "completed"
     assert continued.status == "submitted"
     assert cancelled.status == "canceled"
     assert requests == [
@@ -533,10 +627,13 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
         ("GET", "/api/v1/agent-tasks/task-uid-1/", ""),
         ("GET", "/api/v1/agent-tasks/task-uid-1/snapshot/", ""),
         ("GET", "/api/v1/agent-tasks/task-uid-1/events/", "after_sequence=2&limit=100"),
-        ("POST", "/api/v1/agent-tasks/task-uid-1/claim-dispatch/", ""),
-        ("POST", "/api/v1/agent-tasks/task-uid-1/attempt-messages/", ""),
-        ("POST", "/api/v1/agent-tasks/task-uid-1/attempt-outputs/", ""),
-        ("POST", "/api/v1/agent-tasks/task-uid-1/settle-attempt/", ""),
+        ("GET", "/api/v1/agent-tasks/task-uid-1/dispatches/", ""),
+        ("POST", "/api/v1/agent-tasks/task-uid-1/dispatches/claim/", ""),
+        ("POST", "/api/v1/agent-tasks/task-uid-1/attempts/start/", ""),
+        ("POST", "/api/v1/agent-tasks/task-uid-1/outputs/create/", ""),
+        ("POST", "/api/v1/agent-tasks/task-uid-1/outputs/append/", ""),
+        ("POST", "/api/v1/agent-tasks/task-uid-1/outputs/finalize/", ""),
+        ("POST", "/api/v1/agent-tasks/task-uid-1/attempts/settle/", ""),
         ("POST", "/api/v1/agent-tasks/task-uid-1/continue/", ""),
         ("POST", "/api/v1/agent-tasks/task-uid-1/cancel/", ""),
     ]

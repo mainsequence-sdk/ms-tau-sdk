@@ -168,7 +168,6 @@ async def test_json_rpc_direct_message_does_not_create_a_task(asgi_client):
     assert response.json()["result"]["message"]["parts"] == [{"text": "Direct RPC answer."}]
     client.get_session.assert_not_awaited()
     client.create_task.assert_not_awaited()
-    client.add_task_attempt_message.assert_not_awaited()
     client.settle_task_attempt.assert_not_awaited()
 
 

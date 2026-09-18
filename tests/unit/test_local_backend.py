@@ -233,50 +233,46 @@ async def test_local_backend_persists_complete_a2a_task_lifecycle(tmp_path):
 
     created = await backend.create_task(payload)
     replayed = await backend.create_task(payload)
+    dispatch = (await backend.list_task_dispatches(created.task.uid))[0]
     attempt = await backend.claim_task_dispatch(
         created.task.uid,
         holder_id="holder-1",
         lease_token=bootstrap.lease.lease_token,
-        dispatch_uid=created.task.dispatch_uid,
+        dispatch_uid=dispatch.uid,
     )
-    first_output = await backend.mutate_task_output(
+    attempt = await backend.start_task_attempt(
         created.task.uid,
         attempt_uid=attempt.uid,
         holder_id="holder-1",
         lease_token=bootstrap.lease.lease_token,
-        operation="create",
+    )
+    first_output = await backend.create_task_output(
+        created.task.uid,
+        attempt_uid=attempt.uid,
+        holder_id="holder-1",
+        lease_token=bootstrap.lease.lease_token,
         artifact_id="artifact-1",
         parts=[{"text": "Local "}],
         name="Agent response",
     )
-    final_output = await backend.mutate_task_output(
+    final_output = await backend.append_task_output(
         created.task.uid,
         attempt_uid=attempt.uid,
         holder_id="holder-1",
         lease_token=bootstrap.lease.lease_token,
-        operation="finalize",
-        artifact_id="artifact-1",
+        output_uid=first_output["uid"],
         parts=[{"text": "result."}],
         expected_revision=1,
+        last_chunk=True,
     )
-    await backend.add_task_attempt_message(
-        created.task.uid,
-        attempt_uid=attempt.uid,
-        holder_id="holder-1",
-        lease_token=bootstrap.lease.lease_token,
-        message={
-            "message_id": "message-2",
-            "role": "agent",
-            "parts": [{"text": "Local result."}],
-        },
-    )
-    completed = await backend.settle_task_attempt(
+    completed_attempt = await backend.settle_task_attempt(
         created.task.uid,
         attempt_uid=attempt.uid,
         holder_id="holder-1",
         lease_token=bootstrap.lease.lease_token,
         status="completed",
     )
+    completed = await backend.get_task(created.task.uid)
     snapshot = await backend.get_task_snapshot(created.task.uid)
     events = await backend.list_task_events(
         created.task.uid,
@@ -290,9 +286,10 @@ async def test_local_backend_persists_complete_a2a_task_lifecycle(tmp_path):
     assert attempt.attempt_number == 1
     assert first_output["revision"] == 1
     assert final_output["revision"] == 2
+    assert completed_attempt.state == "completed"
     assert completed.status == "completed"
     assert completed.latest_message is not None
-    assert completed.latest_message["message_id"] == "message-2"
+    assert completed.latest_message["message_id"] == "message-1"
     assert completed.outputs[0]["parts"] == [
         {"text": "Local "},
         {"text": "result."},
@@ -329,12 +326,20 @@ async def test_local_backend_continues_and_cancels_interrupted_a2a_task(tmp_path
             },
         }
     )
+    dispatch = (await backend.list_task_dispatches(creation.task.uid))[0]
     attempt = await backend.claim_task_dispatch(
         creation.task.uid,
         holder_id="holder-1",
         lease_token=bootstrap.lease.lease_token,
+        dispatch_uid=dispatch.uid,
     )
-    interrupted = await backend.settle_task_attempt(
+    attempt = await backend.start_task_attempt(
+        creation.task.uid,
+        attempt_uid=attempt.uid,
+        holder_id="holder-1",
+        lease_token=bootstrap.lease.lease_token,
+    )
+    interrupted_attempt = await backend.settle_task_attempt(
         creation.task.uid,
         attempt_uid=attempt.uid,
         holder_id="holder-1",
@@ -342,6 +347,7 @@ async def test_local_backend_continues_and_cancels_interrupted_a2a_task(tmp_path
         status="input_required",
         status_message={"message": "Choose a value."},
     )
+    interrupted = await backend.get_task(creation.task.uid)
     continued = await backend.continue_task(
         creation.task.uid,
         {
@@ -352,6 +358,7 @@ async def test_local_backend_continues_and_cancels_interrupted_a2a_task(tmp_path
     )
     canceled = await backend.cancel_task(creation.task.uid)
 
+    assert interrupted_attempt.state == "interrupted"
     assert interrupted.status == "input_required"
     assert continued.status == "submitted"
     assert continued.latest_message is not None

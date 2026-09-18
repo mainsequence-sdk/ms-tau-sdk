@@ -23,8 +23,8 @@ from .models import (
     AgentCardEnvelope,
     AgentSession,
     AgentTask,
-    AgentTaskCallerDelivery,
     AgentTaskCreateResult,
+    AgentTaskDispatch,
     AgentTaskEventPage,
     AgentTaskExecutionAttempt,
     AgentTaskSnapshot,
@@ -61,8 +61,6 @@ from .routes import (
     agent_session_tau_resume_snapshot,
     agent_session_tau_runtime_activity,
     agent_session_tau_runtime_bootstrap,
-    agent_task_caller_delivery,
-    agent_task_caller_delivery_operation,
     agent_task_operation,
     model_provider_credentials,
 )
@@ -690,83 +688,151 @@ class MainSequenceClient:
         *,
         holder_id: str,
         lease_token: str,
-        dispatch_uid: str | None = None,
+        dispatch_uid: str,
+        executor_runtime_id: str = "",
         executor_instance_id: str = "",
     ) -> AgentTaskExecutionAttempt:
         payload: dict[str, Any] = {
             "holder_id": holder_id,
             "lease_token": lease_token,
+            "dispatch_uid": dispatch_uid,
+            "executor_runtime_id": executor_runtime_id,
             "executor_instance_id": executor_instance_id,
         }
-        if dispatch_uid:
-            payload["dispatch_uid"] = dispatch_uid
         data = await self._request(
             "POST",
-            agent_task_operation(task_uid, "claim-dispatch"),
+            agent_task_operation(task_uid, "dispatches/claim"),
             json=payload,
             idempotent=True,
         )
         return AgentTaskExecutionAttempt.model_validate(data)
 
-    async def add_task_attempt_message(
+    async def list_task_dispatches(self, task_uid: str) -> list[AgentTaskDispatch]:
+        data = await self._request(
+            "GET",
+            agent_task_operation(task_uid, "dispatches"),
+            idempotent=True,
+        )
+        return TypeAdapter(list[AgentTaskDispatch]).validate_python(data)
+
+    async def start_task_attempt(
         self,
         task_uid: str,
         *,
         attempt_uid: str,
         holder_id: str,
         lease_token: str,
-        message: Mapping[str, Any],
-    ) -> dict[str, Any]:
+    ) -> AgentTaskExecutionAttempt:
         data = await self._request(
             "POST",
-            agent_task_operation(task_uid, "attempt-messages"),
+            agent_task_operation(task_uid, "attempts/start"),
             json={
                 "attempt_uid": attempt_uid,
                 "holder_id": holder_id,
                 "lease_token": lease_token,
-                **dict(message),
             },
             idempotent=True,
         )
-        if not isinstance(data, dict):
-            raise BackendError("Backend task message response is invalid")
-        return data
+        return AgentTaskExecutionAttempt.model_validate(data)
 
-    async def mutate_task_output(
+    async def create_task_output(
         self,
         task_uid: str,
         *,
         attempt_uid: str,
         holder_id: str,
         lease_token: str,
-        operation: str,
         artifact_id: str,
         parts: list[dict[str, Any]],
-        expected_revision: int | None = None,
         name: str = "",
+        description: str = "",
         metadata: Mapping[str, Any] | None = None,
+        extensions: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "attempt_uid": attempt_uid,
             "holder_id": holder_id,
             "lease_token": lease_token,
-            "operation": operation,
             "artifact_id": artifact_id,
             "parts": parts,
             "name": name,
+            "description": description,
         }
-        if expected_revision is not None:
-            payload["expected_revision"] = expected_revision
         if metadata is not None:
             payload["metadata"] = dict(metadata)
+        if extensions is not None:
+            payload["extensions"] = dict(extensions)
         data = await self._request(
             "POST",
-            agent_task_operation(task_uid, "attempt-outputs"),
+            agent_task_operation(task_uid, "outputs/create"),
             json=payload,
             idempotent=True,
         )
         if not isinstance(data, dict):
-            raise BackendError("Backend Task output response is invalid")
+            raise BackendError("Backend Task output-create response is invalid")
+        return data
+
+    async def append_task_output(
+        self,
+        task_uid: str,
+        *,
+        attempt_uid: str,
+        holder_id: str,
+        lease_token: str,
+        output_uid: str,
+        expected_revision: int,
+        parts: list[dict[str, Any]],
+        metadata: Mapping[str, Any] | None = None,
+        extensions: Mapping[str, Any] | None = None,
+        last_chunk: bool = False,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "attempt_uid": attempt_uid,
+            "holder_id": holder_id,
+            "lease_token": lease_token,
+            "output_uid": output_uid,
+            "expected_revision": expected_revision,
+            "parts": parts,
+            "last_chunk": last_chunk,
+        }
+        if metadata is not None:
+            payload["metadata"] = dict(metadata)
+        if extensions is not None:
+            payload["extensions"] = dict(extensions)
+        data = await self._request(
+            "POST",
+            agent_task_operation(task_uid, "outputs/append"),
+            json=payload,
+            idempotent=True,
+        )
+        if not isinstance(data, dict):
+            raise BackendError("Backend Task output-append response is invalid")
+        return data
+
+    async def finalize_task_output(
+        self,
+        task_uid: str,
+        *,
+        attempt_uid: str,
+        holder_id: str,
+        lease_token: str,
+        output_uid: str,
+        expected_revision: int,
+    ) -> dict[str, Any]:
+        data = await self._request(
+            "POST",
+            agent_task_operation(task_uid, "outputs/finalize"),
+            json={
+                "attempt_uid": attempt_uid,
+                "holder_id": holder_id,
+                "lease_token": lease_token,
+                "output_uid": output_uid,
+                "expected_revision": expected_revision,
+            },
+            idempotent=True,
+        )
+        if not isinstance(data, dict):
+            raise BackendError("Backend Task output-finalize response is invalid")
         return data
 
     async def settle_task_attempt(
@@ -778,9 +844,9 @@ class MainSequenceClient:
         lease_token: str,
         status: str,
         status_message: Mapping[str, Any] | None = None,
-        failure_category: str = "",
-        detail: str = "",
-    ) -> AgentTask:
+        outcome_category: str = "",
+        failure_detail: str = "",
+    ) -> AgentTaskExecutionAttempt:
         payload: dict[str, Any] = {
             "attempt_uid": attempt_uid,
             "holder_id": holder_id,
@@ -789,17 +855,17 @@ class MainSequenceClient:
         }
         if status_message is not None:
             payload["status_message"] = dict(status_message)
-        if failure_category:
-            payload["failure_category"] = failure_category
-        if detail:
-            payload["detail"] = detail
+        if outcome_category:
+            payload["outcome_category"] = outcome_category
+        if failure_detail:
+            payload["failure_detail"] = failure_detail
         data = await self._request(
             "POST",
-            agent_task_operation(task_uid, "settle-attempt"),
+            agent_task_operation(task_uid, "attempts/settle"),
             json=payload,
             idempotent=True,
         )
-        return AgentTask.model_validate(data)
+        return AgentTaskExecutionAttempt.model_validate(data)
 
     async def continue_task(
         self,
@@ -813,54 +879,6 @@ class MainSequenceClient:
             idempotent=True,
         )
         return AgentTask.model_validate(data)
-
-    async def get_task_caller_delivery(
-        self,
-        delivery_uid: str,
-    ) -> AgentTaskCallerDelivery:
-        data = await self._request(
-            "GET",
-            agent_task_caller_delivery(delivery_uid),
-            idempotent=True,
-        )
-        return AgentTaskCallerDelivery.model_validate(data)
-
-    async def claim_task_caller_delivery(
-        self,
-        delivery_uid: str,
-        *,
-        holder_id: str,
-        lease_token: str,
-    ) -> AgentTaskCallerDelivery:
-        data = await self._request(
-            "POST",
-            agent_task_caller_delivery_operation(delivery_uid, "claim"),
-            json={"holder_id": holder_id, "lease_token": lease_token},
-            idempotent=True,
-        )
-        return AgentTaskCallerDelivery.model_validate(data)
-
-    async def settle_task_caller_delivery(
-        self,
-        delivery_uid: str,
-        *,
-        holder_id: str,
-        lease_token: str,
-        outcome: str,
-        detail: str = "",
-    ) -> AgentTaskCallerDelivery:
-        data = await self._request(
-            "POST",
-            agent_task_caller_delivery_operation(delivery_uid, "settle"),
-            json={
-                "holder_id": holder_id,
-                "lease_token": lease_token,
-                "outcome": outcome,
-                "detail": detail,
-            },
-            idempotent=True,
-        )
-        return AgentTaskCallerDelivery.model_validate(data)
 
     async def cancel_task(self, task_uid: str) -> AgentTask:
         data = await self._request(

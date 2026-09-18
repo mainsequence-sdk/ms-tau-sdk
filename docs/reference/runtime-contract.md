@@ -53,6 +53,23 @@ The executable operation contract covers:
 The exact methods and paths are frozen in `tests/contract/test_http_surface.py`. Wire examples and
 schema behavior are tested rather than duplicated manually here.
 
+### Managed AgentTask execution
+
+Django owns the durable AgentTask state machine and route contract. A managed runtime lists the
+Task's dispatches when needed, claims the selected dispatch through `dispatches/claim`, explicitly
+starts the returned attempt through `attempts/start`, writes artifacts through
+`outputs/create`, `outputs/append`, and `outputs/finalize`, then settles the attempt through
+`attempts/settle`. Settlement returns an attempt record; the runtime reads the Task afterward for
+the resulting protocol state. The SDK does not post attempt Messages or use combined mutation or
+route aliases that Django does not expose.
+
+Caller delivery flows in the other direction. Django sends the signed internal delivery signal,
+including the canonical caller AgentSession UID as a selector. The runtime persists the platform
+event idempotently by delivery UID and flushes session storage before returning success, then
+schedules the caller continuation. A busy caller session returns conflict so Django retains and
+retries the delivery. The SDK does not read, claim, or settle caller-delivery records through
+Django.
+
 ### Deployment readiness
 
 Managed deployments expose the platform-owned `GET /ms-health-deployment`
