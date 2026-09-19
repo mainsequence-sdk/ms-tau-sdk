@@ -10,7 +10,7 @@ def test_distribution_metadata_and_sdist_allowlist_are_explicit() -> None:
     project = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
 
     assert project["project"]["name"] == "ms-tau-sdk"
-    assert project["project"]["version"] == "1.2.3"
+    assert project["project"]["version"] == "2.0.0"
     assert "Development Status :: 5 - Production/Stable" in project["project"]["classifiers"]
     assert project["project"]["readme"] == "README.md"
     assert project["project"]["urls"]["Repository"] == (
