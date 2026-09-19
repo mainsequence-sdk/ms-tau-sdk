@@ -55,6 +55,14 @@ parent only with `TAU_LOCAL_STATE_ROOT`. Local state is never uploaded or attach
 AgentSession when local mode is disabled. Stop all processes for the workspace before moving or
 deleting its workspace-hash directory.
 
+Local operational events are also written as structured JSON Lines to
+`~/.tau/mainsequence/<workspace-hash>/logs/tau.jsonl` (or beneath `TAU_LOCAL_STATE_ROOT`). The
+file sink is mandatory in local mode even when console logging is enabled. Read the current file
+and its five rotated backups when diagnosing startup, provider, MCP, A2A, or project-extension
+failures. The SDK log does not capture arbitrary extension `print()` output; project-owned code
+must use propagating Python logging and must not log secrets or prompt/tool payloads. A failure to
+open the file stops startup; the logs are never uploaded to an AgentSession.
+
 ## Public local A2A contract
 
 An A2A protocol Task is local coordination state, not a platform `AgentTask`, and does not require

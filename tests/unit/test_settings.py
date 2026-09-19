@@ -117,6 +117,9 @@ def test_local_mode_is_workspace_scoped_and_loopback_by_default(tmp_path):
     assert settings.local_provider == "openai"
     assert settings.local_model == "gpt-5.4"
     assert settings.local_state_path.parent == (tmp_path / "state" / settings.workspace_digest)
+    assert settings.local_log_path == (
+        tmp_path / "state" / settings.workspace_digest / "logs" / "tau.jsonl"
+    )
     assert settings.local_session_uid(None) == (f"local-{settings.workspace_digest}-default")
     assert settings.local_session_uid("demo") == settings.local_session_uid("demo")
     assert settings.local_session_uid("demo") != settings.local_session_uid("other")

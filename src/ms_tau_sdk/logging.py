@@ -7,13 +7,17 @@ import json
 import logging
 import os
 import re
+import stat
 import sys
 import time
 import uuid
 from collections.abc import Mapping
+from pathlib import Path
+from types import TracebackType
 from typing import Any, cast
 
 import structlog
+from concurrent_log_handler import ConcurrentRotatingFileHandler
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from structlog.contextvars import (
     bind_contextvars,
@@ -35,6 +39,7 @@ SENSITIVE_EXACT_KEYS = {
     "credential",
     "credentials",
     "error_message",
+    "exception",
     "messages",
     "password",
     "prompt",
@@ -71,6 +76,9 @@ RUNTIME_INSTANCE_UID = str(uuid.uuid4())
 PROCESS_STARTED_AT = time.monotonic()
 PLATFORM_PROBE_PATHS = frozenset({"/health", "/ready", "/ms-health-deployment"})
 PROBE_FAILURE_LOG_INTERVAL_SECONDS = 60.0
+LOCAL_LOG_MAX_BYTES = 10 * 1024 * 1024
+LOCAL_LOG_BACKUP_COUNT = 5
+MAX_EXCEPTION_FRAMES = 24
 PLATFORM_EVENT_PREFIXES = (
     "http.request.",
     "runtime.",
@@ -271,6 +279,43 @@ def _sanitize_event(
     return {str(key): _sanitize(value, key=str(key)) for key, value in event_dict.items()}
 
 
+def _safe_exception(
+    _logger: WrappedLogger,
+    _method_name: str,
+    event_dict: EventDict,
+) -> EventDict:
+    """Retain traceback locations, never an exception's untrusted message or locals."""
+
+    exc_info = event_dict.pop("exc_info", None)
+    if exc_info is True:
+        exc_info = sys.exc_info()
+    if not isinstance(exc_info, tuple) or len(exc_info) != 3:
+        return event_dict
+
+    error_type, error, traceback_node = exc_info
+    if isinstance(error_type, type):
+        event_dict.setdefault("error_type", error_type.__name__)
+    elif error is not None:
+        event_dict.setdefault("error_type", type(error).__name__)
+
+    frames: list[dict[str, object]] = []
+    while isinstance(traceback_node, TracebackType) and len(frames) < MAX_EXCEPTION_FRAMES:
+        code = traceback_node.tb_frame.f_code
+        frames.append(
+            {
+                "filename": code.co_filename,
+                "lineno": traceback_node.tb_lineno,
+                "func_name": code.co_name,
+            }
+        )
+        traceback_node = traceback_node.tb_next
+    if frames:
+        event_dict["exception_frames"] = frames
+    if isinstance(traceback_node, TracebackType):
+        event_dict["exception_frames_truncated"] = True
+    return event_dict
+
+
 class ClickableConsoleRenderer(structlog.dev.ConsoleRenderer):
     """Render readable one-line logs without dropping structured fields."""
 
@@ -300,7 +345,7 @@ def _common_processors() -> list[Processor]:
         _bind_context,
         _add_google_cloud_trace_fields,
         structlog.dev.set_exc_info,
-        structlog.processors.format_exc_info,
+        _safe_exception,
         structlog.processors.StackInfoRenderer(),
         structlog.processors.CallsiteParameterAdder(CALLSITE_PARAMETERS),
         _add_source,
@@ -312,6 +357,20 @@ def _common_processors() -> list[Processor]:
     ]
 
 
+def _formatter(
+    *,
+    renderer: Processor,
+    foreign_pre_chain: list[Processor],
+) -> structlog.stdlib.ProcessorFormatter:
+    return structlog.stdlib.ProcessorFormatter(
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            renderer,
+        ],
+        foreign_pre_chain=foreign_pre_chain,
+    )
+
+
 def _handler(
     *,
     stream: Any,
@@ -319,15 +378,46 @@ def _handler(
     foreign_pre_chain: list[Processor],
 ) -> logging.Handler:
     handler = logging.StreamHandler(stream)
+    handler.setFormatter(_formatter(renderer=renderer, foreign_pre_chain=foreign_pre_chain))
+    handler._ms_tau_owned = True  # type: ignore[attr-defined]
+    return handler
+
+
+def _local_file_handler(path: Path, processors: list[Processor]) -> logging.Handler:
+    log_dir = path.parent
+    if log_dir.is_symlink():
+        raise OSError(f"Local log directory must not be a symlink: {log_dir}")
+    log_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    log_dir.chmod(0o700)
+
+    flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags, 0o600)
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            raise OSError(f"Local log path is not a regular file: {path}")
+        os.fchmod(descriptor, 0o600)
+    finally:
+        os.close(descriptor)
+
+    handler = ConcurrentRotatingFileHandler(
+        path,
+        maxBytes=LOCAL_LOG_MAX_BYTES,
+        backupCount=LOCAL_LOG_BACKUP_COUNT,
+        encoding="utf-8",
+        chmod=0o600,
+        umask=0o177,
+    )
     handler.setFormatter(
-        structlog.stdlib.ProcessorFormatter(
-            processors=[
-                structlog.stdlib.ProcessorFormatter.remove_processors_meta,
-                renderer,
-            ],
-            foreign_pre_chain=foreign_pre_chain,
+        _formatter(
+            renderer=structlog.processors.JSONRenderer(
+                serializer=json.dumps,
+                default=str,
+                separators=(",", ":"),
+            ),
+            foreign_pre_chain=processors,
         )
     )
+    handler._ms_tau_owned = True  # type: ignore[attr-defined]
     return handler
 
 
@@ -336,11 +426,13 @@ def configure_logging(
     *,
     machine_sink: bool = True,
     human_sink: bool = False,
+    file_path: Path | None = None,
 ) -> None:
     """Configure native Structlog and foreign stdlib logs through one contract."""
 
-    clear_contextvars()
     processors = _common_processors()
+    file_handler = _local_file_handler(file_path, processors) if file_path is not None else None
+    clear_contextvars()
     structlog.configure(
         processors=[
             *processors,
@@ -375,9 +467,15 @@ def configure_logging(
                 foreign_pre_chain=processors,
             )
         )
+    if file_handler is not None:
+        handlers.append(file_handler)
 
     root = logging.getLogger()
+    old_handlers = list(root.handlers)
     root.handlers.clear()
+    for handler in old_handlers:
+        if getattr(handler, "_ms_tau_owned", False):
+            handler.close()
     root.setLevel(level.upper())
     for handler in handlers:
         root.addHandler(handler)

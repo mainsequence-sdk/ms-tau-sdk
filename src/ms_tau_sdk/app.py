@@ -35,6 +35,7 @@ def create_app(
         resolved.log_level,
         machine_sink=resolved.log_machine_sink,
         human_sink=resolved.log_human_sink,
+        file_path=resolved.local_log_path if resolved.local_mode else None,
     )
     if resolved.local_mode and not resolved.loopback_bind:
         logger.warning(

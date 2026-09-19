@@ -93,3 +93,8 @@ The lease-renew interval must be lower than the lease TTL.
 
 At least one logging sink must be enabled. Payload content and secrets remain redacted regardless of
 the payload setting.
+
+Local mode additionally writes structured JSON Lines to
+`~/.tau/mainsequence/<workspace-hash>/logs/tau.jsonl`, under `TAU_LOCAL_STATE_ROOT` when set. The
+file sink is mandatory and independent of the console sink settings. It rotates at 10 MiB with
+five backups. Managed mode does not create this file.

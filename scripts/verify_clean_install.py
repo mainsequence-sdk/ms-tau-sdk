@@ -88,11 +88,14 @@ def main() -> None:
             "settings = TauSDKSettings(workspace=pathlib.Path.cwd()); "
             "assert create_app(settings).title == 'Main Sequence TAU SDK'; "
             "local = TauSDKSettings("
-            "workspace=pathlib.Path.cwd(), auth_mode='jwt', local_mode=True, "
+            "workspace=pathlib.Path.cwd(), "
+            "local_state_root=pathlib.Path.cwd().parent / 'state', "
+            "auth_mode='jwt', local_mode=True, "
             "access_token='verification-access', refresh_token='verification-refresh', "
             "local_provider='openai', local_model='verification-model'); "
             "assert local.host == '127.0.0.1'; "
-            "assert create_app(local).state.settings.local_mode is True"
+            "assert create_app(local).state.settings.local_mode is True; "
+            "assert local.local_log_path.is_file()"
         )
         subprocess.run(
             [str(python), "-P", "-c", import_check],

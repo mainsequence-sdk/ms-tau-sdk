@@ -296,6 +296,10 @@ class TauSDKSettings(BaseSettings):
         return self.local_state_root / self.workspace_digest / "runtime.sqlite3"
 
     @property
+    def local_log_path(self) -> Path:
+        return self.local_state_root / self.workspace_digest / "logs" / "tau.jsonl"
+
+    @property
     def loopback_bind(self) -> bool:
         return self.host.strip().lower() in {"127.0.0.1", "::1", "localhost"}
 

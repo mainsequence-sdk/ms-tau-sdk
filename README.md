@@ -104,6 +104,11 @@ need managed-gateway caller headers: supplied context IDs are mapped into the wo
 session namespace and local provenance is recorded. Task records and event streams survive process
 restart.
 
+Local mode also appends privacy-filtered, structured JSON Lines to
+`~/.tau/mainsequence/<workspace-hash>/logs/tau.jsonl`, with bounded rotation. Both the database
+and log move under `TAU_LOCAL_STATE_ROOT` when set; neither is written to the project `.tau` or
+uploaded to a platform AgentSession. Console logging remains available.
+
 Platform discovery of the unregistered process, internal backend dispatch/caller-delivery hooks,
 push notifications, and `resume_caller` remain unavailable. Outbound A2A through Main Sequence MCP
 supports Messages and Tasks with polling under authenticated-user semantics. Local mode binds to

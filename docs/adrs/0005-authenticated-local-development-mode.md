@@ -7,6 +7,9 @@ Date: 2026-09-16
 Amended: 2026-09-17 — local A2A Message and Task execution is required; an A2A protocol Task does
 not require a platform AgentSession.
 
+Amended: 2026-09-19 — local mode durably writes structured, privacy-filtered operational logs to a
+workspace-scoped file without changing managed-mode logging.
+
 Amends, when accepted:
 
 - [ADR 0002: Runtime and protocol contracts](./0002-runtime-and-protocol-contracts.md); and
@@ -244,6 +247,27 @@ Local state is a separate namespace. A local session ID must never be interprete
 AgentSession UID. Turning local mode off must not upload, migrate, attach, or replay local history
 into a managed session. Export/import, if later required, needs a separate decision and explicit
 user action.
+
+### 4a. Persist local operational logs
+
+`TAU_LOCAL_MODE=true` also requires one append-only JSON Lines operational log at
+`~/.tau/mainsequence/<workspace-hash>/logs/tau.jsonl`. `TAU_LOCAL_STATE_ROOT` moves the parent of
+both this file and `runtime.sqlite3`; the log is not stored in the tracked project or `.tau`.
+Startup creates the file before serving requests. Failure to create or open it is a startup error,
+not a silent downgrade to console-only logging. Managed mode does not create a local file.
+
+The file receives the same structured, redacted SDK, request, runtime, and propagating Python
+logging events as the existing sinks. Console output remains available independently. The file is
+private to the local user (`0700` log directory, `0600` files), rotated at 10 MiB with five backup
+files, and safe for concurrent local processes in the same workspace. A runtime write failure must
+not abort an agent turn. The SDK does not claim to capture arbitrary `print()` calls, direct
+subprocess output, or project loggers that deliberately bypass Python logging propagation.
+
+Persistent diagnostics must not contain JWTs, provider credentials, prompts, tool arguments or
+results, MCP payloads, or raw exception messages. Exceptions retain their type and bounded
+traceback locations, without exception message text or local variables. The log is local-only; it
+is not attached, uploaded, or synchronized to any Main Sequence AgentSession. Developers are
+responsible for retention and removal of their local state directory.
 
 ### 5. Create local sessions lazily
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.2.5 — 2026-09-19
+
+- Persist local-mode operational events as workspace-scoped, rotated, private JSON Lines while
+  retaining console sinks and leaving managed-mode logging unchanged.
+- Preserve exception types and traceback locations without persisting raw exception messages.
+
 ## 1.2.4 — 2026-09-19
 
 - Retired Agent-targeted one-shot responses, the deployment execution snapshot setting, and
