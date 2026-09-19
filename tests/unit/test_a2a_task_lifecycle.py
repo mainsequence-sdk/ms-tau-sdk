@@ -1,6 +1,6 @@
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from fastapi import HTTPException
@@ -8,7 +8,6 @@ from fastapi import HTTPException
 from ms_tau_sdk.api.a2a import (
     _execute_task,
     _output_contract,
-    _resume_caller_delivery,
     _stream_task_events,
     _task_subscription_events,
     task_caller_delivery_available,
@@ -16,7 +15,7 @@ from ms_tau_sdk.api.a2a import (
 )
 from ms_tau_sdk.backend.models import (
     AgentTask,
-    AgentTaskCallerDelivery,
+    AgentTaskDispatch,
     AgentTaskEvent,
     AgentTaskEventPage,
     AgentTaskExecutionAttempt,
@@ -47,14 +46,25 @@ def _task(status: str = "submitted", *, cancellation_requested: bool = False) ->
 
 def _claimed_client(task: AgentTask) -> AsyncMock:
     client = AsyncMock()
-    client.claim_task_dispatch.return_value = AgentTaskExecutionAttempt(
+    claimed = AgentTaskExecutionAttempt(
         uid="attempt-1",
         dispatch_uid="dispatch-1",
         attempt_number=1,
-        state="running",
+        state="claimed",
     )
+    client.list_task_dispatches.return_value = [
+        AgentTaskDispatch(uid="dispatch-1", state="pending")
+    ]
+    client.claim_task_dispatch.return_value = claimed
+    client.start_task_attempt.return_value = claimed.model_copy(update={"state": "running"})
     client.get_task.return_value = task
     return client
+
+
+def _completed_output_client(client: AsyncMock) -> None:
+    client.create_task_output.return_value = {"uid": "output-1", "revision": 1}
+    client.append_task_output.return_value = {"uid": "output-1", "revision": 2}
+    client.finalize_task_output.return_value = {"uid": "output-1", "revision": 2}
 
 
 class _ExecutionManager:
@@ -129,6 +139,11 @@ async def test_durable_cancellation_intent_is_settled_before_agent_execution():
     canceled = _task("canceled", cancellation_requested=True)
     client = _claimed_client(task)
     client.settle_task_attempt.return_value = canceled
+
+    async def get_task(_task_uid):
+        return canceled if client.settle_task_attempt.await_count else task
+
+    client.get_task.side_effect = get_task
     manager = _ExecutionManager(draining=False)
 
     result = await _execute_task(
@@ -151,7 +166,9 @@ async def test_durable_cancellation_intent_is_settled_before_agent_execution():
         lease_token="lease-1",
         status="canceled",
     )
-    client.mutate_task_output.assert_not_awaited()
+    client.create_task_output.assert_not_awaited()
+    client.append_task_output.assert_not_awaited()
+    client.finalize_task_output.assert_not_awaited()
 
 
 async def test_dispatch_signal_pulls_durable_task_then_claims_before_execution():
@@ -183,10 +200,12 @@ async def test_dispatch_signal_pulls_durable_task_then_claims_before_execution()
     async def get_task(_task_uid):
         nonlocal get_count
         get_count += 1
+        if client.settle_task_attempt.await_count:
+            return completed
         return submitted if get_count == 1 else working
 
     client.get_task.side_effect = get_task
-    client.mutate_task_output.side_effect = [{"revision": 1}, {"revision": 2}]
+    _completed_output_client(client)
     client.settle_task_attempt.return_value = completed
 
     class Manager:
@@ -255,8 +274,9 @@ async def test_attempt_writes_refresh_the_rotating_canonical_session_lease_token
     working = _task("working")
     completed = _task("completed")
     client = _claimed_client(working)
-    client.mutate_task_output.side_effect = [{"revision": 1}, {"revision": 2}]
+    _completed_output_client(client)
     client.settle_task_attempt.return_value = completed
+    client.get_task.return_value = completed
 
     class Manager:
         settings = TauSDKSettings(_env_file=None)
@@ -300,11 +320,9 @@ async def test_attempt_writes_refresh_the_rotating_canonical_session_lease_token
     )
 
     assert client.claim_task_dispatch.await_args.kwargs["lease_token"] == "lease-1"
-    assert [call.kwargs["lease_token"] for call in client.mutate_task_output.await_args_list] == [
-        "lease-2",
-        "lease-3",
-    ]
-    assert client.add_task_attempt_message.await_args.kwargs["lease_token"] == "lease-4"
+    assert client.start_task_attempt.await_args.kwargs["lease_token"] == "lease-2"
+    assert client.create_task_output.await_args.kwargs["lease_token"] == "lease-3"
+    assert client.finalize_task_output.await_args.kwargs["lease_token"] == "lease-4"
     assert client.settle_task_attempt.await_args.kwargs["lease_token"] == "lease-5"
 
 
@@ -313,6 +331,7 @@ async def test_structured_interruption_settles_attempt_without_requiring_text_ou
     interrupted = _task("input_required")
     client = _claimed_client(working)
     client.settle_task_attempt.return_value = interrupted
+    client.get_task.return_value = interrupted
 
     class Manager:
         settings = TauSDKSettings(_env_file=None)
@@ -363,8 +382,9 @@ async def test_structured_interruption_settles_attempt_without_requiring_text_ou
             "inputSchema": {"type": "string"},
         },
     )
-    client.mutate_task_output.assert_not_awaited()
-    client.add_task_attempt_message.assert_not_awaited()
+    client.create_task_output.assert_not_awaited()
+    client.append_task_output.assert_not_awaited()
+    client.finalize_task_output.assert_not_awaited()
 
 
 async def test_streaming_terminal_agent_failure_settles_task_failed_not_completed():
@@ -372,6 +392,7 @@ async def test_streaming_terminal_agent_failure_settles_task_failed_not_complete
     failed = _task("failed")
     client = _claimed_client(working)
     client.settle_task_attempt.return_value = failed
+    client.get_task.return_value = failed
 
     class Manager:
         settings = TauSDKSettings(_env_file=None)
@@ -407,7 +428,6 @@ async def test_streaming_terminal_agent_failure_settles_task_failed_not_complete
             )
         ]
 
-    client.add_task_attempt_message.assert_not_awaited()
     client.settle_task_attempt.assert_awaited_once_with(
         working.uid,
         attempt_uid="attempt-1",
@@ -415,8 +435,8 @@ async def test_streaming_terminal_agent_failure_settles_task_failed_not_complete
         lease_token="lease-1",
         status="failed",
         status_message={"message": "Task execution failed"},
-        failure_category="execution",
-        detail="HTTPException",
+        outcome_category="execution",
+        failure_detail="HTTPException",
     )
 
 
@@ -521,54 +541,53 @@ async def test_task_controls_bind_interruption_to_the_active_attempt():
 
 
 async def test_active_caller_turn_leaves_durable_delivery_queued():
-    delivery = AgentTaskCallerDelivery(
-        uid="delivery-1",
-        task_uid="backend-task-1",
-        task_id="task-1",
-        caller_agent_session_uid="caller-session-1",
-        triggering_event_sequence=8,
-        task_status="completed",
-        state="pending",
-    )
-    client = AsyncMock()
-    client.get_task_caller_delivery.return_value = delivery
     manager = SimpleNamespace(
         session_turn_active=lambda _session_uid: True,
-        task_execution_fence=AsyncMock(),
+        persist_platform_event=AsyncMock(),
     )
 
-    result = await task_caller_delivery_available(
-        {"delivery_uid": delivery.uid},
-        client,
-        manager,
-    )
+    with pytest.raises(HTTPException) as raised:
+        await task_caller_delivery_available(
+            {
+                "delivery_uid": "delivery-1",
+                "task_uid": "backend-task-1",
+                "task_id": "task-1",
+                "caller_agent_session_uid": "caller-session-1",
+                "event_cursor": 8,
+                "status": "completed",
+            },
+            manager,
+        )
 
-    assert result == {
-        "accepted": True,
-        "scheduled": False,
-        "queued": True,
-        "delivery_uid": delivery.uid,
-    }
-    client.claim_task_caller_delivery.assert_not_awaited()
-    manager.task_execution_fence.assert_not_awaited()
+    assert raised.value.status_code == 409
+    manager.persist_platform_event.assert_not_awaited()
 
 
 async def test_caller_delivery_adds_bounded_platform_event_before_resuming():
-    delivery = AgentTaskCallerDelivery(
-        uid="delivery-1",
-        task_uid="backend-task-1",
-        task_id="task-1",
-        caller_agent_session_uid="caller-session-1",
-        triggering_event_sequence=8,
-        task_status="completed",
-        state="claimed",
-    )
-    client = AsyncMock()
-
     class Manager:
         def __init__(self) -> None:
-            self.platform_event = None
+            self.persisted_event = None
+            self.background = None
             self.delivered: list[str] = []
+
+        def session_turn_active(self, _session_uid):
+            return False
+
+        async def persist_platform_event(
+            self,
+            session_uid,
+            platform_event,
+            *,
+            idempotency_key,
+        ):
+            self.persisted_event = (session_uid, platform_event, idempotency_key)
+            return True
+
+        def create_a2a_caller_delivery(self, delivery_uid, coroutine, *, name):
+            assert delivery_uid == "delivery-1"
+            assert name == "a2a-caller-delivery-delivery-1"
+            self.background = coroutine
+            return None, True
 
         async def prompt(
             self,
@@ -578,38 +597,74 @@ async def test_caller_delivery_adds_bounded_platform_event_before_resuming():
             provenance=None,
             platform_event=None,
         ):
-            self.platform_event = platform_event
+            assert platform_event is None
             yield TauRuntimeEvent(type="agent_settled")
-
-        async def task_execution_fence(self, _session_uid):
-            return SimpleNamespace(holder_id="holder-1", lease_token="lease-2")
 
         def mark_response_delivered(self, session_uid: str) -> bool:
             self.delivered.append(session_uid)
             return True
 
     manager = Manager()
-    await _resume_caller_delivery(
-        client=client,
-        manager=manager,  # type: ignore[arg-type]
-        delivery=delivery,
-        holder_id="holder-1",
+    result = await task_caller_delivery_available(
+        {
+            "delivery_uid": "delivery-1",
+            "task_uid": "backend-task-1",
+            "task_id": "task-1",
+            "caller_agent_session_uid": "caller-session-1",
+            "event_cursor": 8,
+            "status": "completed",
+        },
+        manager,  # type: ignore[arg-type]
     )
 
-    assert manager.platform_event == (
-        "io.mainsequence.a2a.task-delivery/v1",
-        {
-            "deliveryUid": "delivery-1",
-            "taskUid": "backend-task-1",
-            "taskId": "task-1",
-            "state": "completed",
-            "eventCursor": 8,
-        },
-    )
-    assert manager.delivered == ["caller-session-1"]
-    client.settle_task_caller_delivery.assert_awaited_once_with(
+    assert result == {
+        "accepted": True,
+        "event_persisted": True,
+        "scheduled": True,
+        "delivery_uid": "delivery-1",
+    }
+    assert manager.persisted_event == (
+        "caller-session-1",
+        (
+            "io.mainsequence.a2a.task-delivery/v1",
+            {
+                "deliveryUid": "delivery-1",
+                "taskUid": "backend-task-1",
+                "taskId": "task-1",
+                "state": "completed",
+                "eventCursor": 8,
+            },
+        ),
         "delivery-1",
-        holder_id="holder-1",
-        lease_token="lease-2",
-        outcome="delivered",
     )
+    assert manager.background is not None
+    await manager.background
+    assert manager.delivered == ["caller-session-1"]
+
+
+async def test_replayed_caller_delivery_does_not_schedule_a_second_continuation():
+    manager = SimpleNamespace(
+        session_turn_active=lambda _session_uid: False,
+        persist_platform_event=AsyncMock(return_value=False),
+        create_a2a_caller_delivery=Mock(),
+    )
+
+    result = await task_caller_delivery_available(
+        {
+            "delivery_uid": "delivery-1",
+            "task_uid": "backend-task-1",
+            "task_id": "task-1",
+            "caller_agent_session_uid": "caller-session-1",
+            "event_cursor": 8,
+            "status": "completed",
+        },
+        manager,
+    )
+
+    assert result == {
+        "accepted": True,
+        "event_persisted": False,
+        "scheduled": False,
+        "delivery_uid": "delivery-1",
+    }
+    manager.create_a2a_caller_delivery.assert_not_called()

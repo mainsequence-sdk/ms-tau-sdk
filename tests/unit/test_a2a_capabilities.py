@@ -22,6 +22,7 @@ from ms_tau_sdk.backend.models import (
     AgentSession,
     AgentTask,
     AgentTaskCreateResult,
+    AgentTaskDispatch,
     AgentTaskExecutionAttempt,
 )
 from ms_tau_sdk.runtime.events import TauRuntimeEvent
@@ -210,15 +211,25 @@ async def test_a2a_stream_emits_incremental_artifact_and_final_task():
     working = task.model_copy(update={"status": "working"})
     completed = task.model_copy(update={"status": "completed"})
     client = AsyncMock()
-    client.claim_task_dispatch.return_value = AgentTaskExecutionAttempt(
+    claimed = AgentTaskExecutionAttempt(
         uid="attempt-1",
         dispatch_uid="dispatch-1",
         attempt_number=1,
-        state="running",
+        state="claimed",
     )
-    client.get_task.return_value = working
-    client.mutate_task_output.side_effect = [{"revision": 1}, {"revision": 2}]
-    client.settle_task_attempt.return_value = completed
+    client.list_task_dispatches.return_value = [
+        AgentTaskDispatch(uid="dispatch-1", state="pending")
+    ]
+    client.claim_task_dispatch.return_value = claimed
+    client.start_task_attempt.return_value = claimed.model_copy(update={"state": "running"})
+    client.create_task_output.return_value = {"uid": "output-1", "revision": 1}
+    client.finalize_task_output.return_value = {"uid": "output-1", "revision": 2}
+
+    async def get_task(_task_uid):
+        return completed if client.settle_task_attempt.await_count else working
+
+    client.get_task.side_effect = get_task
+    client.settle_task_attempt.return_value = claimed.model_copy(update={"state": "completed"})
 
     class Manager:
         draining = False
@@ -261,7 +272,7 @@ async def test_a2a_stream_emits_incremental_artifact_and_final_task():
     ]
     assert events[-1]["final"] is True
     assert events[-1]["task"]["status"]["state"] == "TASK_STATE_COMPLETED"
-    client.add_task_attempt_message.assert_awaited_once()
+    client.start_task_attempt.assert_awaited_once()
     client.settle_task_attempt.assert_awaited_once_with(
         task.uid,
         attempt_uid="attempt-1",

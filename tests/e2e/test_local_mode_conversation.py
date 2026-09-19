@@ -199,8 +199,18 @@ async def test_first_local_chat_reaches_provider_execution(
             }
         )
         continuation_fence = await runtime.task_execution_fence(continuation_context)
+        continuation_dispatch = (
+            await backend.list_task_dispatches(continuation_creation.task.uid)
+        )[0]
         continuation_attempt = await backend.claim_task_dispatch(
             continuation_creation.task.uid,
+            holder_id=continuation_fence.holder_id,
+            lease_token=continuation_fence.lease_token,
+            dispatch_uid=continuation_dispatch.uid,
+        )
+        continuation_attempt = await backend.start_task_attempt(
+            continuation_creation.task.uid,
+            attempt_uid=continuation_attempt.uid,
             holder_id=continuation_fence.holder_id,
             lease_token=continuation_fence.lease_token,
         )

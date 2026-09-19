@@ -27,6 +27,7 @@ from .models import (
     AgentSession,
     AgentTask,
     AgentTaskCreateResult,
+    AgentTaskDispatch,
     AgentTaskEvent,
     AgentTaskEventPage,
     AgentTaskExecutionAttempt,
@@ -480,10 +481,6 @@ class LocalDevelopmentBackend(MainSequenceClient):
             outputs=outputs,
             metadata=self._json_load(row["metadata_json"], {}),
             last_event_sequence=int(row["last_event_sequence"]),
-            dispatch_uid=(str(row["dispatch_uid"]) if row["dispatch_uid"] else None),
-            current_attempt_uid=(
-                str(row["current_attempt_uid"]) if row["current_attempt_uid"] else None
-            ),
         )
 
     def _append_task_event(
@@ -1404,6 +1401,35 @@ class LocalDevelopmentBackend(MainSequenceClient):
 
         return await self._run(operation)
 
+    async def list_task_dispatches(self, task_uid: str) -> list[AgentTaskDispatch]:
+        def operation() -> list[AgentTaskDispatch]:
+            with closing(self._connect()) as connection:
+                task = self._task_row(connection, task_uid)
+                dispatch_uid = str(task["dispatch_uid"] or "")
+                if not dispatch_uid:
+                    return []
+                status = str(task["status"])
+                state = (
+                    "pending"
+                    if status == "submitted"
+                    else "claimed"
+                    if status == "working"
+                    else "settled"
+                )
+                return [
+                    AgentTaskDispatch(
+                        uid=dispatch_uid,
+                        state=cast(Any, state),
+                        current_attempt_uid=(
+                            str(task["current_attempt_uid"])
+                            if task["current_attempt_uid"]
+                            else None
+                        ),
+                    )
+                ]
+
+        return await self._run(operation)
+
     async def get_task_snapshot(self, task_uid: str) -> AgentTaskSnapshot:
         task = await self.get_task(task_uid)
         return AgentTaskSnapshot(task=task, event_cursor=task.last_event_sequence)
@@ -1483,10 +1509,11 @@ class LocalDevelopmentBackend(MainSequenceClient):
         *,
         holder_id: str,
         lease_token: str,
-        dispatch_uid: str | None = None,
+        dispatch_uid: str,
+        executor_runtime_id: str = "",
         executor_instance_id: str = "",
     ) -> AgentTaskExecutionAttempt:
-        del executor_instance_id
+        del executor_runtime_id, executor_instance_id
 
         def operation() -> AgentTaskExecutionAttempt:
             with closing(self._connect()) as connection, connection:
@@ -1507,14 +1534,14 @@ class LocalDevelopmentBackend(MainSequenceClient):
                 assert count is not None
                 attempt_number = int(count["value"]) + 1
                 attempt_uid = str(uuid.uuid4())
-                resolved_dispatch_uid = str(dispatch_uid or task["dispatch_uid"] or uuid.uuid4())
+                resolved_dispatch_uid = str(dispatch_uid)
                 now = _utcnow()
                 connection.execute(
                     """
                     INSERT INTO a2a_task_attempts(
                         uid, task_uid, dispatch_uid, attempt_number, state,
                         holder_id, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, 'running', ?, ?, ?)
+                    ) VALUES (?, ?, ?, ?, 'claimed', ?, ?, ?)
                     """,
                     (
                         attempt_uid,
@@ -1550,36 +1577,47 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     uid=attempt_uid,
                     dispatch_uid=resolved_dispatch_uid,
                     attempt_number=attempt_number,
-                    state="running",
+                    state="claimed",
                 )
 
         return await self._run(operation)
 
-    async def add_task_attempt_message(
+    async def start_task_attempt(
         self,
         task_uid: str,
         *,
         attempt_uid: str,
         holder_id: str,
         lease_token: str,
-        message: Mapping[str, Any],
-    ) -> dict[str, Any]:
-        def operation() -> dict[str, Any]:
+    ) -> AgentTaskExecutionAttempt:
+        def operation() -> AgentTaskExecutionAttempt:
             with closing(self._connect()) as connection, connection:
                 connection.execute("BEGIN IMMEDIATE")
                 task = self._task_row(connection, task_uid)
-                self._validate_task_attempt(
+                attempt = self._validate_task_attempt(
                     connection,
                     task,
                     attempt_uid=attempt_uid,
                     holder_id=holder_id,
                     lease_token=lease_token,
                 )
-                return self._append_task_message(connection, task_uid, message)
+                if str(attempt["state"]) not in {"claimed", "running"}:
+                    raise BackendConflictError("Local A2A task attempt cannot be started")
+                now = _utcnow()
+                connection.execute(
+                    "UPDATE a2a_task_attempts SET state='running', updated_at=? WHERE uid=?",
+                    (_iso(now), attempt_uid),
+                )
+                return AgentTaskExecutionAttempt(
+                    uid=attempt_uid,
+                    dispatch_uid=str(attempt["dispatch_uid"]),
+                    attempt_number=int(attempt["attempt_number"]),
+                    state="running",
+                )
 
         return await self._run(operation)
 
-    async def mutate_task_output(
+    async def _mutate_task_output(
         self,
         task_uid: str,
         *,
@@ -1671,6 +1709,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
                         ),
                     )
                 payload = {
+                    "uid": artifact_id,
                     "artifact_id": artifact_id,
                     "name": resolved_name,
                     "parts": parts,
@@ -1690,6 +1729,81 @@ class LocalDevelopmentBackend(MainSequenceClient):
 
         return await self._run(mutate)
 
+    async def create_task_output(
+        self,
+        task_uid: str,
+        *,
+        attempt_uid: str,
+        holder_id: str,
+        lease_token: str,
+        artifact_id: str,
+        parts: list[dict[str, Any]],
+        name: str = "",
+        description: str = "",
+        metadata: Mapping[str, Any] | None = None,
+        extensions: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del description, extensions
+        return await self._mutate_task_output(
+            task_uid,
+            attempt_uid=attempt_uid,
+            holder_id=holder_id,
+            lease_token=lease_token,
+            operation="create",
+            artifact_id=artifact_id,
+            parts=parts,
+            name=name,
+            metadata=metadata,
+        )
+
+    async def append_task_output(
+        self,
+        task_uid: str,
+        *,
+        attempt_uid: str,
+        holder_id: str,
+        lease_token: str,
+        output_uid: str,
+        expected_revision: int,
+        parts: list[dict[str, Any]],
+        metadata: Mapping[str, Any] | None = None,
+        extensions: Mapping[str, Any] | None = None,
+        last_chunk: bool = False,
+    ) -> dict[str, Any]:
+        del extensions
+        return await self._mutate_task_output(
+            task_uid,
+            attempt_uid=attempt_uid,
+            holder_id=holder_id,
+            lease_token=lease_token,
+            operation="finalize" if last_chunk else "append",
+            artifact_id=output_uid,
+            parts=parts,
+            expected_revision=expected_revision,
+            metadata=metadata,
+        )
+
+    async def finalize_task_output(
+        self,
+        task_uid: str,
+        *,
+        attempt_uid: str,
+        holder_id: str,
+        lease_token: str,
+        output_uid: str,
+        expected_revision: int,
+    ) -> dict[str, Any]:
+        return await self._mutate_task_output(
+            task_uid,
+            attempt_uid=attempt_uid,
+            holder_id=holder_id,
+            lease_token=lease_token,
+            operation="finalize",
+            artifact_id=output_uid,
+            parts=[],
+            expected_revision=expected_revision,
+        )
+
     async def settle_task_attempt(
         self,
         task_uid: str,
@@ -1699,9 +1813,9 @@ class LocalDevelopmentBackend(MainSequenceClient):
         lease_token: str,
         status: str,
         status_message: Mapping[str, Any] | None = None,
-        failure_category: str = "",
-        detail: str = "",
-    ) -> AgentTask:
+        outcome_category: str = "",
+        failure_detail: str = "",
+    ) -> AgentTaskExecutionAttempt:
         allowed = {
             "input_required",
             "auth_required",
@@ -1713,11 +1827,11 @@ class LocalDevelopmentBackend(MainSequenceClient):
         if status not in allowed:
             raise BackendConflictError("Invalid local A2A terminal or interruption status")
 
-        def operation() -> AgentTask:
+        def operation() -> AgentTaskExecutionAttempt:
             with closing(self._connect()) as connection, connection:
                 connection.execute("BEGIN IMMEDIATE")
                 task = self._task_row(connection, task_uid)
-                self._validate_task_attempt(
+                attempt = self._validate_task_attempt(
                     connection,
                     task,
                     attempt_uid=attempt_uid,
@@ -1726,10 +1840,10 @@ class LocalDevelopmentBackend(MainSequenceClient):
                 )
                 now = _utcnow()
                 message_payload = dict(status_message or {})
-                if failure_category:
-                    message_payload["failureCategory"] = failure_category
-                if detail:
-                    message_payload["detail"] = detail
+                if outcome_category:
+                    message_payload["outcomeCategory"] = outcome_category
+                if failure_detail:
+                    message_payload["failureDetail"] = failure_detail
                 connection.execute(
                     """
                     UPDATE a2a_tasks SET status=?, status_message_json=?,
@@ -1762,9 +1876,16 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     status=status,
                     payload={"statusMessage": message_payload} if message_payload else {},
                 )
-                return self._task_from_row(
-                    connection,
-                    self._task_row(connection, task_uid),
+                return AgentTaskExecutionAttempt(
+                    uid=attempt_uid,
+                    dispatch_uid=str(attempt["dispatch_uid"]),
+                    attempt_number=int(attempt["attempt_number"]),
+                    state=cast(
+                        Any,
+                        "interrupted"
+                        if status in {"input_required", "auth_required"}
+                        else status,
+                    ),
                 )
 
         return await self._run(operation)
