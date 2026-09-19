@@ -1,6 +1,6 @@
 # Changelog
 
-## 2.0.0 — 2026-09-19
+## 1.2.4 — 2026-09-19
 
 - Retired Agent-targeted one-shot responses, the deployment execution snapshot setting, and
   Agent-UID-only provider hydration. Chat, local and durable A2A, and session snapshots remain.

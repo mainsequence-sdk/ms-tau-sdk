@@ -404,7 +404,7 @@ wheels = [
 
 [[package]]
 name = "ms-tau-sdk"
-version = "2.0.0"
+version = "1.2.4"
 source = { directory = "../../../" }
 dependencies = [
     { name = "anyio" },
