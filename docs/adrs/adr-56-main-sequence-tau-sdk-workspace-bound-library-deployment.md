@@ -4,6 +4,10 @@ Status: Accepted
 
 Date: 2026-09-16
 
+Amended 2026-09-19 by [ADR 0007](./0007-retire-agent-targeted-sessionless-responses.md):
+the previously retained agent-targeted one-shot response surface and deployment snapshot are
+removed. References to them in the original migration inventory no longer define SDK behavior.
+
 Implementation Status: Complete — C0 through C7, A0 through A4, T0 through T5, and D0 through D5
 are implemented and verified in this repository. Version `1.0.0` artifacts passed the stable gates.
 Creating/pushing the release tag and publishing to PyPI remain explicit release-owner operations,
@@ -55,7 +59,7 @@ The current Python implementation already contains the substance that should sur
 - health and readiness reporting;
 - Assistant UI chat and SSE encoding;
 - A2A messages, tasks, streaming, cancellation, replay, and task controls;
-- agent-targeted sessionless responses;
+- agent-targeted sessionless responses (retired by ADR 0007);
 - runtime-credential exchange and authenticated Main Sequence API access;
 - provider selection, validation, and credential hydration;
 - durable Tau session bootstrap, leases, history and snapshot restore, persistence, settlement,
@@ -135,7 +139,7 @@ The required construction surfaces are:
 - validated SDK settings with a required workspace;
 - a service runner used by the `ms-tau` command;
 - durable Tau session/runtime construction;
-- sessionless response execution;
+- workspace-local A2A execution;
 - lifecycle and shutdown hooks; and
 - version and effective-composition reporting.
 
@@ -269,7 +273,7 @@ tag.
 - supported transport surfaces;
 - client-side authentication exchange;
 - provider hydration and validation;
-- durable and sessionless Tau primitives;
+- durable and workspace-local Tau primitives;
 - persistence and task-control clients;
 - Main Sequence MCP integration;
 - packaged Tau defaults;
@@ -363,11 +367,11 @@ the Python SDK. Decisions owned by other repositories are outside this ADR.
 
 ### Retain after explicit review
 
-- health, readiness, chat, responses, sessions, and A2A route families;
+- health, readiness, chat, sessions, and A2A route families;
 - Assistant UI and A2A streaming/event encoding;
 - runtime-credential client exchange;
 - provider-control client behavior;
-- durable and sessionless Tau execution;
+- durable and workspace-local Tau execution;
 - leases, snapshots, persistence, settlement, cancellation, eviction, and cleanup;
 - Main Sequence MCP integration;
 - protocol-required task controls; and
@@ -397,7 +401,7 @@ SDK artifacts have a proposed disposition.
 - Separate settings, application factory, CLI, routers, authentication client, provider adapter,
   runtime/session management, persistence, Tau resources, and observability into explicit modules.
 - Remove unnecessary import-time side effects.
-- Define construction interfaces for durable and sessionless execution.
+- Define construction interfaces for durable and workspace-local execution.
 - Preserve observable behavior through black-box contracts.
 
 Exit: the temporary command and application factory run through the new internal boundaries with
@@ -431,7 +435,7 @@ serves health without importing `astro`.
 - Create a minimal local fixture project that declares and locks `ms-tau-sdk`.
 - Add its minimal application-factory shim.
 - Run `ms-tau` from the fixture workspace.
-- Exercise auth-client, provider, durable, sessionless, MCP, transport, persistence, cancellation,
+- Exercise auth-client, provider, durable, workspace-local, MCP, transport, persistence, cancellation,
   and shutdown contracts without project-written integration glue.
 
 Exit: the fixture uses only the published SDK surface and its own `.tau` configuration.
@@ -499,7 +503,7 @@ Classify it as portable contract, rewritten SDK test, migration-only test, or de
 
 #### T1 — Preserve black-box behavior
 
-Capture HTTP/OpenAPI, chat streaming, A2A, sessionless response, auth-client, provider, lease,
+Capture HTTP/OpenAPI, chat streaming, A2A, auth-client, provider, lease,
 persistence, snapshot, cancellation, and shutdown behavior without relying on Astro internals.
 
 #### T2 — Build the SDK unit suite
@@ -529,7 +533,7 @@ obsolete material. Give each an SDK destination or deletion rationale.
 
 #### D1 — SDK maintainer documentation
 
-Document public/private boundaries, construction, lifecycle, configuration, durable/sessionless
+Document public/private boundaries, construction, lifecycle, configuration, durable/workspace-local
 execution, transports, and test strategy.
 
 #### D2 — Project-author documentation
@@ -558,10 +562,10 @@ ADR 56 is complete only when:
 
 - the distribution is `ms-tau-sdk` and imports through `ms_tau_sdk`;
 - `ms-tau` starts from a required project workspace;
-- `create_app` exposes the accepted health, chat, response, session, and A2A surfaces;
+- `create_app` exposes the accepted health, chat, session, and A2A surfaces;
 - the current HTTP and streaming contracts pass unless changed by a separate SDK ADR;
 - runtime credentials work through the existing external API contract;
-- durable and sessionless Tau execution pass independent tests;
+- durable and workspace-local Tau execution pass independent tests;
 - SDK defaults and project `.tau` overrides resolve through one Tau configuration model;
 - project extensions work without an Astro enable flag;
 - optional web/video/search/runtime-information tools are absent from the base package;

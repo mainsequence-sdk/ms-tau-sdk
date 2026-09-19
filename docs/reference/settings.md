@@ -70,12 +70,11 @@ runtime-role selector.
 
 The lease-renew interval must be lower than the lease TTL.
 
-## A2A, response assets, and streaming
+## A2A assets and streaming
 
 | Environment variable | Default |
 | --- | --- |
 | `MAINSEQUENCE_TAU_A2A_ASSET_ROOT` | `/tmp/ms-tau-a2a-assets` |
-| `MAINSEQUENCE_TAU_SESSIONLESS_ASSET_ROOT` | `/tmp/ms-tau-sessionless-assets` |
 | `MAINSEQUENCE_TAU_A2A_MAX_INLINE_FILE_BYTES` | `20971520` |
 | `MAINSEQUENCE_TAU_A2A_MAX_AGGREGATE_FILE_BYTES` | `41943040` |
 | `MAINSEQUENCE_TAU_A2A_MAX_INLINE_FILE_COUNT` | `8` |

@@ -135,8 +135,8 @@ are not bundled into the SDK. Main Sequence transport and protocol behavior rema
 - runtime-credential exchange, local user-JWT refresh, and authenticated Main Sequence access
 - provider validation and credential hydration
 - durable Tau sessions, leases, restore, persistence, cancellation, eviction, and shutdown
-- sessionless Tau execution
-- chat, responses, SSE, A2A, health, and readiness transports
+- local Tau execution without backend AgentSession pre-creation
+- chat, SSE, A2A, health, and readiness transports
 - Main Sequence MCP and protocol-required task controls
 - packaged defaults that participate in Tau's normal workspace configuration
 - explicit, version-matched development skills for repository integration, local debugging,

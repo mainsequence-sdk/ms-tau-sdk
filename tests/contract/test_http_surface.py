@@ -18,8 +18,6 @@ EXPECTED_OPERATIONS = frozenset(
         ("GET", "/api/a2a/v1/tasks/{task_id}/pushNotificationConfigs/{config_id}"),
         ("POST", "/api/a2a/v1/tasks/{task_id}:cancel"),
         ("GET", "/api/a2a/v1/tasks/{task_id}:subscribe"),
-        ("POST", "/api/agents/{agent_uid}/responses"),
-        ("POST", "/api/agents/{agent_uid}/responses/stream"),
         ("GET", "/api/chat"),
         ("POST", "/api/chat"),
         ("POST", "/api/chat/mock"),
@@ -44,6 +42,11 @@ def test_http_operation_surface_is_explicit(sdk_app: FastAPI) -> None:
     )
 
     assert actual_operations == EXPECTED_OPERATIONS
+
+
+def test_agent_targeted_one_shot_routes_are_absent(sdk_app: FastAPI) -> None:
+    paths = sdk_app.openapi()["paths"]
+    assert not any(path.startswith("/api/agents/") for path in paths)
 
 
 def test_internal_a2a_control_signals_return_backend_compatible_success(

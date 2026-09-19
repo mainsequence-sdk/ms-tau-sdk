@@ -4,7 +4,7 @@ Main Sequence TAU SDK packages the Python primitives required to run Tau as a Ma
 agent inside a project workspace.
 
 The SDK owns application construction and lifecycle, authenticated Main Sequence clients, provider
-evidence validation, durable and sessionless Tau execution, persistence, transports, protocol tools,
+evidence validation, durable and local Tau execution, persistence, transports, protocol tools,
 resource defaults, diagnostics, and shutdown.
 
 Tau owns the agent loop, native project resource resolution, extension lifecycle, provider

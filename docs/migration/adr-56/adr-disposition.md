@@ -29,7 +29,7 @@ Owner for every row: Main Sequence TAU SDK. Records outside this repository are 
 | ADR 41 | Remove `agent_unique_id` | Re-adopt | Keep UID-only identity and no legacy alias in SDK models. |
 | ADR 42 | A2A file parts and PDF intake | Amend/reissue | Preserve bounded file/PDF transport handling as an SDK protocol capability. |
 | ADR 43 | Backend-backed A2A task gap analysis | Supersede | ADR 54 and current task contracts replace the gap analysis. |
-| ADR 44 | Agent-targeted sessionless responses | Re-adopt | Preserve direct `AgentHarness` execution independently from durable sessions. |
+| ADR 44 | Agent-targeted sessionless responses | Superseded by ADR 0007 | Remove the separate one-shot model endpoint and its deployment snapshot. |
 | ADR 45 | Nonblocking Tau runtime I/O | Re-adopt | Preserve nonblocking request paths and bounded background work. |
 | ADR 46 | Disable A2A push notifications | Supersede/amend | Follow the currently implemented task notification contract verified by route tests. |
 | ADR 47 | Explicit A2A response kind | Amend/reissue | Preserve the wire-level response-kind behavior if contract tests confirm it; rewrite Astro ownership and verification for the SDK service. |
@@ -54,10 +54,11 @@ and the unnumbered runtime decisions used by the current Python implementation.
 ## Final Decision Homes
 
 - ADR 0001 owns the library identity, public API, workspace, lifecycle, and artifact boundary.
-- ADR 0002 re-adopts the reviewed transport, authentication, provider, durable/sessionless,
+- ADR 0002 re-adopts the reviewed transport, authentication, provider, durable/local,
   persistence, A2A, MCP, observability, and shutdown contracts.
 - ADR 0003 amends configuration ownership around native project Tau resources and trust.
 - ADR 0004 reissues the minimal bundled-tool boundary.
+- ADR 0007 retires the Agent-targeted one-shot response surface retained by the original migration.
 - Eliminated image, overlay, optional-workspace, runtime-role, parallel prompt, interactive sign-in,
   and optional-tool decisions remain only under `docs/history/astro`.
 - `docs/adrs/README.md` is the sole active decision index.

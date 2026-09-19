@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Retired Agent-targeted one-shot responses, the deployment execution snapshot setting, and
+  Agent-UID-only provider hydration. Chat, local and durable A2A, and session snapshots remain.
+
 ## 1.2.3 — 2026-09-18
 
 - Hard-cut the managed runtime contract to the canonical Tau 0.4.2 handshake: lease acquire and

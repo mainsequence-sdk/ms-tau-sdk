@@ -19,7 +19,7 @@ from typing import Literal
 
 PROVENANCE_NAMESPACE = "io.mainsequence.provenance"
 
-type TurnChannel = Literal["chat", "a2a", "responses"]
+type TurnChannel = Literal["chat", "a2a"]
 type TurnOrigin = Literal["user", "agent"]
 type TurnProvenance = dict[str, str]
 type CallerKind = Literal["user", "agent"]
@@ -46,7 +46,6 @@ _AGENT_ONLY_HEADERS = (
 _ORIGIN_BY_CHANNEL: dict[str, TurnOrigin] = {
     "chat": "user",
     "a2a": "agent",
-    "responses": "agent",
 }
 
 

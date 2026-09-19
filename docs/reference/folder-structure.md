@@ -2,7 +2,6 @@
 
 ```text
 ├── src/ms_tau_sdk/
-│   ├── agents/       # sessionless harness construction
 │   ├── agent_skills/ # version-matched development instructions
 │   ├── api/          # FastAPI transport routers
 │   ├── backend/      # authenticated API and MCP clients

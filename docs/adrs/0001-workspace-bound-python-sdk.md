@@ -32,7 +32,7 @@ Every process is bound to one existing readable project workspace. The workspace
 current directory and may be selected with `MAINSEQUENCE_TAU_WORKSPACE` or `TauSDKSettings`.
 
 The SDK supplies the complete accepted Python behavior: application lifecycle, Main Sequence
-authentication client, backend and MCP transports, provider construction, durable and sessionless
+authentication client, backend and MCP transports, provider construction, durable and local
 Tau execution, persistence, streaming, A2A, cancellation, observability, and shutdown. A project
 does not rewrite those integrations.
 

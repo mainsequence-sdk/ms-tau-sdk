@@ -91,9 +91,7 @@ identity:
 - A2A push-notification configuration; and
 - `resume_caller` Task completion.
 
-Agent-targeted `/api/agents/{agent_uid}/responses` routes also remain unavailable because local
-mode deliberately has no registered Agent target. These are the only A2A-adjacent capability
-boundaries; public local Message and Task requests must not return
+These are the only A2A-adjacent capability boundaries; public local Message and Task requests must not return
 `local_mode_capability_unsupported`.
 
 ## Outbound A2A through Main Sequence MCP

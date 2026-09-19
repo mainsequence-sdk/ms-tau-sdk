@@ -16,15 +16,6 @@ request with session uid
   -> atomic entry batches and turn settlement
 ```
 
-Sessionless execution:
-
-```text
-agent-targeted response request
-  -> provider credential hydration
-  -> direct Tau AgentHarness
-  -> one response (the SSE form currently emits the completed result)
-```
-
 Local development execution:
 
 ```text
@@ -45,7 +36,6 @@ The executable operation contract covers:
 
 - `/health`, `/ready`, and `/version`;
 - `/api/chat`, mock chat, session model, and cancellation;
-- agent-targeted response and response-stream routes;
 - A2A message send/stream, task list/get/cancel/subscribe, push-notification compatibility routes,
   and JSON-RPC; and
 - controlled internal dispatch and caller-delivery availability routes.
@@ -80,7 +70,6 @@ remains outside the SDK's public FastAPI operation surface.
 | A2A Task send/stream/list/get/cancel/subscribe/continue | Supported through local SQLite. |
 | Local Agent Card | Supported; advertises Message, Task, and streaming without platform registration. |
 | Outbound A2A through MCP | Message and polled Task flows use authenticated-user semantics. |
-| Agent-targeted responses | `local_mode_capability_unsupported`. |
 | Internal backend dispatch/caller delivery | `local_mode_capability_unsupported`. |
 | Platform discovery, push notifications, `resume_caller` | Unsupported without explicit platform registration/callback support. |
 

@@ -406,7 +406,6 @@ def _materialize_pdfs(
             }
         },
         config,
-        context_policy="required",
         allowed_media_types={"application/pdf"},
     )
     return [item.path for item in prepared.files]
@@ -430,7 +429,6 @@ def _request_parts(body: dict[str, Any], config: TauSDKSettings) -> tuple[dict[s
     prepared = prepare_a2a_input(
         normalized_body,
         config,
-        context_policy="required",
         allowed_media_types={"application/pdf"},
     )
     return prepared.message, prepared.prompt()

@@ -25,7 +25,7 @@ test module and fixture family in this repository; deleted image-only tests are 
 | `tests/unit/test_backend_auth.py` | Portable contract + rewritten imports | Preserve runtime credential exchange, refresh, and failure behavior. |
 | `tests/unit/test_chat_api.py` | Rewritten SDK transport test | Preserve assistant-ui streaming and cancellation behavior. |
 | `tests/unit/test_event_encoding.py` | Portable contract | Preserve accepted stream encoding independent of module path. |
-| `tests/unit/test_llm_endpoint.py` | Rewritten sessionless test | Rename around agent responses and direct `AgentHarness`; preserve intentional buffered streaming semantics unless separately changed. |
+| `tests/unit/test_llm_endpoint.py` | Retired by ADR 0007 | Delete with the agent-targeted one-shot response endpoint; assert route absence in the HTTP contract. |
 | `tests/unit/test_logging.py` | Rewrite for new ontology | Preserve structured fields that remain operationally required; remove Astro/legacy-role assertions. |
 | `tests/unit/test_mainsequence_mcp.py` | Rewritten SDK integration test | Preserve MCP discovery/tool/resource behavior. |
 | `tests/unit/test_project_extensions.py` | Rewrite for one Tau configuration | Remove enable-flag contract; test verified-workspace native `.tau` precedence and lifecycle. |
@@ -36,7 +36,7 @@ test module and fixture family in this repository; deleted image-only tests are 
 | `tests/unit/test_session_api.py` | Rewritten SDK transport test | Preserve accepted session API behavior. |
 | `tests/unit/test_session_storage.py` | Portable persistence test | Govern under reissued ADR 48 and SDK storage primitive. |
 | `tests/unit/test_settings.py` | Replace | Define the new SDK settings contract; delete Astro-prefixed and optional-extension flag assertions. |
-| `tests/unit/test_strict_json.py` | Portable contract | Preserve strict-JSON behavior if agent-response contract is re-adopted. |
+| `tests/unit/test_strict_json.py` | Portable contract | Preserve strict-JSON behavior used by A2A. |
 | `tests/unit/test_system_prompt_policy.py` | Replace with Tau configuration tests | Stop locking an Astro-only prompt injector; verify SDK defaults and native project override precedence. |
 | `tests/fixtures/a2a/` | Portable fixtures pending protocol audit | Version against reissued A2A decisions and generated OpenAPI/contract tests. |
 | `tests/fixtures/sdk-consumer-project/` | Rewritten SDK consumer fixture | Independent locked Python project with a minimal application shim, project Tau configuration, and project-owned extension. |

@@ -46,7 +46,7 @@ async def test_mock_chat_uses_assistant_ui_sse(sdk_client: AsyncClient):
     assert "data: [DONE]" in response.text
 
 
-async def test_local_mode_rejects_only_registered_agent_orchestration_routes(
+async def test_local_mode_rejects_internal_dispatch_and_has_no_one_shot_agent_route(
     asgi_client,
     tmp_path,
 ):
@@ -72,7 +72,7 @@ async def test_local_mode_rejects_only_registered_agent_orchestration_routes(
             json={},
         )
 
-    for rejected in (response, dispatch):
-        assert rejected.status_code == 409
-        assert rejected.json()["error"] == "local_mode_capability_unsupported"
-        assert rejected.json()["detail"]["mode"] == "local"
+    assert response.status_code == 404
+    assert dispatch.status_code == 409
+    assert dispatch.json()["error"] == "local_mode_capability_unsupported"
+    assert dispatch.json()["detail"]["mode"] == "local"

@@ -1,5 +1,9 @@
 # ADR 56 Migration Workspace
 
+ADR 0007 subsequently retired the agent-targeted one-shot response path. This ledger records the
+original completed migration; its sessionless-harness references are historical, not current
+runtime requirements.
+
 This directory is the execution ledger for
 [ADR 56](../../adrs/adr-56-main-sequence-tau-sdk-workspace-bound-library-deployment.md).
 ADR 56 creates Main Sequence TAU SDK as a new project and retires Astro as a deployment product.

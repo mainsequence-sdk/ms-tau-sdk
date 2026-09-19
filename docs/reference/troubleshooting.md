@@ -35,7 +35,7 @@ to one.
 ## Local A2A returns a capability error
 
 Public `/api/a2a` Message and Task routes are supported in local mode. A capability error is valid
-only for agent-targeted Responses, `/internal/a2a` backend delivery hooks, platform discovery of
+only for `/internal/a2a` backend delivery hooks, platform discovery of
 the unregistered local process, push notifications, or `resume_caller`. For local Task completion,
 use polling. Incoming local calls do not need managed-gateway `X-Caller-*` headers. If a public
 Message or Task route returns this error, the running SDK is stale.
