@@ -1882,9 +1882,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     attempt_number=int(attempt["attempt_number"]),
                     state=cast(
                         Any,
-                        "interrupted"
-                        if status in {"input_required", "auth_required"}
-                        else status,
+                        "interrupted" if status in {"input_required", "auth_required"} else status,
                     ),
                 )
 

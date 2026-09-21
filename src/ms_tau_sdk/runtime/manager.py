@@ -921,8 +921,7 @@ class SessionRuntimeManager:
                 if (
                     getattr(entry, "type", None) == "custom"
                     and getattr(entry, "namespace", None) == namespace
-                    and str(getattr(entry, "data", {}).get("deliveryUid") or "")
-                    == idempotency_key
+                    and str(getattr(entry, "data", {}).get("deliveryUid") or "") == idempotency_key
                 ):
                     return False
             await runtime.coding_session.append_custom_entry(namespace, dict(payload))
