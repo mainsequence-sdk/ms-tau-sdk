@@ -426,7 +426,10 @@ class SessionRuntimeManager:
                     tools=tools,
                     session_id=session_uid,
                     append_system_prompt=mainsequence_mcp_resource_prompt(mcp_client),
-                    resource_paths=tau_resource_paths(cwd),
+                    resource_paths=tau_resource_paths(
+                        cwd,
+                        state_home=self.settings.tau_state_home,
+                    ),
                     project_extensions_enabled=True,
                     trust_override="approve",
                 )
