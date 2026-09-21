@@ -70,8 +70,11 @@ jobs:
           --cov-branch
           --cov-report=term-missing:skip-covered
 
-      # The gate above runs Python from `src`, which leaves caches and runtime state behind, and
-      # Hatchling packages whatever it finds there. The wheel must hold tracked source only.
+      # The gate above runs Python from `src`, which leaves bytecode caches behind, and Hatchling
+      # packages whatever it finds there. The wheel must hold tracked source only. Durable Tau
+      # runtime state is written to a workspace state root, not into the package, and
+      # `scripts/verify_distribution.py` rejects any residue that still reaches an artifact; this
+      # step keeps the tree clean before the version is computed.
       - name: Restore a pristine packaged source tree
         run: |
           git clean -xfdq src

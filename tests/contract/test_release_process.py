@@ -1,11 +1,47 @@
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
+import tarfile
 import tomllib
+import zipfile
 from pathlib import Path
+from types import ModuleType
+
+import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 FINAL_VERSION = re.compile(r"\d+\.\d+\.\d+")
+VERIFY_DISTRIBUTION = ROOT / "scripts/verify_distribution.py"
+
+
+def _verify_distribution() -> ModuleType:
+    spec = importlib.util.spec_from_file_location("verify_distribution", VERIFY_DISTRIBUTION)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+def _write_wheel(wheel: Path, extra_paths: list[str]) -> None:
+    """Write a wheel that is valid apart from the paths under test."""
+    required = _verify_distribution().REQUIRED_WHEEL_PATHS
+    with zipfile.ZipFile(wheel, "w") as archive:
+        for path in sorted(set(required) | set(extra_paths)):
+            archive.writestr(path, "")
+        archive.writestr("ms_tau_sdk-1.2.5.dist-info/METADATA", "")
+        archive.writestr(
+            "ms_tau_sdk-1.2.5.dist-info/entry_points.txt",
+            "[console_scripts]\nms-tau = ms_tau_sdk.cli:main\n",
+        )
+
+
+def _write_sdist(sdist: Path, paths: list[str]) -> None:
+    with tarfile.open(sdist, "w:gz") as archive:
+        for path in paths:
+            archive.addfile(tarfile.TarInfo(name=path))
 
 
 def _project() -> dict[str, object]:
@@ -125,3 +161,72 @@ def test_quality_workflow_and_release_workflows_cover_the_release_branches() -> 
 
     assert "- development\n" in quality
     assert "- main\n" in quality
+
+
+def test_the_release_gate_allowlists_what_the_package_actually_ships() -> None:
+    verify = _verify_distribution()
+    packaged = {
+        path.name for path in (ROOT / "src/ms_tau_sdk").iterdir() if path.name != "__pycache__"
+    }
+
+    # Growing the package is a deliberate release-contract change: the gate and the
+    # source tree have to agree on what a distribution may contain.
+    assert verify.ALLOWED_PACKAGE_ENTRIES == packaged
+    assert verify.ALLOWED_PACKAGE_SUFFIXES == {".md", ".py"}
+    assert "state" in verify.FORBIDDEN_PARTS
+
+
+def test_the_release_gate_rejects_runtime_state_inside_a_wheel(tmp_path) -> None:
+    verify = _verify_distribution()
+    wheel = tmp_path / "ms_tau_sdk-1.2.5-py3-none-any.whl"
+    _write_wheel(wheel, ["ms_tau_sdk/resources/state/extensions/llama.cpp.json.lock"])
+
+    with pytest.raises(verify.DistributionError) as error:
+        verify._validate_wheel(
+            wheel,
+            distribution="ms-tau-sdk",
+            version="1.2.5",
+            requires_python=">=3.13",
+            dependency_count=12,
+        )
+
+    assert "state/extensions/llama.cpp.json.lock" in str(error.value)
+
+
+def test_the_release_gate_rejects_unlisted_package_paths_in_a_wheel(tmp_path) -> None:
+    verify = _verify_distribution()
+    wheel = tmp_path / "ms_tau_sdk-1.2.5-py3-none-any.whl"
+    _write_wheel(wheel, ["ms_tau_sdk/resources/models-store.json", "ms_tau_sdk/scratch/notes.md"])
+
+    with pytest.raises(verify.DistributionError) as error:
+        verify._validate_wheel(
+            wheel,
+            distribution="ms-tau-sdk",
+            version="1.2.5",
+            requires_python=">=3.13",
+            dependency_count=12,
+        )
+
+    message = str(error.value)
+    assert "outside the release allowlist" in message
+    assert "models-store.json" in message
+    assert "scratch" in message
+
+
+def test_the_release_gate_rejects_unlisted_package_paths_in_an_sdist(tmp_path) -> None:
+    verify = _verify_distribution()
+    sdist = tmp_path / "ms_tau_sdk-1.2.5.tar.gz"
+    _write_sdist(
+        sdist,
+        [
+            "ms_tau_sdk-1.2.5/README.md",
+            "ms_tau_sdk-1.2.5/pyproject.toml",
+            "ms_tau_sdk-1.2.5/src/ms_tau_sdk/__init__.py",
+            "ms_tau_sdk-1.2.5/src/ms_tau_sdk/resources/credentials.json",
+        ],
+    )
+
+    with pytest.raises(verify.DistributionError) as error:
+        verify._validate_sdist(sdist, distribution="ms-tau-sdk", version="1.2.5")
+
+    assert "credentials.json" in str(error.value)

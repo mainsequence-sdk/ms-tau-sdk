@@ -30,6 +30,20 @@ AGENT_CALLER_HEADERS = {
 }
 
 
+@pytest.fixture(autouse=True)
+def isolated_tau_state_root(monkeypatch, tmp_path_factory) -> None:
+    """Keep Tau runtime state out of the package tree and the developer's home.
+
+    `MAINSEQUENCE_TAU_STATE_ROOT` defaults to an XDG-style user directory, so a
+    test that builds settings without naming a root would otherwise write real
+    runtime state there.
+    """
+    monkeypatch.setenv(
+        "MAINSEQUENCE_TAU_STATE_ROOT",
+        str(tmp_path_factory.mktemp("tau-state")),
+    )
+
+
 @pytest.fixture
 def test_settings(tmp_path) -> TauSDKSettings:
     return TauSDKSettings(

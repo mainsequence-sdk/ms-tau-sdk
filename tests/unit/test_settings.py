@@ -1,6 +1,7 @@
 import pytest
 
 from ms_tau_sdk.errors import ConfigurationError
+from ms_tau_sdk.resources.loader import resource_root
 from ms_tau_sdk.settings import TauSDKSettings
 
 
@@ -142,3 +143,41 @@ def test_local_mode_is_workspace_scoped_and_loopback_by_default(tmp_path):
 def test_managed_mode_rejects_user_jwt_auth():
     with pytest.raises(ValueError, match="supported only when TAU_LOCAL_MODE=true"):
         TauSDKSettings(_env_file=None, auth_mode="jwt")
+
+
+def test_tau_state_home_is_workspace_scoped_and_outside_the_package(tmp_path, monkeypatch):
+    monkeypatch.delenv("MAINSEQUENCE_TAU_STATE_ROOT", raising=False)
+    monkeypatch.setenv("XDG_STATE_HOME", str(tmp_path / "xdg"))
+
+    settings = TauSDKSettings(
+        _env_file=None,
+        runtime_credential_id="credential-id",
+        runtime_credential_secret="credential-secret",
+        workspace=tmp_path,
+    )
+
+    assert settings.state_root == tmp_path / "xdg" / "ms-tau-sdk"
+    assert settings.tau_state_home == (tmp_path / "xdg" / "ms-tau-sdk" / settings.workspace_digest)
+    # The packaged resources are a read-only input; runtime state never lands there.
+    assert resource_root() not in settings.tau_state_home.parents
+
+
+def test_the_state_root_is_explicitly_overridable(tmp_path, monkeypatch):
+    monkeypatch.setenv("MAINSEQUENCE_TAU_STATE_ROOT", str(tmp_path / "from-env"))
+
+    from_env = TauSDKSettings(
+        _env_file=None,
+        runtime_credential_id="credential-id",
+        runtime_credential_secret="credential-secret",
+        workspace=tmp_path,
+    )
+    explicit = TauSDKSettings(
+        _env_file=None,
+        runtime_credential_id="credential-id",
+        runtime_credential_secret="credential-secret",
+        workspace=tmp_path,
+        state_root=tmp_path / "explicit",
+    )
+
+    assert from_env.state_root == (tmp_path / "from-env").resolve()
+    assert explicit.state_root == (tmp_path / "explicit").resolve()
