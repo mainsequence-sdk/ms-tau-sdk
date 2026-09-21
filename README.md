@@ -195,9 +195,10 @@ uv run ruff check .
 uv run mypy
 ```
 
-Releases are immutable and tag-driven. Pushing a tag that exactly matches the package version—for
-example, `v1.0.0`—builds and verifies the wheel and source distribution, then publishes them to
-PyPI through OIDC trusted publishing. No PyPI API token or container registry is involved.
+Releases are immutable, and a merge to `main` is the release. Merging `development` into `main`
+builds and verifies the wheel and source distribution of the version `pyproject.toml` declares,
+publishes them to PyPI through OIDC trusted publishing, and tags the merge—for example, `v1.0.0`.
+No PyPI API token or container registry is involved.
 
 ## Built on Tau
 

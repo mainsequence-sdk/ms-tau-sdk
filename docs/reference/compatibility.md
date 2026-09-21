@@ -23,13 +23,15 @@ consumer, project-configuration, and protocol contracts.
 | --- | --- | --- |
 | `feat/*` | work in progress | nothing |
 | `development` | where features land, by merge or direct push; nothing is tagged here | `X.Y.Z.devN`, automatically |
-| `main` | receives `development` when a release is decided; `vX.Y.Z` is tagged here | `X.Y.Z` |
+| `main` | receives `development` when a release is decided, through a pull request | `X.Y.Z`, automatically, when the pull request is merged |
 
-A release is a plain `vX.Y.Z` tag on `main`. The
-[publish workflow](../../.github/workflows/publish-to-pipy.yml) refuses a tag whose commit `main`
-does not contain, so a tag pushed on any other branch publishes nothing. `development` reaches
-`main` through a **merge commit**; a squash or rebase would create new commits, leave the released
-tags outside `main`, and stop the two branches sharing history.
+A merge to `main` is the release. The
+[publish workflow](../../.github/workflows/publish-to-pipy.yml) runs on the merge, publishes the
+version `pyproject.toml` declares, creates the tag `vX.Y.Z` and the GitHub release itself, and
+raises the patch number on `development`, so no `X.Y.Z.devN` follows the final `X.Y.Z`. A tag pushed
+by hand publishes nothing. `development` reaches `main` through a **merge commit**; a squash or
+rebase would create new commits and stop the two branches sharing history, and the workflow could
+no longer merge the release back into `development`.
 
 Every push to `development` publishes one PEP 440 development release through the
 [development publish workflow](../../.github/workflows/publish-development-release.yml). PyPI does

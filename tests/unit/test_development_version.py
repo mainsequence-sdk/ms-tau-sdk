@@ -58,6 +58,21 @@ def test_a_declared_version_that_is_already_released_is_refused(
         )
 
 
+def test_a_merge_to_main_releases_the_declared_version() -> None:
+    assert development_version.final_version(published=[(1, 2, 5)], declared=(1, 2, 6)) == "1.2.6"
+    assert development_version.final_version(published=[], declared=(1, 0, 0)) == "1.0.0"
+
+
+@pytest.mark.parametrize("declared", [(1, 2, 5), (1, 2, 4)])
+def test_a_merge_to_main_that_carries_a_released_version_is_refused(
+    declared: tuple[int, int, int],
+) -> None:
+    # A merge to `main` is the release. One that still declares a version PyPI has publishes
+    # nothing, instead of failing at upload as a duplicate.
+    with pytest.raises(development_version.DevelopmentVersionError, match="already released"):
+        development_version.final_version(published=[(1, 2, 5)], declared=declared)
+
+
 def test_the_version_after_a_release_is_the_next_patch() -> None:
     assert development_version.next_patch("1.2.6") == "1.2.7"
 

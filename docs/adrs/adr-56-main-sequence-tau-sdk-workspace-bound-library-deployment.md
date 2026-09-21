@@ -8,6 +8,10 @@ Amended 2026-09-19 by [ADR 0007](./0007-retire-agent-targeted-sessionless-respon
 the previously retained agent-targeted one-shot response surface and deployment snapshot are
 removed. References to them in the original migration inventory no longer define SDK behavior.
 
+Amended 2026-09-21: a merge to `main` is the release. The release-owner operation is merging the
+release pull request from `development` into `main`; the release workflow then publishes to PyPI
+and creates the `v<version>` tag itself. See [the release process](../reference/releasing.md).
+
 Implementation Status: Complete — C0 through C7, A0 through A4, T0 through T5, and D0 through D5
 are implemented and verified in this repository. Version `1.0.0` artifacts passed the stable gates.
 Creating/pushing the release tag and publishing to PyPI remain explicit release-owner operations,
