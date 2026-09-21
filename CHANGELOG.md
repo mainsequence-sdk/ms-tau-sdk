@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.7 — 2026-09-21
 
 - A merge to `main` is the release. The release workflow runs on the merge instead of on a
   hand-pushed tag: it publishes the version `pyproject.toml` declares, creates the tag `vX.Y.Z` and
