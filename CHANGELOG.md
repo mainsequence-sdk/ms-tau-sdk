@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- A merge to `main` is the release. The release workflow runs on the merge instead of on a
+  hand-pushed tag: it publishes the version `pyproject.toml` declares, creates the tag `vX.Y.Z` and
+  the GitHub release after the upload, and brings the release merge and the next patch number to
+  `development` in one push, so no `X.Y.Z.devN` can follow the final `X.Y.Z`. A merge that still
+  declares a released version, or whose tag already names another commit, publishes nothing.
 - Stopped discarding the only diagnostic a message-less provider failure carries. When Tau ends a
   turn with `stopReason: "error"` and no `errorMessage`, the status code from the `provider_error`
   diagnostic is composed into the message the user sees (`Provider error (HTTP 402)`) instead of

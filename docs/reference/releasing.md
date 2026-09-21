@@ -62,20 +62,37 @@ Final releases and development releases are published by two different workflows
 [branch and release standard](./compatibility.md#branch-and-release-standard) states which branch
 does which.
 
-### Final releases from a tag on `main`
+### Final releases from a merge to `main`
 
-The
-[`Publish Python package to PyPI`](../../.github/workflows/publish-to-pipy.yml) workflow runs only
-when a `v*` tag is pushed. The tagged commit must be contained in `main`, the tag must exactly
-match `v<pyproject version>`, and that version must head `CHANGELOG.md` (rename `Unreleased` to
-`X.Y.Z — date` in the release change), or the job fails before publication. A tag on a commit `main` does not
-contain publishes nothing. A valid tag builds, verifies, clean-installs, and attests the wheel and
-source distribution before a protected job publishes them with the official PyPA action and trusted
-publishing. The full verified bundle is also retained as a workflow artifact.
+A merge to `main` is the release. The
+[`Publish Python package to PyPI`](../../.github/workflows/publish-to-pipy.yml) workflow runs on
+every push to `main`, and `main` only changes through a pull request, so every run is a release
+merge. Nobody pushes a tag, and a tag pushed by hand publishes nothing. The workflow:
+
+1. reads the version `pyproject.toml` declares and fails when PyPI already has it ("a merge to main
+   is a release and must carry the next version");
+2. fails when a tag `vX.Y.Z` already exists on another commit;
+3. requires that version to head `CHANGELOG.md` (rename `Unreleased` to `X.Y.Z — date` in the
+   release change);
+4. builds, verifies, clean-installs, and attests the wheel and source distribution, then a protected
+   job publishes them with the official PyPA action and trusted publishing. The full verified
+   bundle is also retained as a workflow artifact;
+5. creates the tag `vX.Y.Z` and the GitHub release on the merge commit, after the upload, so a tag
+   always names code that is on PyPI;
+6. merges the release commit into `development`, raises the patch number there, and pushes both in
+   one push (job `Declare the next version on development`).
+
+A failure in steps 1 to 3 publishes nothing. Do not push `main` back to `development` by hand: a
+push by hand before the patch number is raised would publish one more `X.Y.Z.devN` of a version
+that is already final. A pull request into `main` that does not raise the version, a hotfix for
+example, fails at step 1; raise the version in it.
 
 The repository must configure the protected `pypi` GitHub environment and PyPI trusted-publisher
-relationship before a tag can publish. There is no stored PyPI API token. Creating or pushing a tag
-is an explicit release-owner action and is not performed by the build scripts.
+relationship before a merge can publish. There is no stored PyPI API token. The tag ruleset
+"release tags v\*: admins only" must list GitHub Actions as a bypass actor, because the workflow
+creates the tag with the workflow token; without it the `tag` job fails after the upload, and the
+tag and the GitHub release are missing until the job is re-run. Merging the release pull request is
+the explicit release-owner action; the build scripts never publish.
 
 ### Development releases from `development`
 
@@ -109,13 +126,14 @@ Published stable consumers pin the normal distribution version, for example
 `ms-tau-sdk==1.0.0`.
 
 `pyproject.toml` is the only source of the version. On `development` it declares the release being
-worked toward: while it says `1.2.6`, development releases are `1.2.6.devN` and the final release is
-the tag `v1.2.6`. PyPI is read only as a guard: when the declared version is already released, the
+worked toward: while it says `1.2.6`, development releases are `1.2.6.devN` and the merge to `main`
+publishes `1.2.6`. PyPI is read only as a guard: when the declared version is already released, the
 development build fails with "development must declare the next release" instead of publishing under
 a number the repository does not show. After a final release is published, the release workflow
-raises the patch number on `development` by itself (job `Declare the next version on development`);
-that commit is pushed with the workflow token and therefore starts no development release of its
-own. A minor or major release is declared by hand, by writing that version on `development`.
+raises the patch number on `development` by itself (job `Declare the next version on development`),
+so once `1.2.6` is released the next development release is `1.2.7.devN` and there is no further
+`1.2.6.devN`; that commit is pushed with the workflow token and therefore starts no development
+release of its own. A minor or major release is declared by hand, by writing that version on `development`.
 
 `pyproject.toml` is the only file that declares the version. The consumer fixture in
 `tests/fixtures/sdk-consumer-project` resolves the SDK from this checkout rather than naming a
@@ -124,7 +142,7 @@ and `pyproject.toml` and nothing else.
 
 ## Compatibility Review
 
-Before a stable tag, verify the documented public API, settings, HTTP/wire contracts, project
+Before a release merge, verify the documented public API, settings, HTTP/wire contracts, project
 configuration behavior, complete test suite, fixture lock, compatibility notes, and changelog. See
 the [compatibility policy](./compatibility.md), [ownership boundary](./ownership.md), and
 [test gates](./testing.md).

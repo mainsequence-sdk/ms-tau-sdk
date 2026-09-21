@@ -11,9 +11,10 @@ issuance, persistence, and deployment systems. This SDK repository does not modi
 
 Repository maintainers may merge compatible SDK changes after the quality gates pass. A release
 owner additionally reviews the changelog and compatibility impact, confirms the fixture lock and
-clean-install evidence, configures/approves the protected `pypi` environment, and explicitly creates
-the exact `v<version>` tag. Build scripts and ordinary development commits never create or push a
-release tag.
+clean-install evidence, configures/approves the protected `pypi` environment, and explicitly merges
+the release pull request from `development` into `main`. That merge is the release: the release
+workflow publishes it and creates the exact `v<version>` tag afterwards. Build scripts and ordinary
+development commits never create or push a release tag.
 
 Project extensions remain the consuming project's responsibility. The SDK maintainers do not
 review, license, secure, or operate extensions merely because Tau loads them from a project

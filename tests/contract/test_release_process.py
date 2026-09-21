@@ -102,7 +102,10 @@ def test_release_automation_builds_inspects_clean_installs_and_uses_oidc() -> No
     assert "actions/attest-build-provenance@" in workflow
     assert "uv build --no-sources" in workflow
     assert "pypa/gh-action-pypi-publish@" in workflow
-    assert 'tags:\n      - "v*"' in workflow
+    # A merge to `main` is the release: the workflow runs on the merge, never on a tag.
+    assert "branches:\n      - main\n" in workflow
+    assert "tags:" not in workflow
+    assert "cancel-in-progress: false" in workflow
     assert "name: pypi" in workflow
     assert "id-token: write" in workflow
     assert "uv publish" not in workflow
@@ -110,15 +113,30 @@ def test_release_automation_builds_inspects_clean_installs_and_uses_oidc() -> No
     assert "docker" not in workflow.lower()
 
 
-def test_a_final_release_tag_must_be_contained_in_main() -> None:
+def test_a_merge_to_main_is_refused_before_the_build_when_it_cannot_be_released() -> None:
     workflow = (ROOT / ".github/workflows/publish-to-pipy.yml").read_text(encoding="utf-8")
 
-    # A `vX.Y.Z` tag on a commit outside `main` must publish nothing, so the guard runs before any
-    # build step and the checkout has to fetch enough history to answer the containment question.
-    assert "fetch-depth: 0" in workflow
-    assert 'git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main' in workflow
-    guard = workflow.index("Require the release tag to be contained in main")
-    assert guard < workflow.index("uv build --no-sources")
+    # A merge that still declares a released version, or whose `vX.Y.Z` tag already names another
+    # commit, must publish nothing, so both guards run before any build step.
+    version = workflow.index("scripts/compute_development_version.py \\\n            --final")
+    tag_guard = workflow.index("Refuse a tag that already names another commit")
+    changelog = workflow.index("Require the changelog to be headed by the released version")
+    assert version < tag_guard < changelog < workflow.index("uv build --no-sources")
+
+
+def test_the_release_is_tagged_after_the_upload_and_development_moves_to_the_next_version() -> None:
+    workflow = (ROOT / ".github/workflows/publish-to-pipy.yml").read_text(encoding="utf-8")
+
+    # The tag and the GitHub release follow the upload, so `vX.Y.Z` always names code on PyPI.
+    publish = workflow.index("pypa/gh-action-pypi-publish@")
+    assert publish < workflow.index('gh release create "$RELEASE_TAG" --target "$GITHUB_SHA"')
+
+    # `development` gets the release merge and the next patch number in one push, so no
+    # `X.Y.Z.devN` can follow the final `X.Y.Z`.
+    merge = workflow.index('git merge --no-edit "$GITHUB_SHA"')
+    bump = workflow.index("scripts/compute_development_version.py --bump-patch")
+    assert publish < merge < bump < workflow.index("git push origin HEAD:development")
+    assert workflow.count("git push") == 1
 
 
 def test_development_pushes_publish_a_gated_development_release() -> None:
