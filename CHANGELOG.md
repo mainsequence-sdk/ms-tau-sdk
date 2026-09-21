@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Adopted one branch and release standard. A final release is a `vX.Y.Z` tag on `main`, and the
+  publish workflow refuses a tag whose commit `main` does not contain. Every push to `development`
+  publishes one `X.Y.Z.devN` release automatically, after the same quality gate as `quality.yml`
+  and only when it passes. `pip` and `uv` ignore development releases unless one is pinned exactly.
+- Made `pyproject.toml` the only file that declares the version. The consumer fixture resolves the
+  SDK from the checkout instead of naming a version, and the contract tests read the declared
+  version rather than repeating it.
+
 ## 1.2.5 — 2026-09-19
 
 - Persist local-mode operational events as workspace-scoped, rotated, private JSON Lines while

@@ -36,20 +36,59 @@ distributions.
 
 ## Registry Publication
 
+Final releases and development releases are published by two different workflows. The
+[branch and release standard](./compatibility.md#branch-and-release-standard) states which branch
+does which.
+
+### Final releases from a tag on `main`
+
 The
 [`Publish Python package to PyPI`](../../.github/workflows/publish-to-pipy.yml) workflow runs only
-when a `v*` tag is pushed. The tag must exactly match `v<pyproject version>` or the job fails before
-publication. A valid tag builds, verifies, clean-installs, and attests the wheel and source
-distribution before a protected job publishes them with the official PyPA action and trusted
+when a `v*` tag is pushed. The tagged commit must be contained in `main` and the tag must exactly
+match `v<pyproject version>`, or the job fails before publication. A tag on a commit `main` does not
+contain publishes nothing. A valid tag builds, verifies, clean-installs, and attests the wheel and
+source distribution before a protected job publishes them with the official PyPA action and trusted
 publishing. The full verified bundle is also retained as a workflow artifact.
 
 The repository must configure the protected `pypi` GitHub environment and PyPI trusted-publisher
 relationship before a tag can publish. There is no stored PyPI API token. Creating or pushing a tag
 is an explicit release-owner action and is not performed by the build scripts.
 
+### Development releases from `development`
+
+Every push to `development` runs the
+[`Publish development release to PyPI`](../../.github/workflows/publish-development-release.yml)
+workflow. It runs the same quality gate as [`quality.yml`](../../.github/workflows/quality.yml)
+first and publishes nothing when the gate fails. Only then does
+[`scripts/compute_development_version.py`](../../scripts/compute_development_version.py) write
+`X.Y.Z.devN` into `pyproject.toml`, and the workflow refuses to continue if any other tracked file
+or any other line of `pyproject.toml` changed. Nothing is tagged and nothing is committed back.
+
+The computed version makes the tracked source deliberately dirty, so the development build records
+provenance without `--require-clean-source`; `PROVENANCE.json` reports `dirty: true` and names the
+commit the release was built from. Final releases keep the clean-source requirement.
+
+This workflow needs its own PyPI trusted-publisher entry — repository `mainsequence-sdk/ms-tau-sdk`,
+workflow `publish-development-release.yml`, environment `pypi-development` — and that environment
+must not require a reviewer, or development releases would wait for an approval that the standard
+says is not needed.
+
+To install one deliberately:
+
+```bash
+uv add "ms-tau-sdk==1.2.6.dev41"   # or: uv add --prerelease=allow ms-tau-sdk
+```
+
+`pip` and `uv` skip development releases otherwise, so no consumer picks one up by accident.
+
 Consumers should pin a candidate wheel by immutable artifact and checksum during candidate review.
 Published stable consumers pin the normal distribution version, for example
 `ms-tau-sdk==1.0.0`.
+
+`pyproject.toml` is the only file that declares the version. The consumer fixture in
+`tests/fixtures/sdk-consumer-project` resolves the SDK from this checkout rather than naming a
+version, and the contract tests read the declared version, so a version bump touches the changelog
+and `pyproject.toml` and nothing else.
 
 ## Compatibility Review
 
