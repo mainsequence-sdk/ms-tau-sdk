@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tau Board</title>
+  <link rel="stylesheet" href="/assets/bulma.min.css">
+  <link rel="stylesheet" href="/assets/board.css">
+  <script type="module" src="/assets/app.js"></script>
+</head>
+<body>
+  <header class="board-header">
+    <div class="container is-fluid">
+      <div class="header-line">
+        <div><p class="eyebrow">LOCAL DEVELOPMENT</p><h1 class="title is-3">Tau Board</h1></div>
+        <div id="global-status" class="tag is-light">Connecting…</div>
+      </div>
+      <p class="subtitle is-6">Task and inspect a running Tau workspace.</p>
+    </div>
+  </header>
+  <main class="container is-fluid board-main">
+    <nav class="tabs is-boxed" aria-label="Board views">
+      <ul>
+        <li class="is-active" data-nav="connect"><a href="#connect">Connect</a></li>
+        <li data-nav="chat"><a href="#chat">Chat</a></li>
+        <li data-nav="a2a"><a href="#a2a">A2A</a></li>
+        <li data-nav="state"><a href="#state">State</a></li>
+        <li data-nav="logs"><a href="#logs">Logs</a></li>
+        <li data-nav="settings"><a href="#settings">Settings</a></li>
+      </ul>
+    </nav>
+    <div id="notice" class="notification is-hidden" role="status"></div>
+
+    <section id="view-connect" class="board-view">
+      <div class="columns is-variable is-5">
+        <div class="column is-two-thirds">
+          <div class="box">
+            <h2 class="title is-5">Tau endpoint profile</h2>
+            <p class="help block">Each profile points to an already running local Tau process. Its model labels are checked against Tau after a session is used.</p>
+            <div class="field"><label class="label" for="connect-select">Saved profile</label><div class="select is-fullwidth"><select id="connect-select"></select></div></div>
+            <div class="columns">
+              <div class="column"><div class="field"><label class="label" for="profile-name">Profile name</label><input class="input" id="profile-name" maxlength="64" required></div></div>
+              <div class="column"><div class="field"><label class="label" for="profile-url">Tau URL</label><input class="input" id="profile-url" type="url" placeholder="http://127.0.0.1:8010" required></div></div>
+            </div>
+            <div class="columns">
+              <div class="column"><div class="field"><label class="label" for="profile-provider">Provider</label><input class="input" id="profile-provider" placeholder="openai"></div></div>
+              <div class="column"><div class="field"><label class="label" for="profile-model">Model</label><input class="input" id="profile-model" placeholder="gpt-5.4"></div></div>
+              <div class="column"><div class="field"><label class="label" for="profile-thinking">Thinking</label><input class="input" id="profile-thinking" placeholder="high"></div></div>
+            </div>
+            <div class="field"><label class="label" for="profile-state-dir">Local state directory</label><input class="input mono" id="profile-state-dir" placeholder="/home/me/.tau/mainsequence/workspace-digest"><p class="help">Leave blank to derive it from Tau health and <code>TAU_LOCAL_STATE_ROOT</code>.</p></div>
+            <div class="buttons"><button class="button is-primary" id="save-profile">Save profile</button><button class="button is-light" id="check-connection">Check connection</button><button class="button is-danger is-light" id="delete-profile">Delete profile</button></div>
+          </div>
+        </div>
+        <div class="column">
+          <div class="box"><h2 class="title is-5">Connection</h2><div id="connection-detail" class="detail-list">Choose a profile and check its connection.</div></div>
+          <div class="notification is-warning is-light">Local sessions and Tasks stay on this machine. Tau tools can still change real Main Sequence resources.</div>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-chat" class="board-view is-hidden">
+      <div class="columns is-variable is-5">
+        <div class="column is-one-third"><div class="box">
+          <h2 class="title is-5">Chat settings</h2>
+          <div class="field"><label class="label" for="chat-profile">Endpoint profile</label><div class="select is-fullwidth"><select id="chat-profile" class="action-profile"></select></div></div>
+          <div class="columns is-mobile"><div class="column"><label class="label" for="chat-provider">Provider</label><div class="select is-fullwidth"><select id="chat-provider" class="selection-control"></select></div></div><div class="column"><label class="label" for="chat-model">Model</label><div class="select is-fullwidth"><select id="chat-model" class="selection-control"></select></div></div></div>
+          <div class="field"><label class="label" for="chat-thinking">Thinking</label><div class="select is-fullwidth"><select id="chat-thinking" class="selection-control"></select></div></div>
+          <div class="field"><label class="label" for="chat-session">Session UID</label><input class="input mono" id="chat-session" placeholder="Created on first message"><p class="help">A refresh keeps this UID. Use an existing local UID to resume.</p></div>
+          <button class="button is-warning is-light" id="chat-cancel">Cancel current turn</button>
+          <p id="chat-effective" class="help mt-4"></p>
+        </div></div>
+        <div class="column"><div class="box chat-box">
+          <h2 class="title is-5">Conversation</h2>
+          <div id="chat-messages" class="chat-messages" aria-live="polite"></div>
+          <form id="chat-form"><div class="field"><label class="label" for="chat-input">Message</label><textarea class="textarea" id="chat-input" rows="4" required placeholder="Ask Tau about this workspace…"></textarea></div><div class="buttons"><button class="button is-primary" type="submit">Send</button><span id="chat-progress" class="tag is-light">Idle</span></div></form>
+        </div></div>
+      </div>
+    </section>
+
+    <section id="view-a2a" class="board-view is-hidden">
+      <div class="columns is-variable is-5"><div class="column is-one-third"><div class="box">
+        <h2 class="title is-5">A2A action</h2>
+        <div class="field"><label class="label" for="a2a-profile">Endpoint profile</label><div class="select is-fullwidth"><select id="a2a-profile" class="action-profile"></select></div></div>
+        <div class="columns is-mobile"><div class="column"><label class="label" for="a2a-provider">Provider</label><div class="select is-fullwidth"><select id="a2a-provider" class="selection-control"></select></div></div><div class="column"><label class="label" for="a2a-model">Model</label><div class="select is-fullwidth"><select id="a2a-model" class="selection-control"></select></div></div></div>
+        <div class="field"><label class="label" for="a2a-thinking">Thinking</label><div class="select is-fullwidth"><select id="a2a-thinking" class="selection-control"></select></div></div>
+        <p id="a2a-effective" class="help mb-4"></p>
+        <div class="field"><label class="label" for="a2a-kind">Action</label><div class="select is-fullwidth"><select id="a2a-kind"><option value="message">Message</option><option value="task">Task</option><option value="stream">Streaming Task</option><option value="continue">Continue Task</option></select></div></div>
+        <div class="field"><label class="label" for="a2a-context">Context ID</label><input class="input mono" id="a2a-context" placeholder="Generated if empty"></div>
+        <div class="field"><label class="label" for="a2a-task-id">Task ID</label><input class="input mono" id="a2a-task-id" placeholder="Generated for a new Task"><p class="help">Clear this field to create a new Task. Keep it to continue or inspect the current Task.</p></div>
+        <button class="button is-small is-light mb-4" id="a2a-new-task" type="button">New Task</button>
+        <form id="a2a-form"><div class="field"><label class="label" for="a2a-input">Message</label><textarea class="textarea" id="a2a-input" rows="5" required></textarea></div><button class="button is-primary" type="submit">Send A2A</button></form>
+      </div></div><div class="column"><div class="box">
+        <div class="level"><div class="level-left"><h2 class="title is-5">Tasks</h2></div><div class="level-right"><button class="button is-small" id="refresh-tasks">Refresh</button></div></div>
+        <div id="task-output" class="output-panel" aria-live="polite">Choose an action to begin.</div>
+        <div class="table-container"><table class="table is-fullwidth is-striped is-hoverable"><thead><tr><th>Task</th><th>Context</th><th>Status</th><th></th></tr></thead><tbody id="task-list"></tbody></table></div>
+      </div></div></div>
+    </section>
+
+    <section id="view-state" class="board-view is-hidden"><div class="box">
+      <div class="level"><div class="level-left"><div><h2 class="title is-5">Local SQLite state</h2><p id="state-path" class="help mono"></p></div></div><div class="level-right"><button class="button is-small" id="refresh-state">Refresh</button></div></div>
+      <div id="state-counts" class="tags"></div>
+      <div class="field is-grouped"><div class="control"><div class="select"><select id="state-table"></select></div></div><div class="control"><button class="button" id="state-prev">Previous</button></div><div class="control"><button class="button" id="state-next">Next</button></div><div class="control"><span id="state-page" class="tag is-light"></span></div></div>
+      <div class="table-container"><table class="table is-fullwidth is-striped is-narrow"><thead id="state-head"></thead><tbody id="state-body"></tbody></table></div>
+      <details id="state-detail" class="box detail-box"><summary>Row detail</summary><pre id="state-json"></pre><div class="buttons mt-3"><button class="button is-small" id="state-use-session">Use session in Chat</button><button class="button is-small" id="state-use-task">Open Task in A2A</button></div></details>
+    </div></section>
+
+    <section id="view-logs" class="board-view is-hidden"><div class="box">
+      <div class="level"><div class="level-left"><div><h2 class="title is-5">Operational logs</h2><p id="logs-path" class="help mono"></p></div></div><div class="level-right"><button class="button is-small" id="refresh-logs">Refresh</button></div></div>
+      <div class="columns"><div class="column"><label class="label" for="log-level">Level</label><div class="select is-fullwidth"><select id="log-level"><option value="">All</option><option>info</option><option>warning</option><option>error</option><option>debug</option></select></div></div><div class="column"><label class="label" for="log-session">Session</label><input class="input" id="log-session"></div><div class="column"><label class="label" for="log-task">Task</label><input class="input" id="log-task"></div><div class="column"><label class="label" for="log-event">Event</label><input class="input" id="log-event"></div></div>
+      <div id="log-list" class="log-list"></div>
+    </div></section>
+
+    <section id="view-settings" class="board-view is-hidden">
+      <div class="notification is-info is-light">These values come from Tau Board's startup environment and its local <code>.env</code> file. Tau may have been started with different values. Saving <code>.env</code> changes does not reconfigure a running Tau or Board process; restart the affected process to use them.</div>
+      <div class="columns is-variable is-5">
+        <div class="column is-one-third">
+          <div class="box">
+            <h2 class="title is-5">Current board session</h2>
+            <div id="settings-effective" class="detail-list mb-4"></div>
+            <div class="field"><label class="label" for="settings-board-url">Tau endpoint now</label><input class="input mono" id="settings-board-url" type="url" placeholder="http://127.0.0.1:8010"></div>
+            <div class="field"><label class="label" for="settings-board-dir">Local state directory now</label><input class="input mono" id="settings-board-dir" placeholder="Use environment default or derive from Tau"></div>
+            <button class="button is-primary" id="settings-apply-board">Apply to this session</button>
+            <p class="help mt-2">This updates the selected profile immediately. It does not write <code>.env</code>.</p>
+          </div>
+          <div class="box"><h2 class="title is-6">Credential presence</h2><p class="help mb-3">Board process and local <code>.env</code> are shown separately. Credential values are never sent to the browser.</p><div id="settings-credentials" class="detail-list"></div></div>
+        </div>
+        <div class="column">
+          <div class="box">
+            <div class="level"><div class="level-left"><div><h2 class="title is-5">Local environment settings</h2><p id="settings-env-path" class="help mono"></p></div></div><div class="level-right"><button class="button is-small" id="settings-refresh">Reload</button></div></div>
+            <p class="help mb-4">Edit the local <code>.env</code> column, then save. Only the named non-secret variables below can be changed here. An empty field removes its assignment from <code>.env</code>.</p>
+            <div class="table-container"><table class="table is-fullwidth is-striped is-narrow settings-table"><thead><tr><th>Variable</th><th>Board process</th><th>Local .env</th></tr></thead><tbody id="settings-env-rows"></tbody></table></div>
+            <button class="button is-primary mt-3" id="settings-save-env">Save .env changes</button>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

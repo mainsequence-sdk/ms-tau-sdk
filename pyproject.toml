@@ -30,6 +30,9 @@ dependencies = [
   "uvicorn[standard]>=0.35",
 ]
 
+[project.optional-dependencies]
+tau-board = ["ms-tau-board>=0.1,<0.2"]
+
 [project.urls]
 Changelog = "https://github.com/mainsequence-sdk/ms-tau-sdk/blob/development/CHANGELOG.md"
 Documentation = "https://github.com/mainsequence-sdk/ms-tau-sdk/tree/development/docs"
@@ -61,6 +64,9 @@ include = [
   "/pyproject.toml",
   "/src/ms_tau_sdk",
 ]
+
+[tool.uv.sources]
+ms-tau-board = { path = "packages/tau-board" }
 
 [tool.pytest.ini_options]
 addopts = [

@@ -120,6 +120,20 @@ Local mode also appends privacy-filtered, structured JSON Lines to
 and log move under `TAU_LOCAL_STATE_ROOT` when set; neither is written to the project `.tau` or
 uploaded to a platform AgentSession. Console logging remains available.
 
+For a small browser view of a local run, install the optional, separately running
+[Tau Board](packages/tau-board/README.md):
+
+```bash
+uv add 'ms-tau-sdk[tau-board]'
+uv run tau-board --tau-url http://127.0.0.1:8010
+```
+
+Open `http://127.0.0.1:8788` to chat, send A2A Messages and Tasks, inspect local SQLite state,
+and read logs. The board serves packaged Bulma CSS with no frontend build or CDN. It can select
+another loopback Tau endpoint and local state directory in its Connect view. Its Settings tab shows
+the board process's safe environment values and edits named non-secret variables in a local `.env`
+file; Tau or the board must restart before saved startup values take effect.
+
 Platform discovery of the unregistered process, internal backend dispatch/caller-delivery hooks,
 push notifications, and `resume_caller` remain unavailable. Outbound A2A through Main Sequence MCP
 supports Messages and Tasks with polling under authenticated-user semantics. Local mode binds to

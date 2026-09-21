@@ -1,0 +1,22 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Tau Board (local)",
+      "type": "debugpy",
+      "request": "launch",
+      "module": "ms_tau_board.cli",
+      "python": "${workspaceFolder}/.venv/bin/python",
+      "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
+      "args": ["--port", "8788"],
+      "console": "integratedTerminal",
+      "justMyCode": true,
+      "serverReadyAction": {
+        "action": "openExternally",
+        "pattern": "Uvicorn running on (http://127\\.0\\.0\\.1:[0-9]+)",
+        "uriFormat": "%s"
+      }
+    }
+  ]
+}

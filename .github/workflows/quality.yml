@@ -26,15 +26,19 @@ jobs:
       - name: Install Python
         run: uv python install 3.13
       - name: Sync locked workspace
-        run: uv sync --frozen
+        run: uv sync --frozen --extra tau-board
       - name: Install runtime tool dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep
       - name: Check formatting
-        run: uv run ruff format --check src tests scripts
+        run: uv run ruff format --check src tests scripts packages/tau-board/src packages/tau-board/tests packages/tau-board/scripts
       - name: Lint
-        run: uv run ruff check src tests scripts
+        run: uv run ruff check src tests scripts packages/tau-board
       - name: Type check
-        run: uv run mypy
+        run: |
+          uv run mypy
+          uv run mypy --strict packages/tau-board/src/ms_tau_board
+      - name: Verify board UI syntax
+        run: node --check packages/tau-board/src/ms_tau_board/static/app.js
       - name: Build and inspect distributions
         run: |
           uv build --no-sources --out-dir release-dist
@@ -42,6 +46,8 @@ jobs:
             --dist-dir release-dist \
             --require-clean-source \
             --write-release-metadata
+          uv build --no-sources packages/tau-board --out-dir board-dist
+          uv run python packages/tau-board/scripts/verify_distribution.py board-dist
       - name: Verify clean wheel installation
         run: uv run python scripts/verify_clean_install.py release-dist/ms_tau_sdk-*.whl
       - name: Verify locked SDK consumer project
@@ -57,3 +63,5 @@ jobs:
           --cov=ms_tau_sdk
           --cov-branch
           --cov-report=term-missing:skip-covered
+      - name: Test Tau Board
+        run: uv run pytest packages/tau-board/tests -q
