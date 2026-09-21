@@ -20,8 +20,13 @@ from starlette.responses import FileResponse, JSONResponse, Response
 from starlette.routing import Mount, Route
 from starlette.staticfiles import StaticFiles
 
-from . import logs, state
-from .config import BoardSettings, Profile
+from . import env_file, logs, state
+from .config import (
+    BoardSettings,
+    Profile,
+    public_environment_value,
+    safe_environment_snapshot,
+)
 from .proxy import TauUnavailable, forward, probe
 
 STATIC = Path(__file__).parent / "static"
@@ -207,6 +212,58 @@ async def connection(request: Request) -> Response:
     )
 
 
+async def settings_view(request: Request) -> Response:
+    token, session, new = _session(request)
+    env_path: Path = request.app.state.settings.env_file or Path.cwd() / ".env"
+    if request.method == "PUT":
+        if not _origin_allowed(request):
+            return _cookie(
+                JSONResponse({"error": "Invalid browser origin"}, status_code=403), token, new
+            )
+        if len(await request.body()) > 12_000:
+            return _cookie(
+                JSONResponse({"error": "Settings request is too large"}, status_code=413),
+                token,
+                new,
+            )
+        payload = await request.json()
+        changes = payload.get("changes") if isinstance(payload, dict) else None
+        if not isinstance(changes, dict) or any(
+            not isinstance(name, str) or not isinstance(value, str)
+            for name, value in changes.items()
+        ):
+            raise ValueError("Settings changes must be a map of names to strings")
+        await asyncio.to_thread(env_file.write_values, env_path, changes)
+    file_values = await asyncio.to_thread(env_file.read_values, env_path)
+    file_credentials = await asyncio.to_thread(env_file.credential_presence, env_path)
+    file_exists = await asyncio.to_thread(env_path.is_file)
+    exposed_file_values = {}
+    for name, raw in file_values.items():
+        value, redacted = public_environment_value(name, raw)
+        exposed_file_values[name] = {"value": value, "redacted": redacted}
+    profile = session.profiles[session.selected]
+    try:
+        directory = str(_directory(request, session, profile))
+    except ValueError:
+        directory = None
+    return _cookie(
+        JSONResponse(
+            {
+                **request.app.state.environment_snapshot,
+                "envFile": str(env_path),
+                "envFileExists": file_exists,
+                "envFileValues": exposed_file_values,
+                "envFileCredentials": file_credentials,
+                "selectedProfile": profile.public(),
+                "effectiveStateDir": directory,
+                "boardPort": request.app.state.settings.port,
+            }
+        ),
+        token,
+        new,
+    )
+
+
 async def state_summary(request: Request) -> Response:
     token, session, new = _session(request)
     profile = _selected(request, session)
@@ -304,6 +361,7 @@ def create_app(
             Route("/", index),
             Route("/api/board/config", config, methods=["GET", "PUT"]),
             Route("/api/board/connection", connection),
+            Route("/api/board/settings", settings_view, methods=["GET", "PUT"]),
             Route("/api/board/state", state_summary),
             Route("/api/board/state/{table}/{rowid:int}", state_row),
             Route("/api/board/state/{table}", state_rows),
@@ -314,6 +372,7 @@ def create_app(
         exception_handlers={ValueError: _error, state.StateError: _error, TauUnavailable: _error},
     )
     app.state.settings = resolved
+    app.state.environment_snapshot = safe_environment_snapshot()
     app.state.sessions = {}
 
     app.add_middleware(SecurityHeadersMiddleware)

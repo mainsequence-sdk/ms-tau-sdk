@@ -130,7 +130,9 @@ uv run tau-board --tau-url http://127.0.0.1:8010
 
 Open `http://127.0.0.1:8788` to chat, send A2A Messages and Tasks, inspect local SQLite state,
 and read logs. The board serves packaged Bulma CSS with no frontend build or CDN. It can select
-another loopback Tau endpoint and local state directory in its Connect view.
+another loopback Tau endpoint and local state directory in its Connect view. Its Settings tab shows
+the board process's safe environment values and edits named non-secret variables in a local `.env`
+file; Tau or the board must restart before saved startup values take effect.
 
 Platform discovery of the unregistered process, internal backend dispatch/caller-delivery hooks,
 push notifications, and `resume_caller` remain unavailable. Outbound A2A through Main Sequence MCP

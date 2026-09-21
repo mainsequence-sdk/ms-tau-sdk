@@ -1,7 +1,7 @@
 # Tau Board
 
 An optional local dashboard for a running `ms-tau-sdk` process. Tau Board is a separate process and
-does not load the Tau runtime or Main Sequence credentials.
+does not load the Tau runtime or use Main Sequence credentials.
 
 ```bash
 uv add 'ms-tau-sdk[tau-board]'
@@ -21,6 +21,13 @@ Tau process's provider or model.
 
 The board's SQLite access is read-only. Chat and Task changes use Tau's HTTP API. Bulma CSS and
 all other UI assets are packaged locally; no Node or browser CDN is needed.
+
+The **Settings** tab shows non-secret environment values inherited by the board process, including
+`MAINSEQUENCE_ENDPOINT`. It also lets you edit those named variables in the working directory's
+`.env` file, or in the file chosen by `TAU_BOARD_ENV_FILE`. Credential values stay hidden; only
+their presence is shown. Saved `.env` changes require restarting Tau or Tau Board to affect their
+processes. The selected Tau URL and local state directory can be overridden immediately for the
+current board session.
 
 ## Launch from VS Code
 

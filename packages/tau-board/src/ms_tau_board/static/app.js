@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const views = ["connect", "chat", "a2a", "state", "logs"];
+const views = ["connect", "chat", "a2a", "state", "logs", "settings"];
 const tables = ["sessions", "entries", "a2a_tasks", "a2a_task_messages", "a2a_task_outputs", "a2a_task_attempts", "a2a_task_events", "snapshots"];
 let config = { profiles: [], selectedProfile: "" };
 let activeView = "connect";
@@ -9,6 +9,7 @@ let stateOffset = 0;
 let stateTotal = 0;
 let selectedRow = null;
 let activeA2AProfile = "";
+let settingsBaseline = new Map();
 
 function clear(node) { node.replaceChildren(); }
 function node(tag, value = "", className = "") {
@@ -162,6 +163,7 @@ function showView(view) {
   if (activeView === "a2a") refreshTasks().catch(report);
   if (activeView === "state") refreshState().catch(report);
   if (activeView === "logs") refreshLogs().catch(report);
+  if (activeView === "settings") refreshSettings().catch(report);
 }
 function report(error) { notice(error.message || String(error), "is-danger"); }
 function chatLine(who, type = "agent") {
@@ -411,6 +413,71 @@ async function refreshLogs() {
   }
   if (!(result.records || []).length) list.append(node("p", "No matching log events.", "help"));
 }
+async function refreshSettings() {
+  const result = await json("/api/board/settings");
+  const profile = result.selectedProfile;
+  const effective = $("settings-effective"); clear(effective);
+  detailLine(effective, "Selected profile", profile.name);
+  detailLine(effective, "Tau endpoint", profile.url);
+  detailLine(effective, "Effective state directory", result.effectiveStateDir || "Connect Tau to derive it");
+  detailLine(effective, "Board URL", `http://127.0.0.1:${result.boardPort}`);
+  const backend = result.environment.find((item) => item.name === "MAINSEQUENCE_ENDPOINT");
+  detailLine(effective, "Backend hint from board environment", backend?.value || "Not set in board environment");
+  $("settings-board-url").value = profile.url;
+  $("settings-board-dir").value = profile.stateDir || "";
+  $("settings-env-path").textContent = `${result.envFile} · ${result.envFileExists ? "existing file" : "will be created when saved"}`;
+  const body = $("settings-env-rows"); clear(body);
+  settingsBaseline = new Map();
+  let group = "";
+  for (const item of result.environment) {
+    if (item.group !== group) {
+      group = item.group;
+      const heading = node("tr", "", "settings-group");
+      const cell = node("th", group); cell.colSpan = 3; heading.append(cell); body.append(heading);
+    }
+    const saved = result.envFileValues[item.name];
+    const original = saved?.redacted ? null : (saved?.value || "");
+    settingsBaseline.set(item.name, original);
+    const row = node("tr");
+    const label = node("td");
+    label.append(node("strong", item.name, "mono"), node("span", item.usedBy, "settings-scope"), node("p", item.meaning, "help"));
+    const running = node("td", item.value || "Not set", "mono settings-value");
+    const cell = node("td");
+    const input = node("input", "", "input is-small mono settings-input");
+    input.type = "text"; input.maxLength = 512; input.dataset.envName = item.name;
+    input.value = original || "";
+    input.placeholder = saved?.redacted ? "Hidden; enter a replacement" : "Not set";
+    cell.append(input);
+    row.append(label, running, cell); body.append(row);
+  }
+  const credentials = $("settings-credentials"); clear(credentials);
+  for (const item of result.credentials) {
+    const processStatus = item.present ? "Present" : "Missing";
+    const fileStatus = result.envFileCredentials[item.name] ? "Present" : "Missing";
+    detailLine(credentials, item.name, `Board: ${processStatus} · .env: ${fileStatus}`);
+  }
+}
+async function saveEnvironment() {
+  const changes = {};
+  for (const input of document.querySelectorAll(".settings-input")) {
+    const name = input.dataset.envName;
+    const before = settingsBaseline.get(name);
+    const after = input.value.trim();
+    if ((before === null && after) || (before !== null && after !== before)) changes[name] = after;
+  }
+  if (!Object.keys(changes).length) { notice("No .env changes to save.", "is-info"); return; }
+  await json("/api/board/settings", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ changes }) });
+  await refreshSettings();
+  notice("Saved .env. Restart Tau for Tau settings; restart Tau Board for its startup settings.", "is-success");
+}
+async function applyBoardSettings() {
+  const current = profileByName(config.selectedProfile);
+  const changed = { ...current, url: $("settings-board-url").value.trim(), stateDir: $("settings-board-dir").value.trim() || null };
+  const profiles = config.profiles.map((profile) => profile.name === current.name ? changed : profile);
+  await saveConfig(profiles, current.name);
+  await refreshSettings();
+  notice("Board session override applied to the selected profile.", "is-success");
+}
 function bind(id, event, action) { $(id).addEventListener(event, (...args) => Promise.resolve(action(...args)).catch(report)); }
 async function start() {
   config = await json("/api/board/config");
@@ -436,6 +503,9 @@ async function start() {
   bind("state-use-session", "click", useStateSession);
   bind("state-use-task", "click", useStateTask);
   bind("refresh-logs", "click", refreshLogs);
+  bind("settings-refresh", "click", refreshSettings);
+  bind("settings-save-env", "click", saveEnvironment);
+  bind("settings-apply-board", "click", applyBoardSettings);
   for (const id of ["log-level", "log-session", "log-task", "log-event"]) bind(id, "change", refreshLogs);
   showView(location.hash.slice(1) || "connect");
   checkConnection().catch((error) => { $("global-status").textContent = "Tau unavailable"; $("global-status").className = "tag is-danger is-light"; report(error); });

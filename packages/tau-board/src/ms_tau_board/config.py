@@ -9,6 +9,79 @@ from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import urlsplit
 
+VISIBLE_ENVIRONMENT = (
+    ("Connection", "MAINSEQUENCE_ENDPOINT", "Tau", "Main Sequence backend API URL"),
+    ("Connection", "MAINSEQUENCE_AUTH_MODE", "Tau", "Authentication mode"),
+    ("Connection", "TAU_LOCAL_MODE", "Tau", "Keep sessions and Tasks local"),
+    ("Runtime", "MAINSEQUENCE_TAU_HOST", "Tau", "Tau HTTP bind host"),
+    ("Runtime", "MAINSEQUENCE_TAU_PORT", "Tau", "Tau HTTP port"),
+    ("Runtime", "MAINSEQUENCE_TAU_WORKSPACE", "Tau", "Tau workspace"),
+    ("Runtime", "TAU_LOCAL_PROVIDER", "Tau", "Local provider selection"),
+    ("Runtime", "TAU_LOCAL_MODEL", "Tau", "Local model selection"),
+    ("Runtime", "TAU_LOCAL_THINKING", "Tau", "Local thinking selection"),
+    ("Runtime", "TAU_LOCAL_STATE_ROOT", "Tau", "Local SQLite and log root"),
+    ("Runtime", "MAINSEQUENCE_TAU_STATE_ROOT", "Tau", "Tau runtime state root"),
+    ("Runtime", "MAINSEQUENCE_TAU_LOG_LEVEL", "Tau", "Console log level"),
+    ("Board", "TAU_BOARD_TAU_URL", "Board", "Default Tau endpoint override"),
+    ("Board", "TAU_BOARD_STATE_DIR", "Board", "Default SQLite and log directory override"),
+    ("Board", "TAU_BOARD_PORT", "Board", "Board HTTP port"),
+)
+SECRET_ENVIRONMENT = (
+    "MAINSEQUENCE_ACCESS_TOKEN",
+    "MAINSEQUENCE_REFRESH_TOKEN",
+    "MAINSEQUENCE_RUNTIME_CREDENTIAL_ID",
+    "MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET",
+)
+
+
+def safe_environment_snapshot() -> dict[str, object]:
+    """Expose only named, non-secret process settings; never return credential values."""
+    rows: list[dict[str, str | bool | None]] = []
+    for group, name, used_by, meaning in VISIBLE_ENVIRONMENT:
+        raw = os.environ.get(name, "").strip()
+        value, redacted = public_environment_value(name, raw)
+        rows.append(
+            {
+                "group": group,
+                "name": name,
+                "usedBy": used_by,
+                "meaning": meaning,
+                "value": value,
+                "redacted": redacted,
+            }
+        )
+    return {
+        "environment": rows,
+        "credentials": [
+            {"name": name, "present": bool(os.environ.get(name))} for name in SECRET_ENVIRONMENT
+        ],
+    }
+
+
+def public_environment_value(name: str, raw: str) -> tuple[str | None, bool]:
+    """Show a useful backend target without returning URL credentials or query values."""
+    if not raw:
+        return None, False
+    if len(raw) > 512:
+        return "[value over 512 characters hidden]", True
+    if name != "MAINSEQUENCE_ENDPOINT":
+        return raw, False
+    try:
+        parsed = urlsplit(raw)
+        host = parsed.hostname
+        port_number = parsed.port
+    except ValueError:
+        return "[invalid URL hidden]", True
+    if parsed.scheme not in {"http", "https"} or not host:
+        return "[invalid URL hidden]", True
+    if ":" in host:
+        host = f"[{host}]"
+    port = f":{port_number}" if port_number else ""
+    origin = f"{parsed.scheme}://{host}{port}"
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        return origin + " [credentials or query hidden]", True
+    return origin + parsed.path, False
+
 
 def local_url(value: str) -> str:
     """Accept HTTP on an explicit loopback host, without URL credentials or paths."""
@@ -91,6 +164,7 @@ class BoardSettings:
     state_root: Path
     state_dir: Path | None
     port: int = 8788
+    env_file: Path | None = None
 
     @classmethod
     def from_environment(
@@ -132,4 +206,5 @@ class BoardSettings:
             state_root=state_root.expanduser().resolve(),
             state_dir=state_directory(state_dir or os.getenv("TAU_BOARD_STATE_DIR")),
             port=selected_port,
+            env_file=Path(os.getenv("TAU_BOARD_ENV_FILE", ".env")).expanduser().resolve(),
         )

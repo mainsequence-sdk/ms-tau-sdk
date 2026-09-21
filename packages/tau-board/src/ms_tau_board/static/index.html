@@ -26,6 +26,7 @@
         <li data-nav="a2a"><a href="#a2a">A2A</a></li>
         <li data-nav="state"><a href="#state">State</a></li>
         <li data-nav="logs"><a href="#logs">Logs</a></li>
+        <li data-nav="settings"><a href="#settings">Settings</a></li>
       </ul>
     </nav>
     <div id="notice" class="notification is-hidden" role="status"></div>
@@ -108,6 +109,31 @@
       <div class="columns"><div class="column"><label class="label" for="log-level">Level</label><div class="select is-fullwidth"><select id="log-level"><option value="">All</option><option>info</option><option>warning</option><option>error</option><option>debug</option></select></div></div><div class="column"><label class="label" for="log-session">Session</label><input class="input" id="log-session"></div><div class="column"><label class="label" for="log-task">Task</label><input class="input" id="log-task"></div><div class="column"><label class="label" for="log-event">Event</label><input class="input" id="log-event"></div></div>
       <div id="log-list" class="log-list"></div>
     </div></section>
+
+    <section id="view-settings" class="board-view is-hidden">
+      <div class="notification is-info is-light">These values come from Tau Board's startup environment and its local <code>.env</code> file. Tau may have been started with different values. Saving <code>.env</code> changes does not reconfigure a running Tau or Board process; restart the affected process to use them.</div>
+      <div class="columns is-variable is-5">
+        <div class="column is-one-third">
+          <div class="box">
+            <h2 class="title is-5">Current board session</h2>
+            <div id="settings-effective" class="detail-list mb-4"></div>
+            <div class="field"><label class="label" for="settings-board-url">Tau endpoint now</label><input class="input mono" id="settings-board-url" type="url" placeholder="http://127.0.0.1:8010"></div>
+            <div class="field"><label class="label" for="settings-board-dir">Local state directory now</label><input class="input mono" id="settings-board-dir" placeholder="Use environment default or derive from Tau"></div>
+            <button class="button is-primary" id="settings-apply-board">Apply to this session</button>
+            <p class="help mt-2">This updates the selected profile immediately. It does not write <code>.env</code>.</p>
+          </div>
+          <div class="box"><h2 class="title is-6">Credential presence</h2><p class="help mb-3">Board process and local <code>.env</code> are shown separately. Credential values are never sent to the browser.</p><div id="settings-credentials" class="detail-list"></div></div>
+        </div>
+        <div class="column">
+          <div class="box">
+            <div class="level"><div class="level-left"><div><h2 class="title is-5">Local environment settings</h2><p id="settings-env-path" class="help mono"></p></div></div><div class="level-right"><button class="button is-small" id="settings-refresh">Reload</button></div></div>
+            <p class="help mb-4">Edit the local <code>.env</code> column, then save. Only the named non-secret variables below can be changed here. An empty field removes its assignment from <code>.env</code>.</p>
+            <div class="table-container"><table class="table is-fullwidth is-striped is-narrow settings-table"><thead><tr><th>Variable</th><th>Board process</th><th>Local .env</th></tr></thead><tbody id="settings-env-rows"></tbody></table></div>
+            <button class="button is-primary mt-3" id="settings-save-env">Save .env changes</button>
+          </div>
+        </div>
+      </div>
+    </section>
   </main>
 </body>
 </html>

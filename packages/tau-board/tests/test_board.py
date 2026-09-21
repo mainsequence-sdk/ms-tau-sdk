@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gzip
+import json
 import sqlite3
 from pathlib import Path
 
@@ -218,3 +219,77 @@ def test_loopback_validation_and_asset_budget() -> None:
     assert '<script src="http' not in html
     assert '<link href="http' not in html
     assert "bulma.min.css" in html
+
+
+@pytest.mark.asyncio
+async def test_settings_show_safe_environment_and_edit_only_local_allowlist(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    env_path = tmp_path / ".env"
+    env_path.write_text(
+        "MAINSEQUENCE_ENDPOINT=https://file-user:file-password@file.example/api?token=file-secret\n"
+        "TAU_LOCAL_MODEL=gpt-old\n"
+        "MAINSEQUENCE_ACCESS_TOKEN=secret-in-file\n"
+    )
+    monkeypatch.setenv(
+        "MAINSEQUENCE_ENDPOINT", "https://user:password@running.example/api?token=secret"
+    )
+    monkeypatch.setenv("MAINSEQUENCE_ACCESS_TOKEN", "secret-in-process")
+    settings = BoardSettings(
+        profiles=(Profile("Local Tau", "http://127.0.0.1:8010"),),
+        state_root=tmp_path,
+        state_dir=None,
+        env_file=env_path,
+    )
+    upstream = httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(404)))
+    app = create_app(settings, http_client=upstream)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8788"
+        ) as board:
+            settings_response = await board.get("/api/board/settings")
+            assert settings_response.status_code == 200
+            data = settings_response.json()
+            backend = next(
+                row for row in data["environment"] if row["name"] == "MAINSEQUENCE_ENDPOINT"
+            )
+            assert backend["value"] == "https://running.example [credentials or query hidden]"
+            assert data["envFileValues"]["MAINSEQUENCE_ENDPOINT"]["value"] == (
+                "https://file.example [credentials or query hidden]"
+            )
+            assert data["credentials"][0]["present"] is True
+            assert data["envFileCredentials"]["MAINSEQUENCE_ACCESS_TOKEN"] is True
+            assert "secret-in-file" not in json.dumps(data)
+            assert "secret-in-process" not in json.dumps(data)
+            assert "file-password" not in json.dumps(data)
+            assert "file-secret" not in json.dumps(data)
+
+            denied = await board.put(
+                "/api/board/settings",
+                json={"changes": {"MAINSEQUENCE_ENDPOINT": "https://new.example"}},
+                headers={"Origin": "http://elsewhere.test"},
+            )
+            assert denied.status_code == 403
+            secret_change = await board.put(
+                "/api/board/settings",
+                json={"changes": {"MAINSEQUENCE_ACCESS_TOKEN": "replacement"}},
+            )
+            assert secret_change.status_code == 400
+            saved = await board.put(
+                "/api/board/settings",
+                json={
+                    "changes": {
+                        "MAINSEQUENCE_ENDPOINT": "https://new.example/api",
+                        "TAU_LOCAL_MODEL": "gpt-new",
+                    }
+                },
+            )
+            assert saved.status_code == 200
+            assert saved.json()["envFileValues"]["TAU_LOCAL_MODEL"]["value"] == "gpt-new"
+            saved_backend = next(
+                row for row in saved.json()["environment"] if row["name"] == "MAINSEQUENCE_ENDPOINT"
+            )
+            assert saved_backend["value"] == "https://running.example [credentials or query hidden]"
+    await upstream.aclose()
+    assert "MAINSEQUENCE_ACCESS_TOKEN=secret-in-file" in env_path.read_text()
+    assert 'MAINSEQUENCE_ENDPOINT="https://new.example/api"' in env_path.read_text()

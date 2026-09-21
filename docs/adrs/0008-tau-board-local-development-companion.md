@@ -51,6 +51,8 @@ packages/tau-board/
 ├── src/ms_tau_board/
 │   ├── cli.py
 │   ├── app.py
+│   ├── config.py
+│   ├── env_file.py
 │   ├── proxy.py
 │   ├── state.py
 │   ├── logs.py
@@ -77,8 +79,8 @@ Browser behavior uses **plain JavaScript in one ES module**: `fetch`, `ReadableS
 `AbortController`, and DOM APIs. The module parses Tau's POST-based SSE streams; `EventSource`
 cannot make the required POST requests. There is no React, Vue, Svelte, TypeScript, npm, Vite,
 Webpack, Sass, client-side router, or generated frontend bundle. The HTML is static, so no template
-engine is needed. The board has five Bulma tab views: Connect, Chat, A2A, State, and
-Logs. Chat and A2A maintain only ephemeral page state and non-sensitive endpoint preferences.
+engine is needed. The board has six Bulma tab views: Connect, Chat, A2A, State, Logs, and
+Settings. Chat and A2A maintain only ephemeral page state and non-sensitive endpoint preferences.
 
 The board server uses **Starlette + Uvicorn** and **HTTPX**. Starlette serves the packaged static
 files and the board's small JSON/streaming API; HTTPX forwards only allowlisted Tau operations and
@@ -116,12 +118,21 @@ them to environment defaults. The cookie contains no endpoint, path, credential,
 board does not write its own configuration database. Profile names and non-secret connection
 defaults may be entered again or supplied through environment configuration.
 
-The board reads its process environment; a launcher may export values from the same `.env` used by
-Tau, but the board does not parse `.env` itself. It reads only connection, local-state, and profile
-selection settings. Main Sequence JWTs and runtime
-credentials remain in the Tau process and are never returned to browser code, saved in board
-preferences, or printed in board diagnostics. The board does not perform Main Sequence login or
-provider credential hydration.
+The board reads a fixed allowlist of non-secret process settings for the Settings view, including
+`MAINSEQUENCE_ENDPOINT`, local-mode selection, Tau bind address, workspace, state roots, and board
+defaults. The view labels these as a snapshot of the **board process**, not proof of the running
+Tau process's configuration. It shows only presence or absence for JWTs and runtime credentials;
+their values are never returned to browser code or printed in board diagnostics. The board does not
+perform Main Sequence login or provider credential hydration.
+
+The Settings view may also read and edit the named non-secret variables in a local `.env` file.
+`TAU_BOARD_ENV_FILE` selects that file; the default is `.env` in the board's working directory,
+which is the repository root in the VS Code launch configuration. Edits preserve unrelated lines,
+including credentials, and replace the file atomically. The browser cannot choose an arbitrary
+file or edit credential fields. A saved `.env` value does not change the current process
+environment: Tau settings take effect after Tau restarts, and board startup defaults after the board
+restarts. The current Tau endpoint and state-directory profile overrides can also be changed in
+Settings and take effect immediately in the browser session.
 
 The initial release accepts HTTP loopback Tau endpoints. The board itself binds to loopback. A
 non-loopback or production endpoint requires a later decision on authentication, platform routing,
@@ -151,7 +162,9 @@ input; richer file and structured-output composition can be added after the basi
 
 The board server exposes a fixed, same-origin surface. `GET /` and `GET /assets/*` serve packaged
 files. `GET /api/board/config` returns effective non-secret settings; `PUT /api/board/config` sets
-the current UI override; `GET /api/board/connection` probes Tau health and readiness. Read-only
+the current UI override; `GET /api/board/settings` returns safe process and `.env` settings, and
+`PUT /api/board/settings` updates only allowlisted non-secret `.env` assignments;
+`GET /api/board/connection` probes Tau health and readiness. Read-only
 board routes under `/api/board/state/*` provide paginated SQLite views, and
 `GET /api/board/logs` provides bounded log records. `/tau/*` proxies only the existing Tau health,
 chat, session-model/cancel, and public A2A Message/Task routes. It does not proxy `/internal/*`,
@@ -228,8 +241,9 @@ event, subject to the same local-only handling as database rows.
 The board's server listens on `127.0.0.1` by default and uses a same-origin browser UI with a
 small server-side proxy for the selected Tau endpoint. The proxy accepts only the required Tau
 routes, validates the selected loopback URL, and does not expose arbitrary filesystem paths or a
-general HTTP forwarding service. File reads are limited to the selected state directory and the
-expected database and log files. The UI identifies that Tau's MCP tools may operate on real Main
+general HTTP forwarding service. Inspection reads are limited to the selected state directory and
+its expected database and log files. The Settings view additionally accesses its configured local
+`.env` file for allowlisted assignments. The UI identifies that Tau's MCP tools may operate on real Main
 Sequence resources even while sessions and Tasks remain local.
 
 ## Scope and consequences
