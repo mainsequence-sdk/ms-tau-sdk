@@ -9,7 +9,13 @@ from ms_tau_sdk import TauSDKSettings, __version__, create_app
 def test_public_sdk_construction_surface():
     assert callable(create_app)
     assert TauSDKSettings.__name__ == "TauSDKSettings"
-    assert set(ms_tau_sdk.__all__) == {"TauSDKSettings", "__version__", "create_app"}
+    assert set(ms_tau_sdk.__all__) == {
+        "RUNTIME_HEALTH_ABI_VERSION",
+        "TauSDKSettings",
+        "__version__",
+        "create_app",
+        "register_deployment_readiness_hook",
+    }
     assert __version__ == version("ms-tau-sdk")
 
 
@@ -40,7 +46,7 @@ async def test_mock_chat_uses_assistant_ui_sse(sdk_client: AsyncClient):
     assert "data: [DONE]" in response.text
 
 
-async def test_local_mode_rejects_registered_agent_orchestration_routes(
+async def test_local_mode_rejects_internal_dispatch_and_has_no_one_shot_agent_route(
     asgi_client,
     tmp_path,
 ):
@@ -57,13 +63,16 @@ async def test_local_mode_rejects_registered_agent_orchestration_routes(
     app = create_app(settings)
 
     async with asgi_client(app) as http:
-        a2a = await http.get("/api/a2a/v1/tasks")
         response = await http.post(
             "/api/agents/agent-1/responses",
             json={},
         )
+        dispatch = await http.post(
+            "/internal/a2a/task-dispatch",
+            json={},
+        )
 
-    for rejected in (a2a, response):
-        assert rejected.status_code == 409
-        assert rejected.json()["error"] == "local_mode_capability_unsupported"
-        assert rejected.json()["detail"]["mode"] == "local"
+    assert response.status_code == 404
+    assert dispatch.status_code == 409
+    assert dispatch.json()["error"] == "local_mode_capability_unsupported"
+    assert dispatch.json()["detail"]["mode"] == "local"

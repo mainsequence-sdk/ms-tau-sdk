@@ -17,7 +17,7 @@ historical family has the same destination.
 | `docs/adrs/adr-47` through `adr-55` | Individual ADR disposition | Re-adopt/amend/supersede/eliminate according to `adr-disposition.md`; never copy all as accepted. |
 | `docs/getting-started/` | Rewrite | Project installation, dependency lock, credentials, repository cwd, `ms-tau`, first session, and local troubleshooting. |
 | `docs/interface/` | Amend/reissue | Preserve accepted wire/runtime contracts while replacing package, settings, role, and image assumptions. Generate examples against actual SDK OpenAPI. |
-| `docs/a2a/` | Amend/reissue | Preserve accepted A2A contracts and clearly separate durable streaming from buffered sessionless responses. |
+| `docs/a2a/` | Amend/reissue | Preserve accepted A2A contracts; ADR 0007 retires the buffered one-shot response surface. |
 | `docs/reference/decisions.md` | Replace active index | New project ADR index is normative; Astro reference index becomes historical. |
 | `docs/reference/adr-*` | Historical by default, individual audit where referenced | Retain provenance but remove active authority unless reissued. |
 | `docs/reference/folder-structure.md` | Rewrite | Describe `src/ms_tau_sdk`, tests, packaged defaults, project fixtures, and no production Docker assets. |
@@ -38,7 +38,7 @@ historical family has the same destination.
 - Public Python API and embedding guide.
 - Single Tau `.tau` configuration and precedence guide.
 - Project extension responsibility and shared trust-boundary guide.
-- Durable `CodingSession` versus sessionless `AgentHarness` execution guide.
+- Durable and workspace-local `CodingSession` execution guide.
 - External integration contract limited to what a host must provide to the SDK process.
 - Runtime composition and troubleshooting guide.
 - Astro-to-SDK migration guide with package/import/command/settings/resource mappings.

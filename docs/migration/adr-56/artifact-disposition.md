@@ -13,7 +13,7 @@ Owner for every candidate artifact: Main Sequence TAU SDK.
 | Current artifact | Responsibility | Proposed disposition | Target |
 | --- | --- | --- | --- |
 | `src/astro/app.py` | FastAPI factory, lifespan, Uvicorn runner | Refactor and migrate | Public `ms_tau_sdk` application factory plus `ms-tau` runner; remove import-time operational coupling. |
-| `src/astro/api/` | Health, chat, sessions, responses, A2A transports | Amend and migrate | Private/public router primitives selected during C1; preserve accepted wire contracts. |
+| `src/astro/api/` | Health, chat, sessions, responses, A2A transports | Amend and migrate; responses later retired by ADR 0007 | Private/public router primitives selected during C1; one-shot responses are no longer an accepted wire contract. |
 | `src/astro/backend/auth.py` | Runtime credential exchange/cache | Migrate behind public SDK lifecycle | Retain `MAINSEQUENCE_RUNTIME_CREDENTIAL_*`; expose no secret-bearing public object. |
 | `src/astro/backend/client.py`, `models.py`, `routes.py` | Backend protocol client and models | Amend and migrate privately | SDK backend adapter with contract tests and protocol compatibility metadata. |
 | `src/astro/backend/mcp.py` | Main Sequence MCP connection/catalog | Amend and migrate | SDK integration primitive with startup and shutdown ownership. |
@@ -29,7 +29,7 @@ Owner for every candidate artifact: Main Sequence TAU SDK.
 | `src/astro/resources/` | Packaged Astro prompt/default resources | Refactor before migration | Packaged SDK Tau defaults resolved through Tau-native precedence; no second SDK configuration format. |
 | `src/astro/settings.py` | Astro environment/settings contract | Redesign | New SDK settings and CLI contract; retain stable Main Sequence credential names, eliminate Astro ontology. |
 | `src/astro/logging.py`, `errors.py` | Logging and errors | Amend and migrate | New project vocabulary and stable SDK error surface. |
-| `src/astro/agents/` | Sessionless execution snapshot model | Amend and migrate privately | Preserve the accepted sessionless snapshot input contract; remove role-specific naming where it leaks into the SDK surface. |
+| `src/astro/agents/` | Sessionless execution snapshot model | Migrated, then eliminated by ADR 0007 | No Agent-targeted execution snapshot contract remains in the SDK. |
 | `src/astro/__init__.py` | Astro version/package identity | Eliminate | New `ms_tau_sdk.__init__` with independent version line. |
 | `pyproject.toml` | `mainsequence-astro`, `astro-stream`, build/test config | Replace | New project metadata, package layout, `ms-tau`, public exports, and quality gates. |
 | `uv.lock` | SDK development lock | Regenerate | New SDK development lock; project consumers own their application locks. |

@@ -24,7 +24,11 @@ from ms_tau_sdk.backend.models import (
 from ms_tau_sdk.errors import BackendConflictError
 from ms_tau_sdk.runtime.manager import RUNTIME_CAPABILITIES, SessionRuntimeManager
 from ms_tau_sdk.runtime.session import ActiveSessionRuntime
-from ms_tau_sdk.runtime.snapshots import SNAPSHOT_SCHEMA_VERSION, build_snapshot_upload
+from ms_tau_sdk.runtime.snapshots import (
+    SNAPSHOT_SCHEMA_VERSION,
+    TAU_RUNTIME_VERSION,
+    build_snapshot_upload,
+)
 from ms_tau_sdk.sessions.storage import SESSION_ENTRY_ADAPTER
 from ms_tau_sdk.settings import TauSDKSettings
 
@@ -166,6 +170,74 @@ def test_runtime_contract_versions():
 
 
 @pytest.mark.asyncio
+async def test_platform_event_is_flushed_before_ack_and_replay_is_idempotent(tmp_path):
+    manager, _backend, _providers = _manager_dependencies(tmp_path, [])
+    namespace = "io.mainsequence.a2a.task-delivery/v1"
+    payload = {"deliveryUid": "delivery-1", "taskUid": "task-1"}
+    durable_entries: list[object] = []
+    storage = SimpleNamespace(
+        lease_token="lease-1",
+        read_all=AsyncMock(side_effect=lambda: list(durable_entries)),
+        flush=AsyncMock(),
+    )
+    coding_session = _coding_session()
+
+    async def append_custom_entry(entry_namespace, data):
+        durable_entries.append(
+            SimpleNamespace(type="custom", namespace=entry_namespace, data=data)
+        )
+
+    coding_session.append_custom_entry = AsyncMock(side_effect=append_custom_entry)
+    manager._runtimes["session-1"] = ActiveSessionRuntime(
+        session_uid="session-1",
+        holder_id=manager.holder_id,
+        coding_session=coding_session,
+        storage=storage,
+        provider=object(),
+    )
+
+    inserted = await manager.persist_platform_event(
+        "session-1",
+        (namespace, payload),
+        idempotency_key="delivery-1",
+    )
+    replayed = await manager.persist_platform_event(
+        "session-1",
+        (namespace, payload),
+        idempotency_key="delivery-1",
+    )
+
+    assert inserted is True
+    assert replayed is False
+    coding_session.append_custom_entry.assert_awaited_once_with(namespace, payload)
+    storage.flush.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_platform_event_rejects_an_active_caller_turn(tmp_path):
+    manager, _backend, _providers = _manager_dependencies(tmp_path, [])
+    runtime = ActiveSessionRuntime(
+        session_uid="session-1",
+        holder_id=manager.holder_id,
+        coding_session=_coding_session(),
+        storage=SimpleNamespace(lease_token="lease-1"),
+        provider=object(),
+        active_turn_uid="turn-1",
+    )
+    manager._runtimes["session-1"] = runtime
+
+    with pytest.raises(BackendConflictError, match="already has an active turn"):
+        await manager.persist_platform_event(
+            "session-1",
+            (
+                "io.mainsequence.a2a.task-delivery/v1",
+                {"deliveryUid": "delivery-1"},
+            ),
+            idempotency_key="delivery-1",
+        )
+
+
+@pytest.mark.asyncio
 async def test_stale_pre_provider_lease_reloads_once_before_execution(tmp_path):
     manager, _backend, _providers = _manager_dependencies(tmp_path, [])
     stale_storage = SimpleNamespace(
@@ -255,6 +327,7 @@ async def test_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
         request = call.args[1]
         assert "known_capability_hashes" not in request.model_dump()
         assert request.supported_snapshot_schema_versions == [2]
+        assert request.tau_runtime_version == TAU_RUNTIME_VERSION == "0.4.2"
     for load_call in load_coding_session.await_args_list:
         assert [tool.name for tool in load_call.args[0].tools] == [
             "task_request_input",

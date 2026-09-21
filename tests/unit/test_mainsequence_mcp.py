@@ -462,6 +462,56 @@ async def test_local_mode_keeps_marked_mcp_tool_without_fabricating_session_proo
 
 
 @pytest.mark.asyncio
+async def test_local_a2a_supports_polled_task_without_caller_session_proof():
+    client = AsyncMock()
+    client.tools = (
+        types.Tool(
+            name="a2a.send_message",
+            inputSchema={
+                "type": "object",
+                "properties": {"message": {"type": "string"}},
+                "required": ["message"],
+            },
+            _meta={CALLER_SESSION_PROOF_REQUIRED_META_KEY: True},
+        ),
+    )
+    client.resources = ()
+    client.call_tool.return_value = types.CallToolResult(content=[])
+    tool = create_mainsequence_mcp_tools(
+        client,
+        allow_missing_session_proof=True,
+    )[0]
+
+    assert tool.parameters["properties"]["completion_policy"]["enum"] == ["poll"]
+    await tool.execute(
+        "call-1",
+        {
+            "message": "hello",
+            "response_kind": "task",
+            "completion_policy": "poll",
+        },
+    )
+    with pytest.raises(ValueError, match="requires completion_policy 'poll'"):
+        await tool.execute(
+            "call-2",
+            {
+                "message": "hello",
+                "response_kind": "task",
+                "completion_policy": "resume_caller",
+            },
+        )
+
+    client.call_tool.assert_awaited_once_with(
+        "a2a.send_message",
+        {
+            "message": "hello",
+            "response_kind": "task",
+            "completion_policy": "poll",
+        },
+    )
+
+
+@pytest.mark.asyncio
 async def test_unmarked_mcp_tool_does_not_receive_caller_session_proof():
     client = AsyncMock()
     client.tools = (types.Tool(name="agent.get", inputSchema={"type": "object"}),)

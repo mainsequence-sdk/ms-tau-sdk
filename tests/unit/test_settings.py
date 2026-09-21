@@ -16,6 +16,14 @@ def test_settings_normalize_backend_and_origins(tmp_path):
     assert settings.trusted_origins == ("http://one.test", "http://two.test")
 
 
+def test_settings_use_canonical_mainsequence_endpoint(monkeypatch):
+    monkeypatch.setenv("MAINSEQUENCE_ENDPOINT", "https://development.example.test/")
+
+    settings = TauSDKSettings(_env_file=None)
+
+    assert settings.backend_url == "https://development.example.test"
+
+
 def test_settings_default_to_current_workspace_and_accept_explicit_env(monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
     monkeypatch.delenv("MAINSEQUENCE_TAU_WORKSPACE", raising=False)
@@ -109,6 +117,9 @@ def test_local_mode_is_workspace_scoped_and_loopback_by_default(tmp_path):
     assert settings.local_provider == "openai"
     assert settings.local_model == "gpt-5.4"
     assert settings.local_state_path.parent == (tmp_path / "state" / settings.workspace_digest)
+    assert settings.local_log_path == (
+        tmp_path / "state" / settings.workspace_digest / "logs" / "tau.jsonl"
+    )
     assert settings.local_session_uid(None) == (f"local-{settings.workspace_digest}-default")
     assert settings.local_session_uid("demo") == settings.local_session_uid("demo")
     assert settings.local_session_uid("demo") != settings.local_session_uid("other")

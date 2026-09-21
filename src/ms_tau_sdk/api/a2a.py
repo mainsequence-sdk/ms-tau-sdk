@@ -22,7 +22,6 @@ from tau_agent.types import JSONValue
 from ms_tau_sdk.backend.client import MainSequenceClient
 from ms_tau_sdk.backend.models import (
     AgentTask,
-    AgentTaskCallerDelivery,
     AgentTaskCreateResult,
     AgentTaskSnapshot,
 )
@@ -406,7 +405,6 @@ def _materialize_pdfs(
             }
         },
         config,
-        context_policy="required",
         allowed_media_types={"application/pdf"},
     )
     return [item.path for item in prepared.files]
@@ -420,13 +418,33 @@ def _request_parts(body: dict[str, Any], config: TauSDKSettings) -> tuple[dict[s
             **body["message"],
             "role": A2AMessageDirection.REQUESTER.value,
         }
+    if config.local_mode and isinstance(normalized_body.get("message"), dict):
+        normalized_body = dict(normalized_body)
+        local_message = dict(normalized_body["message"])
+        requested_context = str(local_message.get("contextId") or "").strip()
+        if requested_context:
+            local_message["contextId"] = config.local_session_uid(requested_context)
+        normalized_body["message"] = local_message
     prepared = prepare_a2a_input(
         normalized_body,
         config,
-        context_policy="required",
         allowed_media_types={"application/pdf"},
     )
     return prepared.message, prepared.prompt()
+
+
+def _a2a_turn_provenance(
+    config: TauSDKSettings,
+    request: Request,
+) -> TurnProvenance:
+    if config.local_mode:
+        return {
+            "channel": "a2a",
+            "origin": "agent",
+            "actorKind": "agent",
+            "actorUid": f"local-a2a-client-{config.workspace_digest}",
+        }
+    return turn_provenance_from_request("a2a", request.headers)
 
 
 def _output_contract(body: dict[str, Any]) -> StrictJsonContract:
@@ -796,13 +814,34 @@ async def _claim_backend_task(
     *,
     dispatch_uid: str | None = None,
 ) -> _ClaimedTask:
+    resolved_dispatch_uid = dispatch_uid
+    if not resolved_dispatch_uid:
+        dispatches = await client.list_task_dispatches(task.uid)
+        open_dispatch = next(
+            (
+                candidate
+                for candidate in reversed(dispatches)
+                if candidate.state in {"pending", "signaled"}
+            ),
+            None,
+        )
+        if open_dispatch is None:
+            raise BackendError(f"Backend Task {task.task_id} has no claimable dispatch")
+        resolved_dispatch_uid = open_dispatch.uid
     fence = await manager.task_execution_fence(task.agent_session_uid or task.context_id)
     attempt = await client.claim_task_dispatch(
         task.uid,
         holder_id=fence.holder_id,
         lease_token=fence.lease_token,
-        dispatch_uid=dispatch_uid or task.dispatch_uid,
+        dispatch_uid=resolved_dispatch_uid,
         executor_instance_id=fence.holder_id,
+    )
+    fence = await manager.task_execution_fence(task.agent_session_uid or task.context_id)
+    attempt = await client.start_task_attempt(
+        task.uid,
+        attempt_uid=attempt.uid,
+        holder_id=fence.holder_id,
+        lease_token=fence.lease_token,
     )
     return _ClaimedTask(
         attempt_uid=attempt.uid,
@@ -824,23 +863,6 @@ async def _current_task_fence(
     return fence
 
 
-async def _add_claimed_task_message(
-    client: MainSequenceClient,
-    manager: SessionRuntimeManager,
-    task: AgentTask,
-    claim: _ClaimedTask,
-    message: dict[str, Any],
-) -> dict[str, Any]:
-    fence = await _current_task_fence(manager, task, claim)
-    return await client.add_task_attempt_message(
-        task.uid,
-        attempt_uid=claim.attempt_uid,
-        holder_id=fence.holder_id,
-        lease_token=fence.lease_token,
-        message=message,
-    )
-
-
 async def _settle_claimed_task(
     client: MainSequenceClient,
     manager: SessionRuntimeManager,
@@ -849,18 +871,18 @@ async def _settle_claimed_task(
     *,
     status: str,
     status_message: dict[str, Any] | None = None,
-    failure_category: str = "",
-    detail: str = "",
+    outcome_category: str = "",
+    failure_detail: str = "",
 ) -> AgentTask:
     fence = await _current_task_fence(manager, task, claim)
     optional: dict[str, Any] = {}
     if status_message is not None:
         optional["status_message"] = status_message
-    if failure_category:
-        optional["failure_category"] = failure_category
-    if detail:
-        optional["detail"] = detail
-    return await client.settle_task_attempt(
+    if outcome_category:
+        optional["outcome_category"] = outcome_category
+    if failure_detail:
+        optional["failure_detail"] = failure_detail
+    await client.settle_task_attempt(
         task.uid,
         attempt_uid=claim.attempt_uid,
         holder_id=fence.holder_id,
@@ -868,6 +890,7 @@ async def _settle_claimed_task(
         status=status,
         **optional,
     )
+    return await client.get_task(task.uid)
 
 
 @dataclass(slots=True)
@@ -880,6 +903,7 @@ class _DurableArtifactWriter:
     flush_bytes: int
     cancellation_poll_interval_seconds: float
     artifact_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    output_uid: str | None = None
     revision: int = 0
     pending: list[str] = field(default_factory=list)
     pending_bytes: int = 0
@@ -913,38 +937,61 @@ class _DurableArtifactWriter:
             return
         await self.ensure_not_canceled(force=True)
         fence = await _current_task_fence(self.manager, self.task, self.claim)
-        operation = "create" if self.revision == 0 else "finalize" if final else "append"
-        result = await self.client.mutate_task_output(
-            self.task.uid,
-            attempt_uid=self.claim.attempt_uid,
-            holder_id=fence.holder_id,
-            lease_token=fence.lease_token,
-            operation=operation,
-            artifact_id=self.artifact_id,
-            parts=[{"text": text}] if text else [],
-            expected_revision=self.revision or None,
-            name="Agent response",
-        )
+        created = self.revision == 0
+        if created:
+            result = await self.client.create_task_output(
+                self.task.uid,
+                attempt_uid=self.claim.attempt_uid,
+                holder_id=fence.holder_id,
+                lease_token=fence.lease_token,
+                artifact_id=self.artifact_id,
+                parts=[{"text": text}] if text else [],
+                name="Agent response",
+            )
+            self.output_uid = str(result["uid"])
+        elif final:
+            if self.output_uid is None:
+                raise RuntimeError("Backend Task output UID is unavailable")
+            result = await self.client.finalize_task_output(
+                self.task.uid,
+                attempt_uid=self.claim.attempt_uid,
+                holder_id=fence.holder_id,
+                lease_token=fence.lease_token,
+                output_uid=self.output_uid,
+                expected_revision=self.revision,
+            )
+        else:
+            if self.output_uid is None:
+                raise RuntimeError("Backend Task output UID is unavailable")
+            result = await self.client.append_task_output(
+                self.task.uid,
+                attempt_uid=self.claim.attempt_uid,
+                holder_id=fence.holder_id,
+                lease_token=fence.lease_token,
+                output_uid=self.output_uid,
+                expected_revision=self.revision,
+                parts=[{"text": text}] if text else [],
+            )
         self.revision = int(result.get("revision") or self.revision + 1)
         self.pending.clear()
         self.pending_bytes = 0
         self.last_flush_at = time.monotonic()
-        if final and operation == "create":
+        if final and created:
             await self.flush(final=True)
 
     async def write_strict_json(self, text: str) -> None:
         await self.ensure_not_canceled(force=True)
         fence = await _current_task_fence(self.manager, self.task, self.claim)
-        result = await self.client.mutate_task_output(
+        result = await self.client.create_task_output(
             self.task.uid,
             attempt_uid=self.claim.attempt_uid,
             holder_id=fence.holder_id,
             lease_token=fence.lease_token,
-            operation="create",
             artifact_id=self.artifact_id,
             parts=[{"data": json.loads(text), "mediaType": "application/json"}],
             name="Agent response",
         )
+        self.output_uid = str(result["uid"])
         self.revision = int(result.get("revision") or 1)
         await self.flush(final=True)
 
@@ -1064,18 +1111,6 @@ async def _execute_task(
             strict_json=output_contract.enabled,
         )
         await writer.ensure_not_canceled(force=True)
-        await _add_claimed_task_message(
-            client,
-            manager,
-            task,
-            claim,
-            {
-                "message_id": message["messageId"],
-                "role": "agent",
-                "parts": message["parts"],
-            },
-        )
-        await writer.ensure_not_canceled(force=True)
         await _settle_claimed_task(
             client,
             manager,
@@ -1121,8 +1156,8 @@ async def _execute_task(
                 claim,
                 status="failed",
                 status_message={"message": "Task execution failed"},
-                failure_category="execution",
-                detail=type(error).__name__,
+                outcome_category="execution",
+                failure_detail=type(error).__name__,
             )
         raise
 
@@ -1337,23 +1372,6 @@ async def _stream_task_events(
             return
         if not output_contract.enabled:
             await writer.flush(final=True)
-        message = _agent_message(
-            context_id=task.context_id,
-            text=text,
-            strict_json=output_contract.enabled,
-        )
-        await writer.ensure_not_canceled(force=True)
-        await _add_claimed_task_message(
-            client,
-            manager,
-            task,
-            claim,
-            {
-                "message_id": message["messageId"],
-                "role": "agent",
-                "parts": message["parts"],
-            },
-        )
         await writer.ensure_not_canceled(force=True)
         completed = await _settle_claimed_task(
             client,
@@ -1406,8 +1424,8 @@ async def _stream_task_events(
                 claim,
                 status="failed",
                 status_message={"message": "Task execution failed"},
-                failure_category="execution",
-                detail=type(error).__name__,
+                outcome_category="execution",
+                failure_detail=type(error).__name__,
             )
         raise
 
@@ -1688,7 +1706,7 @@ def _durable_task_execution_input(
     return prompt, contract, provenance
 
 
-@router.post("/internal/a2a/dispatches:available", status_code=202)
+@router.post("/internal/a2a/task-dispatch", status_code=200)
 async def task_dispatch_available(
     body: dict[str, Any],
     client: BackendDep,
@@ -1697,13 +1715,13 @@ async def task_dispatch_available(
 ) -> dict[str, Any]:
     """Handle the bounded post-wake hint; the backend claim is the authority."""
 
-    task_uid = str(body.get("taskUid") or "").strip()
-    dispatch_uid = str(body.get("dispatchUid") or "").strip()
+    task_uid = str(body.get("task_uid") or "").strip()
+    dispatch_uid = str(body.get("dispatch_uid") or "").strip()
     if not task_uid or not dispatch_uid:
-        raise HTTPException(status_code=400, detail="taskUid and dispatchUid are required")
+        raise HTTPException(status_code=400, detail="task_uid and dispatch_uid are required")
     task = await client.get_task(task_uid)
     if task.status != "submitted":
-        return {"accepted": True, "scheduled": False, "taskUid": task.uid}
+        return {"accepted": True, "scheduled": False, "task_uid": task.uid}
     prompt, output_contract, provenance = _durable_task_execution_input(task, config)
     claim = await _claim_backend_task(
         client,
@@ -1726,111 +1744,95 @@ async def task_dispatch_available(
         ),
         name=f"a2a-task-{task.task_id}",
     )
-    return {"accepted": True, "scheduled": scheduled, "taskUid": task.uid}
+    return {"accepted": True, "scheduled": scheduled, "task_uid": task.uid}
 
 
 async def _resume_caller_delivery(
     *,
-    client: MainSequenceClient,
     manager: SessionRuntimeManager,
-    delivery: AgentTaskCallerDelivery,
-    holder_id: str,
+    task_uid: str,
+    task_id: str,
+    task_status: str,
+    caller_agent_session_uid: str,
 ) -> None:
-    event_payload: dict[str, JSONValue] = {
-        "deliveryUid": delivery.uid,
-        "taskUid": delivery.task_uid,
-        "taskId": delivery.task_id,
-        "state": delivery.task_status,
-        "eventCursor": delivery.triggering_event_sequence,
-    }
     prompt = (
         "A delegated asynchronous A2A Task has new actionable state. "
-        f"Task {delivery.task_id} is {delivery.task_status}. "
-        "Use the Main Sequence A2A get/wait tools with the Task UID in the attached "
-        "platform event, then continue the original work."
+        f"Task {task_id} ({task_uid}) is {task_status}. "
+        "Use the Main Sequence A2A get/wait tools with that Task UID, then continue "
+        "the original work."
     )
-    try:
-        async for _event in manager.prompt(
-            delivery.caller_agent_session_uid,
-            prompt,
-            provenance={
-                "channel": "a2a",
-                "origin": "agent",
-                "actorKind": "platform",
-                "actorUid": "mainsequence",
-            },
-            platform_event=("io.mainsequence.a2a.task-delivery/v1", event_payload),
-        ):
-            pass
-        manager.mark_response_delivered(delivery.caller_agent_session_uid)
-        fence = await manager.task_execution_fence(delivery.caller_agent_session_uid)
-        if fence.holder_id != holder_id:
-            raise LeaseLostError(
-                f"Caller delivery lease holder changed for delivery {delivery.uid}"
-            )
-        await client.settle_task_caller_delivery(
-            delivery.uid,
-            holder_id=fence.holder_id,
-            lease_token=fence.lease_token,
-            outcome="delivered",
-        )
-    except asyncio.CancelledError:
-        raise
-    except (BackendError, LeaseLostError):
-        raise
-    except Exception as error:
-        with contextlib.suppress(Exception):
-            fence = await manager.task_execution_fence(delivery.caller_agent_session_uid)
-            if fence.holder_id == holder_id:
-                await client.settle_task_caller_delivery(
-                    delivery.uid,
-                    holder_id=fence.holder_id,
-                    lease_token=fence.lease_token,
-                    outcome="failed",
-                    detail=type(error).__name__,
-                )
-        raise
+    async for _event in manager.prompt(
+        caller_agent_session_uid,
+        prompt,
+        provenance={
+            "channel": "a2a",
+            "origin": "agent",
+            "actorKind": "platform",
+            "actorUid": "mainsequence",
+        },
+    ):
+        pass
+    manager.mark_response_delivered(caller_agent_session_uid)
 
 
-@router.post("/internal/a2a/caller-deliveries:available", status_code=202)
+@router.post("/internal/a2a/task-caller-delivery", status_code=200)
 async def task_caller_delivery_available(
     body: dict[str, Any],
-    client: BackendDep,
     manager: RuntimeManagerDep,
 ) -> dict[str, Any]:
-    delivery_uid = str(body.get("deliveryUid") or "").strip()
-    if not delivery_uid:
-        raise HTTPException(status_code=400, detail="deliveryUid is required")
-    delivery = await client.get_task_caller_delivery(delivery_uid)
-    if delivery.state == "delivered":
-        return {"accepted": True, "scheduled": False, "deliveryUid": delivery.uid}
-    if manager.session_turn_active(delivery.caller_agent_session_uid):
+    delivery_uid = str(body.get("delivery_uid") or "").strip()
+    task_uid = str(body.get("task_uid") or "").strip()
+    task_id = str(body.get("task_id") or "").strip()
+    task_status = str(body.get("status") or "").strip()
+    caller_agent_session_uid = str(body.get("caller_agent_session_uid") or "").strip()
+    event_cursor = body.get("event_cursor")
+    if not all((delivery_uid, task_uid, task_id, task_status, caller_agent_session_uid)):
+        raise HTTPException(status_code=400, detail="Caller-delivery signal is incomplete")
+    if not isinstance(event_cursor, int) or isinstance(event_cursor, bool) or event_cursor < 1:
+        raise HTTPException(status_code=400, detail="event_cursor must be a positive integer")
+    if manager.session_turn_active(caller_agent_session_uid):
+        raise HTTPException(
+            status_code=409,
+            detail="Caller AgentSession already has an active turn",
+        )
+    event_payload: dict[str, JSONValue] = {
+        "deliveryUid": delivery_uid,
+        "taskUid": task_uid,
+        "taskId": task_id,
+        "state": task_status,
+        "eventCursor": event_cursor,
+    }
+    try:
+        persisted = await manager.persist_platform_event(
+            caller_agent_session_uid,
+            ("io.mainsequence.a2a.task-delivery/v1", event_payload),
+            idempotency_key=delivery_uid,
+        )
+    except BackendError as error:
+        raise HTTPException(status_code=409, detail=str(error)) from error
+    if not persisted:
         return {
             "accepted": True,
+            "event_persisted": False,
             "scheduled": False,
-            "queued": True,
-            "deliveryUid": delivery.uid,
+            "delivery_uid": delivery_uid,
         }
-    fence = await manager.task_execution_fence(delivery.caller_agent_session_uid)
-    delivery = await client.claim_task_caller_delivery(
-        delivery.uid,
-        holder_id=fence.holder_id,
-        lease_token=fence.lease_token,
-    )
     _execution, scheduled = manager.create_a2a_caller_delivery(
-        delivery.uid,
+        delivery_uid,
         _resume_caller_delivery(
-            client=client,
             manager=manager,
-            delivery=delivery,
-            holder_id=fence.holder_id,
+            task_uid=task_uid,
+            task_id=task_id,
+            task_status=task_status,
+            caller_agent_session_uid=caller_agent_session_uid,
         ),
-        name=f"a2a-caller-delivery-{delivery.uid}",
+        name=f"a2a-caller-delivery-{delivery_uid}",
     )
     return {
         "accepted": True,
+        "event_persisted": persisted,
         "scheduled": scheduled,
-        "deliveryUid": delivery.uid,
+        "delivery_uid": delivery_uid,
     }
 
 
@@ -1847,7 +1849,7 @@ async def message_send(
     ] = None,
 ) -> dict[str, Any]:
     try:
-        provenance = turn_provenance_from_request("a2a", request.headers)
+        provenance = _a2a_turn_provenance(config, request)
     except CallerIdentityError as error:
         return _caller_identity_rejection(request, error)  # type: ignore[return-value]
     message, prompt = _request_parts(body, config)
@@ -1869,6 +1871,8 @@ async def message_send(
             response_kind=response_kind,
         )
     continuation_task_id = str(message.get("taskId") or "").strip()
+    if config.local_mode and (continuation_task_id or response_kind is ResponseKind.TASK):
+        await manager.get(str(message["contextId"]))
     if continuation_task_id:
         if response_kind is not ResponseKind.TASK:
             raise HTTPException(
@@ -1964,7 +1968,7 @@ async def message_stream(
     ] = None,
 ) -> StreamingResponse:
     try:
-        provenance = turn_provenance_from_request("a2a", request.headers)
+        provenance = _a2a_turn_provenance(config, request)
     except CallerIdentityError as error:
         return _caller_identity_rejection(request, error)  # type: ignore[return-value]
     _response_kind(
@@ -1981,6 +1985,8 @@ async def message_stream(
         streaming=True,
     )
     output_contract = _output_contract(body)
+    if config.local_mode:
+        await manager.get(str(message["contextId"]))
     creation = await _create_backend_task(
         client,
         message=message,
@@ -2138,7 +2144,7 @@ async def json_rpc(
     provenance: TurnProvenance | None = None
     if method in PROTECTED_MESSAGE_RPC_METHODS:
         try:
-            provenance = turn_provenance_from_request("a2a", request.headers)
+            provenance = _a2a_turn_provenance(config, request)
         except CallerIdentityError as error:
             return _caller_identity_json_rpc_error(request, request_id, error)
 
@@ -2168,6 +2174,8 @@ async def json_rpc(
                 streaming=True,
             )
             output_contract = _output_contract(params)
+            if config.local_mode:
+                await manager.get(str(message["contextId"]))
             creation = await _create_backend_task(
                 client,
                 message=message,

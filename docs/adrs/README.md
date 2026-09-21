@@ -8,6 +8,8 @@ These records are the normative decisions for Main Sequence TAU SDK:
 - [ADR 0004: Minimal bundled tool boundary](./0004-minimal-bundled-tool-boundary.md)
 - [ADR 0005: Authenticated local development mode](./0005-authenticated-local-development-mode.md)
   (Accepted; SDK implementation in progress)
+- [ADR 0006: SDK-owned agent development skills](./0006-sdk-owned-agent-development-skills.md)
+- [ADR 0007: Retire agent-targeted sessionless responses](./0007-retire-agent-targeted-sessionless-responses.md)
 
 [ADR 56](./adr-56-main-sequence-tau-sdk-workspace-bound-library-deployment.md) is the accepted
 transition record and implementation ledger. Earlier decisions are preserved only in the

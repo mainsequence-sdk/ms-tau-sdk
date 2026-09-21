@@ -8,11 +8,21 @@ workspace.
 With `uv`:
 
 ```bash
-uv add "ms-tau-sdk==1.1.0"
+uv add "ms-tau-sdk==1.2.5"
 ```
 
 The project lockfile is the record of the exact SDK, Tau, provider, and transport versions that
 will execute.
+
+When a coding agent will develop or debug the TAU integration, explicitly copy the skills from the
+installed SDK version:
+
+```bash
+uv run ms-tau skills sync --path .
+```
+
+The managed copies are written to `.agents/skills/ms_tau_sdk/`. Re-run the same command after an
+SDK update. Installing the package and starting the runtime do not copy files automatically.
 
 ## Configure runtime authentication
 
@@ -26,7 +36,7 @@ export MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET="<runtime-credential-secret>"
 The SDK exchanges this pair for short-lived access credentials. Do not put either value in source
 control or `.tau` files.
 
-Set `MAINSEQUENCE_BACKEND` only when the project must use a non-default Main Sequence API URL.
+Set `MAINSEQUENCE_ENDPOINT` only when the project must use a non-default Main Sequence API URL.
 
 ## Run
 
@@ -77,10 +87,19 @@ The Main Sequence login or project launcher is responsible for exporting the ref
 pair. The runtime package itself has no dependency on the `mainsequence` Python distribution and
 does not read the CLI's private credential store.
 
-Local mode creates its workspace-scoped SQLite state lazily on the first chat request. The request
-may omit `sessionUid`; the response's `X-Agent-Session-Uid` header contains the effective local
-identifier. Provider authorization, credential hydration, model inference, and Main Sequence MCP
-remain remote. MCP tools operate on real platform resources.
+Local mode creates its workspace-scoped SQLite state lazily on the first chat or public A2A
+request. Chat may omit `sessionUid`; the response's `X-Agent-Session-Uid` header contains the
+effective local identifier. A2A Message and Task requests use workspace-local context identities
+and persist task status, messages, artifacts, events, cancellation, and continuation locally.
+Provider authorization, credential hydration, model inference, and Main Sequence MCP remain
+remote. MCP tools operate on real platform resources.
+
+Local A2A callers do not send managed-gateway `X-Caller-*` headers. Use REST or JSON-RPC
+`message:send`, request `configuration.responseKind: "task"` for Task execution, or use
+`message:stream` for SSE. Task list/get/cancel/subscribe and continuation after `input_required` or
+`auth_required` use the same SQLite store and survive restart. Platform discovery, internal
+dispatch/caller-delivery hooks, push notifications, and `resume_caller` remain unavailable;
+outbound MCP Task workflows use polling.
 
 Local mode defaults to `127.0.0.1:8787`. Explicitly binding another interface exposes a process
 that acts with the authenticated user's live Main Sequence authority.

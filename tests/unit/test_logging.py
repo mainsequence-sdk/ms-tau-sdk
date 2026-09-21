@@ -1,6 +1,9 @@
 import asyncio
 import json
 import logging
+import stat
+import subprocess
+import sys
 
 import pytest
 import structlog
@@ -19,6 +22,7 @@ from ms_tau_sdk.logging import (
 )
 from ms_tau_sdk.runtime.events import TauRuntimeEvent
 from ms_tau_sdk.runtime.observability import TauTurnObserver
+from ms_tau_sdk.settings import TauSDKSettings
 
 
 def _json_events(output: str) -> list[dict[str, object]]:
@@ -144,6 +148,139 @@ def test_structlog_human_sink_uses_console_renderer_and_source(capsys):
     assert "pathname=" in captured.err
     assert "source=" not in captured.err
     assert len(captured.err.splitlines()) == 1
+
+
+def test_local_file_sink_is_structured_private_and_survives_reconfiguration(tmp_path, capsys):
+    log_path = tmp_path / "state" / "logs" / "tau.jsonl"
+    configure_logging("INFO", machine_sink=False, human_sink=True, file_path=log_path)
+    bind_contextvars(request_id="local-request-1")
+
+    structlog.get_logger("ms_tau_sdk.test").info(
+        "local.first",
+        authorization="Bearer private-token",
+        nested={"credential_secret": "private-credential"},
+    )
+    try:
+        raise ValueError("private exception message")
+    except ValueError:
+        structlog.get_logger("ms_tau_sdk.test").exception("local.failed")
+        logging.getLogger("foreign.test").exception("Foreign failure")
+
+    configure_logging("INFO", machine_sink=False, human_sink=True, file_path=log_path)
+    structlog.get_logger("ms_tau_sdk.test").info("local.after_restart")
+    clear_contextvars()
+
+    events = _json_events(log_path.read_text(encoding="utf-8"))
+    first = next(event for event in events if event["event"] == "local.first")
+    failed = next(event for event in events if event["event"] == "local.failed")
+    foreign = next(event for event in events if event["logger"] == "foreign.test")
+    assert first["request_id"] == "local-request-1"
+    assert first["authorization"] == "[REDACTED]"
+    assert first["nested"] == {"credential_secret": "[REDACTED]"}
+    assert failed["error_type"] == "ValueError"
+    assert failed["exception_frames"]
+    assert foreign["error_type"] == "ValueError"
+    assert len([event for event in events if event["event"] == "local.after_restart"]) == 1
+    assert "private exception message" not in log_path.read_text(encoding="utf-8")
+    assert "private-token" not in log_path.read_text(encoding="utf-8")
+    assert stat.S_IMODE(log_path.parent.stat().st_mode) == 0o700
+    assert stat.S_IMODE(log_path.stat().st_mode) == 0o600
+    assert "local.first" in capsys.readouterr().err
+
+
+def test_local_app_always_creates_file_but_managed_app_does_not(tmp_path):
+    local_settings = TauSDKSettings(
+        _env_file=None,
+        workspace=tmp_path,
+        local_state_root=tmp_path / "state",
+        local_mode=True,
+        auth_mode="jwt",
+        access_token="access-token",
+        refresh_token="refresh-token",
+        local_provider="openai",
+        local_model="gpt-5.4",
+    )
+    create_app(local_settings)
+    assert local_settings.local_log_path.is_file()
+
+    managed_settings = TauSDKSettings(
+        _env_file=None,
+        workspace=tmp_path / "state",
+        local_state_root=tmp_path / "managed-state",
+        runtime_credential_id="credential-id",
+        runtime_credential_secret="credential-secret",
+    )
+    create_app(managed_settings)
+    assert not managed_settings.local_log_path.exists()
+
+
+def test_local_file_sink_fails_startup_when_path_is_unwritable(tmp_path):
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a directory", encoding="utf-8")
+    settings = TauSDKSettings(
+        _env_file=None,
+        workspace=tmp_path,
+        local_state_root=blocked,
+        local_mode=True,
+        auth_mode="jwt",
+        access_token="access-token",
+        refresh_token="refresh-token",
+        local_provider="openai",
+        local_model="gpt-5.4",
+    )
+    with pytest.raises(OSError):
+        create_app(settings)
+
+
+def test_local_file_sink_rotates_valid_json_lines(tmp_path, monkeypatch):
+    import ms_tau_sdk.logging as tau_logging
+
+    monkeypatch.setattr(tau_logging, "LOCAL_LOG_MAX_BYTES", 1024)
+    monkeypatch.setattr(tau_logging, "LOCAL_LOG_BACKUP_COUNT", 3)
+    log_path = tmp_path / "logs" / "tau.jsonl"
+    configure_logging("INFO", machine_sink=False, human_sink=False, file_path=log_path)
+    for number in range(12):
+        structlog.get_logger("ms_tau_sdk.test").info("local.rotate", sequence=number)
+
+    log_files = [log_path, *sorted(log_path.parent.glob("tau.jsonl.[1-3]"))]
+    assert len(log_files) > 1
+    for file in log_files:
+        assert _json_events(file.read_text(encoding="utf-8"))
+        assert stat.S_IMODE(file.stat().st_mode) == 0o600
+
+
+def test_local_file_sink_accepts_two_processes_without_corrupting_json(tmp_path):
+    log_path = tmp_path / "logs" / "tau.jsonl"
+    script = "\n".join(
+        (
+            "import sys",
+            "from pathlib import Path",
+            "import structlog",
+            "from ms_tau_sdk.logging import configure_logging",
+            "configure_logging('INFO', machine_sink=False, human_sink=False,",
+            "                  file_path=Path(sys.argv[1]))",
+            "for number in range(20):",
+            "    structlog.get_logger('ms_tau_sdk.worker').info(",
+            "        'local.concurrent', worker=sys.argv[2], sequence=number)",
+        )
+    )
+    processes = [
+        subprocess.Popen(
+            [sys.executable, "-c", script, str(log_path), str(worker)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        for worker in range(2)
+    ]
+    for process in processes:
+        _stdout, stderr = process.communicate(timeout=8)
+        assert process.returncode == 0, stderr.decode("utf-8", errors="replace")
+
+    events = _json_events(log_path.read_text(encoding="utf-8"))
+    assert len(events) == 40
+    assert {(event["worker"], event["sequence"]) for event in events} == {
+        (str(worker), number) for worker in range(2) for number in range(20)
+    }
 
 
 async def test_request_context_emits_correlated_access_events(

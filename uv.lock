@@ -197,6 +197,18 @@ wheels = [
 ]
 
 [[package]]
+name = "concurrent-log-handler"
+version = "0.9.29"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "portalocker" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9c/2c/ba185acc438cff6b58cd8f8dec27e7f4fcabf6968a1facbb6d0cacbde7fe/concurrent_log_handler-0.9.29.tar.gz", hash = "sha256:bc37a76d3f384cbf4a98f693ebd770543edc0f4cd5c6ab6bc70e9e1d7d582265", size = 42114, upload-time = "2026-02-22T18:18:25.758Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/4a/f3/3e3188fdb3e53c6343fd1c7de41c55d4db626f07db3877eae77b28d58bd2/concurrent_log_handler-0.9.29-py3-none-any.whl", hash = "sha256:0d6c077fbaef2dae49a25975dcf72a602fe0a6a4ce80a3b7c37696d37e10459a", size = 32052, upload-time = "2026-02-22T18:18:24.558Z" },
+]
+
+[[package]]
 name = "coverage"
 version = "7.15.4"
 source = { registry = "https://pypi.org/simple" }
@@ -597,17 +609,17 @@ wheels = [
 
 [[package]]
 name = "ms-tau-sdk"
-version = "1.1.0"
+version = "1.2.5"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },
+    { name = "concurrent-log-handler" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "jsonschema" },
     { name = "mcp" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
-    { name = "pypdf" },
     { name = "python-multipart" },
     { name = "structlog" },
     { name = "tau-ai" },
@@ -629,13 +641,13 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "anyio", specifier = ">=4.10" },
+    { name = "concurrent-log-handler", specifier = ">=0.9.28,<1" },
     { name = "fastapi", specifier = ">=0.116" },
     { name = "httpx", specifier = ">=0.28" },
     { name = "jsonschema", specifier = ">=4.25,<5" },
     { name = "mcp", specifier = ">=1.27,<2" },
     { name = "pydantic", specifier = ">=2.11" },
     { name = "pydantic-settings", specifier = ">=2.10" },
-    { name = "pypdf", specifier = ">=6.0,<7" },
     { name = "python-multipart", specifier = ">=0.0.20" },
     { name = "structlog", specifier = ">=26.1,<27" },
     { name = "tau-ai", specifier = "==0.4.2" },
@@ -800,6 +812,15 @@ wheels = [
 ]
 
 [[package]]
+name = "portalocker"
+version = "4.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/81/cd/d2a23fc80c26f539ac77e7d61bd5e4af5d0b3a09a78ac4c716eead345129/portalocker-4.4.0.tar.gz", hash = "sha256:90c0df939d4ffba121f8e925bbf98ecea8b9381718666ab871a226938d2b63b2", size = 304906, upload-time = "2026-09-19T16:11:09.114Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/52/6c/07fa2775e87b6e241c2aca5cef79f65e450bc115de55f03cda6251f81690/portalocker-4.4.0-py3-none-any.whl", hash = "sha256:a8e99ea29bfb61766ee0b4008cbaf0651e8e050f7a2485ebf54316480e99226e", size = 129647, upload-time = "2026-09-19T16:11:07.377Z" },
+]
+
+[[package]]
 name = "pycparser"
 version = "3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -914,15 +935,6 @@ wheels = [
 [package.optional-dependencies]
 crypto = [
     { name = "cryptography" },
-]
-
-[[package]]
-name = "pypdf"
-version = "6.14.2"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/03/72/7dfd5ff1c9c37de97a731701f51af091325f123d9d4270361c9c69e4431f/pypdf-6.14.2.tar.gz", hash = "sha256:7873f502fe4385e79539b21d872392dc0c4e3714327c15881cbc7fbfd1f95b25", size = 6491182, upload-time = "2026-06-23T14:18:30.859Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/49/e6/136aa8993a2ae7214e0b0ef2edaa0d2e08d1d4e4982635b08a835ff31ec8/pypdf-6.14.2-py3-none-any.whl", hash = "sha256:3f07891af76dc002657e04993ab9b4de81de29f9013b9761d0b7968bff12e946", size = 349514, upload-time = "2026-06-23T14:18:28.867Z" },
 ]
 
 [[package]]

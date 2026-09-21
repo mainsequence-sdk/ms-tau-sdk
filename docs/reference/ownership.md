@@ -1,8 +1,8 @@
 # Ownership and Release Authority
 
 Main Sequence TAU SDK maintainers own this repository's Python package, public construction API,
-command, packaged resources, documented settings, tested wire contracts, CI, and Python release
-artifacts.
+command, packaged resources, version-matched development skills, documented settings, tested wire
+contracts, CI, and Python release artifacts.
 
 Consuming-project owners choose and lock the SDK version, provide the project workspace and Python
 environment, own `.tau` configuration and extensions, and build or deploy their own project
@@ -18,3 +18,8 @@ release tag.
 Project extensions remain the consuming project's responsibility. The SDK maintainers do not
 review, license, secure, or operate extensions merely because Tau loads them from a project
 workspace.
+
+Django remains authoritative for platform ontology, deployment resources, canonical A2A protocol,
+authorization, and durable task lifecycle. The `mainsequence-sdk` distribution remains
+authoritative for its Python client and CLI mechanics. Neither dependency may overwrite the
+other's managed skill namespace.

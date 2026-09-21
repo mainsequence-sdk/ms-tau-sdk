@@ -20,7 +20,6 @@ from ms_tau_sdk.runtime.session import ActiveSessionRuntime
 def test_build_turn_provenance_maps_the_route_to_an_origin():
     assert build_turn_provenance("chat") == {"channel": "chat", "origin": "user"}
     assert build_turn_provenance("a2a") == {"channel": "a2a", "origin": "agent"}
-    assert build_turn_provenance("responses") == {"channel": "responses", "origin": "agent"}
     with pytest.raises(ValueError):
         build_turn_provenance("smoke-signals")  # type: ignore[arg-type]
 

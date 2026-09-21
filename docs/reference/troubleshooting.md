@@ -32,6 +32,24 @@ all `ms-tau` processes for that workspace before moving or deleting its workspac
 Removing local state cannot remove a platform AgentSession because local state is never attached
 to one.
 
+## Inspect local operational logs
+
+Local-mode structured events are appended to
+`~/.tau/mainsequence/<workspace-hash>/logs/tau.jsonl`, beside the workspace's SQLite state. Use
+`TAU_LOCAL_STATE_ROOT` to relocate the parent of both. Each line is a JSON event; rotated backups
+are kept in the same `logs` directory. If the log file cannot be opened, local startup fails with
+the path instead of silently discarding durable diagnostics. The file excludes raw exception
+messages and known secret-bearing fields, but project extensions must also avoid logging their
+own sensitive content. Do not commit or upload the local state directory.
+
+## Local A2A returns a capability error
+
+Public `/api/a2a` Message and Task routes are supported in local mode. A capability error is valid
+only for `/internal/a2a` backend delivery hooks, platform discovery of
+the unregistered local process, push notifications, or `resume_caller`. For local Task completion,
+use polling. Incoming local calls do not need managed-gateway `X-Caller-*` headers. If a public
+Message or Task route returns this error, the running SDK is stale.
+
 ## An MCP tool fails only in local mode
 
 Main Sequence MCP remains connected with user JWT authentication. Tools marked as requiring a real

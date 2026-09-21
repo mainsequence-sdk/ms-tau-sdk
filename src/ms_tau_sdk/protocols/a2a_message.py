@@ -8,12 +8,10 @@ import hashlib
 import json
 import os
 import re
-import shutil
-import tempfile
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 from fastapi import HTTPException
 
@@ -25,18 +23,6 @@ from ms_tau_sdk.protocols.strict_json import StrictJsonContract, build_strict_js
 from ms_tau_sdk.settings import TauSDKSettings
 
 OUTPUT_CONTRACT_EXTENSION_URI = "https://mainsequence.ai/a2a/extensions/output-contract/v1"
-SESSION_IDENTITY_KEYS = frozenset(
-    {
-        "agent_session_uid",
-        "agentSessionUid",
-        "session_uid",
-        "sessionUid",
-        "thread_id",
-        "threadId",
-    }
-)
-AGENT_IDENTITY_KEYS = frozenset({"agent_uid", "agentUid"})
-IMAGE_MEDIA_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
 TEXT_MEDIA_TYPES = frozenset({"text/plain", "text/markdown", "application/json", "text/csv"})
 
 
@@ -56,7 +42,6 @@ class PreparedA2AInput:
     text: str
     data_parts: list[Any]
     files: list[PreparedFilePart]
-    cleanup_root: Path | None = None
 
     def prompt(self, *, include_file_manifest: bool = True) -> str:
         sections = [self.text] if self.text else []
@@ -72,30 +57,9 @@ class PreparedA2AInput:
             sections.append(f"Attached files:\n{manifest}")
         return "\n\n".join(section for section in sections if section).strip()
 
-    def cleanup(self) -> None:
-        if self.cleanup_root is not None:
-            shutil.rmtree(self.cleanup_root, ignore_errors=True)
-            self.cleanup_root = None
-
 
 def _safe_component(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]+", "-", value).strip(".-") or "item"
-
-
-def _contains_key(value: object, keys: frozenset[str]) -> str | None:
-    if isinstance(value, dict):
-        for key, item in value.items():
-            if isinstance(key, str) and key in keys:
-                return key
-            found = _contains_key(item, keys)
-            if found is not None:
-                return found
-    elif isinstance(value, list):
-        for item in value:
-            found = _contains_key(item, keys)
-            if found is not None:
-                return found
-    return None
 
 
 def _validate_signature(raw: bytes, *, media_type: str, index: int) -> None:
@@ -125,41 +89,27 @@ def _validate_signature(raw: bytes, *, media_type: str, index: int) -> None:
 def _file_directory(
     *,
     config: TauSDKSettings,
-    context_id: str | None,
+    context_id: str,
     message_id: str,
-    request_scoped: bool,
-) -> tuple[Path, Path | None]:
-    if request_scoped:
-        config.sessionless_asset_root.mkdir(parents=True, exist_ok=True, mode=0o700)
-        root = Path(tempfile.mkdtemp(prefix="response-", dir=config.sessionless_asset_root))
-        os.chmod(root, 0o700)
-        return root, root
+) -> Path:
     directory = (
         config.a2a_asset_root
-        / _safe_component(context_id or "context")
+        / _safe_component(context_id)
         / "a2a-inputs"
         / _safe_component(message_id)
     )
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
-    return directory, None
+    return directory
 
 
 def prepare_a2a_input(
     body: dict[str, Any],
     config: TauSDKSettings,
     *,
-    context_policy: Literal["required", "forbidden"],
     allowed_media_types: set[str] | frozenset[str],
 ) -> PreparedA2AInput:
     """Validate one canonical A2A message and materialize accepted raw parts."""
 
-    if context_policy == "forbidden":
-        forbidden = _contains_key(
-            body,
-            SESSION_IDENTITY_KEYS | AGENT_IDENTITY_KEYS,
-        )
-        if forbidden is not None:
-            raise HTTPException(status_code=400, detail=f"{forbidden} is not allowed")
     message = body.get("message")
     if not isinstance(message, dict):
         raise HTTPException(status_code=400, detail="message must be an object")
@@ -178,15 +128,8 @@ def prepare_a2a_input(
     if not message_id:
         raise HTTPException(status_code=400, detail="message.messageId is required")
     context_id = str(message.get("contextId") or "").strip()
-    if context_policy == "required" and not context_id:
+    if not context_id:
         raise HTTPException(status_code=400, detail="message.contextId is required")
-    if context_policy == "forbidden" and (context_id or message.get("taskId")):
-        raise HTTPException(
-            status_code=400,
-            detail="message.contextId and message.taskId are not allowed",
-        )
-    if context_policy == "forbidden" and body.get("taskId"):
-        raise HTTPException(status_code=400, detail="taskId is not allowed")
     parts = message.get("parts")
     if not isinstance(parts, list) or not parts:
         raise HTTPException(status_code=400, detail="message.parts must be a non-empty array")
@@ -194,144 +137,100 @@ def prepare_a2a_input(
     configuration = body.get("configuration", {})
     if not isinstance(configuration, dict):
         raise HTTPException(status_code=400, detail="configuration must be an object")
-    if context_policy == "forbidden":
-        unsupported_configuration = {
-            "historyLength",
-            "pushNotificationConfig",
-            "blocking",
-            "returnImmediately",
-        }.intersection(configuration)
-        if unsupported_configuration:
-            field = sorted(unsupported_configuration)[0]
-            raise HTTPException(status_code=400, detail=f"configuration.{field} is not allowed")
-        if configuration.get("responseKind", "message") != "message":
-            raise HTTPException(
-                status_code=400,
-                detail="configuration.responseKind must be message",
-            )
-
     directory: Path | None = None
-    cleanup_root: Path | None = None
     text_parts: list[str] = []
     data_parts: list[Any] = []
     files: list[PreparedFilePart] = []
     total_bytes = 0
     normalized_allowed = {item.lower() for item in allowed_media_types}
-    try:
-        for index, part in enumerate(parts):
-            if not isinstance(part, dict):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"message.parts[{index}] must be an object",
-                )
-            if "kind" in part:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(f"message.parts[{index}].kind is not part of the A2A v1 Part envelope"),
-                )
-            variants = [key for key in ("text", "data", "raw", "url") if key in part]
-            if len(variants) != 1:
-                raise HTTPException(
-                    status_code=400,
-                    detail=(
-                        f"message.parts[{index}] must contain exactly one of text, data, raw, url"
-                    ),
-                )
-            variant = variants[0]
-            if variant == "url":
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"message.parts[{index}].url is not supported",
-                )
-            if variant == "text":
-                value = part["text"]
-                if not isinstance(value, str) or not value.strip():
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"message.parts[{index}].text must be non-empty",
-                    )
-                text_parts.append(value.strip())
-                continue
-            if variant == "data":
-                data_parts.append(part["data"])
-                continue
-
-            media_type = str(part.get("mediaType") or "").strip().lower()
-            if media_type not in normalized_allowed:
-                raise HTTPException(
-                    status_code=415,
-                    detail=(
-                        f"message.parts[{index}].mediaType "
-                        f"{media_type or '<missing>'} is unsupported"
-                    ),
-                )
-            filename = str(part.get("filename") or "").strip()
-            if not filename or Path(filename).name != filename:
-                label = "safe PDF filename" if media_type == "application/pdf" else "safe filename"
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"message.parts[{index}].filename must be a {label}",
-                )
-            try:
-                raw = base64.b64decode(str(part["raw"]), validate=True)
-            except (ValueError, binascii.Error) as error:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"message.parts[{index}].raw is not valid base64",
-                ) from error
-            if not raw:
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"message.parts[{index}].raw must not be empty",
-                )
-            if len(raw) > config.a2a_max_inline_file_bytes:
-                raise HTTPException(
-                    status_code=413,
-                    detail=f"message.parts[{index}].raw exceeds the inline file limit",
-                )
-            total_bytes += len(raw)
-            if total_bytes > config.a2a_max_aggregate_file_bytes:
-                raise HTTPException(
-                    status_code=413,
-                    detail="inline files exceed the aggregate limit",
-                )
-            if len(files) >= config.a2a_max_inline_file_count:
-                raise HTTPException(status_code=413, detail="too many inline files")
-            _validate_signature(raw, media_type=media_type, index=index)
-            if directory is None:
-                directory, cleanup_root = _file_directory(
-                    config=config,
-                    context_id=context_id or None,
-                    message_id=message_id,
-                    request_scoped=context_policy == "forbidden",
-                )
-            digest = hashlib.sha256(raw).hexdigest()
-            path = directory / f"{index}-{digest[:12]}-{_safe_component(filename)}"
-            path.write_bytes(raw)
-            os.chmod(path, 0o600)
-            files.append(
-                PreparedFilePart(
-                    index=index,
-                    path=path,
-                    filename=filename,
-                    media_type=media_type,
-                    size=len(raw),
-                    sha256=digest,
-                )
+    for index, part in enumerate(parts):
+        if not isinstance(part, dict):
+            raise HTTPException(status_code=400, detail=f"message.parts[{index}] must be an object")
+        if "kind" in part:
+            raise HTTPException(
+                status_code=400,
+                detail=f"message.parts[{index}].kind is not part of the A2A v1 Part envelope",
             )
-        if not text_parts and not data_parts and not files:
-            raise HTTPException(status_code=400, detail="message.parts has no usable content")
-        return PreparedA2AInput(
-            message=message,
-            text="\n".join(text_parts).strip(),
-            data_parts=data_parts,
-            files=files,
-            cleanup_root=cleanup_root,
+        variants = [key for key in ("text", "data", "raw", "url") if key in part]
+        if len(variants) != 1:
+            raise HTTPException(
+                status_code=400,
+                detail=f"message.parts[{index}] must contain exactly one of text, data, raw, url",
+            )
+        variant = variants[0]
+        if variant == "url":
+            raise HTTPException(
+                status_code=400, detail=f"message.parts[{index}].url is not supported"
+            )
+        if variant == "text":
+            value = part["text"]
+            if not isinstance(value, str) or not value.strip():
+                raise HTTPException(
+                    status_code=400, detail=f"message.parts[{index}].text must be non-empty"
+                )
+            text_parts.append(value.strip())
+            continue
+        if variant == "data":
+            data_parts.append(part["data"])
+            continue
+
+        media_type = str(part.get("mediaType") or "").strip().lower()
+        if media_type not in normalized_allowed:
+            unsupported_type = media_type or "<missing>"
+            raise HTTPException(
+                status_code=415,
+                detail=f"message.parts[{index}].mediaType {unsupported_type} is unsupported",
+            )
+        filename = str(part.get("filename") or "").strip()
+        if not filename or Path(filename).name != filename:
+            label = "safe PDF filename" if media_type == "application/pdf" else "safe filename"
+            raise HTTPException(
+                status_code=400, detail=f"message.parts[{index}].filename must be a {label}"
+            )
+        try:
+            raw = base64.b64decode(str(part["raw"]), validate=True)
+        except (ValueError, binascii.Error) as error:
+            raise HTTPException(
+                status_code=400, detail=f"message.parts[{index}].raw is not valid base64"
+            ) from error
+        if not raw:
+            raise HTTPException(
+                status_code=400, detail=f"message.parts[{index}].raw must not be empty"
+            )
+        if len(raw) > config.a2a_max_inline_file_bytes:
+            raise HTTPException(
+                status_code=413, detail=f"message.parts[{index}].raw exceeds the inline file limit"
+            )
+        total_bytes += len(raw)
+        if total_bytes > config.a2a_max_aggregate_file_bytes:
+            raise HTTPException(status_code=413, detail="inline files exceed the aggregate limit")
+        if len(files) >= config.a2a_max_inline_file_count:
+            raise HTTPException(status_code=413, detail="too many inline files")
+        _validate_signature(raw, media_type=media_type, index=index)
+        if directory is None:
+            directory = _file_directory(config=config, context_id=context_id, message_id=message_id)
+        digest = hashlib.sha256(raw).hexdigest()
+        path = directory / f"{index}-{digest[:12]}-{_safe_component(filename)}"
+        path.write_bytes(raw)
+        os.chmod(path, 0o600)
+        files.append(
+            PreparedFilePart(
+                index=index,
+                path=path,
+                filename=filename,
+                media_type=media_type,
+                size=len(raw),
+                sha256=digest,
+            )
         )
-    except BaseException:
-        if cleanup_root is not None:
-            shutil.rmtree(cleanup_root, ignore_errors=True)
-        raise
+    if not text_parts and not data_parts and not files:
+        raise HTTPException(status_code=400, detail="message.parts has no usable content")
+    return PreparedA2AInput(
+        message=message,
+        text="\n".join(text_parts).strip(),
+        data_parts=data_parts,
+        files=files,
+    )
 
 
 def output_contract(body: dict[str, Any]) -> StrictJsonContract:

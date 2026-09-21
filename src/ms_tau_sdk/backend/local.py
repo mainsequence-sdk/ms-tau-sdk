@@ -7,7 +7,7 @@ import hashlib
 import json
 import sqlite3
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import closing
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -25,6 +25,14 @@ from .models import (
     AgentCardEnvelope,
     AgentRuntimeActivity,
     AgentSession,
+    AgentTask,
+    AgentTaskCreateResult,
+    AgentTaskDispatch,
+    AgentTaskEvent,
+    AgentTaskEventPage,
+    AgentTaskExecutionAttempt,
+    AgentTaskSnapshot,
+    AgentTaskStatus,
     ProviderCredential,
     ProviderExecutionEvidence,
     RuntimeActivityPatch,
@@ -54,8 +62,11 @@ LOCAL_RUNTIME_CAPABILITIES = {
     "tau_activity_sequence": "v1",
     "tau_turn_commit": "v1",
 }
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 _T = TypeVar("_T")
+
+_LOCAL_A2A_RESPONSE_KIND_EXTENSION_URI = "https://mainsequence.ai/a2a/extensions/response-kind/v1"
+_LOCAL_A2A_TERMINAL_STATES = {"completed", "failed", "canceled", "rejected"}
 
 
 def _utcnow() -> datetime:
@@ -175,6 +186,70 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     canonical_size INTEGER NOT NULL,
                     snapshot_json TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS a2a_tasks (
+                    uid TEXT PRIMARY KEY,
+                    task_id TEXT NOT NULL UNIQUE,
+                    context_id TEXT NOT NULL,
+                    agent_uid TEXT NOT NULL,
+                    agent_session_uid TEXT,
+                    status TEXT NOT NULL,
+                    status_message_json TEXT,
+                    status_timestamp TEXT NOT NULL,
+                    cancellation_requested INTEGER NOT NULL DEFAULT 0,
+                    metadata_json TEXT NOT NULL,
+                    last_event_sequence INTEGER NOT NULL DEFAULT 0,
+                    dispatch_uid TEXT,
+                    current_attempt_uid TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS a2a_tasks_context_idx
+                    ON a2a_tasks(context_id, created_at);
+                CREATE TABLE IF NOT EXISTS a2a_task_messages (
+                    task_uid TEXT NOT NULL REFERENCES a2a_tasks(uid) ON DELETE CASCADE,
+                    sequence INTEGER NOT NULL,
+                    message_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    message_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (task_uid, sequence),
+                    UNIQUE (task_uid, message_id)
+                );
+                CREATE TABLE IF NOT EXISTS a2a_task_outputs (
+                    task_uid TEXT NOT NULL REFERENCES a2a_tasks(uid) ON DELETE CASCADE,
+                    artifact_id TEXT NOT NULL,
+                    revision INTEGER NOT NULL,
+                    name TEXT NOT NULL,
+                    parts_json TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    finalized INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (task_uid, artifact_id)
+                );
+                CREATE TABLE IF NOT EXISTS a2a_task_attempts (
+                    uid TEXT PRIMARY KEY,
+                    task_uid TEXT NOT NULL REFERENCES a2a_tasks(uid) ON DELETE CASCADE,
+                    dispatch_uid TEXT NOT NULL,
+                    attempt_number INTEGER NOT NULL,
+                    state TEXT NOT NULL,
+                    holder_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE (task_uid, attempt_number)
+                );
+                CREATE TABLE IF NOT EXISTS a2a_task_events (
+                    task_uid TEXT NOT NULL REFERENCES a2a_tasks(uid) ON DELETE CASCADE,
+                    sequence INTEGER NOT NULL,
+                    uid TEXT NOT NULL UNIQUE,
+                    event_type TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT '',
+                    message_uid TEXT,
+                    output_uid TEXT,
+                    payload_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (task_uid, sequence)
+                );
                 """
             )
             connection.execute(
@@ -247,11 +322,13 @@ class LocalDevelopmentBackend(MainSequenceClient):
             "headers": credential.headers,
         }
         return {
-            credential.provider: {
-                "credential_kind": credential.credential_kind,
-                "credential": {key: value for key, value in raw.items() if value is not None},
-                "version": credential.metadata.get("version"),
-                "credential_hash": credential.metadata.get("credential_hash"),
+            "credentials": {
+                credential.provider: {
+                    "credential_kind": credential.credential_kind,
+                    "credential": {key: value for key, value in raw.items() if value is not None},
+                    "version": credential.metadata.get("version"),
+                    "credential_hash": credential.metadata.get("credential_hash"),
+                }
             }
         }
 
@@ -305,10 +382,201 @@ class LocalDevelopmentBackend(MainSequenceClient):
         return await self.get_session(session_uid)
 
     async def get_agent_card(self, session_uid: str) -> AgentCardEnvelope:
-        del session_uid
-        raise LocalModeUnsupportedError(
-            "Local mode has no registered Agent Card; platform discovery is unavailable"
+        context_id = self.settings.local_session_uid(session_uid)
+        agent_uid = f"local-agent-{self.settings.workspace_digest}"
+        return AgentCardEnvelope(
+            agent_session_uid=context_id,
+            agent_uid=agent_uid,
+            agent_card={
+                "name": "Local Main Sequence TAU Agent",
+                "description": "Workspace-local TAU runtime for A2A development.",
+                "version": "local",
+                "capabilities": {
+                    "streaming": True,
+                    "pushNotifications": False,
+                    "extensions": [
+                        {
+                            "uri": _LOCAL_A2A_RESPONSE_KIND_EXTENSION_URI,
+                            "description": (
+                                "Select whether message:send returns a completed message "
+                                "or an asynchronous task."
+                            ),
+                            "required": False,
+                            "params": {
+                                "supportedResponseKinds": ["message", "task"],
+                                "defaultResponseKind": "message",
+                            },
+                        }
+                    ],
+                },
+            },
         )
+
+    @staticmethod
+    def _json_dump(value: object) -> str:
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
+
+    @staticmethod
+    def _json_load(value: object, default: _T) -> _T:
+        if value is None or value == "":
+            return default
+        return cast(_T, json.loads(str(value)))
+
+    @staticmethod
+    def _task_row(connection: sqlite3.Connection, task_uid: str) -> sqlite3.Row:
+        row = connection.execute(
+            "SELECT * FROM a2a_tasks WHERE uid = ?",
+            (task_uid,),
+        ).fetchone()
+        if row is None:
+            raise SessionNotFoundError(f"A2A task not found: {task_uid}")
+        return cast(sqlite3.Row, row)
+
+    def _task_from_row(
+        self,
+        connection: sqlite3.Connection,
+        row: sqlite3.Row,
+    ) -> AgentTask:
+        message = connection.execute(
+            """
+            SELECT message_json FROM a2a_task_messages
+            WHERE task_uid = ? ORDER BY sequence DESC LIMIT 1
+            """,
+            (str(row["uid"]),),
+        ).fetchone()
+        output_rows = connection.execute(
+            """
+            SELECT * FROM a2a_task_outputs
+            WHERE task_uid = ? ORDER BY created_at, artifact_id
+            """,
+            (str(row["uid"]),),
+        ).fetchall()
+        outputs = [
+            {
+                "uid": str(output["artifact_id"]),
+                "artifact_id": str(output["artifact_id"]),
+                "name": str(output["name"]),
+                "parts": self._json_load(output["parts_json"], []),
+                "metadata": self._json_load(output["metadata_json"], {}),
+                "revision": int(output["revision"]),
+                "finalized": bool(output["finalized"]),
+            }
+            for output in output_rows
+        ]
+        return AgentTask(
+            uid=str(row["uid"]),
+            task_id=str(row["task_id"]),
+            context_id=str(row["context_id"]),
+            agent_uid=str(row["agent_uid"]),
+            agent_session_uid=(
+                str(row["agent_session_uid"]) if row["agent_session_uid"] is not None else None
+            ),
+            status=cast(AgentTaskStatus, str(row["status"])),
+            status_message=self._json_load(row["status_message_json"], None),
+            status_timestamp=_from_iso(str(row["status_timestamp"])),
+            cancellation_requested=bool(row["cancellation_requested"]),
+            latest_message=(
+                self._json_load(message["message_json"], {}) if message is not None else None
+            ),
+            outputs=outputs,
+            metadata=self._json_load(row["metadata_json"], {}),
+            last_event_sequence=int(row["last_event_sequence"]),
+        )
+
+    def _append_task_event(
+        self,
+        connection: sqlite3.Connection,
+        task_uid: str,
+        *,
+        event_type: str,
+        status: str = "",
+        message_uid: str | None = None,
+        output_uid: str | None = None,
+        payload: Mapping[str, Any] | None = None,
+    ) -> int:
+        row = self._task_row(connection, task_uid)
+        sequence = int(row["last_event_sequence"]) + 1
+        now = _utcnow()
+        connection.execute(
+            """
+            INSERT INTO a2a_task_events(
+                task_uid, sequence, uid, event_type, status,
+                message_uid, output_uid, payload_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task_uid,
+                sequence,
+                str(uuid.uuid4()),
+                event_type,
+                status,
+                message_uid,
+                output_uid,
+                self._json_dump(dict(payload or {})),
+                _iso(now),
+            ),
+        )
+        connection.execute(
+            "UPDATE a2a_tasks SET last_event_sequence = ?, updated_at = ? WHERE uid = ?",
+            (sequence, _iso(now), task_uid),
+        )
+        return sequence
+
+    def _append_task_message(
+        self,
+        connection: sqlite3.Connection,
+        task_uid: str,
+        message: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        normalized = dict(message)
+        message_id = str(
+            normalized.get("message_id") or normalized.get("messageId") or uuid.uuid4()
+        )
+        normalized["message_id"] = message_id
+        normalized.pop("messageId", None)
+        existing = connection.execute(
+            """
+            SELECT message_json FROM a2a_task_messages
+            WHERE task_uid = ? AND message_id = ?
+            """,
+            (task_uid, message_id),
+        ).fetchone()
+        if existing is not None:
+            persisted: dict[str, Any] = self._json_load(existing["message_json"], {})
+            if persisted != normalized:
+                raise BackendConflictError("Local A2A message idempotency conflict")
+            return persisted
+        sequence_row = connection.execute(
+            """
+            SELECT COALESCE(MAX(sequence), 0) + 1 AS next_sequence
+            FROM a2a_task_messages WHERE task_uid = ?
+            """,
+            (task_uid,),
+        ).fetchone()
+        assert sequence_row is not None
+        connection.execute(
+            """
+            INSERT INTO a2a_task_messages(
+                task_uid, sequence, message_id, role, message_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task_uid,
+                int(sequence_row["next_sequence"]),
+                message_id,
+                str(normalized.get("role") or ""),
+                self._json_dump(normalized),
+                _iso(_utcnow()),
+            ),
+        )
+        self._append_task_event(
+            connection,
+            task_uid,
+            event_type="message_added",
+            message_uid=message_id,
+            payload={"message": normalized},
+        )
+        return normalized
 
     def _session_from_row(self, row: sqlite3.Row) -> AgentSession:
         return AgentSession.model_validate(
@@ -1034,6 +1302,660 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     runtime_config_sha256=request.runtime_config_sha256,
                     payload_sha256=request.payload_sha256,
                     canonical_size=len(canonical.encode("utf-8")),
+                )
+
+        return await self._run(operation)
+
+    async def create_task(self, payload: Mapping[str, Any]) -> AgentTaskCreateResult:
+        task_id = str(payload.get("task_id") or "").strip()
+        requested_context = str(payload.get("context_id") or "").strip()
+        if not task_id or not requested_context:
+            raise BackendConflictError("Local A2A task_id and context_id are required")
+        context_id = self.settings.local_session_uid(requested_context)
+        agent_uid = f"local-agent-{self.settings.workspace_digest}"
+
+        def operation() -> AgentTaskCreateResult:
+            with closing(self._connect()) as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                existing = connection.execute(
+                    "SELECT * FROM a2a_tasks WHERE task_id = ?",
+                    (task_id,),
+                ).fetchone()
+                if existing is not None:
+                    if str(existing["context_id"]) != context_id:
+                        raise BackendConflictError(
+                            "Local A2A task id already belongs to another context"
+                        )
+                    return AgentTaskCreateResult(
+                        task=self._task_from_row(connection, existing),
+                        created=False,
+                    )
+                now = _utcnow()
+                task_uid = str(uuid.uuid4())
+                dispatch_uid = str(uuid.uuid4())
+                metadata = payload.get("metadata")
+                connection.execute(
+                    """
+                    INSERT INTO a2a_tasks(
+                        uid, task_id, context_id, agent_uid, agent_session_uid,
+                        status, status_timestamp, metadata_json, dispatch_uid,
+                        created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?, 'submitted', ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        task_uid,
+                        task_id,
+                        context_id,
+                        agent_uid,
+                        context_id,
+                        _iso(now),
+                        self._json_dump(metadata if isinstance(metadata, Mapping) else {}),
+                        dispatch_uid,
+                        _iso(now),
+                        _iso(now),
+                    ),
+                )
+                initial_message = payload.get("initial_message")
+                if isinstance(initial_message, Mapping):
+                    self._append_task_message(connection, task_uid, initial_message)
+                self._append_task_event(
+                    connection,
+                    task_uid,
+                    event_type="status_changed",
+                    status="submitted",
+                )
+                row = self._task_row(connection, task_uid)
+                return AgentTaskCreateResult(
+                    task=self._task_from_row(connection, row),
+                    created=True,
+                )
+
+        return await self._run(operation)
+
+    async def list_tasks(self, **filters: str) -> list[AgentTask]:
+        def operation() -> list[AgentTask]:
+            clauses: list[str] = []
+            values: list[str] = []
+            context_id = str(filters.get("context_id") or "").strip()
+            task_id = str(filters.get("task_id") or "").strip()
+            if context_id:
+                clauses.append("context_id = ?")
+                values.append(self.settings.local_session_uid(context_id))
+            if task_id:
+                clauses.append("task_id = ?")
+                values.append(task_id)
+            where = " WHERE " + " AND ".join(clauses) if clauses else ""
+            with closing(self._connect()) as connection, connection:
+                rows = connection.execute(
+                    "SELECT * FROM a2a_tasks" + where + " ORDER BY created_at, uid",
+                    values,
+                ).fetchall()
+                return [self._task_from_row(connection, row) for row in rows]
+
+        return await self._run(operation)
+
+    async def get_task(self, task_uid: str) -> AgentTask:
+        def operation() -> AgentTask:
+            with closing(self._connect()) as connection, connection:
+                return self._task_from_row(connection, self._task_row(connection, task_uid))
+
+        return await self._run(operation)
+
+    async def list_task_dispatches(self, task_uid: str) -> list[AgentTaskDispatch]:
+        def operation() -> list[AgentTaskDispatch]:
+            with closing(self._connect()) as connection:
+                task = self._task_row(connection, task_uid)
+                dispatch_uid = str(task["dispatch_uid"] or "")
+                if not dispatch_uid:
+                    return []
+                status = str(task["status"])
+                state = (
+                    "pending"
+                    if status == "submitted"
+                    else "claimed"
+                    if status == "working"
+                    else "settled"
+                )
+                return [
+                    AgentTaskDispatch(
+                        uid=dispatch_uid,
+                        state=cast(Any, state),
+                        current_attempt_uid=(
+                            str(task["current_attempt_uid"])
+                            if task["current_attempt_uid"]
+                            else None
+                        ),
+                    )
+                ]
+
+        return await self._run(operation)
+
+    async def get_task_snapshot(self, task_uid: str) -> AgentTaskSnapshot:
+        task = await self.get_task(task_uid)
+        return AgentTaskSnapshot(task=task, event_cursor=task.last_event_sequence)
+
+    async def list_task_events(
+        self,
+        task_uid: str,
+        *,
+        after_sequence: int,
+        limit: int = 100,
+    ) -> AgentTaskEventPage:
+        bounded_limit = max(1, min(int(limit), 500))
+
+        def operation() -> AgentTaskEventPage:
+            with closing(self._connect()) as connection, connection:
+                self._task_row(connection, task_uid)
+                rows = connection.execute(
+                    """
+                    SELECT * FROM a2a_task_events
+                    WHERE task_uid = ? AND sequence > ?
+                    ORDER BY sequence LIMIT ?
+                    """,
+                    (task_uid, max(0, int(after_sequence)), bounded_limit + 1),
+                ).fetchall()
+                page_rows = rows[:bounded_limit]
+                events = [
+                    AgentTaskEvent(
+                        uid=str(row["uid"]),
+                        sequence=int(row["sequence"]),
+                        event_type=str(row["event_type"]),
+                        status=str(row["status"]),
+                        message_uid=(str(row["message_uid"]) if row["message_uid"] else None),
+                        output_uid=(str(row["output_uid"]) if row["output_uid"] else None),
+                        payload=self._json_load(row["payload_json"], {}),
+                    )
+                    for row in page_rows
+                ]
+                next_cursor = events[-1].sequence if events else max(0, int(after_sequence))
+                return AgentTaskEventPage(
+                    events=events,
+                    next_cursor=next_cursor,
+                    has_more=len(rows) > bounded_limit,
+                )
+
+        return await self._run(operation)
+
+    def _validate_task_attempt(
+        self,
+        connection: sqlite3.Connection,
+        task: sqlite3.Row,
+        *,
+        attempt_uid: str,
+        holder_id: str,
+        lease_token: str,
+    ) -> sqlite3.Row:
+        if bool(task["cancellation_requested"]) or str(task["status"]) == "canceled":
+            raise BackendConflictError("Local A2A task cancellation was requested")
+        if str(task["current_attempt_uid"] or "") != attempt_uid:
+            raise BackendConflictError("Local A2A task attempt is not current")
+        attempt = connection.execute(
+            "SELECT * FROM a2a_task_attempts WHERE uid = ? AND task_uid = ?",
+            (attempt_uid, str(task["uid"])),
+        ).fetchone()
+        if attempt is None or str(attempt["holder_id"]) != holder_id:
+            raise BackendConflictError("Local A2A task attempt ownership is invalid")
+        self._require_lease(
+            connection,
+            str(task["context_id"]),
+            lease_token=lease_token,
+            holder_id=holder_id,
+        )
+        return cast(sqlite3.Row, attempt)
+
+    async def claim_task_dispatch(
+        self,
+        task_uid: str,
+        *,
+        holder_id: str,
+        lease_token: str,
+        dispatch_uid: str,
+        executor_runtime_id: str = "",
+        executor_instance_id: str = "",
+    ) -> AgentTaskExecutionAttempt:
+        del executor_runtime_id, executor_instance_id
+
+        def operation() -> AgentTaskExecutionAttempt:
+            with closing(self._connect()) as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                task = self._task_row(connection, task_uid)
+                self._require_lease(
+                    connection,
+                    str(task["context_id"]),
+                    lease_token=lease_token,
+                    holder_id=holder_id,
+                )
+                if str(task["status"]) != "submitted":
+                    raise BackendConflictError("Local A2A task is not available for dispatch")
+                count = connection.execute(
+                    "SELECT COUNT(*) AS value FROM a2a_task_attempts WHERE task_uid = ?",
+                    (task_uid,),
+                ).fetchone()
+                assert count is not None
+                attempt_number = int(count["value"]) + 1
+                attempt_uid = str(uuid.uuid4())
+                resolved_dispatch_uid = str(dispatch_uid)
+                now = _utcnow()
+                connection.execute(
+                    """
+                    INSERT INTO a2a_task_attempts(
+                        uid, task_uid, dispatch_uid, attempt_number, state,
+                        holder_id, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, 'claimed', ?, ?, ?)
+                    """,
+                    (
+                        attempt_uid,
+                        task_uid,
+                        resolved_dispatch_uid,
+                        attempt_number,
+                        holder_id,
+                        _iso(now),
+                        _iso(now),
+                    ),
+                )
+                connection.execute(
+                    """
+                    UPDATE a2a_tasks SET status='working', status_timestamp=?,
+                        dispatch_uid=?, current_attempt_uid=?, updated_at=?
+                    WHERE uid=?
+                    """,
+                    (
+                        _iso(now),
+                        resolved_dispatch_uid,
+                        attempt_uid,
+                        _iso(now),
+                        task_uid,
+                    ),
+                )
+                self._append_task_event(
+                    connection,
+                    task_uid,
+                    event_type="status_changed",
+                    status="working",
+                )
+                return AgentTaskExecutionAttempt(
+                    uid=attempt_uid,
+                    dispatch_uid=resolved_dispatch_uid,
+                    attempt_number=attempt_number,
+                    state="claimed",
+                )
+
+        return await self._run(operation)
+
+    async def start_task_attempt(
+        self,
+        task_uid: str,
+        *,
+        attempt_uid: str,
+        holder_id: str,
+        lease_token: str,
+    ) -> AgentTaskExecutionAttempt:
+        def operation() -> AgentTaskExecutionAttempt:
+            with closing(self._connect()) as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                task = self._task_row(connection, task_uid)
+                attempt = self._validate_task_attempt(
+                    connection,
+                    task,
+                    attempt_uid=attempt_uid,
+                    holder_id=holder_id,
+                    lease_token=lease_token,
+                )
+                if str(attempt["state"]) not in {"claimed", "running"}:
+                    raise BackendConflictError("Local A2A task attempt cannot be started")
+                now = _utcnow()
+                connection.execute(
+                    "UPDATE a2a_task_attempts SET state='running', updated_at=? WHERE uid=?",
+                    (_iso(now), attempt_uid),
+                )
+                return AgentTaskExecutionAttempt(
+                    uid=attempt_uid,
+                    dispatch_uid=str(attempt["dispatch_uid"]),
+                    attempt_number=int(attempt["attempt_number"]),
+                    state="running",
+                )
+
+        return await self._run(operation)
+
+    async def _mutate_task_output(
+        self,
+        task_uid: str,
+        *,
+        attempt_uid: str,
+        holder_id: str,
+        lease_token: str,
+        operation: str,
+        artifact_id: str,
+        parts: list[dict[str, Any]],
+        expected_revision: int | None = None,
+        name: str = "",
+        metadata: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        if operation not in {"create", "append", "finalize"}:
+            raise BackendConflictError("Unknown local A2A output mutation")
+
+        def mutate() -> dict[str, Any]:
+            with closing(self._connect()) as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                task = self._task_row(connection, task_uid)
+                self._validate_task_attempt(
+                    connection,
+                    task,
+                    attempt_uid=attempt_uid,
+                    holder_id=holder_id,
+                    lease_token=lease_token,
+                )
+                current = connection.execute(
+                    """
+                    SELECT * FROM a2a_task_outputs
+                    WHERE task_uid = ? AND artifact_id = ?
+                    """,
+                    (task_uid, artifact_id),
+                ).fetchone()
+                if operation == "create" and current is not None:
+                    raise BackendConflictError("Local A2A output already exists")
+                if operation != "create" and current is None:
+                    raise BackendConflictError("Local A2A output does not exist")
+                current_revision = int(current["revision"]) if current is not None else 0
+                if expected_revision is not None and expected_revision != current_revision:
+                    raise BackendConflictError("Local A2A output revision conflict")
+                revision = current_revision + 1
+                existing_parts: list[dict[str, Any]] = (
+                    self._json_load(current["parts_json"], []) if current is not None else []
+                )
+                resolved_parts = [*existing_parts, *parts]
+                existing_metadata: dict[str, Any] = (
+                    self._json_load(current["metadata_json"], {}) if current is not None else {}
+                )
+                resolved_metadata = {**existing_metadata, **dict(metadata or {})}
+                resolved_name = name or (str(current["name"]) if current is not None else "")
+                now = _utcnow()
+                if current is None:
+                    connection.execute(
+                        """
+                        INSERT INTO a2a_task_outputs(
+                            task_uid, artifact_id, revision, name, parts_json,
+                            metadata_json, finalized, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            task_uid,
+                            artifact_id,
+                            revision,
+                            resolved_name,
+                            self._json_dump(resolved_parts),
+                            self._json_dump(resolved_metadata),
+                            int(operation == "finalize"),
+                            _iso(now),
+                            _iso(now),
+                        ),
+                    )
+                else:
+                    connection.execute(
+                        """
+                        UPDATE a2a_task_outputs SET revision=?, name=?, parts_json=?,
+                            metadata_json=?, finalized=?, updated_at=?
+                        WHERE task_uid=? AND artifact_id=?
+                        """,
+                        (
+                            revision,
+                            resolved_name,
+                            self._json_dump(resolved_parts),
+                            self._json_dump(resolved_metadata),
+                            int(bool(current["finalized"]) or operation == "finalize"),
+                            _iso(now),
+                            task_uid,
+                            artifact_id,
+                        ),
+                    )
+                payload = {
+                    "uid": artifact_id,
+                    "artifact_id": artifact_id,
+                    "name": resolved_name,
+                    "parts": parts,
+                    "metadata": resolved_metadata,
+                    "append": operation == "append",
+                    "lastChunk": operation == "finalize",
+                    "revision": revision,
+                }
+                self._append_task_event(
+                    connection,
+                    task_uid,
+                    event_type="output_added" if current is None else "output_updated",
+                    output_uid=artifact_id,
+                    payload=payload,
+                )
+                return payload
+
+        return await self._run(mutate)
+
+    async def create_task_output(
+        self,
+        task_uid: str,
+        *,
+        attempt_uid: str,
+        holder_id: str,
+        lease_token: str,
+        artifact_id: str,
+        parts: list[dict[str, Any]],
+        name: str = "",
+        description: str = "",
+        metadata: Mapping[str, Any] | None = None,
+        extensions: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del description, extensions
+        return await self._mutate_task_output(
+            task_uid,
+            attempt_uid=attempt_uid,
+            holder_id=holder_id,
+            lease_token=lease_token,
+            operation="create",
+            artifact_id=artifact_id,
+            parts=parts,
+            name=name,
+            metadata=metadata,
+        )
+
+    async def append_task_output(
+        self,
+        task_uid: str,
+        *,
+        attempt_uid: str,
+        holder_id: str,
+        lease_token: str,
+        output_uid: str,
+        expected_revision: int,
+        parts: list[dict[str, Any]],
+        metadata: Mapping[str, Any] | None = None,
+        extensions: Mapping[str, Any] | None = None,
+        last_chunk: bool = False,
+    ) -> dict[str, Any]:
+        del extensions
+        return await self._mutate_task_output(
+            task_uid,
+            attempt_uid=attempt_uid,
+            holder_id=holder_id,
+            lease_token=lease_token,
+            operation="finalize" if last_chunk else "append",
+            artifact_id=output_uid,
+            parts=parts,
+            expected_revision=expected_revision,
+            metadata=metadata,
+        )
+
+    async def finalize_task_output(
+        self,
+        task_uid: str,
+        *,
+        attempt_uid: str,
+        holder_id: str,
+        lease_token: str,
+        output_uid: str,
+        expected_revision: int,
+    ) -> dict[str, Any]:
+        return await self._mutate_task_output(
+            task_uid,
+            attempt_uid=attempt_uid,
+            holder_id=holder_id,
+            lease_token=lease_token,
+            operation="finalize",
+            artifact_id=output_uid,
+            parts=[],
+            expected_revision=expected_revision,
+        )
+
+    async def settle_task_attempt(
+        self,
+        task_uid: str,
+        *,
+        attempt_uid: str,
+        holder_id: str,
+        lease_token: str,
+        status: str,
+        status_message: Mapping[str, Any] | None = None,
+        outcome_category: str = "",
+        failure_detail: str = "",
+    ) -> AgentTaskExecutionAttempt:
+        allowed = {
+            "input_required",
+            "auth_required",
+            "completed",
+            "failed",
+            "canceled",
+            "rejected",
+        }
+        if status not in allowed:
+            raise BackendConflictError("Invalid local A2A terminal or interruption status")
+
+        def operation() -> AgentTaskExecutionAttempt:
+            with closing(self._connect()) as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                task = self._task_row(connection, task_uid)
+                attempt = self._validate_task_attempt(
+                    connection,
+                    task,
+                    attempt_uid=attempt_uid,
+                    holder_id=holder_id,
+                    lease_token=lease_token,
+                )
+                now = _utcnow()
+                message_payload = dict(status_message or {})
+                if outcome_category:
+                    message_payload["outcomeCategory"] = outcome_category
+                if failure_detail:
+                    message_payload["failureDetail"] = failure_detail
+                connection.execute(
+                    """
+                    UPDATE a2a_tasks SET status=?, status_message_json=?,
+                        status_timestamp=?, cancellation_requested=?, updated_at=?
+                    WHERE uid=?
+                    """,
+                    (
+                        status,
+                        self._json_dump(message_payload) if message_payload else None,
+                        _iso(now),
+                        int(status == "canceled"),
+                        _iso(now),
+                        task_uid,
+                    ),
+                )
+                connection.execute(
+                    """
+                    UPDATE a2a_task_attempts SET state=?, updated_at=? WHERE uid=?
+                    """,
+                    (
+                        "interrupted" if status in {"input_required", "auth_required"} else status,
+                        _iso(now),
+                        attempt_uid,
+                    ),
+                )
+                self._append_task_event(
+                    connection,
+                    task_uid,
+                    event_type="status_changed",
+                    status=status,
+                    payload={"statusMessage": message_payload} if message_payload else {},
+                )
+                return AgentTaskExecutionAttempt(
+                    uid=attempt_uid,
+                    dispatch_uid=str(attempt["dispatch_uid"]),
+                    attempt_number=int(attempt["attempt_number"]),
+                    state=cast(
+                        Any,
+                        "interrupted"
+                        if status in {"input_required", "auth_required"}
+                        else status,
+                    ),
+                )
+
+        return await self._run(operation)
+
+    async def continue_task(
+        self,
+        task_uid: str,
+        message: Mapping[str, Any],
+    ) -> AgentTask:
+        def operation() -> AgentTask:
+            with closing(self._connect()) as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                task = self._task_row(connection, task_uid)
+                if str(task["status"]) not in {"input_required", "auth_required"}:
+                    raise BackendConflictError("Local A2A task is not awaiting continuation")
+                self._append_task_message(connection, task_uid, message)
+                now = _utcnow()
+                connection.execute(
+                    """
+                    UPDATE a2a_tasks SET status='submitted', status_message_json=NULL,
+                        status_timestamp=?, cancellation_requested=0, dispatch_uid=?,
+                        current_attempt_uid=NULL, updated_at=? WHERE uid=?
+                    """,
+                    (_iso(now), str(uuid.uuid4()), _iso(now), task_uid),
+                )
+                self._append_task_event(
+                    connection,
+                    task_uid,
+                    event_type="status_changed",
+                    status="submitted",
+                )
+                return self._task_from_row(
+                    connection,
+                    self._task_row(connection, task_uid),
+                )
+
+        return await self._run(operation)
+
+    async def cancel_task(self, task_uid: str) -> AgentTask:
+        def operation() -> AgentTask:
+            with closing(self._connect()) as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                task = self._task_row(connection, task_uid)
+                if str(task["status"]) in _LOCAL_A2A_TERMINAL_STATES:
+                    return self._task_from_row(connection, task)
+                now = _utcnow()
+                connection.execute(
+                    """
+                    UPDATE a2a_tasks SET status='canceled', cancellation_requested=1,
+                        status_timestamp=?, updated_at=? WHERE uid=?
+                    """,
+                    (_iso(now), _iso(now), task_uid),
+                )
+                if task["current_attempt_uid"]:
+                    connection.execute(
+                        """
+                        UPDATE a2a_task_attempts SET state='canceled', updated_at=?
+                        WHERE uid=?
+                        """,
+                        (_iso(now), str(task["current_attempt_uid"])),
+                    )
+                self._append_task_event(
+                    connection,
+                    task_uid,
+                    event_type="status_changed",
+                    status="canceled",
+                )
+                return self._task_from_row(
+                    connection,
+                    self._task_row(connection, task_uid),
                 )
 
         return await self._run(operation)

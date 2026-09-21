@@ -23,8 +23,8 @@ from .models import (
     AgentCardEnvelope,
     AgentSession,
     AgentTask,
-    AgentTaskCallerDelivery,
     AgentTaskCreateResult,
+    AgentTaskDispatch,
     AgentTaskEventPage,
     AgentTaskExecutionAttempt,
     AgentTaskSnapshot,
@@ -52,17 +52,15 @@ from .routes import (
     AGENT_TASKS,
     agent_session,
     agent_session_agent_card,
-    agent_session_checkpoint_lease,
     agent_session_entries,
     agent_session_entries_append,
     agent_session_entries_append_batch,
     agent_session_runtime_cancel_request,
+    agent_session_runtime_lease,
     agent_session_runtime_state,
     agent_session_tau_resume_snapshot,
     agent_session_tau_runtime_activity,
     agent_session_tau_runtime_bootstrap,
-    agent_task_caller_delivery,
-    agent_task_caller_delivery_operation,
     agent_task_operation,
     model_provider_credentials,
 )
@@ -79,6 +77,38 @@ PATH_IDENTIFIER_PATTERN = re.compile(
 def _dependency_operation(method: str, path: str) -> str:
     normalized_path = PATH_IDENTIFIER_PATTERN.sub("{id}", path.split("?", 1)[0])
     return f"{method.upper()} {normalized_path[:192]}"
+
+
+def _field_error_paths(value: object, *, prefix: str = "") -> list[str]:
+    if isinstance(value, Mapping):
+        paths: list[str] = []
+        for key, child in value.items():
+            child_prefix = f"{prefix}.{key}" if prefix else str(key)
+            paths.extend(_field_error_paths(child, prefix=child_prefix))
+        return paths
+    if isinstance(value, list):
+        paths = []
+        for index, child in enumerate(value):
+            child_prefix = f"{prefix}.{index}" if prefix else str(index)
+            paths.extend(_field_error_paths(child, prefix=child_prefix))
+        return paths
+    return [prefix] if prefix else []
+
+
+def _backend_rejection_log_fields(detail: object) -> dict[str, object]:
+    if not isinstance(detail, Mapping):
+        return {}
+    fields: dict[str, object] = {}
+    error_code = detail.get("error_code")
+    error_detail = detail.get("error_detail")
+    if isinstance(error_code, str):
+        fields["backend_error_code"] = error_code[:128]
+    if isinstance(error_detail, str):
+        fields["backend_error_detail"] = error_detail[:500]
+    paths = sorted(set(_field_error_paths(detail.get("field_errors"))))
+    if paths:
+        fields["backend_field_error_paths"] = paths[:64]
+    return fields
 
 
 class MainSequenceClient:
@@ -134,6 +164,7 @@ class MainSequenceClient:
                     headers=await self.auth.headers(force=force_auth),
                     json=json,
                 )
+                response_detail = self._safe_body(response) if not response.is_success else None
                 status_outcome = (
                     "success"
                     if response.is_success
@@ -155,6 +186,7 @@ class MainSequenceClient:
                     outcome=status_outcome,
                     retryable=response.status_code in RETRYABLE_BACKEND_STATUS_CODES,
                     circuit_breaker_state="not_configured",
+                    **_backend_rejection_log_fields(response_detail),
                     **dict(dependency_fields or {}),
                 )
                 if response.status_code == 401 and not auth_retried:
@@ -183,13 +215,13 @@ class MainSequenceClient:
                     raise BackendConflictError(
                         f"Backend conflict for {path}",
                         status_code=response.status_code,
-                        detail=self._safe_body(response),
+                        detail=response_detail,
                     )
                 if not response.is_success:
                     raise BackendError(
                         f"Backend request failed: {method} {path}",
                         status_code=response.status_code,
-                        detail=self._safe_body(response),
+                        detail=response_detail,
                     )
                 if len(response.content) > self.settings.backend_max_response_bytes:
                     raise BackendError("Backend response exceeded configured size limit")
@@ -411,7 +443,7 @@ class MainSequenceClient:
     ) -> RuntimeLease:
         data = await self._request(
             "POST",
-            agent_session_checkpoint_lease(session_uid, "acquire"),
+            agent_session_runtime_lease(session_uid, "acquire"),
             json=self._dump(request),
         )
         return RuntimeLease.model_validate(data)
@@ -423,7 +455,7 @@ class MainSequenceClient:
     ) -> RuntimeLease:
         data = await self._request(
             "POST",
-            agent_session_checkpoint_lease(session_uid, "renew"),
+            agent_session_runtime_lease(session_uid, "renew"),
             json=self._dump(request),
             idempotent=True,
         )
@@ -436,7 +468,7 @@ class MainSequenceClient:
     ) -> None:
         await self._request(
             "POST",
-            agent_session_checkpoint_lease(session_uid, "release"),
+            agent_session_runtime_lease(session_uid, "release"),
             json=self._dump(request),
             idempotent=True,
         )
@@ -487,20 +519,14 @@ class MainSequenceClient:
         provider: str,
         *,
         model: str,
-        session_uid: str | None = None,
-        agent_uid: str | None = None,
+        session_uid: str,
         holder_id: str,
     ) -> ProviderExecutionEvidence:
-        if bool(session_uid) == bool(agent_uid):
-            raise BackendError(
-                "Provider hydration requires exactly one of AgentSession UID or Agent UID"
-            )
-        identity = {"agent_session_uid": session_uid} if session_uid else {"agent_uid": agent_uid}
         data = await self._request(
             "POST",
             model_provider_credentials("hydrate"),
             json={
-                **identity,
+                "agent_session_uid": session_uid,
                 "providers": [provider],
                 "holder_id": holder_id,
                 "supported_provider_control_schema_versions": [1],
@@ -656,83 +682,151 @@ class MainSequenceClient:
         *,
         holder_id: str,
         lease_token: str,
-        dispatch_uid: str | None = None,
+        dispatch_uid: str,
+        executor_runtime_id: str = "",
         executor_instance_id: str = "",
     ) -> AgentTaskExecutionAttempt:
         payload: dict[str, Any] = {
             "holder_id": holder_id,
             "lease_token": lease_token,
+            "dispatch_uid": dispatch_uid,
+            "executor_runtime_id": executor_runtime_id,
             "executor_instance_id": executor_instance_id,
         }
-        if dispatch_uid:
-            payload["dispatch_uid"] = dispatch_uid
         data = await self._request(
             "POST",
-            agent_task_operation(task_uid, "claim-dispatch"),
+            agent_task_operation(task_uid, "dispatches/claim"),
             json=payload,
             idempotent=True,
         )
         return AgentTaskExecutionAttempt.model_validate(data)
 
-    async def add_task_attempt_message(
+    async def list_task_dispatches(self, task_uid: str) -> list[AgentTaskDispatch]:
+        data = await self._request(
+            "GET",
+            agent_task_operation(task_uid, "dispatches"),
+            idempotent=True,
+        )
+        return TypeAdapter(list[AgentTaskDispatch]).validate_python(data)
+
+    async def start_task_attempt(
         self,
         task_uid: str,
         *,
         attempt_uid: str,
         holder_id: str,
         lease_token: str,
-        message: Mapping[str, Any],
-    ) -> dict[str, Any]:
+    ) -> AgentTaskExecutionAttempt:
         data = await self._request(
             "POST",
-            agent_task_operation(task_uid, "attempt-messages"),
+            agent_task_operation(task_uid, "attempts/start"),
             json={
                 "attempt_uid": attempt_uid,
                 "holder_id": holder_id,
                 "lease_token": lease_token,
-                **dict(message),
             },
             idempotent=True,
         )
-        if not isinstance(data, dict):
-            raise BackendError("Backend task message response is invalid")
-        return data
+        return AgentTaskExecutionAttempt.model_validate(data)
 
-    async def mutate_task_output(
+    async def create_task_output(
         self,
         task_uid: str,
         *,
         attempt_uid: str,
         holder_id: str,
         lease_token: str,
-        operation: str,
         artifact_id: str,
         parts: list[dict[str, Any]],
-        expected_revision: int | None = None,
         name: str = "",
+        description: str = "",
         metadata: Mapping[str, Any] | None = None,
+        extensions: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "attempt_uid": attempt_uid,
             "holder_id": holder_id,
             "lease_token": lease_token,
-            "operation": operation,
             "artifact_id": artifact_id,
             "parts": parts,
             "name": name,
+            "description": description,
         }
-        if expected_revision is not None:
-            payload["expected_revision"] = expected_revision
         if metadata is not None:
             payload["metadata"] = dict(metadata)
+        if extensions is not None:
+            payload["extensions"] = dict(extensions)
         data = await self._request(
             "POST",
-            agent_task_operation(task_uid, "attempt-outputs"),
+            agent_task_operation(task_uid, "outputs/create"),
             json=payload,
             idempotent=True,
         )
         if not isinstance(data, dict):
-            raise BackendError("Backend Task output response is invalid")
+            raise BackendError("Backend Task output-create response is invalid")
+        return data
+
+    async def append_task_output(
+        self,
+        task_uid: str,
+        *,
+        attempt_uid: str,
+        holder_id: str,
+        lease_token: str,
+        output_uid: str,
+        expected_revision: int,
+        parts: list[dict[str, Any]],
+        metadata: Mapping[str, Any] | None = None,
+        extensions: Mapping[str, Any] | None = None,
+        last_chunk: bool = False,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "attempt_uid": attempt_uid,
+            "holder_id": holder_id,
+            "lease_token": lease_token,
+            "output_uid": output_uid,
+            "expected_revision": expected_revision,
+            "parts": parts,
+            "last_chunk": last_chunk,
+        }
+        if metadata is not None:
+            payload["metadata"] = dict(metadata)
+        if extensions is not None:
+            payload["extensions"] = dict(extensions)
+        data = await self._request(
+            "POST",
+            agent_task_operation(task_uid, "outputs/append"),
+            json=payload,
+            idempotent=True,
+        )
+        if not isinstance(data, dict):
+            raise BackendError("Backend Task output-append response is invalid")
+        return data
+
+    async def finalize_task_output(
+        self,
+        task_uid: str,
+        *,
+        attempt_uid: str,
+        holder_id: str,
+        lease_token: str,
+        output_uid: str,
+        expected_revision: int,
+    ) -> dict[str, Any]:
+        data = await self._request(
+            "POST",
+            agent_task_operation(task_uid, "outputs/finalize"),
+            json={
+                "attempt_uid": attempt_uid,
+                "holder_id": holder_id,
+                "lease_token": lease_token,
+                "output_uid": output_uid,
+                "expected_revision": expected_revision,
+            },
+            idempotent=True,
+        )
+        if not isinstance(data, dict):
+            raise BackendError("Backend Task output-finalize response is invalid")
         return data
 
     async def settle_task_attempt(
@@ -744,9 +838,9 @@ class MainSequenceClient:
         lease_token: str,
         status: str,
         status_message: Mapping[str, Any] | None = None,
-        failure_category: str = "",
-        detail: str = "",
-    ) -> AgentTask:
+        outcome_category: str = "",
+        failure_detail: str = "",
+    ) -> AgentTaskExecutionAttempt:
         payload: dict[str, Any] = {
             "attempt_uid": attempt_uid,
             "holder_id": holder_id,
@@ -755,17 +849,17 @@ class MainSequenceClient:
         }
         if status_message is not None:
             payload["status_message"] = dict(status_message)
-        if failure_category:
-            payload["failure_category"] = failure_category
-        if detail:
-            payload["detail"] = detail
+        if outcome_category:
+            payload["outcome_category"] = outcome_category
+        if failure_detail:
+            payload["failure_detail"] = failure_detail
         data = await self._request(
             "POST",
-            agent_task_operation(task_uid, "settle-attempt"),
+            agent_task_operation(task_uid, "attempts/settle"),
             json=payload,
             idempotent=True,
         )
-        return AgentTask.model_validate(data)
+        return AgentTaskExecutionAttempt.model_validate(data)
 
     async def continue_task(
         self,
@@ -779,54 +873,6 @@ class MainSequenceClient:
             idempotent=True,
         )
         return AgentTask.model_validate(data)
-
-    async def get_task_caller_delivery(
-        self,
-        delivery_uid: str,
-    ) -> AgentTaskCallerDelivery:
-        data = await self._request(
-            "GET",
-            agent_task_caller_delivery(delivery_uid),
-            idempotent=True,
-        )
-        return AgentTaskCallerDelivery.model_validate(data)
-
-    async def claim_task_caller_delivery(
-        self,
-        delivery_uid: str,
-        *,
-        holder_id: str,
-        lease_token: str,
-    ) -> AgentTaskCallerDelivery:
-        data = await self._request(
-            "POST",
-            agent_task_caller_delivery_operation(delivery_uid, "claim"),
-            json={"holder_id": holder_id, "lease_token": lease_token},
-            idempotent=True,
-        )
-        return AgentTaskCallerDelivery.model_validate(data)
-
-    async def settle_task_caller_delivery(
-        self,
-        delivery_uid: str,
-        *,
-        holder_id: str,
-        lease_token: str,
-        outcome: str,
-        detail: str = "",
-    ) -> AgentTaskCallerDelivery:
-        data = await self._request(
-            "POST",
-            agent_task_caller_delivery_operation(delivery_uid, "settle"),
-            json={
-                "holder_id": holder_id,
-                "lease_token": lease_token,
-                "outcome": outcome,
-                "detail": detail,
-            },
-            idempotent=True,
-        )
-        return AgentTaskCallerDelivery.model_validate(data)
 
     async def cancel_task(self, task_uid: str) -> AgentTask:
         data = await self._request(

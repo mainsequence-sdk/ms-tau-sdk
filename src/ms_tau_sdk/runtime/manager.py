@@ -211,6 +211,12 @@ class SessionRuntimeManager:
     def draining(self) -> bool:
         return self._draining or self._closed
 
+    @property
+    def deployment_ready(self) -> bool:
+        """Whether TAU bootstrap completed and the runtime still accepts work."""
+
+        return self._startup_ready and not self.draining
+
     async def task_execution_fence(self, session_uid: str) -> RuntimeExecutionFence:
         """Acquire/load the canonical runtime and expose its existing session lease."""
 
@@ -895,6 +901,33 @@ class SessionRuntimeManager:
         return bool(
             runtime is not None and (runtime.active_turn_uid is not None or runtime.lock.locked())
         )
+
+    async def persist_platform_event(
+        self,
+        session_uid: str,
+        platform_event: PlatformEvent,
+        *,
+        idempotency_key: str,
+    ) -> bool:
+        """Persist one signed control-plane event before acknowledging its delivery."""
+
+        runtime = await self.get(session_uid)
+        if runtime.active_turn_uid is not None or runtime.lock.locked():
+            raise BackendConflictError(f"Session {session_uid} already has an active turn")
+        namespace, payload = platform_event
+        async with runtime.lock:
+            entries = await runtime.storage.read_all()
+            for entry in entries:
+                if (
+                    getattr(entry, "type", None) == "custom"
+                    and getattr(entry, "namespace", None) == namespace
+                    and str(getattr(entry, "data", {}).get("deliveryUid") or "")
+                    == idempotency_key
+                ):
+                    return False
+            await runtime.coding_session.append_custom_entry(namespace, dict(payload))
+            await runtime.storage.flush()
+            return True
 
     def mark_response_delivered(self, session_uid: str) -> bool:
         """Schedule the latest durable snapshot after the transport terminal event."""

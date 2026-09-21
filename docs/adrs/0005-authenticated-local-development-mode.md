@@ -1,8 +1,14 @@
 # ADR 0005: Authenticated Local Development Mode
 
-Status: Accepted — SDK implementation in progress; backend capability remains external
+Status: Accepted — SDK implementation complete; live backend capability evidence remains external
 
 Date: 2026-09-16
+
+Amended: 2026-09-17 — local A2A Message and Task execution is required; an A2A protocol Task does
+not require a platform AgentSession.
+
+Amended: 2026-09-19 — local mode durably writes structured, privacy-filtered operational logs to a
+workspace-scoped file without changing managed-mode logging.
 
 Amends, when accepted:
 
@@ -45,7 +51,7 @@ remote.
 In this ADR, **local mode** means:
 
 - the Tau process runs in the current project workspace;
-- the process owns a local, durable session identity and local runtime state;
+- the process owns local, durable session, A2A Task, and runtime state;
 - no Main Sequence Agent or AgentSession is required or implicitly created; and
 - Main Sequence authentication, provider credential hydration, and MCP remain active.
 
@@ -217,10 +223,13 @@ In local mode the following state is local-only:
 - runtime activity and cancellation state;
 - resume snapshots;
 - idempotency and sequence metadata;
+- A2A Tasks, attempts, requester/responder messages, artifacts, events, interruption state, and
+  cancellation;
 - local lease/ownership coordination when more than one process opens the same session.
 
 The SDK must not call the AgentSession bootstrap, history, append, lease, runtime-state, snapshot,
-or task-persistence endpoints in local mode.
+or platform task-persistence endpoints in local mode. This prohibition applies to remote platform
+state; it does not prohibit the local A2A Task aggregate required by this ADR.
 
 The default store is a schema-versioned SQLite database outside the repository, scoped by the
 canonical workspace path:
@@ -238,6 +247,27 @@ Local state is a separate namespace. A local session ID must never be interprete
 AgentSession UID. Turning local mode off must not upload, migrate, attach, or replay local history
 into a managed session. Export/import, if later required, needs a separate decision and explicit
 user action.
+
+### 4a. Persist local operational logs
+
+`TAU_LOCAL_MODE=true` also requires one append-only JSON Lines operational log at
+`~/.tau/mainsequence/<workspace-hash>/logs/tau.jsonl`. `TAU_LOCAL_STATE_ROOT` moves the parent of
+both this file and `runtime.sqlite3`; the log is not stored in the tracked project or `.tau`.
+Startup creates the file before serving requests. Failure to create or open it is a startup error,
+not a silent downgrade to console-only logging. Managed mode does not create a local file.
+
+The file receives the same structured, redacted SDK, request, runtime, and propagating Python
+logging events as the existing sinks. Console output remains available independently. The file is
+private to the local user (`0700` log directory, `0600` files), rotated at 10 MiB with five backup
+files, and safe for concurrent local processes in the same workspace. A runtime write failure must
+not abort an agent turn. The SDK does not claim to capture arbitrary `print()` calls, direct
+subprocess output, or project loggers that deliberately bypass Python logging propagation.
+
+Persistent diagnostics must not contain JWTs, provider credentials, prompts, tool arguments or
+results, MCP payloads, or raw exception messages. Exceptions retain their type and bounded
+traceback locations, without exception message text or local variables. The log is local-only; it
+is not attached, uploaded, or synchronized to any Main Sequence AgentSession. Developers are
+responsible for retention and removal of their local state directory.
 
 ### 5. Create local sessions lazily
 
@@ -293,6 +323,12 @@ tool that the server declares to require a real AgentSession must either support
 semantics in its own backend contract or return a typed authorization/capability failure. The rest
 of the MCP catalog remains available. This limitation must be visible in diagnostics and must not
 cause the SDK to create an AgentSession as a workaround.
+
+The canonical outbound `a2a.send_message` tool remains present in local mode. Authenticated-user
+Message delivery and Task delivery with polling do not require a local platform AgentSession and
+must be supported by the platform contract. `resume_caller` remains unavailable unless the
+platform gains an explicit callback contract for an unregistered local process; local development
+must use polling instead of fabricating caller-session proof.
 
 ### 7. Separate local state from remote operational services
 
@@ -367,14 +403,23 @@ or required operational tool surface.
 
 ### 10. Bound protocol behavior honestly
 
-Local chat, streaming, cancellation, session-model inspection, restart recovery, and project Tau
-customization are required in the first complete release.
+Local chat, A2A Message and Task execution, A2A streaming, task continuation, cancellation,
+subscription, session-model inspection, restart recovery, and project Tau customization are
+required.
 
-The HTTP and A2A wire encoders remain shared. Routes whose semantics can be satisfied with a local
-identity and local task store may operate locally. Platform discovery, remote dispatch, caller
-delivery, and any operation whose contract requires a registered target Agent or AgentSession must
-return an explicit local-mode capability error. They must not create hidden backend records or
+The HTTP and A2A wire encoders remain shared. Public A2A Message and Task routes use a workspace-
+scoped local identity and the SQLite task store. An A2A protocol Task is not a platform
+`AgentTask`, and its identity, context, status, messages, artifacts, and events do not require a
+registered AgentSession. Platform discovery of the local process, backend dispatch webhooks,
+caller-delivery webhooks, push notifications, and any operation whose contract genuinely requires
+a registered platform target remain unavailable. They must not create hidden backend records or
 pretend that the local agent is discoverable by the platform.
+
+The supported local public surface includes REST and JSON-RPC `message:send`, `message:stream`,
+Message and Task response kinds, task list/get/cancel/subscribe, and Task continuation after
+`input_required` or `auth_required`. The local Agent Card advertises Message, Task, and streaming
+support while explicitly disabling push notifications. Task records survive process restart and
+never migrate into managed mode.
 
 The supported-route matrix is an executable contract and is documented before release. Returning
 a typed unsupported response is preferable to accepting a request and losing its coordination
@@ -388,7 +433,10 @@ semantics.
 | AgentSession creation/bootstrap | Never called |
 | Session entries and snapshots | Local SQLite |
 | Activity, lease, cancellation | Local SQLite/process coordination |
-| Local task lifecycle | Local SQLite where supported |
+| Public A2A Message and Task lifecycle | Local SQLite; REST and JSON-RPC supported |
+| Local A2A Agent Card | Process-local capability description; not platform discovery |
+| Backend dispatch/caller-delivery webhooks | Unsupported; require registered platform routing |
+| A2A push notifications and `resume_caller` | Unsupported; polling remains supported |
 | Main Sequence authentication | Remote JWT environment/HTTP contract; no SDK import |
 | Provider/model selection | Explicit local non-secret settings |
 | Provider authorization/control evidence | Remote, Main Sequence-owned |
@@ -458,6 +506,8 @@ and runtime-state persistence change.
 - Local execution uses an explicitly selected, Main Sequence-authorized provider and the same MCP
   capabilities as deployed execution.
 - Local sessions survive process restarts and remain isolated by workspace.
+- Local A2A Tasks exercise the same transport and Tau execution behavior without creating platform
+  Agent or AgentSession records.
 - The architecture gains explicit boundaries between runtime persistence, provider authorization,
   and operational platform tools.
 
@@ -501,10 +551,12 @@ branch exists inside provider validation or Tau event translation.
 
 Add `TAU_LOCAL_MODE`, required `TAU_LOCAL_PROVIDER` and `TAU_LOCAL_MODEL`, optional
 `TAU_LOCAL_THINKING`, deterministic workspace scoping, lazy local session creation, SQLite schema
-and migrations, entry batching, turn commits, snapshots, cancellation, and restart recovery.
+and migrations, entry batching, turn commits, snapshots, cancellation, local A2A task aggregates,
+and restart recovery.
 
-Gate: chat can execute, cancel, restart, and resume without any AgentSession persistence endpoint
-being called. A network spy proves the exact allowed/forbidden endpoint classes.
+Gate: chat and A2A Message/Task flows can execute, cancel, restart, resume, list, get, and subscribe
+without any AgentSession or platform task-persistence endpoint being called. A network spy proves
+the exact allowed/forbidden endpoint classes.
 
 ### C3: Main Sequence user auth and provider execution
 
@@ -529,10 +581,13 @@ change the effective tool composition through its normal mechanisms.
 ### C5: Protocol surface and safety
 
 Implement the local-mode route matrix, local provenance, loopback CLI default, health/readiness
-fields, task behavior where locally meaningful, and typed capability failures elsewhere.
+fields, durable local A2A Message/Task behavior, and typed capability failures only for genuine
+platform orchestration.
 
-Gate: unsupported orchestration never creates hidden platform state, external bind warnings are
-tested, and managed mode retains its gateway identity requirements.
+Gate: REST and JSON-RPC Message/Task requests, streaming, continuation, list/get/cancel/subscribe,
+and restart persistence pass against the local store; unsupported orchestration never creates
+hidden platform state; external bind warnings are tested; and managed mode retains its gateway
+identity requirements.
 
 ### C6: Documentation, migration, and release
 
@@ -551,10 +606,10 @@ without the `mainsequence` distribution installed in the runtime environment.
 | --- | --- | --- |
 | C0 | JWT environment names and refresh URL verified against `mainsequence-sdk`; client inventory classified | Deploy and live-test authenticated-user provider hydration without agent identity |
 | C1 | Complete | None |
-| C2 | Complete for the required local chat/session surface | None |
+| C2 | Complete for local chat, session, and durable A2A Task state | None |
 | C3 | Client complete; dependency/import guards and secret-persistence tests pass | Live backend authorization/hydration conformance |
 | C4 | Client composition complete; no fake session proof is emitted | Live read and mutating MCP conformance under user JWT |
-| C5 | Complete: loopback default, diagnostics, local chat, and typed unsupported route boundary | None |
+| C5 | Complete: local REST/JSON-RPC A2A Message/Task execution and narrow platform-only failures | None |
 | C6 | SDK documentation, migration text, changelog, build, and clean test suite complete | End-to-end clean-project run against the deployed backend capability |
 
 No Django or other backend repository is modified by this ADR's SDK implementation. The external
@@ -568,8 +623,8 @@ The implementation is not complete until automated tests prove:
    credential secret.
 2. Local startup requires valid Main Sequence access/refresh JWT environment values and refreshes
    them without importing the `mainsequence` package.
-3. No Agent, AgentSession, entry, lease, activity, snapshot, cancellation, or task-persistence
-   endpoint is called in local mode.
+3. No Agent, AgentSession, entry, lease, activity, snapshot, cancellation, or platform
+   task-persistence endpoint is called in local mode; equivalent local state remains in SQLite.
 4. The exact configured provider/model pair is sent for Main Sequence authorization, evidence,
    hydration, and refresh and continues to pass the existing execution-safety validation.
 5. The provider receives only its hydrated provider credential, never the Main Sequence JWT.
@@ -587,6 +642,12 @@ The implementation is not complete until automated tests prove:
     selection never falls back to another provider or credential source.
 17. Built wheel metadata contains no `mainsequence` dependency, and source/import tests reject any
     `mainsequence` package import.
+18. Local REST and JSON-RPC A2A Message and Task flows execute without gateway caller headers,
+    canonicalize context IDs into the workspace namespace, and persist no platform session state.
+19. Local task list/get/cancel/subscribe, streaming, interruption continuation, idempotent creation,
+    artifacts, events, and restart recovery conform to the managed A2A wire contract.
+20. `/internal/a2a` dispatch and caller-delivery hooks remain rejected in local mode, and outbound
+    platform Task communication uses authenticated-user polling rather than fake caller proof.
 
 ## Acceptance Criteria
 
@@ -605,9 +666,10 @@ After startup:
 
 - the project runs the real workspace-bound Tau runtime;
 - no Agent or AgentSession has been registered;
-- chat state is durable only on the developer's machine;
+- chat and public A2A Task state are durable only on the developer's machine;
 - provider calls use the explicitly selected provider/model and credentials authorized and
   hydrated by Main Sequence;
-- Main Sequence MCP remains available and operates against the real platform; and
+- Main Sequence MCP, including authenticated-user A2A Message and polled Task communication,
+  remains available and operates against the real platform; and
 - removing the flag restores the existing managed AgentSession contract without migrating local
   state.

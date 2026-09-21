@@ -18,16 +18,14 @@ EXPECTED_OPERATIONS = frozenset(
         ("GET", "/api/a2a/v1/tasks/{task_id}/pushNotificationConfigs/{config_id}"),
         ("POST", "/api/a2a/v1/tasks/{task_id}:cancel"),
         ("GET", "/api/a2a/v1/tasks/{task_id}:subscribe"),
-        ("POST", "/api/agents/{agent_uid}/responses"),
-        ("POST", "/api/agents/{agent_uid}/responses/stream"),
         ("GET", "/api/chat"),
         ("POST", "/api/chat"),
         ("POST", "/api/chat/mock"),
         ("GET", "/api/chat/session-model"),
         ("POST", "/api/chat/session/cancel"),
         ("GET", "/health"),
-        ("POST", "/internal/a2a/caller-deliveries:available"),
-        ("POST", "/internal/a2a/dispatches:available"),
+        ("POST", "/internal/a2a/task-caller-delivery"),
+        ("POST", "/internal/a2a/task-dispatch"),
         ("GET", "/ready"),
         ("GET", "/version"),
     }
@@ -44,3 +42,22 @@ def test_http_operation_surface_is_explicit(sdk_app: FastAPI) -> None:
     )
 
     assert actual_operations == EXPECTED_OPERATIONS
+
+
+def test_agent_targeted_one_shot_routes_are_absent(sdk_app: FastAPI) -> None:
+    paths = sdk_app.openapi()["paths"]
+    assert not any(path.startswith("/api/agents/") for path in paths)
+
+
+def test_internal_a2a_control_signals_return_backend_compatible_success(
+    sdk_app: FastAPI,
+) -> None:
+    schema = sdk_app.openapi()
+
+    for path in (
+        "/internal/a2a/task-caller-delivery",
+        "/internal/a2a/task-dispatch",
+    ):
+        responses = schema["paths"][path]["post"]["responses"]
+        assert "200" in responses
+        assert "202" not in responses

@@ -18,6 +18,7 @@ type HarnessKind = Literal["pi", "tau"]
 type HarnessProtocol = Literal["pi-checkpoint-v1", "tau-session-v1"]
 type TauEntryType = Literal[
     "message",
+    "custom_message",
     "model_change",
     "thinking_level_change",
     "compaction",
@@ -154,7 +155,6 @@ class SessionEntryBatchAppendResponse(BackendModel):
     runtime_state: RuntimeState | None = None
 
 
-type RuntimeLeasePurpose = Literal["runtime_run"]
 type RuntimeLeaseReleaseReason = Literal[
     "runtime_load_failed",
     "runtime_eviction",
@@ -166,7 +166,6 @@ class RuntimeLease(BackendModel):
     holder_id: str
     lease_expires_at: datetime
     checkpoint_version: int = 0
-    lease_purpose: RuntimeLeasePurpose = "runtime_run"
     cancel_requested: bool = False
     cancellation: dict[str, Any] | None = None
     runtime_activity: AgentRuntimeActivity | None = None
@@ -179,14 +178,12 @@ class RuntimeLease(BackendModel):
 class RuntimeLeaseRequest(BackendRequestModel):
     holder_id: str
     ttl_seconds: int
-    lease_purpose: Literal["runtime_run"] = "runtime_run"
 
 
 class RuntimeLeaseRenewRequest(BackendRequestModel):
     lease_token: str
     holder_id: str
     ttl_seconds: int
-    lease_purpose: Literal["runtime_run"] = "runtime_run"
 
 
 class RuntimeLeaseReleaseRequest(BackendRequestModel):
@@ -366,13 +363,17 @@ class AgentTask(BackendModel):
     outputs: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
     last_event_sequence: int = 0
-    dispatch_uid: str | None = None
-    current_attempt_uid: str | None = None
 
 
 class AgentTaskCreateResult(BackendModel):
     task: AgentTask
     created: bool
+
+
+class AgentTaskDispatch(BackendModel):
+    uid: str
+    state: Literal["pending", "signaled", "claimed", "settled", "canceled"]
+    current_attempt_uid: str | None = None
 
 
 class AgentTaskExecutionAttempt(BackendModel):
@@ -410,13 +411,3 @@ class AgentTaskEventPage(BackendModel):
     events: list[AgentTaskEvent] = Field(default_factory=list)
     next_cursor: int = Field(ge=0)
     has_more: bool = False
-
-
-class AgentTaskCallerDelivery(BackendModel):
-    uid: str
-    task_uid: str
-    task_id: str
-    caller_agent_session_uid: str
-    triggering_event_sequence: int = Field(ge=1)
-    task_status: AgentTaskStatus
-    state: str

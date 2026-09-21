@@ -4,6 +4,9 @@ Status: Approved charter for ADR 56
 
 Date: 2026-09-16
 
+Amended 2026-09-19 by [ADR 0007](../../adrs/0007-retire-agent-targeted-sessionless-responses.md):
+the one-shot Agent response transport and tool-free harness are retired.
+
 ## Identity
 
 **Main Sequence TAU SDK** is a new Python library project. Its distribution is `ms-tau-sdk`, its
@@ -35,12 +38,12 @@ no-workspace SDK mode, `astro-orchestrator` SDK type, or `code-repository-execut
 
 - Public Python construction primitives and the `ms-tau` service entrypoint.
 - FastAPI/ASGI lifecycle and the current supported route families.
-- HTTP, SSE, chat, A2A, and agent-response transport adapters.
+- HTTP, SSE, chat, and A2A transport adapters.
 - Runtime-credential exchange and authenticated Main Sequence backend access.
 - Provider-control validation and provider-credential hydration.
 - Durable session bootstrap, leases, history/snapshot restore, persistence, cancellation, eviction,
   and shutdown.
-- Sessionless `AgentHarness` execution.
+- Workspace-local Tau execution without platform Agent registration.
 - Main Sequence MCP integration and protocol-required task controls.
 - Packaged Tau defaults and integration with Tau's one configuration resolver.
 - Runtime composition, health, readiness, logging, and observability primitives.
@@ -95,7 +98,7 @@ The exact symbol list is decided during Phase C1/C3. The required surface catego
 - validated SDK settings/configuration;
 - service runner used by `ms-tau`;
 - durable Tau runtime/session construction;
-- sessionless response execution;
+- workspace-local Tau execution;
 - transport/router composition;
 - lifecycle and shutdown hooks; and
 - version and runtime-composition reporting.

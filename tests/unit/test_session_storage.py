@@ -39,7 +39,7 @@ class FakeBackend:
         return RuntimeState(
             harness="tau",
             harness_protocol="tau-session-v1",
-            harness_version="0.3.1",
+            harness_version="0.4.2",
             runtime_activity=request.runtime_activity,
             active_turn_uid=request.active_turn_uid,
             activity_sequence=request.activity_sequence,

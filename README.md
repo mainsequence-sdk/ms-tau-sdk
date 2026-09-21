@@ -43,7 +43,7 @@ uv add ms-tau-sdk
 Provide the runtime credential that Main Sequence assigned to the deployment:
 
 ```bash
-export MAINSEQUENCE_BACKEND="https://api.main-sequence.app"
+export MAINSEQUENCE_ENDPOINT="https://api.main-sequence.app"
 export MAINSEQUENCE_RUNTIME_CREDENTIAL_ID="<runtime-credential-id>"
 export MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET="<runtime-credential-secret>"
 ```
@@ -53,6 +53,16 @@ Start the service from the project workspace:
 ```bash
 uv run ms-tau
 ```
+
+Install the version-matched development skills when a coding agent will work on the TAU
+integration:
+
+```bash
+uv run ms-tau skills sync --path .
+```
+
+This explicit command owns only `.agents/skills/ms_tau_sdk/`; package installation and runtime
+startup never modify the repository automatically.
 
 The credential pair is exchanged for short-lived Main Sequence access tokens. Do not commit it or
 place it in `.tau` configuration. For an embedded ASGI deployment, construct the same application
@@ -86,10 +96,24 @@ The normal Main Sequence login or project launcher may provision those JWT varia
 environment handoff and public refresh API directly. Provider secrets are never environment
 settings and are never persisted locally.
 
-Local conversations are stored at
+Local conversations and public A2A Tasks are stored at
 `~/.tau/mainsequence/<workspace-hash>/runtime.sqlite3`; an omitted chat `sessionUid` uses the
-workspace default. Local mode binds to `127.0.0.1` unless a host was explicitly configured. Main
-Sequence MCP remains live, so its tools can still read or mutate real platform resources.
+workspace default. Public A2A Message, Task, streaming, continuation, list/get/cancel, and
+subscription flows run without creating a platform AgentSession. Incoming local A2A calls do not
+need managed-gateway caller headers: supplied context IDs are mapped into the workspace-local
+session namespace and local provenance is recorded. Task records and event streams survive process
+restart.
+
+Local mode also appends privacy-filtered, structured JSON Lines to
+`~/.tau/mainsequence/<workspace-hash>/logs/tau.jsonl`, with bounded rotation. Both the database
+and log move under `TAU_LOCAL_STATE_ROOT` when set; neither is written to the project `.tau` or
+uploaded to a platform AgentSession. Console logging remains available.
+
+Platform discovery of the unregistered process, internal backend dispatch/caller-delivery hooks,
+push notifications, and `resume_caller` remain unavailable. Outbound A2A through Main Sequence MCP
+supports Messages and Tasks with polling under authenticated-user semantics. Local mode binds to
+`127.0.0.1` unless a host was explicitly configured. Main Sequence MCP remains live, so its tools
+can still read or mutate real platform resources.
 
 ## Workspace-owned Tau behavior
 
@@ -116,10 +140,12 @@ are not bundled into the SDK. Main Sequence transport and protocol behavior rema
 - runtime-credential exchange, local user-JWT refresh, and authenticated Main Sequence access
 - provider validation and credential hydration
 - durable Tau sessions, leases, restore, persistence, cancellation, eviction, and shutdown
-- sessionless Tau execution
-- chat, responses, SSE, A2A, health, and readiness transports
+- local Tau execution without backend AgentSession pre-creation
+- chat, SSE, A2A, health, and readiness transports
 - Main Sequence MCP and protocol-required task controls
 - packaged defaults that participate in Tau's normal workspace configuration
+- explicit, version-matched development skills for repository integration, local debugging,
+  project customization, and TAU's A2A host adapter
 
 ## Deployment boundary
 

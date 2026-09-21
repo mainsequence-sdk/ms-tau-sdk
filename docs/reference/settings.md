@@ -11,7 +11,7 @@ connection and credential names remain unprefixed by the SDK product name.
 | `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET` | One process's runtime credential secret. |
 
 Managed mode uses `MAINSEQUENCE_AUTH_MODE=runtime_credential` and remains the default.
-`MAINSEQUENCE_BACKEND` defaults to `https://api.main-sequence.app`.
+`MAINSEQUENCE_ENDPOINT` defaults to `https://api.main-sequence.app`.
 
 ## Authenticated local development
 
@@ -70,12 +70,11 @@ runtime-role selector.
 
 The lease-renew interval must be lower than the lease TTL.
 
-## A2A, response assets, and streaming
+## A2A assets and streaming
 
 | Environment variable | Default |
 | --- | --- |
 | `MAINSEQUENCE_TAU_A2A_ASSET_ROOT` | `/tmp/ms-tau-a2a-assets` |
-| `MAINSEQUENCE_TAU_SESSIONLESS_ASSET_ROOT` | `/tmp/ms-tau-sessionless-assets` |
 | `MAINSEQUENCE_TAU_A2A_MAX_INLINE_FILE_BYTES` | `20971520` |
 | `MAINSEQUENCE_TAU_A2A_MAX_AGGREGATE_FILE_BYTES` | `41943040` |
 | `MAINSEQUENCE_TAU_A2A_MAX_INLINE_FILE_COUNT` | `8` |
@@ -94,3 +93,8 @@ The lease-renew interval must be lower than the lease TTL.
 
 At least one logging sink must be enabled. Payload content and secrets remain redacted regardless of
 the payload setting.
+
+Local mode additionally writes structured JSON Lines to
+`~/.tau/mainsequence/<workspace-hash>/logs/tau.jsonl`, under `TAU_LOCAL_STATE_ROOT` when set. The
+file sink is mandatory and independent of the console sink settings. It rotates at 10 MiB with
+five backups. Managed mode does not create this file.

@@ -44,4 +44,6 @@ def test_active_adr_index_lists_the_complete_sdk_decision_set() -> None:
         "0003-tau-native-project-configuration.md",
         "0004-minimal-bundled-tool-boundary.md",
         "0005-authenticated-local-development-mode.md",
+        "0006-sdk-owned-agent-development-skills.md",
+        "0007-retire-agent-targeted-sessionless-responses.md",
     }

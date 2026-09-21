@@ -11,18 +11,17 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from ms_tau_sdk import __version__
-from ms_tau_sdk.api import a2a, chat, health, responses, sessions
+from ms_tau_sdk.api import a2a, chat, health, sessions
 from ms_tau_sdk.application import ApplicationServices
 from ms_tau_sdk.errors import TauSDKError
 from ms_tau_sdk.logging import RequestContextMiddleware, configure_logging
+from ms_tau_sdk.runtime.deployment_health import (
+    install_tau_deployment_readiness_adapter,
+)
 from ms_tau_sdk.settings import TauSDKSettings, get_settings
 
 logger = structlog.get_logger(__name__)
-LOCAL_UNSUPPORTED_PATH_PREFIXES = (
-    "/api/a2a",
-    "/api/agents",
-    "/internal/a2a",
-)
+LOCAL_UNSUPPORTED_PATH_PREFIXES = ("/internal/a2a",)
 
 
 def create_app(
@@ -36,6 +35,7 @@ def create_app(
         resolved.log_level,
         machine_sink=resolved.log_machine_sink,
         human_sink=resolved.log_human_sink,
+        file_path=resolved.local_log_path if resolved.local_mode else None,
     )
     if resolved.local_mode and not resolved.loopback_bind:
         logger.warning(
@@ -93,6 +93,7 @@ def create_app(
         lifespan=lifespan,
     )
     app.state.settings = resolved
+    install_tau_deployment_readiness_adapter(app)
     if resolved.trusted_origins:
         app.add_middleware(
             CORSMiddleware,
@@ -137,7 +138,6 @@ def create_app(
 
     app.include_router(health.router)
     app.include_router(chat.router)
-    app.include_router(responses.router)
     app.include_router(a2a.router)
     app.include_router(sessions.router)
     return app

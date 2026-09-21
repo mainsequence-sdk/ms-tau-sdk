@@ -11,8 +11,6 @@ from typing import Literal
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from ms_tau_sdk.agents import AgentExecutionSnapshot
-
 from .errors import ConfigurationError
 
 
@@ -27,7 +25,7 @@ class TauSDKSettings(BaseSettings):
 
     backend_url: str = Field(
         default="https://api.main-sequence.app",
-        validation_alias="MAINSEQUENCE_BACKEND",
+        validation_alias="MAINSEQUENCE_ENDPOINT",
     )
     auth_mode: Literal["runtime_credential", "jwt"] = Field(
         default="runtime_credential",
@@ -96,14 +94,6 @@ class TauSDKSettings(BaseSettings):
         ge=1,
         le=64,
         validation_alias="MAINSEQUENCE_TAU_A2A_MAX_INLINE_FILE_COUNT",
-    )
-    sessionless_asset_root: Path = Field(
-        default=Path("/tmp/ms-tau-sessionless-assets"),
-        validation_alias="MAINSEQUENCE_TAU_SESSIONLESS_ASSET_ROOT",
-    )
-    agent_execution_snapshot: AgentExecutionSnapshot | None = Field(
-        default=None,
-        validation_alias="MAINSEQUENCE_TAU_AGENT_EXECUTION_SNAPSHOT",
     )
     log_level: str = Field(default="INFO", validation_alias="MAINSEQUENCE_TAU_LOG_LEVEL")
     log_machine_sink: bool = Field(
@@ -304,6 +294,10 @@ class TauSDKSettings(BaseSettings):
     @property
     def local_state_path(self) -> Path:
         return self.local_state_root / self.workspace_digest / "runtime.sqlite3"
+
+    @property
+    def local_log_path(self) -> Path:
+        return self.local_state_root / self.workspace_digest / "logs" / "tau.jsonl"
 
     @property
     def loopback_bind(self) -> bool:

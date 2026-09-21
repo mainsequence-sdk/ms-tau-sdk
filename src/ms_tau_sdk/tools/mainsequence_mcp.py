@@ -81,7 +81,11 @@ def _tool_result(
     return AgentToolResult(content=content, details=details)
 
 
-def _tau_tool_input_schema(tool: types.Tool) -> Mapping[str, JSONValue]:
+def _tau_tool_input_schema(
+    tool: types.Tool,
+    *,
+    local_user_semantics: bool = False,
+) -> Mapping[str, JSONValue]:
     schema = deepcopy(tool.inputSchema)
     if tool.name == A2A_SEND_TOOL:
         properties = schema.setdefault("properties", {})
@@ -93,7 +97,7 @@ def _tau_tool_input_schema(tool: types.Tool) -> Mapping[str, JSONValue]:
             }
             properties["completion_policy"] = {
                 "type": "string",
-                "enum": ["poll", "resume_caller"],
+                "enum": ["poll"] if local_user_semantics else ["poll", "resume_caller"],
                 "description": "Required only for Task mode.",
             }
         required = schema.setdefault("required", [])
@@ -155,6 +159,7 @@ def _create_mcp_tool(
     tool: types.Tool,
     tau_name: str,
     private_meta: Mapping[str, JSONValue] | None = None,
+    local_user_semantics: bool = False,
 ) -> AgentTool:
     canonical_name = tool.name
     annotations = tool.annotations
@@ -190,6 +195,8 @@ def _create_mcp_tool(
                 raise ValueError(
                     "Task response_kind requires completion_policy 'poll' or 'resume_caller'"
                 )
+            if local_user_semantics and completion_policy == "resume_caller":
+                raise ValueError("Local A2A Task communication requires completion_policy 'poll'")
             if response_kind == "message" and completion_policy is not None:
                 raise ValueError("completion_policy is not valid for Message response_kind")
         if private_meta is None:
@@ -206,7 +213,10 @@ def _create_mcp_tool(
         name=tau_name,
         label=_tool_label(tool),
         description=tool.description or f"Call Main Sequence MCP tool {canonical_name}.",
-        parameters=_tau_tool_input_schema(tool),
+        parameters=_tau_tool_input_schema(
+            tool,
+            local_user_semantics=local_user_semantics,
+        ),
         execute_fn=execute,
         execution_mode=execution_mode,
     )
@@ -293,6 +303,7 @@ def create_mainsequence_mcp_tools(
                     caller_session_proof,
                     allow_missing_proof=allow_missing_session_proof,
                 ),
+                local_user_semantics=allow_missing_session_proof,
             )
         )
     if client.resources:
