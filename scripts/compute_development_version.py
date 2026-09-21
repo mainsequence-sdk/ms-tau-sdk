@@ -3,8 +3,9 @@
 
 `pyproject.toml` is the only source of the version. On `development` it declares the release being
 worked toward, `X.Y.Z`. Every push to `development` publishes `X.Y.Z.devN`, which sorts before its
-final (`1.2.5 < 1.2.6.dev41 < 1.2.6`), and the final release is the tag `vX.Y.Z` on `main`, the same
-number. `N` is the publishing workflow's run number, so one push is one development release.
+final (`1.2.5 < 1.2.6.dev41 < 1.2.6`), and merging `development` into `main` publishes the final
+`X.Y.Z`, the same number. `N` is the publishing workflow's run number, so one push is one
+development release.
 
 PyPI is consulted only as a guard: a declared version that is already released means the bump that
 follows every release is missing, and the build fails instead of publishing a development release
@@ -110,6 +111,19 @@ def next_development_version(
     return f"{major}.{minor}.{patch}.dev{run_number}"
 
 
+def final_version(*, published: list[Release], declared: Release) -> str:
+    """Return the `X.Y.Z` a merge to `main` releases, which must not be published yet."""
+
+    wanted = ".".join(str(part) for part in declared)
+    if published and declared <= max(published):
+        newest = ".".join(str(part) for part in max(published))
+        raise DevelopmentVersionError(
+            f"pyproject.toml declares {wanted}, and {newest} is already released; "
+            "a merge to main is a release and must carry the next version"
+        )
+    return wanted
+
+
 def next_patch(version: str) -> str:
     """Return the version `development` declares after `version` has been released."""
 
@@ -150,6 +164,11 @@ def main() -> None:
         action="store_true",
         help="write the next patch version into pyproject.toml; run on development after a release",
     )
+    parser.add_argument(
+        "--final",
+        action="store_true",
+        help="print the version a merge to main releases; fails when PyPI already has it",
+    )
     parser.add_argument("--github-output", action="store_true")
     args = parser.parse_args()
 
@@ -160,11 +179,17 @@ def main() -> None:
         print(bumped)
         return
     distribution = args.distribution or package["name"]
-    version = next_development_version(
-        published=published_final_releases(distribution),
-        declared=declared_release(package["version"]),
-        run_number=_run_number(args.run_number),
-    )
+    if args.final:
+        version = final_version(
+            published=published_final_releases(distribution),
+            declared=declared_release(package["version"]),
+        )
+    else:
+        version = next_development_version(
+            published=published_final_releases(distribution),
+            declared=declared_release(package["version"]),
+            run_number=_run_number(args.run_number),
+        )
     if args.write:
         apply_version(version)
     if args.github_output:
