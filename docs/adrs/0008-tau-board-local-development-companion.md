@@ -1,6 +1,6 @@
 # ADR 0008: Tau Board as a Separate Local Development Companion
 
-Status: Proposed
+Status: Accepted
 
 Date: 2026-09-21
 
@@ -43,23 +43,82 @@ release checks, and the extra must reference a board version that is published b
 release advertising it. The root wheel and source distribution must not include board source or
 assets.
 
-### 2. Make endpoint and local-state location selectable
+The package layout is fixed at this level:
+
+```text
+packages/tau-board/
+├── pyproject.toml
+├── src/ms_tau_board/
+│   ├── cli.py
+│   ├── app.py
+│   ├── proxy.py
+│   ├── state.py
+│   ├── logs.py
+│   └── static/
+│       ├── index.html
+│       ├── app.js
+│       ├── board.css
+│       ├── bulma.min.css
+│       └── BULMA-LICENSE.txt
+└── tests/
+```
+
+### 2. Fix the implementation stack and size boundary
+
+The UI is one static `index.html` using **Bulma 1.0.4 CSS** for layout, forms, tables, tabs,
+panels, and status badges. Package the prebuilt `bulma.min.css` and its license inside the board
+wheel. Use one small board stylesheet for project-specific layout. Do not load Bulma or any other
+asset from a CDN. Bulma is CSS-only and publishes a single ready-to-use stylesheet; no Bulma
+JavaScript, Sass compilation, icon library, or web font is needed ([Bulma overview](https://bulma.io/),
+[Bulma installation](https://bulma.io/documentation/start/installation/)). Use native HTML controls
+and inline text or small inline SVG where needed.
+
+Browser behavior uses **plain JavaScript in one ES module**: `fetch`, `ReadableStream`,
+`AbortController`, and DOM APIs. The module parses Tau's POST-based SSE streams; `EventSource`
+cannot make the required POST requests. There is no React, Vue, Svelte, TypeScript, npm, Vite,
+Webpack, Sass, client-side router, or generated frontend bundle. The HTML is static, so no template
+engine is needed. The board has five Bulma tab views: Connect, Chat, A2A, State, and
+Logs. Chat and A2A maintain only ephemeral page state and non-sensitive endpoint preferences.
+
+The board server uses **Starlette + Uvicorn** and **HTTPX**. Starlette serves the packaged static
+files and the board's small JSON/streaming API; HTTPX forwards only allowlisted Tau operations and
+preserves SSE streaming. `sqlite3`, `json`, and file I/O come from the Python standard library.
+The board's standalone distribution declares only `starlette>=1.3,<2`, `uvicorn>=0.51,<1`, and
+`httpx>=0.28,<1` as runtime dependencies and requires Python 3.13 or newer. It does not depend on
+FastAPI or `ms-tau-sdk`. Starlette provides static-file and streaming response primitives, and
+HTTPX provides asynchronous streaming suitable for this proxy ([Starlette static files](https://www.starlette.io/staticfiles/), [Starlette responses](https://www.starlette.io/responses/), [HTTPX async streaming](https://www.python-httpx.org/async/)).
+
+The board project uses Hatchling to build its wheel and source distribution. No Node installation
+or frontend build runs at install time or in release CI. The pinned Bulma CSS is about 678 KiB raw
+and 66 KiB gzip-compressed. All packaged UI assets together must stay below **800 KiB raw** and
+**120 KiB gzip-compressed**; board-authored JavaScript must stay below **50 KiB raw**. A build
+check measures these limits and verifies that the HTML references only packaged assets. Raising
+either limit requires amending this ADR.
+
+### 3. Make endpoint and local-state location selectable
 
 The board presents two editable connection settings:
 
 | Setting | Environment default | UI override |
 | --- | --- | --- |
-| Tau base URL, for example `http://127.0.0.1:8010` | `TAU_BOARD_TAU_URL`, otherwise `http://127.0.0.1:8787` | Enter or select another URL, then probe `/health` and `/ready` |
+| Tau base URL, for example `http://127.0.0.1:8010` | `TAU_BOARD_TAU_URL`; otherwise use `MAINSEQUENCE_TAU_PORT` or `8787` on `127.0.0.1` | Enter or select another URL, then probe `/health` and `/ready` |
 | Workspace-specific local state directory containing `runtime.sqlite3` and `logs/tau.jsonl` | `TAU_BOARD_STATE_DIR`; otherwise derive from `TAU_LOCAL_STATE_ROOT` (or its documented default) and the connected runtime's `workspace_digest` | Enter another directory and inspect its database and logs |
 
 An explicit UI value takes precedence over the environment default for the current board session.
 The board shows the effective URL, state directory, runtime mode, workspace digest, and connection
 status. It never assumes that a directory selected for one endpoint belongs to another; a digest
-mismatch is shown before displaying state. An absent database or log file is a normal empty state
+mismatch is shown alongside inspected state. An absent database or log file is a normal empty state
 because local SQLite is created lazily.
 
-The board may read the same environment or `.env` file as a local project, but it reads only the
-settings needed for these defaults and local runtime profiles. Main Sequence JWTs and runtime
+The selected URL and directory are held in board-server memory under a random, browser-session
+cookie (`HttpOnly`, `SameSite=Strict`); a page refresh retains them, and a board restart resets
+them to environment defaults. The cookie contains no endpoint, path, credential, or content. The
+board does not write its own configuration database. Profile names and non-secret connection
+defaults may be entered again or supplied through environment configuration.
+
+The board reads its process environment; a launcher may export values from the same `.env` used by
+Tau, but the board does not parse `.env` itself. It reads only connection, local-state, and profile
+selection settings. Main Sequence JWTs and runtime
 credentials remain in the Tau process and are never returned to browser code, saved in board
 preferences, or printed in board diagnostics. The board does not perform Main Sequence login or
 provider credential hydration.
@@ -68,7 +127,12 @@ The initial release accepts HTTP loopback Tau endpoints. The board itself binds 
 non-loopback or production endpoint requires a later decision on authentication, platform routing,
 and access control; the URL field does not imply those capabilities.
 
-### 3. Provide a compact interaction surface
+The board command binds to `127.0.0.1:8788` by default, with `TAU_BOARD_PORT` and `--port`
+overrides. `--tau-url` and `--state-dir` override environment defaults at process startup. UI
+overrides take precedence for the active browser session. The board does not automatically launch
+or stop Tau.
+
+### 4. Provide a compact interaction surface
 
 The main view has a conversation composer and a Task composer:
 
@@ -85,7 +149,21 @@ The UI must not invent new wire semantics or write Task records directly to SQLi
 that change a session or Task go through Tau's public HTTP routes. The first version handles text
 input; richer file and structured-output composition can be added after the basic flows work.
 
-### 4. Define honest provider, model, and thinking selection
+The board server exposes a fixed, same-origin surface. `GET /` and `GET /assets/*` serve packaged
+files. `GET /api/board/config` returns effective non-secret settings; `PUT /api/board/config` sets
+the current UI override; `GET /api/board/connection` probes Tau health and readiness. Read-only
+board routes under `/api/board/state/*` provide paginated SQLite views, and
+`GET /api/board/logs` provides bounded log records. `/tau/*` proxies only the existing Tau health,
+chat, session-model/cancel, and public A2A Message/Task routes. It does not proxy `/internal/*`,
+OpenAPI docs, arbitrary paths, or arbitrary methods. The proxy streams SSE frames without
+buffering a full response and aborts the upstream request when the browser disconnects.
+
+For mutation routes, the board checks the browser `Origin` against its own loopback origin. The
+proxy never forwards browser-supplied authorization or caller-identity headers, does not follow
+redirects, and accepts a destination only after its `/health` response identifies Tau in local
+mode. The browser uses same-origin `/tau/*`; developers do not need to set Tau CORS origins.
+
+### 5. Define honest provider, model, and thinking selection
 
 Local Tau currently fixes `TAU_LOCAL_PROVIDER`, `TAU_LOCAL_MODEL`, and `TAU_LOCAL_THINKING` at
 process startup. Its chat and A2A requests do not contain effective per-turn selection fields, and
@@ -103,13 +181,22 @@ profile metadata is user-declared and shown as unverified until Tau confirms an 
 created session's selection. The board must show the effective selection returned by Tau after the
 first action and stop reuse of a mismatched profile.
 
+The default profile takes its URL from the connection setting above and its selection label from
+`TAU_LOCAL_PROVIDER`, `TAU_LOCAL_MODEL`, and `TAU_LOCAL_THINKING` when present. Additional profiles
+come from `TAU_BOARD_PROFILES`, a JSON array of objects with exactly `name`, `url`, `provider`,
+`model`, optional `thinking`, and optional `stateDir` fields, or from the Connect view for the
+current browser session. Profile data contains no credentials. The action forms use a profile
+picker; the provider, model, and thinking controls show and select the values available among
+configured profiles. An edit to one of those values selects a matching profile or asks the user to
+configure an endpoint for that combination. It does not change a running Tau process.
+
 With only one attached Tau endpoint, the selector has only that endpoint's configured selection.
 Arbitrary provider/model/thinking switching inside a single running Tau process is not part of this
 board decision. If needed later, it requires a separate runtime protocol decision and SDK change,
 including authorization, session persistence, and compatibility rules. The board must clearly
 report an unavailable selection rather than send ignored request fields.
 
-### 5. Explore the local database without changing it
+### 6. Explore the local database without changing it
 
 The board opens the selected `runtime.sqlite3` in SQLite read-only mode. It provides bounded,
 paginated views of sessions, ordered entries, Tasks, Task messages, artifacts, attempts, events,
@@ -127,7 +214,7 @@ content only on demand, does not upload it, and does not place row bodies in boa
 persistent storage. Board UI preferences may save endpoint and directory paths, but never tokens,
 conversation bodies, Task artifacts, or log contents.
 
-### 6. Read local operational logs
+### 7. Read local operational logs
 
 The board tails the selected `logs/tau.jsonl` and its rotated files with bounded reads. It shows
 recent events and filters for level, time, session, Task, and event name when those fields exist.
@@ -136,7 +223,7 @@ It displays the SDK's already filtered structured events; it does not turn on pa
 reconstruct prompts from logs, or upload logs. A log detail view can show one full structured
 event, subject to the same local-only handling as database rows.
 
-### 7. Keep the local trust boundary visible
+### 8. Keep the local trust boundary visible
 
 The board's server listens on `127.0.0.1` by default and uses a same-origin browser UI with a
 small server-side proxy for the selected Tau endpoint. The proxy accepts only the required Tau
@@ -174,6 +261,8 @@ must be checked against each compatible SDK release.
    cannot proxy to non-loopback hosts or read outside the selected state directory.
 7. Missing files, unknown SQLite schema versions, a stopped Tau endpoint, SSE interruption, and
    log rotation produce actionable UI states without corrupting local runtime state.
+8. The built wheel runs without Node or network-fetched UI assets, contains the pinned Bulma CSS
+   and its license, and passes the static-asset and JavaScript size limits above.
 
 ## Alternatives considered
 
@@ -182,3 +271,11 @@ development interface and expand its release surface. Direct browser calls to Ta
 cross-origin configuration and would make file inspection unavailable without another process.
 A general database editor would create a write path around Tau's leases, task lifecycle, and
 session persistence rules. These alternatives are rejected for the local board.
+
+For the UI CSS, Bootstrap's precompiled stylesheet would work but brings a broader component
+system than this board needs. [Pico CSS](https://picocss.com/docs) is smaller in concept and can be
+linked directly, but its semantic, class-light design leaves the board's tabs, dense task tables,
+and state explorer layout to custom CSS. [Tabler](https://docs.tabler.io/) supplies a complete
+dashboard kit, but its Bootstrap-based layouts and additional assets exceed this tool's narrow
+scope. Bulma supplies the required dashboard primitives as one CSS file without a frontend build
+or JavaScript framework.

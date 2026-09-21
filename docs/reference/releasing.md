@@ -34,6 +34,28 @@ GitHub Actions also produces an OIDC build-provenance attestation for the wheel 
 official PyPA publishing action generates and uploads the PyPI PEP 740 attestations with the Python
 distributions.
 
+## Optional Tau Board distribution
+
+`packages/tau-board/` builds the independent `ms-tau-board` distribution. It has its own
+`tau-board` command and does not import `ms-tau-sdk`. Build and inspect it with:
+
+```bash
+uv build --no-sources packages/tau-board --out-dir board-dist
+uv run python packages/tau-board/scripts/verify_distribution.py board-dist
+```
+
+The board verifier checks wheel and source-distribution contents, its small dependency set, the
+packaged Bulma license, and the raw and compressed UI asset budgets. The root SDK verifier rejects
+board source and UI assets from the SDK distribution. The SDK's `tau-board` extra declares a
+compatible published board version.
+
+Push a `tau-board-v<board version>` tag to run
+[`Publish Tau Board to PyPI`](../../.github/workflows/publish-tau-board.yml). Configure the protected
+`pypi-tau-board` GitHub environment and a PyPI trusted publisher for that workflow first. Publish
+the matching board version before publishing an SDK version that advertises the extra: both SDK
+release workflows check that the board requirement resolves from PyPI. A branch build does not
+publish either distribution.
+
 ## Registry Publication
 
 Final releases and development releases are published by two different workflows. The
