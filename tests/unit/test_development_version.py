@@ -24,10 +24,10 @@ def _module() -> ModuleType:
 development_version = _module()
 
 
-def test_the_base_is_the_newest_published_final_with_its_patch_raised() -> None:
+def test_the_declared_version_is_the_only_source() -> None:
     version = development_version.next_development_version(
         published=[(1, 2, 3), (1, 2, 5), (1, 1, 9)],
-        declared=(1, 2, 5),
+        declared=(1, 2, 6),
         run_number=41,
     )
 
@@ -41,9 +41,25 @@ def test_a_planned_release_ahead_of_pypi_keeps_its_own_number() -> None:
         run_number=42,
     )
 
-    # `1.2.6.dev42` would sort before `1.3.0`, so the development releases leading up to a planned
-    # minor or major release would never be tried against the number they precede.
     assert version == "1.3.0.dev42"
+
+
+@pytest.mark.parametrize("declared", [(1, 2, 5), (1, 2, 4)])
+def test_a_declared_version_that_is_already_released_is_refused(
+    declared: tuple[int, int, int],
+) -> None:
+    # The repository once said 1.2.5 while it published 1.2.6.devN, and tagging v1.2.6 then failed
+    # against pyproject.toml. A missing bump now stops the build instead of being papered over.
+    with pytest.raises(development_version.DevelopmentVersionError, match="already released"):
+        development_version.next_development_version(
+            published=[(1, 2, 5)],
+            declared=declared,
+            run_number=7,
+        )
+
+
+def test_the_version_after_a_release_is_the_next_patch() -> None:
+    assert development_version.next_patch("1.2.6") == "1.2.7"
 
 
 def test_an_unpublished_distribution_falls_back_to_the_declared_version() -> None:

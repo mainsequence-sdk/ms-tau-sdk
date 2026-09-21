@@ -44,8 +44,9 @@ does which.
 
 The
 [`Publish Python package to PyPI`](../../.github/workflows/publish-to-pipy.yml) workflow runs only
-when a `v*` tag is pushed. The tagged commit must be contained in `main` and the tag must exactly
-match `v<pyproject version>`, or the job fails before publication. A tag on a commit `main` does not
+when a `v*` tag is pushed. The tagged commit must be contained in `main`, the tag must exactly
+match `v<pyproject version>`, and that version must head `CHANGELOG.md` (rename `Unreleased` to
+`X.Y.Z — date` in the release change), or the job fails before publication. A tag on a commit `main` does not
 contain publishes nothing. A valid tag builds, verifies, clean-installs, and attests the wheel and
 source distribution before a protected job publishes them with the official PyPA action and trusted
 publishing. The full verified bundle is also retained as a workflow artifact.
@@ -61,7 +62,7 @@ Every push to `development` runs the
 workflow. It runs the same quality gate as [`quality.yml`](../../.github/workflows/quality.yml)
 first and publishes nothing when the gate fails. Only then does
 [`scripts/compute_development_version.py`](../../scripts/compute_development_version.py) write
-`X.Y.Z.devN` into `pyproject.toml`, and the workflow refuses to continue if any other tracked file
+`X.Y.Z.devN` into `pyproject.toml`, where `X.Y.Z` is the version `pyproject.toml` declares, and the workflow refuses to continue if any other tracked file
 or any other line of `pyproject.toml` changed. Nothing is tagged and nothing is committed back.
 
 The computed version makes the tracked source deliberately dirty, so the development build records
@@ -84,6 +85,15 @@ uv add "ms-tau-sdk==1.2.6.dev41"   # or: uv add --prerelease=allow ms-tau-sdk
 Consumers should pin a candidate wheel by immutable artifact and checksum during candidate review.
 Published stable consumers pin the normal distribution version, for example
 `ms-tau-sdk==1.0.0`.
+
+`pyproject.toml` is the only source of the version. On `development` it declares the release being
+worked toward: while it says `1.2.6`, development releases are `1.2.6.devN` and the final release is
+the tag `v1.2.6`. PyPI is read only as a guard: when the declared version is already released, the
+development build fails with "development must declare the next release" instead of publishing under
+a number the repository does not show. After a final release is published, the release workflow
+raises the patch number on `development` by itself (job `Declare the next version on development`);
+that commit is pushed with the workflow token and therefore starts no development release of its
+own. A minor or major release is declared by hand, by writing that version on `development`.
 
 `pyproject.toml` is the only file that declares the version. The consumer fixture in
 `tests/fixtures/sdk-consumer-project` resolves the SDK from this checkout rather than naming a
