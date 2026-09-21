@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Compute the next PEP 440 development version published from the `development` branch.
+"""Compute the PEP 440 development version published from the `development` branch.
 
-Final releases are tagged `vX.Y.Z` on `main`. Every push to `development` instead publishes one
-development release `X.Y.Z.devN`, which sorts before its final (`1.2.5 < 1.2.6.dev41 < 1.2.6`) and
-therefore carries the number of the *next* release.
+`pyproject.toml` is the only source of the version. On `development` it declares the release being
+worked toward, `X.Y.Z`. Every push to `development` publishes `X.Y.Z.devN`, which sorts before its
+final (`1.2.5 < 1.2.6.dev41 < 1.2.6`), and the final release is the tag `vX.Y.Z` on `main`, the same
+number. `N` is the publishing workflow's run number, so one push is one development release.
 
-The release segment is the later of the newest final release on PyPI with its patch number raised
-by one, and the version declared in `pyproject.toml`. PyPI is consulted instead of git tags because
-the tag history of this repository predates the branch standard and cannot be trusted as a base;
-the declared version is honoured so that a planned minor or major release is not renumbered into a
-patch. `N` is the publishing workflow's run number, so one push is one development release.
+PyPI is consulted only as a guard: a declared version that is already released means the bump that
+follows every release is missing, and the build fails instead of publishing a development release
+of a version that already exists. After a final release the release workflow raises the patch
+number on `development` by itself.
 """
 
 from __future__ import annotations
@@ -95,16 +95,26 @@ def next_development_version(
     declared: Release,
     run_number: int,
 ) -> str:
-    """Return `X.Y.Z.devN` for the release that follows everything already published."""
+    """Return `X.Y.Z.devN` for the declared release, which must not be published yet."""
 
     if run_number < 0:
         raise DevelopmentVersionError(f"run number must not be negative; got {run_number}")
-    candidates = [declared]
-    if published:
-        major, minor, patch = max(published)
-        candidates.append((major, minor, patch + 1))
-    major, minor, patch = max(candidates)
+    if published and declared <= max(published):
+        newest = ".".join(str(part) for part in max(published))
+        wanted = ".".join(str(part) for part in declared)
+        raise DevelopmentVersionError(
+            f"pyproject.toml declares {wanted}, and {newest} is already released; "
+            "development must declare the next release"
+        )
+    major, minor, patch = declared
     return f"{major}.{minor}.{patch}.dev{run_number}"
+
+
+def next_patch(version: str) -> str:
+    """Return the version `development` declares after `version` has been released."""
+
+    major, minor, patch = declared_release(version)
+    return f"{major}.{minor}.{patch + 1}"
 
 
 def apply_version(version: str) -> None:
@@ -135,10 +145,20 @@ def main() -> None:
     parser.add_argument("--distribution")
     parser.add_argument("--run-number", default=os.environ.get("GITHUB_RUN_NUMBER"))
     parser.add_argument("--write", action="store_true")
+    parser.add_argument(
+        "--bump-patch",
+        action="store_true",
+        help="write the next patch version into pyproject.toml; run on development after a release",
+    )
     parser.add_argument("--github-output", action="store_true")
     args = parser.parse_args()
 
     package = _project()["project"]
+    if args.bump_patch:
+        bumped = next_patch(package["version"])
+        apply_version(bumped)
+        print(bumped)
+        return
     distribution = args.distribution or package["name"]
     version = next_development_version(
         published=published_final_releases(distribution),

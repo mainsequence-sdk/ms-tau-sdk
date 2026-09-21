@@ -68,10 +68,11 @@ def test_distribution_metadata_and_sdist_allowlist_are_explicit() -> None:
     ]
 
 
-def test_the_declared_version_heads_the_changelog() -> None:
-    # The declared version and the changelog are the two places a release is written down by hand,
-    # and this repository has published tags that disagreed with both. Notes for work that has not
-    # been released yet collect under `Unreleased`.
+def test_the_changelog_never_runs_ahead_of_the_declared_version() -> None:
+    # `development` declares the release being worked toward, so between releases the newest dated
+    # changelog section is the previous release and new notes collect under `Unreleased`. At release
+    # time `Unreleased` becomes the declared version, and the release workflow requires exactly that
+    # before it publishes.
     version = _project()["project"]["version"]
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
 
@@ -81,7 +82,11 @@ def test_the_declared_version_heads_the_changelog() -> None:
         if heading != "Unreleased"
     ]
 
-    assert headings[:1] == [version]
+    def release(value: str) -> tuple[int, ...]:
+        return tuple(int(part) for part in value.split("."))
+
+    assert headings, "the changelog has no released section"
+    assert release(headings[0]) <= release(version)
 
 
 def test_release_automation_builds_inspects_clean_installs_and_uses_oidc() -> None:
