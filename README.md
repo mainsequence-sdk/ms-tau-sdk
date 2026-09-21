@@ -15,6 +15,7 @@
   <a href="https://pypi.org/project/ms-tau-sdk/"><img src="https://img.shields.io/pypi/pyversions/ms-tau-sdk.svg" alt="Supported Python versions"></a>
   <a href="https://github.com/mainsequence-sdk/ms-tau-sdk/actions/workflows/quality.yml"><img src="https://github.com/mainsequence-sdk/ms-tau-sdk/actions/workflows/quality.yml/badge.svg?branch=development" alt="Quality checks"></a>
   <a href="https://github.com/mainsequence-sdk/ms-tau-sdk/actions/workflows/publish-to-pipy.yml"><img src="https://github.com/mainsequence-sdk/ms-tau-sdk/actions/workflows/publish-to-pipy.yml/badge.svg" alt="PyPI publication"></a>
+  <a href="https://github.com/mainsequence-sdk/ms-tau-sdk/actions/workflows/publish-development-release.yml"><img src="https://github.com/mainsequence-sdk/ms-tau-sdk/actions/workflows/publish-development-release.yml/badge.svg?branch=development" alt="Development release publication"></a>
   <a href="https://github.com/mainsequence-sdk/ms-tau-sdk/issues"><img src="https://img.shields.io/github/issues/mainsequence-sdk/ms-tau-sdk.svg" alt="Open issues"></a>
 </p>
 
@@ -39,6 +40,16 @@ Add the SDK to the project that will host the agent:
 ```bash
 uv add ms-tau-sdk
 ```
+
+Every push to `development` also publishes one `X.Y.Z.devN` release to the same PyPI project.
+`pip` and `uv` skip development releases, so take one only on purpose:
+
+```bash
+uv add --prerelease=allow ms-tau-sdk   # or pin one exactly: uv add "ms-tau-sdk==X.Y.Z.devN"
+```
+
+See the [release process](docs/reference/releasing.md#registry-publication) for what each workflow
+publishes.
 
 Provide the runtime credential that Main Sequence assigned to the deployment:
 
