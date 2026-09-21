@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 1.2.6 — 2026-09-21
+
+- Made `pyproject.toml` the only source of the version. `development` declares the release being
+  worked toward, development releases are that number with `.devN`, and the final release is the
+  same number as a tag on `main`. The repository used to say `1.2.5` while it published
+  `1.2.6.devN`, and tagging `v1.2.6` then failed against `pyproject.toml`. PyPI is now read only as
+  a guard that refuses a development build of an already released version, and the release
+  workflow raises the patch number on `development` after it publishes.
 - Stopped sending `execution_context` in local-mode provider hydration. The backend never declared
   the field on `POST /api/v1/model-provider-credentials/hydrate/` and dropped it silently;
   authentication already distinguishes local development from runtime execution, so the request

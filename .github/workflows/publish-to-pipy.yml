@@ -54,6 +54,13 @@ jobs:
           uv run python -c \
             'import os, pathlib, tomllib; version = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]; assert os.environ["RELEASE_TAG"] == f"v{version}", (os.environ["RELEASE_TAG"], version)'
 
+      - name: Require the changelog to be headed by the released version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          uv run python -c \
+            'import os, pathlib, re; heads = [h for h in re.findall(r"^## (\S+)", pathlib.Path("CHANGELOG.md").read_text(), flags=re.M) if h != "Unreleased"]; assert heads[:1] == [os.environ["RELEASE_TAG"].removeprefix("v")], (os.environ["RELEASE_TAG"], heads[:1])'
+
       - name: Build and inspect distributions
         run: |
           uv build --no-sources --out-dir release-dist
@@ -109,3 +116,38 @@ jobs:
         uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           packages-dir: dist/
+
+  open-next-version:
+    # pyproject.toml is the only source of the version. Once X.Y.Z is released, `development` has to
+    # declare the next release, or its development builds would be refused as already released.
+    name: Declare the next version on development
+    needs: publish-to-pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out development
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: development
+          fetch-depth: 0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+
+      - name: Raise the patch number when development still declares the released version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          declared="$(uv run --no-project --python 3.13 python -c 'import tomllib, pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          if [ "v$declared" != "$RELEASE_TAG" ]; then
+            echo "development declares $declared, not the released ${RELEASE_TAG#v}; nothing to raise"
+            exit 0
+          fi
+          next="$(uv run --no-project --python 3.13 python scripts/compute_development_version.py --bump-patch)"
+          uv lock
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -- pyproject.toml uv.lock
+          git commit -m "Declare $next as the next release after ${RELEASE_TAG#v}"
+          git push origin HEAD:development
