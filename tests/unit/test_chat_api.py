@@ -82,6 +82,33 @@ class _ProviderErrorManager(_ChatManager):
         yield TauRuntimeEvent(type="agent_settled")
 
 
+class _MessagelessProviderErrorManager(_ChatManager):
+    """Tau ends the turn with ``stopReason: "error"`` and supplies no message."""
+
+    async def prompt(self, session_uid: str, prompt: str, *, provenance=None):
+        self.prompts.append((session_uid, prompt))
+        self.provenances.append(provenance)
+        yield TauRuntimeEvent(
+            type="message_end",
+            data={
+                "message": {
+                    "role": "assistant",
+                    "stopReason": "error",
+                    "diagnostics": [
+                        {
+                            "type": "provider_error",
+                            "details": {
+                                "status_code": 402,
+                                "body": "private raw response body",
+                            },
+                        }
+                    ],
+                }
+            },
+        )
+        yield TauRuntimeEvent(type="agent_settled")
+
+
 def _app(manager: _ChatManager) -> FastAPI:
     app = FastAPI()
     app.include_router(router)
@@ -204,13 +231,36 @@ async def test_chat_streams_terminal_provider_message_as_error_text(asgi_client)
 
     assert response.status_code == 200
     assert (
-        'data: {"type":"error","errorText":"Provider supplied billing message"}\n\n'
-        in response.text
+        'data: {"type":"error","errorText":"Provider supplied billing message",'
+        '"error_code":"AssistantError"}\n\n' in response.text
     )
     assert '"type":"finish"' not in response.text
     assert "body" not in response.text
     assert response.text.endswith("data: [DONE]\n\n")
     assert manager.delivered_sessions == ["session-1"]
+
+
+async def test_chat_composes_the_status_code_when_the_provider_supplies_no_message(asgi_client):
+    manager = _MessagelessProviderErrorManager()
+
+    async with asgi_client(_app(manager), headers=USER_CALLER_HEADERS) as http:
+        response = await http.post(
+            "/api/chat",
+            json={
+                "sessionUid": "session-1",
+                "messages": [{"role": "user", "content": "Answer this."}],
+            },
+        )
+
+    assert response.status_code == 200
+    assert (
+        'data: {"type":"error","errorText":"Provider error (HTTP 402)",'
+        '"status":402,"error_code":"ProviderError"}\n\n' in response.text
+    )
+    assert '"type":"finish"' not in response.text
+    assert "body" not in response.text
+    assert "private raw response body" not in response.text
+    assert response.text.endswith("data: [DONE]\n\n")
 
 
 async def test_chat_stamps_each_user_turn_as_human_chat_provenance(asgi_client):

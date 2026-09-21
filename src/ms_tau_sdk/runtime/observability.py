@@ -229,6 +229,7 @@ class TauTurnObserver:
             model_attempt=attempt,
             model_duration_ms=round((time.monotonic() - started) * 1000, 3),
             model_error_type=error_type,
+            status_code=status_code,
             provider_request_id=_bounded(_first(data, "provider_request_id", "response_id")),
             rate_limited=rate_limited,
             retryable=retryable,

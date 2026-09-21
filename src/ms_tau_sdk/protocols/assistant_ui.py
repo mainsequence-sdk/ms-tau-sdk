@@ -8,7 +8,9 @@ Chunk vocabulary (what a ``ui-message-stream`` consumer receives):
 - ``tool-call-start`` / ``tool-call-delta`` (``argsText``) / ``tool-call-end``
   when the model has finished a tool call, then ``tool-result`` (``result``,
   ``isError``) when the tool has run;
-- ``data-runtime-lifecycle``, ``error`` and ``finish``.
+- ``data-runtime-lifecycle``, ``error`` and ``finish``. An ``error`` chunk
+  carries ``errorText`` plus, when the runtime diagnosed them, the ``status``
+  and ``error_code`` fields the Command Center stream consumer reads.
 
 The tool chunk names are the ones assistant-stream's ``UIMessageStreamDecoder``
 understands; the earlier ``tool-input-available`` / ``tool-output-available``
@@ -34,6 +36,8 @@ class AssistantUiEncoder:
     tool_names: dict[str, str] = field(default_factory=dict)
     finished: bool = False
     terminal_error_text: str | None = None
+    terminal_error_status: int | None = None
+    terminal_error_code: str | None = None
 
     def _tool_call_chunks(
         self,
@@ -161,15 +165,25 @@ class AssistantUiEncoder:
         if event_type == "message_end":
             failure = terminal_assistant_failure(data)
             if failure is not None:
-                self.terminal_error_text = failure.message
+                self._set_terminal_error(
+                    failure.message,
+                    status_code=failure.status_code,
+                    error_code=failure.error_type,
+                )
             elif is_terminal_assistant_message(data):
                 # A later successful terminal message means Tau recovered from
                 # an earlier error, for example through overflow compaction.
-                self.terminal_error_text = None
+                self._set_terminal_error(None)
             return []
         if event_type == "error":
             if self.terminal_error_text is None:
-                self.terminal_error_text = _assistant_error_message(data)
+                error = data.get("error")
+                error = error if isinstance(error, dict) else {}
+                self._set_terminal_error(
+                    _assistant_error_message(data),
+                    status_code=_error_status_code(error),
+                    error_code=_error_code(error),
+                )
             return []
         if event_type == "agent_settled" and not self.finished:
             if self.terminal_error_text is not None:
@@ -178,13 +192,29 @@ class AssistantUiEncoder:
             return [{"type": "finish", "finishReason": "stop"}]
         return []
 
+    def _set_terminal_error(
+        self,
+        text: str | None,
+        *,
+        status_code: int | None = None,
+        error_code: str | None = None,
+    ) -> None:
+        self.terminal_error_text = text
+        self.terminal_error_status = status_code if text is not None else None
+        self.terminal_error_code = error_code if text is not None else None
+
     def finalize(self) -> list[dict[str, Any]]:
         """Emit the one terminal frame after the runtime has finished settling."""
         if self.finished:
             return []
         self.finished = True
         if self.terminal_error_text is not None:
-            return [{"type": "error", "errorText": self.terminal_error_text}]
+            frame: dict[str, Any] = {"type": "error", "errorText": self.terminal_error_text}
+            if self.terminal_error_status is not None:
+                frame["status"] = self.terminal_error_status
+            if self.terminal_error_code is not None:
+                frame["error_code"] = self.terminal_error_code
+            return [frame]
         return [{"type": "finish", "finishReason": "stop"}]
 
     @staticmethod
@@ -209,6 +239,20 @@ def _step_finish_reason(data: dict[str, Any]) -> str:
     message = data.get("message", {})
     stop_reason = message.get("stopReason") if isinstance(message, dict) else None
     return _STEP_FINISH_REASONS.get(str(stop_reason or ""), "stop")
+
+
+def _error_status_code(error: dict[str, Any]) -> int | None:
+    candidate = error.get("status_code", error.get("statusCode", error.get("status")))
+    if isinstance(candidate, bool) or not isinstance(candidate, int):
+        return None
+    return candidate
+
+
+def _error_code(error: dict[str, Any]) -> str | None:
+    candidate = error.get("errorType", error.get("error_type"))
+    if not isinstance(candidate, str) or not candidate.strip():
+        return None
+    return candidate
 
 
 def _assistant_error_message(data: dict[str, Any]) -> str:

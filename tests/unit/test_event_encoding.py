@@ -207,8 +207,72 @@ def test_terminal_provider_error_is_preserved_without_success_finish(status_code
         == []
     )
     assert encoder.encode(TauRuntimeEvent(type="agent_settled")) == []
-    assert encoder.finalize() == [{"type": "error", "errorText": provider_message}]
+    assert encoder.finalize() == [
+        {
+            "type": "error",
+            "errorText": provider_message,
+            "status": status_code,
+            "error_code": "ProviderError",
+        }
+    ]
     assert encoder.encode(TauRuntimeEvent(type="agent_settled")) == []
+
+
+@pytest.mark.parametrize("status_code", [401, 402, 429, 503])
+def test_terminal_provider_error_without_a_message_composes_the_status_code(status_code: int):
+    encoder = AssistantUiEncoder()
+
+    assert (
+        encoder.encode(
+            TauRuntimeEvent(
+                type="message_end",
+                data={
+                    "message": {
+                        "role": "assistant",
+                        "stopReason": "error",
+                        "diagnostics": [
+                            {
+                                "type": "provider_error",
+                                "details": {
+                                    "status_code": status_code,
+                                    "body": "must not be emitted",
+                                },
+                            }
+                        ],
+                    }
+                },
+            )
+        )
+        == []
+    )
+    assert encoder.encode(TauRuntimeEvent(type="agent_settled")) == []
+    assert encoder.finalize() == [
+        {
+            "type": "error",
+            "errorText": f"Provider error (HTTP {status_code})",
+            "status": status_code,
+            "error_code": "ProviderError",
+        }
+    ]
+
+
+def test_terminal_provider_error_without_diagnostics_keeps_the_bare_fallback():
+    encoder = AssistantUiEncoder()
+
+    encoder.encode(
+        TauRuntimeEvent(
+            type="message_end",
+            data={"message": {"role": "assistant", "stopReason": "error"}},
+        )
+    )
+
+    assert encoder.finalize() == [
+        {
+            "type": "error",
+            "errorText": "Provider error",
+            "error_code": "AssistantError",
+        }
+    ]
 
 
 def test_direct_tau_error_uses_the_same_deferred_terminal_contract():
