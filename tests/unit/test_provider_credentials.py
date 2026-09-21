@@ -208,7 +208,6 @@ async def test_local_hydration_uses_authenticated_user_without_agent_identity(tm
                 "model": "gpt-5.4",
                 "thinking_level": "high",
             },
-            "execution_context": "local_development",
         }
     ]
 

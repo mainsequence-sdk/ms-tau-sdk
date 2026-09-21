@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Stopped sending `execution_context` in local-mode provider hydration. The backend never declared
+  the field on `POST /api/v1/model-provider-credentials/hydrate/` and dropped it silently;
+  authentication already distinguishes local development from runtime execution, so the request
+  carries no execution-context discriminator.
 - Moved durable Tau runtime state out of the installed package. Built-in extension state, provider
   credentials, project trust, and agent-call diagnostics now live under
   `MAINSEQUENCE_TAU_STATE_ROOT/<workspace-hash>`, defaulting to an XDG-style user state directory,
@@ -11,7 +15,6 @@
 - Made the release gate reject runtime residue. `scripts/verify_distribution.py` now holds an
   explicit allowlist of the entries and file types the package ships, and refuses any `state/`
   directory, so this class of leak fails the gate instead of shipping.
-
 - Adopted one branch and release standard. A final release is a `vX.Y.Z` tag on `main`, and the
   publish workflow refuses a tag whose commit `main` does not contain. Every push to `development`
   publishes one `X.Y.Z.devN` release automatically, after the same quality gate as `quality.yml`

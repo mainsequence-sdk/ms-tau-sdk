@@ -560,7 +560,6 @@ class MainSequenceClient:
                 "holder_id": holder_id,
                 "supported_provider_control_schema_versions": [1],
                 "execution_selection": selection,
-                "execution_context": "local_development",
             },
             idempotent=True,
         )
