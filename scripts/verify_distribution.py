@@ -335,7 +335,10 @@ def main() -> None:
         distribution=package["name"],
         version=package["version"],
         requires_python=package["requires-python"],
-        dependency_count=len(package["dependencies"]),
+        dependency_count=(
+            len(package["dependencies"])
+            + sum(len(items) for items in package.get("optional-dependencies", {}).values())
+        ),
     )
     _validate_sdist(sdist, distribution=package["name"], version=package["version"])
     if args.write_release_metadata:

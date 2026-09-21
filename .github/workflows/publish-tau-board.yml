@@ -1,0 +1,76 @@
+# Release the optional board before an SDK release advertises its extra.
+name: Publish Tau Board to PyPI
+
+on:
+  push:
+    tags:
+      - "tau-board-v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-verify:
+    runs-on: ubuntu-latest
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - name: Install Python
+        run: uv python install 3.13
+      - name: Match tag to board version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          uv run --no-project --python 3.13 python -c \
+            'import os,pathlib,tomllib; v=tomllib.loads(pathlib.Path("packages/tau-board/pyproject.toml").read_text())["project"]["version"]; assert os.environ["RELEASE_TAG"] == f"tau-board-v{v}"'
+      - name: Check board source and UI
+        run: |
+          uv sync --frozen --extra tau-board
+          uv run ruff format --check packages/tau-board/src packages/tau-board/tests packages/tau-board/scripts
+          uv run ruff check packages/tau-board
+          uv run mypy --strict packages/tau-board/src/ms_tau_board
+          node --check packages/tau-board/src/ms_tau_board/static/app.js
+          uv run pytest packages/tau-board/tests -q
+      - name: Build and inspect board
+        run: |
+          uv build --no-sources packages/tau-board --out-dir board-dist
+          uv run --no-project --python 3.13 python packages/tau-board/scripts/verify_distribution.py board-dist
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6a0c4c32 # v4.1.0
+        with:
+          subject-path: |
+            board-dist/*.whl
+            board-dist/*.tar.gz
+      - name: Upload board distributions
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          if-no-files-found: error
+          name: tau-board-distributions
+          path: |
+            board-dist/*.whl
+            board-dist/*.tar.gz
+
+  publish-to-pypi:
+    needs: build-and-verify
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-tau-board
+      url: https://pypi.org/p/ms-tau-board
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: tau-board-distributions
+          path: dist
+      - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/

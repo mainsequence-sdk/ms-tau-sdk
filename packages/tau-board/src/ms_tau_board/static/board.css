@@ -1,0 +1,39 @@
+:root { color-scheme: light dark; }
+body { min-height: 100vh; background: var(--bulma-scheme-main-bis); }
+.board-header { padding: 1.25rem 0 1rem; border-bottom: 1px solid var(--bulma-border); background: var(--bulma-scheme-main); }
+.header-line { display: flex; justify-content: space-between; align-items: center; gap: 1rem; }
+.eyebrow { font-size: .68rem; font-weight: 800; letter-spacing: .16em; color: var(--bulma-primary); margin-bottom: .2rem; }
+.board-header .title { margin-bottom: .2rem; }
+.board-header .subtitle { margin: .4rem 0 0; }
+.board-main { padding-top: 1.25rem; padding-bottom: 3rem; }
+.board-view { min-height: 40vh; }
+.mono, code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.detail-list { font-size: .9rem; overflow-wrap: anywhere; }
+.detail-list > div { border-bottom: 1px solid var(--bulma-border-weak); padding: .45rem 0; }
+.detail-list strong { display: block; color: var(--bulma-text-weak); font-size: .72rem; text-transform: uppercase; letter-spacing: .05em; }
+.chat-box { display: flex; flex-direction: column; min-height: 70vh; }
+.chat-messages { flex: 1; min-height: 22rem; max-height: 55vh; overflow: auto; padding: .25rem .1rem 1rem; }
+.chat-line { padding: .8rem 1rem; margin-bottom: .7rem; border-radius: .7rem; white-space: pre-wrap; overflow-wrap: anywhere; }
+.chat-line.user { background: var(--bulma-primary-soft); margin-left: 12%; }
+.chat-line.agent { background: var(--bulma-scheme-main-ter); margin-right: 12%; }
+.chat-line.meta { font-size: .82rem; background: var(--bulma-scheme-main-bis); color: var(--bulma-text-weak); }
+.chat-line .who { display: block; font-size: .7rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; margin-bottom: .35rem; }
+.output-panel { min-height: 7rem; max-height: 35vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: .8rem; border: 1px solid var(--bulma-border); border-radius: .4rem; margin-bottom: 1rem; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .85rem; }
+.table-container { max-height: 55vh; overflow: auto; }
+th { white-space: nowrap; }
+td { max-width: 24rem; overflow-wrap: anywhere; font-size: .82rem; }
+.detail-box { margin-top: 1rem; }
+.detail-box pre { max-height: 40vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.log-list { max-height: 65vh; overflow: auto; }
+.log-item { padding: .55rem .7rem; border-bottom: 1px solid var(--bulma-border-weak); font-size: .82rem; }
+.log-item summary { display: flex; gap: .75rem; cursor: pointer; align-items: baseline; }
+.log-item summary .event { font-weight: 700; }
+.log-item pre { margin-top: .6rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 20rem; }
+.settings-table td { vertical-align: middle; }
+.settings-table td:first-child { min-width: 15rem; }
+.settings-table td:last-child { min-width: 14rem; }
+.settings-table .settings-value { max-width: 18rem; }
+.settings-table .help { margin-top: .25rem; }
+.settings-scope { margin-left: .55rem; color: var(--bulma-primary); font-size: .68rem; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; }
+.settings-group th { background: var(--bulma-scheme-main-ter); }
+@media (max-width: 768px) { .board-header .title { font-size: 1.55rem; } .tabs { overflow-x: auto; } .chat-line.user, .chat-line.agent { margin-left: 0; margin-right: 0; } }
