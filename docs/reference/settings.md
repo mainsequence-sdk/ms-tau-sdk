@@ -44,9 +44,17 @@ absent.
 | `MAINSEQUENCE_TAU_PORT` | `8787` |
 | `MAINSEQUENCE_TAU_TRUSTED_ORIGINS` | Empty |
 | `MAINSEQUENCE_TAU_STARTUP_DEPENDENCIES_ENABLED` | `true` |
+| `MAINSEQUENCE_TAU_STATE_ROOT` | `$XDG_STATE_HOME/ms-tau-sdk`, else `~/.local/state/ms-tau-sdk` |
 
 The workspace must already exist, be a directory, and be readable. There is no no-workspace mode or
 runtime-role selector.
+
+Both modes keep durable Tau runtime state — built-in extension state, provider credentials, project
+trust, agent-call diagnostics — under `MAINSEQUENCE_TAU_STATE_ROOT/<workspace-hash>`. It is never
+written into the installed package: `ms_tau_sdk/resources/` lives in site-packages, which is
+read-only on a hardened install and must not mutate itself at runtime. Point
+`MAINSEQUENCE_TAU_STATE_ROOT` at a writable volume when the home directory is not one. This root is
+independent of `TAU_LOCAL_STATE_ROOT`, which only holds the local-mode database and log.
 
 ## Limits and lifecycle
 

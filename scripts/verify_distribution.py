@@ -29,8 +29,39 @@ FORBIDDEN_PARTS = {
     "docker",
     "kubernetes",
     "mainsequence_astro",
+    # Tau runtime state. The SDK writes it to a workspace state root, never into
+    # the package; a `state/` directory inside an artifact means a build picked
+    # up runtime residue from the source tree.
+    "state",
     "tests",
 }
+IMPORT_PACKAGE = "ms_tau_sdk"
+# Everything the package legitimately ships, as the entries directly below
+# `ms_tau_sdk/`. Anything else in an artifact is residue, so adding a module or
+# data directory to the package is a deliberate release-contract change here.
+ALLOWED_PACKAGE_ENTRIES = {
+    "__init__.py",
+    "agent_skills",
+    "api",
+    "app.py",
+    "application.py",
+    "backend",
+    "cli.py",
+    "errors.py",
+    "logging.py",
+    "protocols",
+    "providers",
+    "resources",
+    "runtime",
+    "sessions",
+    "settings.py",
+    "skills.py",
+    "tools",
+}
+# The package is source plus markdown resources. Runtime state arrives as
+# something else entirely (`.lock`, `.json`, `.jsonl`, `.sqlite3`), so an
+# unexpected suffix fails the gate even under an allowed entry.
+ALLOWED_PACKAGE_SUFFIXES = {".md", ".py"}
 REQUIRED_WHEEL_PATHS = {
     "ms_tau_sdk/__init__.py",
     "ms_tau_sdk/agent_skills/tau_a2a_runtime_adapter/SKILL.md",
@@ -82,6 +113,25 @@ def _forbidden_path(path: str) -> bool:
     return bool(parts & FORBIDDEN_PARTS) or normalized.endswith((".pyc", ".pyo"))
 
 
+def _package_allowlist_violation(relative: PurePosixPath) -> str | None:
+    """Return why a path below the import package is not part of the release.
+
+    `relative` is the path relative to the directory holding `ms_tau_sdk`, so
+    its first part is always the import package itself.
+    """
+    entries = relative.parts[1:]
+    if not entries:
+        return "the import package must be a directory"
+    if entries[0] not in ALLOWED_PACKAGE_ENTRIES:
+        return (
+            f"{entries[0]!r} is not a packaged entry; add it to "
+            "ALLOWED_PACKAGE_ENTRIES when the package really grew"
+        )
+    if relative.suffix not in ALLOWED_PACKAGE_SUFFIXES:
+        return f"{relative.suffix or relative.name!r} is not a packaged file type"
+    return None
+
+
 def _metadata_from_wheel(archive: zipfile.ZipFile) -> Message:
     metadata_paths = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
     if len(metadata_paths) != 1:
@@ -97,11 +147,27 @@ def _validate_wheel(
     requires_python: str,
     dependency_count: int,
 ) -> list[str]:
+    dist_info = f"{_normalized_distribution(distribution)}-{version}.dist-info"
     with zipfile.ZipFile(wheel) as archive:
         paths = set(archive.namelist())
         forbidden = sorted(path for path in paths if _forbidden_path(path))
         if forbidden:
             raise DistributionError(f"wheel contains forbidden paths: {forbidden}")
+        outside: list[str] = []
+        for path in sorted(paths):
+            pure = PurePosixPath(path)
+            if pure.parts and pure.parts[0] == dist_info:
+                continue
+            if not pure.parts or pure.parts[0] != IMPORT_PACKAGE:
+                outside.append(f"{path} (outside {IMPORT_PACKAGE}/ and {dist_info}/)")
+                continue
+            violation = _package_allowlist_violation(pure)
+            if violation is not None:
+                outside.append(f"{path} ({violation})")
+        if outside:
+            raise DistributionError(
+                f"wheel contains paths outside the release allowlist: {outside}"
+            )
         missing = sorted(REQUIRED_WHEEL_PATHS - paths)
         if missing:
             raise DistributionError(f"wheel is missing required paths: {missing}")
@@ -162,9 +228,16 @@ def _validate_sdist(sdist: Path, *, distribution: str, version: str) -> None:
         relative = PurePosixPath(*pure.parts[1:])
         if str(relative) in allowed_root_files:
             continue
-        if relative.parts[:2] == ("src", "ms_tau_sdk"):
+        if relative.parts[:1] != ("src",):
+            invalid.append(path)
             continue
-        invalid.append(path)
+        packaged = PurePosixPath(*relative.parts[1:])
+        if packaged.parts[:1] != (IMPORT_PACKAGE,):
+            invalid.append(path)
+            continue
+        violation = _package_allowlist_violation(packaged)
+        if violation is not None:
+            invalid.append(f"{path} ({violation})")
     if invalid:
         raise DistributionError(f"sdist contains paths outside the release allowlist: {invalid}")
 

@@ -752,9 +752,7 @@ async def test_rejected_backend_call_logs_safe_structured_error_evidence():
             json={
                 "error_code": "runtime_entry_invalid",
                 "error_detail": "Tau session entry is invalid.",
-                "field_errors": {
-                    "entries": {"0": {"entry": ["timing is not allowed"]}}
-                },
+                "field_errors": {"entries": {"0": {"entry": ["timing is not allowed"]}}},
             },
         )
 
@@ -775,9 +773,7 @@ async def test_rejected_backend_call_logs_safe_structured_error_evidence():
                 await client.get_session("session-1")
 
     rejected = next(
-        call
-        for call in log_info.call_args_list
-        if call.kwargs.get("status_code") == 400
+        call for call in log_info.call_args_list if call.kwargs.get("status_code") == 400
     )
     assert rejected.kwargs["backend_error_code"] == "runtime_entry_invalid"
     assert rejected.kwargs["backend_error_detail"] == "Tau session entry is invalid."

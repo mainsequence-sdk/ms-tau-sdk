@@ -14,6 +14,13 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from .errors import ConfigurationError
 
 
+def _default_state_root() -> Path:
+    """Return the XDG-style user state directory for SDK-owned runtime state."""
+    override = os.environ.get("XDG_STATE_HOME", "").strip()
+    base = Path(override) if override else Path.home() / ".local" / "state"
+    return base / "ms-tau-sdk"
+
+
 class TauSDKSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -65,6 +72,10 @@ class TauSDKSettings(BaseSettings):
     local_state_root: Path = Field(
         default_factory=lambda: Path.home() / ".tau" / "mainsequence",
         validation_alias="TAU_LOCAL_STATE_ROOT",
+    )
+    state_root: Path = Field(
+        default_factory=_default_state_root,
+        validation_alias="MAINSEQUENCE_TAU_STATE_ROOT",
     )
     host: str = Field(default="0.0.0.0", validation_alias="MAINSEQUENCE_TAU_HOST")
     port: int = Field(default=8787, validation_alias="MAINSEQUENCE_TAU_PORT")
@@ -240,9 +251,9 @@ class TauSDKSettings(BaseSettings):
         normalized = str(value or "").strip()
         return normalized or None
 
-    @field_validator("local_state_root")
+    @field_validator("local_state_root", "state_root")
     @classmethod
-    def normalize_local_state_root(cls, value: Path) -> Path:
+    def normalize_state_roots(cls, value: Path) -> Path:
         return value.expanduser().resolve()
 
     @model_validator(mode="after")
@@ -290,6 +301,18 @@ class TauSDKSettings(BaseSettings):
     @property
     def workspace_digest(self) -> str:
         return sha256(str(self.workspace).encode("utf-8")).hexdigest()[:12]
+
+    @property
+    def tau_state_home(self) -> Path:
+        """Return the writable Tau home holding this workspace's runtime state.
+
+        Tau keeps durable runtime data (built-in extension state, provider
+        credentials, project trust, diagnostics) under one home directory. That
+        home must never be the packaged resource directory: an installed wheel
+        lives in site-packages, which is read-only on hardened installs and must
+        not mutate itself at runtime.
+        """
+        return self.state_root / self.workspace_digest
 
     @property
     def local_state_path(self) -> Path:

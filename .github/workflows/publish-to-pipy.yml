@@ -1,4 +1,5 @@
-# Build, verify, and publish ms-tau-sdk to PyPI from an exact version tag.
+# Build, verify, and publish a final ms-tau-sdk release to PyPI from an exact version tag on main.
+# Pushes to `development` publish X.Y.Z.devN through publish-development-release.yml instead.
 # PyPI authentication uses GitHub OIDC trusted publishing; no API token is stored.
 name: Publish Python package to PyPI
 
@@ -22,7 +23,20 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
+
+      - name: Require the release tag to be contained in main
+        env:
+          RELEASE_SHA: ${{ github.sha }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
+          if ! git merge-base --is-ancestor "$RELEASE_SHA" refs/remotes/origin/main; then
+            echo "::error::$RELEASE_TAG ($RELEASE_SHA) is not contained in main."
+            echo "::error::Final releases are tagged on main; development publishes X.Y.Z.devN."
+            exit 1
+          fi
 
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0

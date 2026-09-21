@@ -42,6 +42,15 @@ the path instead of silently discarding durable diagnostics. The file excludes r
 messages and known secret-bearing fields, but project extensions must also avoid logging their
 own sensitive content. Do not commit or upload the local state directory.
 
+## Tau runtime state cannot be written
+
+Both modes keep durable Tau runtime state — built-in extension state, provider credentials, project
+trust, agent-call diagnostics — under `MAINSEQUENCE_TAU_STATE_ROOT/<workspace-hash>`, defaulting to
+`$XDG_STATE_HOME/ms-tau-sdk` or `~/.local/state/ms-tau-sdk`. A container with a read-only root
+filesystem or no writable home fails there. Point `MAINSEQUENCE_TAU_STATE_ROOT` at a writable
+volume. Never point it inside the installed package: `ms_tau_sdk/resources/` is a read-only input
+that lives in site-packages.
+
 ## Local A2A returns a capability error
 
 Public `/api/a2a` Message and Task routes are supported in local mode. A capability error is valid

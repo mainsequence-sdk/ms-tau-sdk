@@ -183,9 +183,7 @@ async def test_platform_event_is_flushed_before_ack_and_replay_is_idempotent(tmp
     coding_session = _coding_session()
 
     async def append_custom_entry(entry_namespace, data):
-        durable_entries.append(
-            SimpleNamespace(type="custom", namespace=entry_namespace, data=data)
-        )
+        durable_entries.append(SimpleNamespace(type="custom", namespace=entry_namespace, data=data))
 
     coding_session.append_custom_entry = AsyncMock(side_effect=append_custom_entry)
     manager._runtimes["session-1"] = ActiveSessionRuntime(

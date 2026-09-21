@@ -426,7 +426,10 @@ class SessionRuntimeManager:
                     tools=tools,
                     session_id=session_uid,
                     append_system_prompt=mainsequence_mcp_resource_prompt(mcp_client),
-                    resource_paths=tau_resource_paths(cwd),
+                    resource_paths=tau_resource_paths(
+                        cwd,
+                        state_home=self.settings.tau_state_home,
+                    ),
                     project_extensions_enabled=True,
                     trust_override="approve",
                 )
@@ -921,8 +924,7 @@ class SessionRuntimeManager:
                 if (
                     getattr(entry, "type", None) == "custom"
                     and getattr(entry, "namespace", None) == namespace
-                    and str(getattr(entry, "data", {}).get("deliveryUid") or "")
-                    == idempotency_key
+                    and str(getattr(entry, "data", {}).get("deliveryUid") or "") == idempotency_key
                 ):
                     return False
             await runtime.coding_session.append_custom_entry(namespace, dict(payload))

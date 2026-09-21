@@ -1,0 +1,164 @@
+# Build, verify, and publish one PEP 440 development release for every push to `development`.
+# Final releases are never published here; they are `vX.Y.Z` tags on `main`.
+# PyPI authentication uses GitHub OIDC trusted publishing; no API token is stored.
+name: Publish development release to PyPI
+
+on:
+  push:
+    branches:
+      - development
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-development-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-verify:
+    name: Gate and build development distributions
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.development-version.outputs.version }}
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          enable-cache: true
+
+      - name: Install Python
+        run: uv python install 3.13
+
+      - name: Sync locked workspace
+        run: uv sync --frozen
+
+      - name: Install runtime tool dependencies
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep
+
+      # The quality gate below is the one in `quality.yml`; nothing is published when it fails.
+      - name: Check formatting
+        run: uv run ruff format --check src tests scripts
+
+      - name: Lint
+        run: uv run ruff check src tests scripts
+
+      - name: Type check
+        run: uv run mypy
+
+      - name: Verify locked SDK consumer project
+        working-directory: tests/fixtures/sdk-consumer-project
+        env:
+          MAINSEQUENCE_TAU_STARTUP_DEPENDENCIES_ENABLED: "false"
+        run: |
+          uv sync --frozen
+          uv run --frozen python -c 'from api.tau.main import app; assert app.title == "Main Sequence TAU SDK"'
+
+      - name: Test with branch coverage
+        run: >-
+          uv run pytest
+          --cov=ms_tau_sdk
+          --cov-branch
+          --cov-report=term-missing:skip-covered
+
+      # The gate above runs Python from `src`, which leaves bytecode caches behind, and Hatchling
+      # packages whatever it finds there. The wheel must hold tracked source only. Durable Tau
+      # runtime state is written to a workspace state root, not into the package, and
+      # `scripts/verify_distribution.py` rejects any residue that still reaches an artifact; this
+      # step keeps the tree clean before the version is computed.
+      - name: Restore a pristine packaged source tree
+        run: |
+          git clean -xfdq src
+          residue="$(git status --porcelain --untracked-files=all -- src)"
+          if [ -n "$residue" ]; then
+            echo "::error::src is not pristine after cleaning; refusing to package it:"
+            echo "$residue"
+            exit 1
+          fi
+
+      # Only a gated commit reaches the version computation, so only a gated commit is published.
+      - name: Compute development version
+        id: development-version
+        run: |
+          uv run --no-project --python 3.13 python scripts/compute_development_version.py \
+            --write --github-output
+
+      - name: Require the computed version to be the only source change
+        run: |
+          changed="$(git status --porcelain --untracked-files=no)"
+          if [ "$changed" != " M pyproject.toml" ]; then
+            echo "::error::a development build may only rewrite the pyproject version; found:"
+            echo "$changed"
+            exit 1
+          fi
+          if git diff --unified=0 -- pyproject.toml | grep -E '^[+-][^+-]' | grep -vqE '^[+-]version = "'; then
+            echo "::error::pyproject.toml changed outside its version line"
+            git diff -- pyproject.toml
+            exit 1
+          fi
+
+      - name: Build and inspect distributions
+        run: |
+          uv build --no-sources --out-dir release-dist
+          uv run --no-project --python 3.13 python scripts/verify_distribution.py \
+            --dist-dir release-dist \
+            --write-release-metadata
+
+      - name: Verify clean wheel installation
+        run: |
+          uv run --no-project --python 3.13 python scripts/verify_clean_install.py \
+            release-dist/ms_tau_sdk-*.whl
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
+        with:
+          subject-path: |
+            release-dist/*.whl
+            release-dist/*.tar.gz
+
+      - name: Upload package distributions
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          if-no-files-found: error
+          name: python-package-distributions
+          path: |
+            release-dist/*.whl
+            release-dist/*.tar.gz
+          retention-days: 7
+
+      - name: Upload verified development bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          if-no-files-found: error
+          name: ms-tau-sdk-${{ steps.development-version.outputs.version }}
+          path: release-dist/*
+
+  publish-to-pypi:
+    name: Publish development release to PyPI
+    needs: build-and-verify
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi-development
+      url: https://pypi.org/p/ms-tau-sdk
+    permissions:
+      id-token: write
+    steps:
+      - name: Download package distributions
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: python-package-distributions
+          path: dist
+
+      - name: Publish package to PyPI
+        uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          packages-dir: dist/

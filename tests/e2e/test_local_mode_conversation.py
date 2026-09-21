@@ -29,6 +29,7 @@ async def test_first_local_chat_reaches_provider_execution(
         _env_file=None,
         workspace=tmp_path,
         local_state_root=tmp_path / "state",
+        state_root=tmp_path / "tau-state",
         backend_url="http://backend.test",
         auth_mode="jwt",
         local_mode=True,
