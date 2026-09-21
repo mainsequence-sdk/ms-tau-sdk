@@ -708,6 +708,73 @@ def test_tau_terminal_provider_failure_is_observed_as_failed_without_payloads(ca
     assert "private raw response body" not in json.dumps(model_events)
 
 
+def test_tau_terminal_provider_failure_logs_the_status_code_without_a_message(capsys):
+    configure_logging("INFO", machine_sink=True, human_sink=False)
+    observer = TauTurnObserver(provider="openrouter", model="controlled-model")
+
+    observer.observe(TauRuntimeEvent(type="message_start"))
+    observer.observe(
+        TauRuntimeEvent(
+            type="message_end",
+            data={
+                "message": {
+                    "role": "assistant",
+                    "stopReason": "error",
+                    "diagnostics": [
+                        {
+                            "type": "provider_error",
+                            "details": {
+                                "status_code": 402,
+                                "body": "private raw response body",
+                            },
+                        }
+                    ],
+                }
+            },
+        )
+    )
+
+    events = _json_events(capsys.readouterr().out)
+    failed = [event for event in events if event["event"] == "agent.model.failed"]
+    assert len(failed) == 1
+    assert failed[0]["status_code"] == 402
+    assert failed[0]["model_error_type"] == "ProviderError"
+    assert failed[0]["rate_limited"] is False
+    assert failed[0]["retryable"] is False
+    assert observer.terminal_failure is not None
+    assert observer.terminal_failure.message == "Provider error (HTTP 402)"
+    assert observer.terminal_failure.status_code == 402
+    assert "private raw response body" not in json.dumps(failed)
+
+
+def test_tau_terminal_rate_limit_without_a_message_stays_retryable(capsys):
+    configure_logging("INFO", machine_sink=True, human_sink=False)
+    observer = TauTurnObserver(provider="openrouter", model="controlled-model")
+
+    observer.observe(TauRuntimeEvent(type="message_start"))
+    observer.observe(
+        TauRuntimeEvent(
+            type="message_end",
+            data={
+                "message": {
+                    "role": "assistant",
+                    "stopReason": "error",
+                    "diagnostics": [{"type": "provider_error", "details": {"status_code": 429}}],
+                }
+            },
+        )
+    )
+
+    failed = [
+        event
+        for event in _json_events(capsys.readouterr().out)
+        if event["event"] == "agent.model.failed"
+    ]
+    assert failed[0]["status_code"] == 429
+    assert failed[0]["rate_limited"] is True
+    assert failed[0]["retryable"] is True
+
+
 def test_tau_tool_timeout_retry_preserves_safe_canonical_approval_outcome(capsys):
     configure_logging("INFO", machine_sink=True, human_sink=False)
     observer = TauTurnObserver(provider="openai", model="controlled-model")

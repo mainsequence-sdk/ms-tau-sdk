@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Stopped discarding the only diagnostic a message-less provider failure carries. When Tau ends a
+  turn with `stopReason: "error"` and no `errorMessage`, the status code from the `provider_error`
+  diagnostic is composed into the message the user sees (`Provider error (HTTP 402)`) instead of
+  the bare `Provider error` constant, `agent.model.failed` now emits `status_code`, and the
+  assistant-ui `error` frame carries `status` and `error_code`. An unpaid account and a
+  misconfigured credential are distinguishable again, in the stream and in the logs. The
+  message/body split is unchanged: the provider's message is still forwarded verbatim and its raw
+  response body still never leaves the process.
+
 ## 1.2.6 — 2026-09-21
 
 - Made `pyproject.toml` the only source of the version. `development` declares the release being
