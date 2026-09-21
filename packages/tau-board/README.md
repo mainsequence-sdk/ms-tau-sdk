@@ -21,3 +21,12 @@ Tau process's provider or model.
 
 The board's SQLite access is read-only. Chat and Task changes use Tau's HTTP API. Bulma CSS and
 all other UI assets are packaged locally; no Node or browser CDN is needed.
+
+## Launch from VS Code
+
+From the repository checkout, install the optional package once with
+`uv sync --frozen --extra tau-board`. In VS Code's Run and Debug view, select
+**Tau Board (local)** and press F5. The launch configuration uses `.venv`, reads the repository's
+`.env`, and opens `http://127.0.0.1:8788` when Uvicorn starts. Start a local-mode Tau process
+separately; select its loopback URL in the board's Connect view if it differs from the environment
+default. The board can still open and inspect an explicit state directory while Tau is stopped.

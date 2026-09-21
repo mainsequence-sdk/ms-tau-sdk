@@ -27,3 +27,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error(str(error))
     uvicorn.run(create_app(settings), host="127.0.0.1", port=settings.port, access_log=False)
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
