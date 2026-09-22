@@ -62,6 +62,8 @@ class ActiveSessionRuntime:
         if self.persistence_task is not None:
             await asyncio.shield(self.persistence_task)
         async with self.lock:
+            if self.evicting:
+                raise RuntimeError("Session runtime is being reconfigured")
             self.last_used_at = time.monotonic()
             settled_event: TauRuntimeEvent | None = None
             if provenance:

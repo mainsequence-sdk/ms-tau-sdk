@@ -134,3 +134,83 @@ def row_detail(directory: Path, table: str, rowid: int) -> dict[str, Any]:
     if row is None:
         raise StateError("Row not found")
     return {"table": table, "row": dict(row)}
+
+
+def sessions(directory: Path, *, limit: int = 100) -> dict[str, Any]:
+    """Return recent local sessions for the board's session picker."""
+    if not 1 <= limit <= 200:
+        raise StateError("Session limit must be between 1 and 200")
+    path = _database_path(directory)
+    if path is None:
+        return {"sessions": []}
+    try:
+        with closing(_connect(path)) as connection:
+            rows = connection.execute(
+                "SELECT uid, provider, model, thinking, runtime_activity, created_at, "
+                "updated_at FROM sessions ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+    except sqlite3.Error as error:
+        raise StateError(f"Cannot read local sessions: {type(error).__name__}") from error
+    return {"sessions": [dict(row) for row in rows]}
+
+
+def tasks(directory: Path, *, session_uid: str = "", limit: int = 100) -> dict[str, Any]:
+    if not 1 <= limit <= 200 or len(session_uid) > 128:
+        raise StateError("Invalid Task query")
+    path = _database_path(directory)
+    if path is None:
+        return {"tasks": []}
+    try:
+        with closing(_connect(path)) as connection:
+            where = "WHERE context_id = ?" if session_uid else ""
+            params: tuple[object, ...] = (session_uid, limit) if session_uid else (limit,)
+            rows = connection.execute(
+                "SELECT uid, task_id, context_id, agent_session_uid, status, "
+                "status_timestamp, cancellation_requested, created_at, updated_at "
+                f"FROM a2a_tasks {where} ORDER BY created_at DESC LIMIT ?",
+                params,
+            ).fetchall()
+    except sqlite3.Error as error:
+        raise StateError(f"Cannot read local Tasks: {type(error).__name__}") from error
+    return {"tasks": [dict(row) for row in rows]}
+
+
+def task_detail(directory: Path, task_id: str) -> dict[str, Any]:
+    if not task_id or len(task_id) > 128:
+        raise StateError("Invalid Task ID")
+    path = _database_path(directory)
+    if path is None:
+        raise StateError("Local SQLite state does not exist yet")
+    try:
+        with closing(_connect(path)) as connection:
+            task = connection.execute(
+                "SELECT * FROM a2a_tasks WHERE task_id = ?", (task_id,)
+            ).fetchone()
+            if task is None:
+                raise StateError("Task not found")
+            uid = task["uid"]
+            events = connection.execute(
+                "SELECT sequence, uid, event_type, status, message_uid, output_uid, "
+                "payload_json, created_at FROM a2a_task_events "
+                "WHERE task_uid = ? ORDER BY sequence",
+                (uid,),
+            ).fetchall()
+            attempts = connection.execute(
+                "SELECT uid, attempt_number, state, created_at, updated_at "
+                "FROM a2a_task_attempts WHERE task_uid = ? ORDER BY attempt_number",
+                (uid,),
+            ).fetchall()
+            outputs = connection.execute(
+                "SELECT artifact_id, revision, name, finalized, created_at, updated_at "
+                "FROM a2a_task_outputs WHERE task_uid = ? ORDER BY created_at",
+                (uid,),
+            ).fetchall()
+    except sqlite3.Error as error:
+        raise StateError(f"Cannot read local Task: {type(error).__name__}") from error
+    return {
+        "task": dict(task),
+        "events": [dict(row) for row in events],
+        "attempts": [dict(row) for row in attempts],
+        "outputs": [dict(row) for row in outputs],
+    }

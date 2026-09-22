@@ -16,8 +16,13 @@ Connect view. The board accepts only local-mode Tau endpoints on loopback.
 
 `TAU_BOARD_PROFILES` may contain a JSON array of additional profiles with `name`, `url`,
 `provider`, `model`, optional `thinking`, and optional `stateDir`. Each profile points to a Tau
-process already configured with that selection. Selecting a profile does not change a running
-Tau process's provider or model.
+process. Chat and A2A load provider, model, and thinking options from the authenticated Main
+Sequence catalog through Tau. Choosing a different model updates the same idle local session
+before the next action; a working session must finish or be cancelled first.
+
+The **Tasks** tab selects a local Task and shows its status, attempts, artifacts, state events,
+and related Task and session logs. The **Logs** tab starts with a local session picker and can
+narrow to a Task. Log history is limited by Tau's rotated local files.
 
 The board's SQLite access is read-only. Chat and Task changes use Tau's HTTP API. Bulma CSS and
 all other UI assets are packaged locally; no Node or browser CDN is needed.

@@ -9,6 +9,7 @@ import httpx
 import pytest
 from ms_tau_board.app import create_app
 from ms_tau_board.config import BoardSettings, Profile, local_url
+from ms_tau_board.logs import read_logs
 from ms_tau_board.state import TABLES
 
 
@@ -20,8 +21,18 @@ def _store(root: Path, digest: str = "a1b2c3d4e5f6") -> Path:
         connection.execute("INSERT INTO schema_metadata VALUES('schema_version', '2')")
         for table in TABLES:
             if table == "sessions":
-                connection.execute("CREATE TABLE sessions(uid TEXT)")
-                connection.execute("INSERT INTO sessions VALUES('local-a1b2c3d4e5f6-default')")
+                connection.execute(
+                    "CREATE TABLE sessions(uid TEXT, provider TEXT, model TEXT, thinking TEXT, "
+                    "runtime_activity TEXT, created_at TEXT, updated_at TEXT)"
+                )
+                connection.execute(
+                    "INSERT INTO sessions VALUES(?, 'openai', 'gpt-5.4', NULL, 'idle', ?, ?)",
+                    (
+                        "local-a1b2c3d4e5f6-default",
+                        "2026-09-21T10:00:00+00:00",
+                        "2026-09-21T10:00:01+00:00",
+                    ),
+                )
             elif table == "entries":
                 connection.execute("CREATE TABLE entries(session_uid TEXT, entry_json TEXT)")
                 connection.execute(
@@ -29,9 +40,38 @@ def _store(root: Path, digest: str = "a1b2c3d4e5f6") -> Path:
                     ("local-a1b2c3d4e5f6-default", '{"secret":"text"}'),
                 )
             elif table == "a2a_tasks":
-                connection.execute("CREATE TABLE a2a_tasks(task_id TEXT, context_id TEXT)")
                 connection.execute(
-                    "INSERT INTO a2a_tasks VALUES('task-1', 'local-a1b2c3d4e5f6-default')"
+                    "CREATE TABLE a2a_tasks(uid TEXT, task_id TEXT, context_id TEXT, "
+                    "agent_session_uid TEXT, status TEXT, status_timestamp TEXT, "
+                    "cancellation_requested INTEGER, created_at TEXT, updated_at TEXT)"
+                )
+                connection.execute(
+                    "INSERT INTO a2a_tasks VALUES('internal-1', 'task-1', ?, ?, "
+                    "'completed', ?, 0, ?, ?)",
+                    (
+                        "local-a1b2c3d4e5f6-default",
+                        "local-a1b2c3d4e5f6-default",
+                        "2026-09-21T10:00:01+00:00",
+                        "2026-09-21T10:00:00+00:00",
+                        "2026-09-21T10:00:01+00:00",
+                    ),
+                )
+            elif table == "a2a_task_events":
+                connection.execute(
+                    "CREATE TABLE a2a_task_events(task_uid TEXT, sequence INTEGER, uid TEXT, "
+                    "event_type TEXT, status TEXT, message_uid TEXT, output_uid TEXT, "
+                    "payload_json TEXT, created_at TEXT)"
+                )
+            elif table == "a2a_task_attempts":
+                connection.execute(
+                    "CREATE TABLE a2a_task_attempts(uid TEXT, task_uid TEXT, "
+                    "attempt_number INTEGER, state TEXT, created_at TEXT, updated_at TEXT)"
+                )
+            elif table == "a2a_task_outputs":
+                connection.execute(
+                    "CREATE TABLE a2a_task_outputs(task_uid TEXT, artifact_id TEXT, "
+                    "revision INTEGER, name TEXT, finalized INTEGER, "
+                    "created_at TEXT, updated_at TEXT)"
                 )
             else:
                 connection.execute(f"CREATE TABLE {table}(id TEXT)")
@@ -64,6 +104,22 @@ async def test_board_connects_proxies_and_inspects_state_without_writes(tmp_path
                 200,
                 headers={"Content-Type": "text/event-stream", "X-Agent-Session-Uid": "session-1"},
                 content=b'data: {"type":"text-delta","textDelta":"Hello"}\n\ndata: [DONE]\n\n',
+            )
+        if request.url.path == "/api/chat/model-providers":
+            return httpx.Response(
+                200,
+                json={
+                    "schema_version": 1,
+                    "providers": [{"provider": "openai", "models": [{"model": "gpt-5.4"}]}],
+                },
+            )
+        if request.url.path == "/api/chat/session-model" and request.method == "PUT":
+            return httpx.Response(
+                200,
+                json={
+                    "sessionUid": "session-1",
+                    "model": {"provider": "openai", "model": "gpt-5.4", "thinkingLevel": None},
+                },
             )
         if request.url.path == "/api/a2a/v1/message:send":
             return httpx.Response(
@@ -113,6 +169,16 @@ async def test_board_connects_proxies_and_inspects_state_without_writes(tmp_path
             assert "textDelta" in stream.text
             assert "authorization" not in seen[-1].headers
             assert seen[-1].url.port == 8010
+            catalog = await board.get(
+                "/tau/api/chat/model-providers", headers={"Authorization": "Bearer secret"}
+            )
+            assert catalog.json()["providers"][0]["provider"] == "openai"
+            assert "authorization" not in seen[-1].headers
+            changed = await board.put(
+                "/tau/api/chat/session-model",
+                json={"sessionUid": "session-1", "provider": "openai", "model": "gpt-5.4"},
+            )
+            assert changed.json()["model"]["model"] == "gpt-5.4"
             assert (await board.get("/tau/internal/a2a/task-dispatch")).status_code == 404
             task = await board.post(
                 "/tau/api/a2a/v1/message:send",
@@ -202,6 +268,142 @@ async def test_profile_override_and_nonlocal_endpoint_are_rejected(tmp_path: Pat
             assert cross_origin.status_code == 403
     await upstream.aclose()
     assert calls[0].url.port == 8010
+
+
+@pytest.mark.asyncio
+async def test_task_tab_data_includes_task_and_related_session_events(tmp_path: Path) -> None:
+    directory = _store(tmp_path)
+    session_uid = "local-a1b2c3d4e5f6-default"
+    with sqlite3.connect(directory / "runtime.sqlite3") as connection:
+        for table in (
+            "sessions",
+            "a2a_tasks",
+            "a2a_task_events",
+            "a2a_task_attempts",
+            "a2a_task_outputs",
+        ):
+            connection.execute(f"DROP TABLE {table}")
+        connection.execute(
+            "CREATE TABLE sessions(uid TEXT, provider TEXT, model TEXT, thinking TEXT, "
+            "runtime_activity TEXT, created_at TEXT, updated_at TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO sessions VALUES(?, 'openai', 'gpt-5.4', NULL, 'idle', ?, ?)",
+            (session_uid, "2026-09-21T09:00:00+00:00", "2026-09-21T10:01:00+00:00"),
+        )
+        connection.execute(
+            "CREATE TABLE a2a_tasks(uid TEXT, task_id TEXT, context_id TEXT, "
+            "agent_session_uid TEXT, status TEXT, status_timestamp TEXT, "
+            "cancellation_requested INTEGER, created_at TEXT, updated_at TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO a2a_tasks VALUES('internal-1', 'task-1', ?, ?, 'completed', ?, 0, ?, ?)",
+            (
+                session_uid,
+                session_uid,
+                "2026-09-21T10:01:00+00:00",
+                "2026-09-21T10:00:00+00:00",
+                "2026-09-21T10:01:00+00:00",
+            ),
+        )
+        connection.execute(
+            "CREATE TABLE a2a_task_events(task_uid TEXT, sequence INTEGER, uid TEXT, "
+            "event_type TEXT, status TEXT, message_uid TEXT, output_uid TEXT, "
+            "payload_json TEXT, created_at TEXT)"
+        )
+        connection.execute(
+            "INSERT INTO a2a_task_events VALUES('internal-1', 1, 'event-1', "
+            "'status', 'completed', NULL, NULL, '{}', '2026-09-21T10:01:00+00:00')"
+        )
+        connection.execute(
+            "CREATE TABLE a2a_task_attempts(uid TEXT, task_uid TEXT, attempt_number INTEGER, "
+            "state TEXT, created_at TEXT, updated_at TEXT)"
+        )
+        connection.execute(
+            "CREATE TABLE a2a_task_outputs(task_uid TEXT, artifact_id TEXT, revision INTEGER, "
+            "name TEXT, finalized INTEGER, created_at TEXT, updated_at TEXT)"
+        )
+    (directory / "logs" / "tau.jsonl").write_text(
+        json.dumps(
+            {
+                "timestamp": "2026-09-21T10:00:15Z",
+                "event": "a2a.task.started",
+                "a2a_task_id": "task-1",
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "timestamp": "2026-09-21T10:00:30Z",
+                "event": "agent.model.failed",
+                "session_uid": session_uid,
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "timestamp": "2026-09-21T10:00:40Z",
+                "event": "a2a.task.other",
+                "a2a_task_id": "task-10",
+                "session_uid": session_uid,
+            }
+        )
+        + "\n"
+        + json.dumps(
+            {
+                "timestamp": "2026-09-21T10:05:00Z",
+                "event": "agent.later",
+                "session_uid": session_uid,
+            }
+        )
+        + "\n"
+    )
+    app = create_app(
+        BoardSettings(
+            profiles=(Profile("Local Tau", "http://127.0.0.1:8010"),),
+            state_root=tmp_path,
+            state_dir=directory,
+        )
+    )
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8788"
+        ) as board:
+            sessions = await board.get("/api/board/sessions")
+            assert sessions.json()["sessions"][0]["uid"] == session_uid
+            tasks = await board.get("/api/board/tasks", params={"sessionUid": session_uid})
+            assert [task["task_id"] for task in tasks.json()["tasks"]] == ["task-1"]
+            detail = await board.get("/api/board/tasks/task-1")
+            assert detail.json()["events"][0]["status"] == "completed"
+            timeline = await board.get("/api/board/tasks/task-1/logs")
+            assert {record["event"] for record in timeline.json()["records"]} == {
+                "a2a.task.started",
+                "agent.model.failed",
+            }
+    first_page = read_logs(
+        directory,
+        limit=1,
+        session=session_uid,
+        task="task-1",
+        related_session=True,
+        since="2026-09-21T10:00:00+00:00",
+        until="2026-09-21T10:01:05+00:00",
+    )
+    second_page = read_logs(
+        directory,
+        limit=1,
+        offset=1,
+        session=session_uid,
+        task="task-1",
+        related_session=True,
+        since="2026-09-21T10:00:00+00:00",
+        until="2026-09-21T10:01:05+00:00",
+    )
+    assert first_page["hasMore"] is True
+    assert {first_page["records"][0]["event"], second_page["records"][0]["event"]} == {
+        "a2a.task.started",
+        "agent.model.failed",
+    }
 
 
 def test_loopback_validation_and_asset_budget() -> None:

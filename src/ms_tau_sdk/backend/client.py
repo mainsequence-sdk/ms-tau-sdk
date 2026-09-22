@@ -50,6 +50,7 @@ from .models import (
 )
 from .routes import (
     AGENT_TASKS,
+    MODEL_PROVIDERS,
     agent_session,
     agent_session_agent_card,
     agent_session_entries,
@@ -282,6 +283,13 @@ class MainSequenceClient:
                 f"contract: {', '.join(invalid_fields)}",
                 detail=error.errors(include_input=False),
             ) from error
+
+    async def list_model_providers(self) -> dict[str, Any]:
+        """Read the authenticated user's safe provider catalog from Main Sequence."""
+        data = await self._request("GET", MODEL_PROVIDERS, idempotent=True)
+        if not isinstance(data, dict) or not isinstance(data.get("providers"), list):
+            raise BackendError("Backend model-provider catalog response is invalid")
+        return data
 
     async def update_session_config(
         self,

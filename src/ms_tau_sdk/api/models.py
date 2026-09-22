@@ -54,3 +54,10 @@ class CancelRequest(ApiModel):
         )
     )
     message: str | None = None
+
+
+class SessionModelSelection(ApiModel):
+    session_uid: str = Field(validation_alias=AliasChoices("sessionUid", "session_uid"))
+    provider: str
+    model: str
+    thinking_level: str | None = Field(default=None, validation_alias="thinkingLevel")

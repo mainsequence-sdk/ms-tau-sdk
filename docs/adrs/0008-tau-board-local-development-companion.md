@@ -2,6 +2,8 @@
 
 Status: Accepted
 
+Provider selection and Task/log navigation are amended by ADR 0009.
+
 Date: 2026-09-21
 
 ## Context

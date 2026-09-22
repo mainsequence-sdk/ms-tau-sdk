@@ -4,14 +4,14 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ms_tau_sdk.backend.client import MainSequenceClient
 from ms_tau_sdk.runtime.manager import SessionRuntimeManager
 from ms_tau_sdk.settings import TauSDKSettings
 
 from .dependencies import backend, runtime_manager, settings
-from .models import CancelRequest
+from .models import CancelRequest, SessionModelSelection
 
 router = APIRouter(prefix="/api/chat")
 BackendDep = Annotated[MainSequenceClient, Depends(backend)]
@@ -28,6 +28,39 @@ async def session_model(
     if config.local_mode:
         session_uid = config.local_session_uid(session_uid)
     session = await client.get_session(session_uid)
+    return {
+        "sessionUid": session_uid,
+        "model": {
+            "provider": session.active_provider,
+            "model": session.active_model,
+            "thinkingLevel": session.active_thinking,
+        },
+    }
+
+
+@router.get("/model-providers")
+async def model_providers(client: BackendDep, config: SettingsDep) -> dict[str, object]:
+    if not config.local_mode:
+        raise HTTPException(status_code=409, detail="Provider catalog is local-mode only")
+    return await client.list_model_providers()
+
+
+@router.put("/session-model")
+async def select_session_model(
+    body: SessionModelSelection,
+    manager: RuntimeManagerDep,
+    config: SettingsDep,
+) -> dict[str, object]:
+    if not config.local_mode:
+        raise HTTPException(status_code=409, detail="Model selection is local-mode only")
+    session_uid = config.local_session_uid(body.session_uid)
+    await manager.change_session_model(
+        session_uid,
+        provider=body.provider,
+        model=body.model,
+        thinking_level=body.thinking_level,
+    )
+    session = await manager.backend.get_session(session_uid)
     return {
         "sessionUid": session_uid,
         "model": {

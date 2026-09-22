@@ -22,6 +22,8 @@ EXPECTED_OPERATIONS = frozenset(
         ("POST", "/api/chat"),
         ("POST", "/api/chat/mock"),
         ("GET", "/api/chat/session-model"),
+        ("PUT", "/api/chat/session-model"),
+        ("GET", "/api/chat/model-providers"),
         ("POST", "/api/chat/session/cancel"),
         ("GET", "/health"),
         ("POST", "/internal/a2a/task-caller-delivery"),
