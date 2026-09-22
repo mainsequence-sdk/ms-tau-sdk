@@ -80,9 +80,12 @@ def main() -> None:
         import_check = (
             "import importlib.util, pathlib, sys; "
             "import ms_tau_sdk; "
+            "import ms_tau_board; "
             "from ms_tau_sdk import TauSDKSettings, create_app; "
             "path = pathlib.Path(ms_tau_sdk.__file__).resolve(); "
             "assert pathlib.Path(sys.prefix).resolve() in path.parents, path; "
+            "board_path = pathlib.Path(ms_tau_board.__file__).resolve(); "
+            "assert pathlib.Path(sys.prefix).resolve() in board_path.parents, board_path; "
             "assert importlib.util.find_spec('astro') is None; "
             "assert importlib.util.find_spec('mainsequence') is None; "
             "settings = TauSDKSettings(workspace=pathlib.Path.cwd()); "
@@ -99,6 +102,16 @@ def main() -> None:
         )
         subprocess.run(
             [str(python), "-P", "-c", import_check],
+            cwd=workspace,
+            env=environment,
+            check=True,
+        )
+        subprocess.run(
+            [uv, "pip", "install", "--python", str(python), f"{wheel}[tau-board]"],
+            check=True,
+        )
+        subprocess.run(
+            [str(_venv_executable(venv, "tau-board")), "--help"],
             cwd=workspace,
             env=environment,
             check=True,

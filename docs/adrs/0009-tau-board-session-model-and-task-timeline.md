@@ -2,6 +2,8 @@
 
 Status: Accepted
 
+The separate-process design remains in force; distribution packaging is amended by ADR 0010.
+
 Date: 2026-09-22
 
 ## Context

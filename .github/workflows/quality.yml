@@ -30,7 +30,7 @@ jobs:
       - name: Install runtime tool dependencies
         run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep
       - name: Check formatting
-        run: uv run ruff format --check src tests scripts packages/tau-board/src packages/tau-board/tests packages/tau-board/scripts
+        run: uv run ruff format --check src tests scripts packages/tau-board/src packages/tau-board/tests
       - name: Lint
         run: uv run ruff check src tests scripts packages/tau-board
       - name: Type check
@@ -39,15 +39,13 @@ jobs:
           uv run mypy --strict packages/tau-board/src/ms_tau_board
       - name: Verify board UI syntax
         run: node --check packages/tau-board/src/ms_tau_board/static/app.js
-      - name: Build and inspect distributions
+      - name: Build and inspect SDK with Tau Board
         run: |
           uv build --no-sources --out-dir release-dist
           uv run python scripts/verify_distribution.py \
             --dist-dir release-dist \
             --require-clean-source \
             --write-release-metadata
-          uv build --no-sources packages/tau-board --out-dir board-dist
-          uv run python packages/tau-board/scripts/verify_distribution.py board-dist
       - name: Verify clean wheel installation
         run: uv run python scripts/verify_clean_install.py release-dist/ms_tau_sdk-*.whl
       - name: Verify locked SDK consumer project

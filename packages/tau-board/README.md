@@ -1,7 +1,8 @@
 # Tau Board
 
-An optional local dashboard for a running `ms-tau-sdk` process. Tau Board is a separate process and
-does not load the Tau runtime or use Main Sequence credentials.
+A local dashboard bundled in the `ms-tau-sdk` wheel. Tau Board is a separate process and does
+not load the Tau runtime or use Main Sequence credentials. The `tau-board` extra selects its
+tested dependency bounds; the command and assets are included in the SDK distribution.
 
 ```bash
 uv add 'ms-tau-sdk[tau-board]'
@@ -36,7 +37,7 @@ current board session.
 
 ## Launch from VS Code
 
-From the repository checkout, install the optional package once with
+From the repository checkout, install the SDK with Board dependencies once with
 `uv sync --frozen --extra tau-board`. In VS Code's Run and Debug view, select
 **Tau Board (local)** and press F5. The launch configuration uses `.venv`, reads the repository's
 `.env`, and opens `http://127.0.0.1:8788` when Uvicorn starts. Start a local-mode Tau process

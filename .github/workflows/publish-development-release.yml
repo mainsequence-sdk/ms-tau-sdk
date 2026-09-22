@@ -47,7 +47,7 @@ jobs:
 
       # The quality gate below is the one in `quality.yml`; nothing is published when it fails.
       - name: Check formatting
-        run: uv run ruff format --check src tests scripts packages/tau-board/src packages/tau-board/tests packages/tau-board/scripts
+        run: uv run ruff format --check src tests scripts packages/tau-board/src packages/tau-board/tests
 
       - name: Lint
         run: uv run ruff check src tests scripts packages/tau-board
@@ -61,9 +61,6 @@ jobs:
         run: |
           node --check packages/tau-board/src/ms_tau_board/static/app.js
           uv run pytest packages/tau-board/tests -q
-
-      - name: Require published Tau Board for the SDK extra
-        run: uv run --no-project --with 'ms-tau-board>=0.1,<0.2' python -c 'import ms_tau_board'
 
       - name: Verify locked SDK consumer project
         working-directory: tests/fixtures/sdk-consumer-project
@@ -94,11 +91,6 @@ jobs:
             echo "$residue"
             exit 1
           fi
-
-      - name: Build and inspect Tau Board
-        run: |
-          uv build --no-sources packages/tau-board --out-dir board-dist
-          uv run python packages/tau-board/scripts/verify_distribution.py board-dist
 
       # Only a gated commit reaches the version computation, so only a gated commit is published.
       - name: Compute development version
