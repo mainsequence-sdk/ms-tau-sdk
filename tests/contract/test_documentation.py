@@ -48,4 +48,5 @@ def test_active_adr_index_lists_the_complete_sdk_decision_set() -> None:
         "0007-retire-agent-targeted-sessionless-responses.md",
         "0008-tau-board-local-development-companion.md",
         "0009-tau-board-session-model-and-task-timeline.md",
+        "0010-bundle-tau-board-in-sdk-distribution.md",
     }

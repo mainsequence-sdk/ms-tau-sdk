@@ -27,8 +27,8 @@ deployment model.
 | Contract | Value |
 | --- | --- |
 | PyPI distribution | `ms-tau-sdk` |
-| Python package | `ms_tau_sdk` |
-| Command | `ms-tau` |
+| Python packages | `ms_tau_sdk`, `ms_tau_board` |
+| Commands | `ms-tau`, `tau-board` |
 | Python entry point | `ms_tau_sdk.app:create_app` |
 | Required Python | 3.13 or newer |
 | Project customization | Standard workspace `.tau/` configuration |
@@ -120,13 +120,16 @@ Local mode also appends privacy-filtered, structured JSON Lines to
 and log move under `TAU_LOCAL_STATE_ROOT` when set; neither is written to the project `.tau` or
 uploaded to a platform AgentSession. Console logging remains available.
 
-For a small browser view of a local run, install the optional, separately running
+For a small browser view of a local run, use the separately running
 [Tau Board](packages/tau-board/README.md):
 
 ```bash
 uv add 'ms-tau-sdk[tau-board]'
 uv run tau-board --tau-url http://127.0.0.1:8010
 ```
+
+Tau Board ships in the same SDK wheel. The `tau-board` extra declares its tested dependency
+bounds; plain SDK installations never start the board.
 
 Open `http://127.0.0.1:8788` to chat, send A2A Messages and Tasks, inspect local SQLite state,
 and read logs. The board serves packaged Bulma CSS with no frontend build or CDN. It can select

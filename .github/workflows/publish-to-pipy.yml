@@ -73,9 +73,6 @@ jobs:
           uv run python -c \
             'import os, pathlib, re; heads = [h for h in re.findall(r"^## (\S+)", pathlib.Path("CHANGELOG.md").read_text(), flags=re.M) if h != "Unreleased"]; assert heads[:1] == [os.environ["RELEASE_TAG"].removeprefix("v")], (os.environ["RELEASE_TAG"], heads[:1])'
 
-      - name: Require published Tau Board for the SDK extra
-        run: uv run --no-project --with 'ms-tau-board>=0.1,<0.2' python -c 'import ms_tau_board'
-
       - name: Build and inspect distributions
         run: |
           uv build --no-sources --out-dir release-dist
