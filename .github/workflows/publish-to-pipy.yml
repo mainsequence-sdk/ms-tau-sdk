@@ -130,8 +130,8 @@ jobs:
           packages-dir: dist/
 
   # The tag and the GitHub release are made after the upload, so a tag vX.Y.Z always names code
-  # that is on PyPI. The ruleset "release tags v*" has to list GitHub Actions as a bypass actor;
-  # see docs/reference/releasing.md.
+  # that is on PyPI. The v* tag ruleset permits creation by this workflow, then restricts
+  # updates and deletion; see docs/reference/releasing.md.
   tag:
     name: Tag the merge and create the GitHub release
     needs: [build-and-verify, publish-to-pypi]
