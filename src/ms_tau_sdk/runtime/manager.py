@@ -970,6 +970,9 @@ class SessionRuntimeManager:
                 "principal_type",
                 "coding_agent_service_uid",
                 "agent_session_uid",
+                "a2a_task_id",
+                "a2a_context_id",
+                "task_uid",
                 "agent_uid",
                 "agent_run_uid",
                 "turn_uid",
@@ -1168,9 +1171,71 @@ class SessionRuntimeManager:
         with bound_contextvars(session_uid=session_uid):
             await self._evict_with_context(session_uid)
 
-    async def _evict_with_context(self, session_uid: str) -> None:
+    async def change_session_model(
+        self,
+        session_uid: str,
+        *,
+        provider: str,
+        model: str,
+        thinking_level: str | None,
+    ) -> None:
+        """Switch an idle session and reload it with backend-authorized evidence."""
+        if not self.settings.local_mode:
+            raise BackendConflictError("Board model selection requires local mode")
+        async with self._registry_lock:
+            load_lock = self._load_locks.setdefault(session_uid, asyncio.Lock())
+        async with load_lock:
+            runtime = self._runtimes.get(session_uid)
+            if runtime is None:
+                runtime = await self._load(session_uid)
+            async with runtime.lock:
+                if runtime.coding_session.is_running or runtime.runtime_activity == "working":
+                    raise BackendConflictError("Cannot change a model while the session is working")
+                if runtime.persistence_task is not None:
+                    await asyncio.shield(runtime.persistence_task)
+                previous = await self.backend.get_session(session_uid)
+                if previous.active_provider is None or previous.active_model is None:
+                    raise BackendConflictError("Session has no model to restore")
+                runtime.evicting = True
+                try:
+                    await self.backend.update_session_config(
+                        session_uid,
+                        provider=provider,
+                        model=model,
+                        thinking_level=thinking_level,
+                    )
+                except BaseException:
+                    runtime.evicting = False
+                    raise
+            await self._evict_with_context(session_uid, force=True)
+            try:
+                await self._load(session_uid)
+            except Exception:
+                try:
+                    await self.backend.update_session_config(
+                        session_uid,
+                        provider=previous.active_provider,
+                        model=previous.active_model,
+                        thinking_level=previous.active_thinking,
+                    )
+                    await self._load(session_uid)
+                except Exception:
+                    logger.exception(
+                        "runtime.session.model_change_rollback_failed",
+                        session_uid=session_uid,
+                    )
+                raise
+            logger.info(
+                "runtime.session.model_changed",
+                session_uid=session_uid,
+                provider=provider,
+                model=model,
+                thinking_level=thinking_level,
+            )
+
+    async def _evict_with_context(self, session_uid: str, *, force: bool = False) -> None:
         runtime = self._runtimes.get(session_uid)
-        if runtime is None or runtime.evicting:
+        if runtime is None or (runtime.evicting and not force):
             return
         runtime.evicting = True
         if runtime.lock.locked():

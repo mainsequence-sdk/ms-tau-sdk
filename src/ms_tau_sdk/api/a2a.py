@@ -17,6 +17,7 @@ from typing import Annotated, Any
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import JSONResponse, StreamingResponse
+from structlog.contextvars import bind_contextvars
 from tau_agent.types import JSONValue
 
 from ms_tau_sdk.backend.client import MainSequenceClient
@@ -1054,6 +1055,13 @@ async def _execute_task(
     dispatch_uid: str | None = None,
     claim: _ClaimedTask | None = None,
 ) -> dict[str, Any]:
+    bind_contextvars(
+        a2a_task_id=task.task_id,
+        task_uid=task.uid,
+        a2a_context_id=task.context_id,
+        session_uid=task.context_id,
+        agent_session_uid=task.context_id,
+    )
     if claim is None:
         claim = await _claim_backend_task(
             client,

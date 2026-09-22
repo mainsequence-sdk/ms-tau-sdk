@@ -9,6 +9,7 @@ API_V1_PREFIX = "/api/v1"
 RUNTIME_CREDENTIAL_TOKEN = f"{API_V1_PREFIX}/runtime-credentials/token/"
 AGENT_SESSIONS = f"{API_V1_PREFIX}/agent-sessions/"
 MODEL_PROVIDER_CREDENTIALS = f"{API_V1_PREFIX}/model-provider-credentials/"
+MODEL_PROVIDERS = f"{API_V1_PREFIX}/model-providers/"
 AGENT_TASKS = f"{API_V1_PREFIX}/agent-tasks/"
 
 type RuntimeLeaseOperation = Literal["acquire", "renew", "release"]

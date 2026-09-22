@@ -18,6 +18,8 @@ ALLOWED: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("GET", re.compile(r"/(?:health|ready|version)")),
     ("POST", re.compile(r"/api/chat")),
     ("GET", re.compile(r"/api/chat/session-model")),
+    ("PUT", re.compile(r"/api/chat/session-model")),
+    ("GET", re.compile(r"/api/chat/model-providers")),
     ("POST", re.compile(r"/api/chat/session/cancel")),
     ("POST", re.compile(r"/api/a2a/v1/message:(?:send|stream)")),
     ("GET", re.compile(r"/api/a2a/v1/tasks")),

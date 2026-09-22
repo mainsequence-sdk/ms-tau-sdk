@@ -11,6 +11,7 @@ These records are the normative decisions for Main Sequence TAU SDK:
 - [ADR 0006: SDK-owned agent development skills](./0006-sdk-owned-agent-development-skills.md)
 - [ADR 0007: Retire agent-targeted sessionless responses](./0007-retire-agent-targeted-sessionless-responses.md)
 - [ADR 0008: Tau Board as a separate local development companion](./0008-tau-board-local-development-companion.md)
+- [ADR 0009: Backend model selection and Task timelines in Tau Board](./0009-tau-board-session-model-and-task-timeline.md)
   (Proposed)
 
 [ADR 56](./adr-56-main-sequence-tau-sdk-workspace-bound-library-deployment.md) is the accepted
