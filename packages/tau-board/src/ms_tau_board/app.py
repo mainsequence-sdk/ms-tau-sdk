@@ -8,6 +8,7 @@ import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -273,6 +274,59 @@ async def state_summary(request: Request) -> Response:
     return _cookie(JSONResponse(result), token, new)
 
 
+async def session_list(request: Request) -> Response:
+    token, session, new = _session(request)
+    directory = _directory(request, session, _selected(request, session))
+    result = await asyncio.to_thread(state.sessions, directory)
+    return _cookie(JSONResponse(result), token, new)
+
+
+async def task_list(request: Request) -> Response:
+    token, session, new = _session(request)
+    directory = _directory(request, session, _selected(request, session))
+    result = await asyncio.to_thread(
+        state.tasks, directory, session_uid=request.query_params.get("sessionUid", "")
+    )
+    return _cookie(JSONResponse(result), token, new)
+
+
+async def task_inspect(request: Request) -> Response:
+    token, session, new = _session(request)
+    directory = _directory(request, session, _selected(request, session))
+    result = await asyncio.to_thread(state.task_detail, directory, request.path_params["task_id"])
+    return _cookie(JSONResponse(result), token, new)
+
+
+async def task_log_records(request: Request) -> Response:
+    token, session, new = _session(request)
+    directory = _directory(request, session, _selected(request, session))
+    detail = await asyncio.to_thread(state.task_detail, directory, request.path_params["task_id"])
+    task = detail["task"]
+    try:
+        offset = int(request.query_params.get("offset", "0"))
+    except ValueError as error:
+        raise ValueError("Log offset must be an integer") from error
+    result = await asyncio.to_thread(
+        logs.read_logs,
+        directory,
+        limit=200,
+        offset=offset,
+        session=str(task["context_id"]),
+        task=str(task["task_id"]),
+        task_uid=str(task["uid"]),
+        related_session=True,
+        since=str(task["created_at"]),
+        until=_task_log_end(task),
+    )
+    return _cookie(JSONResponse(result), token, new)
+
+
+def _task_log_end(task: dict[str, Any]) -> str:
+    if task["status"] not in {"completed", "failed", "canceled", "rejected"}:
+        return ""
+    return (datetime.fromisoformat(str(task["updated_at"])) + timedelta(seconds=5)).isoformat()
+
+
 async def state_rows(request: Request) -> Response:
     token, session, new = _session(request)
     directory = _directory(request, session, _selected(request, session))
@@ -302,17 +356,29 @@ async def log_records(request: Request) -> Response:
     directory = _directory(request, session, profile)
     try:
         limit = int(request.query_params.get("limit", "100"))
+        offset = int(request.query_params.get("offset", "0"))
     except ValueError as error:
         raise ValueError("Log limit must be an integer") from error
+    task_id = request.query_params.get("task", "")
+    task = None
+    if task_id:
+        task = (await asyncio.to_thread(state.task_detail, directory, task_id))["task"]
+        requested_session = request.query_params.get("session", "")
+        if requested_session and requested_session != task["context_id"]:
+            raise ValueError("Task does not belong to the selected session")
     result = await asyncio.to_thread(
         logs.read_logs,
         directory,
         limit=limit,
         level=request.query_params.get("level", ""),
-        session=request.query_params.get("session", ""),
-        task=request.query_params.get("task", ""),
+        session=str(task["context_id"]) if task else request.query_params.get("session", ""),
+        task=task_id,
+        task_uid=str(task["uid"]) if task else "",
+        related_session=bool(task),
         event=request.query_params.get("event", ""),
-        since=request.query_params.get("since", ""),
+        since=str(task["created_at"]) if task else request.query_params.get("since", ""),
+        until=_task_log_end(task) if task else "",
+        offset=offset,
     )
     result["warning"] = _state_warning(session, profile, directory)
     return _cookie(JSONResponse(result), token, new)
@@ -366,7 +432,11 @@ def create_app(
             Route("/api/board/state/{table}/{rowid:int}", state_row),
             Route("/api/board/state/{table}", state_rows),
             Route("/api/board/logs", log_records),
-            Route("/tau/{path:path}", tau_proxy, methods=["GET", "POST"]),
+            Route("/api/board/sessions", session_list),
+            Route("/api/board/tasks", task_list),
+            Route("/api/board/tasks/{task_id}/logs", task_log_records),
+            Route("/api/board/tasks/{task_id}", task_inspect),
+            Route("/tau/{path:path}", tau_proxy, methods=["GET", "POST", "PUT"]),
             Mount("/assets", StaticFiles(directory=STATIC)),
         ],
         exception_handlers={ValueError: _error, state.StateError: _error, TauUnavailable: _error},

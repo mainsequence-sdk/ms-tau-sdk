@@ -1,6 +1,10 @@
 # ADR 0008: Tau Board as a Separate Local Development Companion
 
-Status: Accepted
+Status: Superseded in part by ADR 0010
+
+Provider selection and Task/log navigation are amended by ADR 0009.
+Distribution packaging and release are superseded by ADR 0010; the separate process and UI
+architecture remain in force.
 
 Date: 2026-09-21
 

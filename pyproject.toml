@@ -31,7 +31,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-tau-board = ["ms-tau-board>=0.1,<0.2"]
+tau-board = ["starlette>=1.3,<2", "uvicorn>=0.51,<1"]
 
 [project.urls]
 Changelog = "https://github.com/mainsequence-sdk/ms-tau-sdk/blob/development/CHANGELOG.md"
@@ -41,6 +41,7 @@ Repository = "https://github.com/mainsequence-sdk/ms-tau-sdk"
 
 [project.scripts]
 ms-tau = "ms_tau_sdk.cli:main"
+tau-board = "ms_tau_board.cli:main"
 
 [dependency-groups]
 dev = [
@@ -56,6 +57,7 @@ dev = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ms_tau_sdk"]
+force-include = { "packages/tau-board/src/ms_tau_board" = "ms_tau_board" }
 
 [tool.hatch.build.targets.sdist]
 include = [
@@ -63,10 +65,8 @@ include = [
   "/README.md",
   "/pyproject.toml",
   "/src/ms_tau_sdk",
+  "/packages/tau-board/src/ms_tau_board",
 ]
-
-[tool.uv.sources]
-ms-tau-board = { path = "packages/tau-board" }
 
 [tool.pytest.ini_options]
 addopts = [

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import hashlib
 import json
 import os
@@ -36,6 +37,25 @@ FORBIDDEN_PARTS = {
     "tests",
 }
 IMPORT_PACKAGE = "ms_tau_sdk"
+BOARD_PACKAGE = "ms_tau_board"
+BOARD_SOURCE = PurePosixPath("packages/tau-board/src/ms_tau_board")
+BOARD_MODULES = {
+    "__init__.py",
+    "app.py",
+    "cli.py",
+    "config.py",
+    "env_file.py",
+    "logs.py",
+    "proxy.py",
+    "state.py",
+}
+BOARD_ASSETS = {
+    "index.html",
+    "app.js",
+    "board.css",
+    "bulma.min.css",
+    "BULMA-LICENSE.txt",
+}
 # Everything the package legitimately ships, as the entries directly below
 # `ms_tau_sdk/`. Anything else in an artifact is residue, so adding a module or
 # data directory to the package is a deliberate release-contract change here.
@@ -72,6 +92,8 @@ REQUIRED_WHEEL_PATHS = {
     "ms_tau_sdk/resources/SYSTEM.md",
     "ms_tau_sdk/resources/prompts/review-code-repository.md",
     "ms_tau_sdk/skills.py",
+    *(f"ms_tau_board/{name}" for name in BOARD_MODULES),
+    *(f"ms_tau_board/static/{name}" for name in BOARD_ASSETS),
 }
 
 
@@ -132,6 +154,31 @@ def _package_allowlist_violation(relative: PurePosixPath) -> str | None:
     return None
 
 
+def _board_allowlist_violation(relative: PurePosixPath) -> str | None:
+    entries = relative.parts[1:]
+    if not entries:
+        return "the board import package must be a directory"
+    if entries[0] == "static":
+        if len(entries) != 2 or entries[1] not in BOARD_ASSETS:
+            return "unlisted board asset"
+    elif len(entries) != 1 or entries[0] not in BOARD_MODULES:
+        return "unlisted board module"
+    return None
+
+
+def _verify_board_assets(archive: zipfile.ZipFile) -> None:
+    assets = [archive.read(f"{BOARD_PACKAGE}/static/{name}") for name in BOARD_ASSETS]
+    if sum(map(len, assets)) >= 800 * 1024:
+        raise DistributionError("Board assets exceed the 800 KiB raw limit")
+    if sum(len(gzip.compress(value)) for value in assets) >= 120 * 1024:
+        raise DistributionError("Board assets exceed the 120 KiB gzip limit")
+    if len(archive.read(f"{BOARD_PACKAGE}/static/app.js")) >= 50 * 1024:
+        raise DistributionError("Board JavaScript exceeds the 50 KiB limit")
+    html = archive.read(f"{BOARD_PACKAGE}/static/index.html").decode("utf-8")
+    if re.search(r"(?:src|href)=[\"']https?://", html):
+        raise DistributionError("Board HTML loads a remote asset")
+
+
 def _metadata_from_wheel(archive: zipfile.ZipFile) -> Message:
     metadata_paths = [name for name in archive.namelist() if name.endswith(".dist-info/METADATA")]
     if len(metadata_paths) != 1:
@@ -158,10 +205,14 @@ def _validate_wheel(
             pure = PurePosixPath(path)
             if pure.parts and pure.parts[0] == dist_info:
                 continue
-            if not pure.parts or pure.parts[0] != IMPORT_PACKAGE:
-                outside.append(f"{path} (outside {IMPORT_PACKAGE}/ and {dist_info}/)")
+            if not pure.parts or pure.parts[0] not in {IMPORT_PACKAGE, BOARD_PACKAGE}:
+                outside.append(f"{path} (outside allowed import packages and {dist_info}/)")
                 continue
-            violation = _package_allowlist_violation(pure)
+            violation = (
+                _package_allowlist_violation(pure)
+                if pure.parts[0] == IMPORT_PACKAGE
+                else _board_allowlist_violation(pure)
+            )
             if violation is not None:
                 outside.append(f"{path} ({violation})")
         if outside:
@@ -171,6 +222,7 @@ def _validate_wheel(
         missing = sorted(REQUIRED_WHEEL_PATHS - paths)
         if missing:
             raise DistributionError(f"wheel is missing required paths: {missing}")
+        _verify_board_assets(archive)
 
         entry_points = [path for path in paths if path.endswith(".dist-info/entry_points.txt")]
         if len(entry_points) != 1:
@@ -178,6 +230,8 @@ def _validate_wheel(
         entry_point_text = archive.read(entry_points[0]).decode("utf-8")
         if "ms-tau = ms_tau_sdk.cli:main" not in entry_point_text:
             raise DistributionError("wheel does not expose the ms-tau command")
+        if "tau-board = ms_tau_board.cli:main" not in entry_point_text:
+            raise DistributionError("wheel does not expose the tau-board command")
 
         metadata = _metadata_from_wheel(archive)
 
@@ -228,14 +282,21 @@ def _validate_sdist(sdist: Path, *, distribution: str, version: str) -> None:
         relative = PurePosixPath(*pure.parts[1:])
         if str(relative) in allowed_root_files:
             continue
-        if relative.parts[:1] != ("src",):
-            invalid.append(path)
-            continue
-        packaged = PurePosixPath(*relative.parts[1:])
-        if packaged.parts[:1] != (IMPORT_PACKAGE,):
-            invalid.append(path)
-            continue
-        violation = _package_allowlist_violation(packaged)
+        if relative.parts[:1] == ("src",):
+            packaged = PurePosixPath(*relative.parts[1:])
+            violation = (
+                _package_allowlist_violation(packaged)
+                if packaged.parts[:1] == (IMPORT_PACKAGE,)
+                else "unlisted source package"
+            )
+        elif relative.parts[:3] == BOARD_SOURCE.parts[:3]:
+            if relative.parts[:4] != BOARD_SOURCE.parts[:4]:
+                violation = "unlisted board source path"
+            else:
+                packaged = PurePosixPath(*relative.parts[3:])
+                violation = _board_allowlist_violation(packaged)
+        else:
+            violation = "unlisted source path"
         if violation is not None:
             invalid.append(f"{path} ({violation})")
     if invalid:
@@ -248,6 +309,8 @@ def _validate_sdist(sdist: Path, *, distribution: str, version: str) -> None:
         f"{expected_root}/src/ms_tau_sdk/agent_skills/tau_local_development/SKILL.md",
         f"{expected_root}/src/ms_tau_sdk/resources/SYSTEM.md",
         f"{expected_root}/src/ms_tau_sdk/skills.py",
+        f"{expected_root}/{BOARD_SOURCE}/__init__.py",
+        *(f"{expected_root}/{BOARD_SOURCE}/static/{name}" for name in BOARD_ASSETS),
     }
     missing = sorted(required - set(paths))
     if missing:

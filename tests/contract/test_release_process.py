@@ -65,7 +65,18 @@ def test_distribution_metadata_and_sdist_allowlist_are_explicit() -> None:
         "/README.md",
         "/pyproject.toml",
         "/src/ms_tau_sdk",
+        "/packages/tau-board/src/ms_tau_board",
     ]
+    assert project["tool"]["hatch"]["build"]["targets"]["wheel"]["force-include"] == {
+        "packages/tau-board/src/ms_tau_board": "ms_tau_board"
+    }
+    assert project["project"]["scripts"]["tau-board"] == "ms_tau_board.cli:main"
+    assert all(
+        "ms-tau-board" not in dependency
+        for dependency in project["project"]["optional-dependencies"]["tau-board"]
+    )
+    assert not (ROOT / "packages/tau-board/pyproject.toml").exists()
+    assert not (ROOT / ".github/workflows/publish-tau-board.yml").exists()
 
 
 def test_the_changelog_never_runs_ahead_of_the_declared_version() -> None:
@@ -197,6 +208,9 @@ def test_the_release_gate_allowlists_what_the_package_actually_ships() -> None:
     assert verify.ALLOWED_PACKAGE_ENTRIES == packaged
     assert verify.ALLOWED_PACKAGE_SUFFIXES == {".md", ".py"}
     assert "state" in verify.FORBIDDEN_PARTS
+    board = ROOT / "packages/tau-board/src/ms_tau_board"
+    assert verify.BOARD_MODULES == {path.name for path in board.glob("*.py")}
+    assert verify.BOARD_ASSETS == {path.name for path in (board / "static").iterdir()}
 
 
 def test_the_release_gate_rejects_runtime_state_inside_a_wheel(tmp_path) -> None:

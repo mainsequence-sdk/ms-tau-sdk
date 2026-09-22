@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Tau Board</title>
   <link rel="stylesheet" href="/assets/bulma.min.css">
-  <link rel="stylesheet" href="/assets/board.css">
-  <script type="module" src="/assets/app.js"></script>
+  <link rel="stylesheet" href="/assets/board.css?v=2">
+  <script type="module" src="/assets/app.js?v=2"></script>
 </head>
 <body>
   <header class="board-header">
@@ -24,6 +24,7 @@
         <li class="is-active" data-nav="connect"><a href="#connect">Connect</a></li>
         <li data-nav="chat"><a href="#chat">Chat</a></li>
         <li data-nav="a2a"><a href="#a2a">A2A</a></li>
+        <li data-nav="tasks"><a href="#tasks">Tasks</a></li>
         <li data-nav="state"><a href="#state">State</a></li>
         <li data-nav="logs"><a href="#logs">Logs</a></li>
         <li data-nav="settings"><a href="#settings">Settings</a></li>
@@ -36,7 +37,7 @@
         <div class="column is-two-thirds">
           <div class="box">
             <h2 class="title is-5">Tau endpoint profile</h2>
-            <p class="help block">Each profile points to an already running local Tau process. Its model labels are checked against Tau after a session is used.</p>
+            <p class="help block">Each profile points to a running local Tau process. Chat and A2A model choices come from the authenticated backend catalog and can change within a session.</p>
             <div class="field"><label class="label" for="connect-select">Saved profile</label><div class="select is-fullwidth"><select id="connect-select"></select></div></div>
             <div class="columns">
               <div class="column"><div class="field"><label class="label" for="profile-name">Profile name</label><input class="input" id="profile-name" maxlength="64" required></div></div>
@@ -96,6 +97,27 @@
       </div></div></div>
     </section>
 
+    <section id="view-tasks" class="board-view is-hidden">
+      <div class="columns is-variable is-5">
+        <div class="column is-one-third"><div class="box">
+          <div class="level"><div class="level-left"><h2 class="title is-5">Tasks</h2></div><div class="level-right"><button class="button is-small" id="tasks-refresh">Refresh</button></div></div>
+          <div class="field"><label class="label" for="tasks-profile">Endpoint profile</label><div class="select is-fullwidth"><select id="tasks-profile"></select></div></div>
+          <div class="field"><label class="label" for="tasks-session">Session</label><div class="select is-fullwidth"><select id="tasks-session"><option value="">All sessions</option></select></div></div>
+          <div class="field has-addons"><div class="control is-expanded"><input class="input" id="tasks-id" placeholder="Open Task ID"></div><div class="control"><button class="button" id="tasks-open-id">Open</button></div></div>
+          <div id="tasks-list" class="task-picker" role="listbox" aria-label="Local Tasks"></div>
+        </div></div>
+        <div class="column"><div class="box">
+          <h2 class="title is-5">Task detail</h2>
+          <div id="tasks-detail" class="detail-list">Select a Task to inspect its status and events.</div>
+          <div class="buttons mt-4"><button class="button is-small" id="tasks-open-a2a" disabled>Open in A2A</button><button class="button is-small" id="tasks-open-session" disabled>Open session logs</button></div>
+          <h3 class="title is-6 mt-5">Event timeline</h3>
+          <p class="help">Task state events and related session logs are labelled separately. Raw event fields are available by expanding a row.</p>
+          <div id="tasks-timeline" class="log-list"></div>
+          <button class="button is-small mt-3 is-hidden" id="tasks-older">Load older logs</button>
+        </div></div>
+      </div>
+    </section>
+
     <section id="view-state" class="board-view is-hidden"><div class="box">
       <div class="level"><div class="level-left"><div><h2 class="title is-5">Local SQLite state</h2><p id="state-path" class="help mono"></p></div></div><div class="level-right"><button class="button is-small" id="refresh-state">Refresh</button></div></div>
       <div id="state-counts" class="tags"></div>
@@ -106,8 +128,10 @@
 
     <section id="view-logs" class="board-view is-hidden"><div class="box">
       <div class="level"><div class="level-left"><div><h2 class="title is-5">Operational logs</h2><p id="logs-path" class="help mono"></p></div></div><div class="level-right"><button class="button is-small" id="refresh-logs">Refresh</button></div></div>
-      <div class="columns"><div class="column"><label class="label" for="log-level">Level</label><div class="select is-fullwidth"><select id="log-level"><option value="">All</option><option>info</option><option>warning</option><option>error</option><option>debug</option></select></div></div><div class="column"><label class="label" for="log-session">Session</label><input class="input" id="log-session"></div><div class="column"><label class="label" for="log-task">Task</label><input class="input" id="log-task"></div><div class="column"><label class="label" for="log-event">Event</label><input class="input" id="log-event"></div></div>
+      <div class="field"><label class="label" for="log-profile">Endpoint profile</label><div class="select"><select id="log-profile"></select></div></div>
+      <div class="columns"><div class="column"><label class="label" for="log-session">Session</label><div class="select is-fullwidth"><select id="log-session"></select></div></div><div class="column"><label class="label" for="log-task">Task</label><div class="select is-fullwidth"><select id="log-task"><option value="">All in session</option></select></div></div><div class="column"><label class="label" for="log-level">Level</label><div class="select is-fullwidth"><select id="log-level"><option value="">All levels</option><option>info</option><option>warning</option><option>error</option><option>debug</option></select></div></div><div class="column"><label class="label" for="log-event">Event</label><input class="input" id="log-event" placeholder="Optional event filter"></div></div>
       <div id="log-list" class="log-list"></div>
+      <button class="button is-small mt-3 is-hidden" id="logs-older">Load older events</button>
     </div></section>
 
     <section id="view-settings" class="board-view is-hidden">

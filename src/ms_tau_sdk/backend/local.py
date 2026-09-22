@@ -109,6 +109,9 @@ class LocalDevelopmentBackend(MainSequenceClient):
     async def aclose(self) -> None:
         await self._services.aclose()
 
+    async def list_model_providers(self) -> dict[str, Any]:
+        return await self._services.list_model_providers()
+
     async def _ensure_initialized(self) -> None:
         if self._initialized:
             return
@@ -269,8 +272,8 @@ class LocalDevelopmentBackend(MainSequenceClient):
             raise BackendConflictError("Local provider/model selection is not configured")
         return provider, model, self.settings.local_thinking
 
-    def _runtime_config_sha256(self) -> str:
-        provider, model, thinking = self._selection()
+    def _runtime_config_sha256(self, selection: tuple[str, str, str | None] | None = None) -> str:
+        provider, model, thinking = selection or self._selection()
         payload = json.dumps(
             {"provider": provider, "model": model, "thinking": thinking},
             sort_keys=True,
@@ -278,8 +281,10 @@ class LocalDevelopmentBackend(MainSequenceClient):
         ).encode("utf-8")
         return "sha256:" + hashlib.sha256(payload).hexdigest()
 
-    async def _hydrate_evidence(self, *, holder_id: str) -> ProviderExecutionEvidence:
-        provider, model, thinking = self._selection()
+    async def _hydrate_evidence(
+        self, *, holder_id: str, selection: tuple[str, str, str | None] | None = None
+    ) -> ProviderExecutionEvidence:
+        provider, model, thinking = selection or self._selection()
         evidence = await self._services.hydrate_local_provider_credential(
             provider,
             model=model,
@@ -342,16 +347,24 @@ class LocalDevelopmentBackend(MainSequenceClient):
         holder_id: str,
     ) -> ProviderExecutionEvidence:
         del agent_uid
-        selected_provider, selected_model, _thinking = self._selection()
+        selected_provider, selected_model, selected_thinking = self._selection()
+        if session_uid is not None:
+            session = await self.get_session(session_uid)
+            selected_provider = session.active_provider or ""
+            selected_model = session.active_model or ""
+            selected_thinking = session.active_thinking
         if provider != selected_provider or model != selected_model:
             raise BackendConflictError(
-                "Local provider refresh does not match the configured selection"
+                "Local provider refresh does not match the session selection"
             )
         if session_uid is not None:
             canonical = self.settings.local_session_uid(session_uid)
             if canonical != session_uid:
                 raise SessionNotFoundError("Local session identifier is invalid")
-        return await self._hydrate_evidence(holder_id=holder_id)
+        return await self._hydrate_evidence(
+            holder_id=holder_id,
+            selection=(selected_provider, selected_model, selected_thinking),
+        )
 
     async def get_session(self, session_uid: str) -> AgentSession:
         def operation() -> AgentSession:
@@ -374,11 +387,35 @@ class LocalDevelopmentBackend(MainSequenceClient):
         model: str,
         thinking_level: str | None,
     ) -> AgentSession:
-        selected = self._selection()
-        if (provider, model, thinking_level) != selected:
-            raise BackendConflictError(
-                "Local session selection is fixed by TAU_LOCAL_PROVIDER and TAU_LOCAL_MODEL"
-            )
+        if not provider or not model:
+            raise BackendConflictError("A provider and model are required")
+        selection = (provider, model, thinking_level)
+        await self._hydrate_evidence(
+            holder_id=f"local-selection-{self.settings.workspace_digest}",
+            selection=selection,
+        )
+
+        def operation() -> None:
+            with closing(self._connect()) as connection, connection:
+                row = connection.execute(
+                    "SELECT runtime_activity FROM sessions WHERE uid = ?", (session_uid,)
+                ).fetchone()
+                if row is None:
+                    raise SessionNotFoundError(f"Local session not found: {session_uid}")
+                if row["runtime_activity"] == "working":
+                    raise BackendConflictError("Cannot change a model while the session is working")
+                connection.execute(
+                    "UPDATE sessions SET provider = ?, model = ?, thinking = ?, "
+                    "runtime_config_sha256 = ?, updated_at = ? WHERE uid = ?",
+                    (
+                        *selection,
+                        self._runtime_config_sha256(selection),
+                        _iso(_utcnow()),
+                        session_uid,
+                    ),
+                )
+
+        await self._run(operation)
         return await self.get_session(session_uid)
 
     async def get_agent_card(self, session_uid: str) -> AgentCardEnvelope:
@@ -669,13 +706,23 @@ class LocalDevelopmentBackend(MainSequenceClient):
         session_uid: str,
         request: TauRuntimeBootstrapRequest,
     ) -> TauRuntimeBootstrap:
-        provider, model, thinking = self._selection()
-        evidence = await self._hydrate_evidence(holder_id=request.holder_id)
+        def stored_selection() -> tuple[str, str, str | None]:
+            with closing(self._connect()) as connection:
+                row = connection.execute(
+                    "SELECT provider, model, thinking FROM sessions WHERE uid = ?", (session_uid,)
+                ).fetchone()
+                if row is None:
+                    return self._selection()
+                return str(row["provider"]), str(row["model"]), row["thinking"]
+
+        selection = await self._run(stored_selection)
+        provider, model, thinking = selection
+        evidence = await self._hydrate_evidence(holder_id=request.holder_id, selection=selection)
 
         def operation() -> TauRuntimeBootstrap:
             now = _utcnow()
             expires = now + timedelta(seconds=request.ttl_seconds)
-            runtime_config_sha256 = self._runtime_config_sha256()
+            runtime_config_sha256 = self._runtime_config_sha256(selection)
             with closing(self._connect()) as connection, connection:
                 connection.execute("BEGIN IMMEDIATE")
                 row = connection.execute(
