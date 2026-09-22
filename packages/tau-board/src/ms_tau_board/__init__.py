@@ -1,3 +1,5 @@
-"""Local Tau development board, separate from the runtime SDK."""
+"""Local Tau development board, separate from the Tau runtime process."""
 
-__version__ = "0.1.0"
+from importlib.metadata import version
+
+__version__ = version("ms-tau-sdk")

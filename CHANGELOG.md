@@ -2,6 +2,10 @@
 
 ## 1.2.7 — 2026-09-21
 
+- Bundle the local Tau Board command, Python package, and UI assets in the `ms-tau-sdk` wheel.
+  `ms-tau-sdk[tau-board]` now selects Board's tested dependency bounds without requiring a
+  second PyPI project. The Board remains a separate local process. SDK releases no longer wait
+  for an unpublished `ms-tau-board` distribution.
 - A merge to `main` is the release. The release workflow runs on the merge instead of on a
   hand-pushed tag: it publishes the version `pyproject.toml` declares, creates the tag `vX.Y.Z` and
   the GitHub release after the upload, and brings the release merge and the next patch number to
