@@ -76,10 +76,12 @@ example, fails at step 1; raise the version in it.
 
 The repository must configure the protected `pypi` GitHub environment and PyPI trusted-publisher
 relationship before a merge can publish. There is no stored PyPI API token. The tag ruleset
-"release tags v\*: admins only" must list GitHub Actions as a bypass actor, because the workflow
-creates the tag with the workflow token; without it the `tag` job fails after the upload, and the
-tag and the GitHub release are missing until the job is re-run. Merging the release pull request is
-the explicit release-owner action; the build scripts never publish.
+"release tags v\*: immutable after creation" permits creation of a new `v*` tag by an actor with
+repository write access, including the release workflow token, while restricting updates and
+deletion to administrators. This allows the `tag` job to create the release tag after the PyPI
+upload. It also means other repository writers can create new `v*` tags; only merges into `main`
+trigger the package release workflow. Merging the release pull request is the explicit
+release-owner action; the build scripts never publish.
 
 ### Development releases from `development`
 
