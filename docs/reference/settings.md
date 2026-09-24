@@ -1,7 +1,8 @@
 # Settings and Credentials
 
-Settings are case-sensitive. SDK-specific names use `MAINSEQUENCE_TAU_*`; established Main Sequence
-connection and credential names remain unprefixed by the SDK product name.
+Settings are case-sensitive. SDK-specific names generally use `MAINSEQUENCE_TAU_*`; the two tool
+composition settings use `TAU_*` so managed workflow environment validation accepts them.
+Established Main Sequence connection and credential names remain unprefixed by the SDK product name.
 
 ## Managed authenticated startup
 
@@ -44,10 +45,21 @@ absent.
 | `MAINSEQUENCE_TAU_PORT` | `8787` |
 | `MAINSEQUENCE_TAU_TRUSTED_ORIGINS` | Empty |
 | `MAINSEQUENCE_TAU_STARTUP_DEPENDENCIES_ENABLED` | `true` |
+| `TAU_EXCLUDE_BASE_TOOLS` | `false`; omit `read`, `write`, `edit`, and `bash` when `true` |
+| `TAU_EXCLUDE_MAINSEQUENCE_MCP` | `false`; skip Main Sequence MCP connection, tools, resources, and resource prompt when `true` |
 | `MAINSEQUENCE_TAU_STATE_ROOT` | `$XDG_STATE_HOME/ms-tau-sdk`, else `~/.local/state/ms-tau-sdk` |
 
 The workspace must already exist, be a directory, and be readable. There is no no-workspace mode or
 runtime-role selector.
+
+The two exclusion settings are independent, process-wide, and apply to managed and local sessions.
+With both `true`, the model sees only project `.tau/extensions` tools and the always-present
+`task_request_input` and `task_request_authorization` tools for its own A2A Task. With either or
+both `false`, the corresponding coding tools or Main Sequence MCP tools remain available. Project
+tools compose in every mode. In a managed workflow, set the variables in
+`harness_agent.spec.env_vars`; local `ms-tau` reads them from its process environment. Explicit
+`TauSDKSettings` values can configure Python applications. Agent Card skills and system prompts do
+not remove executable tools. Excluding the coding tools does not sandbox project extension code.
 
 Both modes keep durable Tau runtime state — built-in extension state, provider credentials, project
 trust, agent-call diagnostics — under `MAINSEQUENCE_TAU_STATE_ROOT/<workspace-hash>`. It is never

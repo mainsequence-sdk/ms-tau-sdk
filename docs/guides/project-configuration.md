@@ -5,7 +5,7 @@ SDK passes its packaged defaults and workspace to Tau; Tau resolves one effectiv
 
 ## General behavior override
 
-Without a project override, the packaged SDK `SYSTEM.md` supplies a concise coding-agent default.
+Without a project override, the packaged SDK `SYSTEM.md` supplies concise agent instructions.
 To replace it, create:
 
 ```text
@@ -49,4 +49,23 @@ authenticated caller and lease proof, persistence ordering, secret redaction, an
 
 Web, search, fetch, video, and runtime-information tools are not part of the base SDK. A project may
 install its chosen implementation and register tools in `.tau/extensions`. Those tools do not alter
-the SDK's own Main Sequence HTTP and MCP transports.
+the SDK's own Main Sequence HTTP transport.
+
+## Runtime tool composition
+
+The host process sets two independent booleans, both `false` by default:
+
+| Environment variable | When `true` |
+| --- | --- |
+| `TAU_EXCLUDE_BASE_TOOLS` | Omit Tau's `read`, `write`, `edit`, and `bash`. |
+| `TAU_EXCLUDE_MAINSEQUENCE_MCP` | Do not connect to Main Sequence MCP or inject its tools, resources, or resource prompt. |
+
+Project extension tools remain in either mode. `task_request_input` and
+`task_request_authorization` always remain for the agent's own A2A Task and cannot be replaced by
+a project tool. Set these variables in `harness_agent.spec.env_vars` for managed deployments, or in
+the process environment for local `ms-tau`; Python applications can set the matching
+`TauSDKSettings` fields. With both exclusions enabled, the catalog consists of project tools plus
+the two Task controls. If only one is enabled, the other built-in source remains. A project prompt
+or Agent Card skill description does not remove tools. Without `read`, Tau 0.4.2 does not insert
+discovered skills into the system prompt, so supply needed guidance in `.tau/SYSTEM.md` or through
+a declared retrieval tool.

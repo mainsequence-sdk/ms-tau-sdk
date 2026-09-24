@@ -7,6 +7,9 @@ Date: 2026-09-16
 Amended 2026-09-19 by [ADR 0007](./0007-retire-agent-targeted-sessionless-responses.md):
 agent-targeted, sessionless model responses are no longer an SDK contract.
 
+Amended 2026-09-24 by [ADR 0011](./0011-independent-base-tool-and-main-sequence-mcp-exclusion.md):
+Main Sequence MCP projection is optional through a process setting.
+
 ## Context
 
 The project identity changed, but its useful transport and execution behavior remains necessary.

@@ -1,6 +1,7 @@
 import sys
 from pathlib import Path
 
+import pytest
 from tau_agent.messages import AssistantMessage, TextContent, ToolCall, ToolResultMessage
 from tau_agent.provider_events import AssistantDoneEvent
 from tau_agent.tools import AgentTool, AgentToolResult
@@ -8,7 +9,10 @@ from tau_ai.fake import FakeProvider
 from tau_coding import CodingSession, CodingSessionConfig
 from tau_coding.resources import TauResourcePaths
 
-from ms_tau_sdk.runtime.extensions import ProjectExtensionState
+from ms_tau_sdk.errors import ConfigurationError
+from ms_tau_sdk.runtime.extensions import ProjectExtensionState, validate_tool_catalog
+from ms_tau_sdk.runtime.session import ActiveSessionRuntime
+from ms_tau_sdk.tools.task_control import create_task_control_tools
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "fixtures/sdk-consumer-project"
 
@@ -239,6 +243,71 @@ async def test_project_tau_skills_prompts_and_reload_are_native(tmp_path):
         summary.prompt_templates.after,
         summary.prompt_templates.changed,
     ) == (1, 2, True)
+    await session.aclose()
+
+
+async def test_tool_only_catalog_rejects_reserved_tool_after_tau_reload(tmp_path):
+    extension = tmp_path / ".tau/extensions/project_tool/extension.py"
+    extension.parent.mkdir(parents=True)
+
+    def source(tool_name):
+        return f'''from tau_agent.messages import TextContent
+from tau_agent.tools import AgentTool, AgentToolResult
+
+
+async def execute(tool_call_id, arguments, signal=None, on_update=None):
+    return AgentToolResult(content=[TextContent(text="project result")])
+
+
+def setup(tau):
+    tau.register_tool(AgentTool(
+        name="{tool_name}",
+        label="Project Tool",
+        description="Project-owned tool",
+        parameters={{"type": "object", "properties": {{}}}},
+        execute_fn=execute,
+    ))
+'''
+
+    extension.write_text(source("project_tool"), encoding="utf-8")
+    session = await CodingSession.load(
+        CodingSessionConfig(
+            provider=FakeProvider([]),
+            provider_name="fake",
+            model="fake-model",
+            storage=_MemoryStorage(),
+            cwd=tmp_path,
+            tools=create_task_control_tools(),
+            resource_paths=TauResourcePaths(
+                root=tmp_path / ".runtime-tau", cwd=tmp_path, agents_root=None
+            ),
+            project_extensions_enabled=True,
+            trust_override="approve",
+        )
+    )
+    task_names = frozenset({"task_request_input", "task_request_authorization"})
+
+    def check_catalog(current_session):
+        validate_tool_catalog(
+            current_session,
+            sdk_tool_names=task_names,
+            require_complete_project_catalog=True,
+        )
+
+    runtime = ActiveSessionRuntime(
+        session_uid="session-1",
+        holder_id="holder",
+        coding_session=session,
+        storage=_MemoryStorage(),
+        provider=object(),
+        project_extension_state=ProjectExtensionState(enabled=True),
+        validate_tool_catalog=check_catalog,
+    )
+    check_catalog(session)
+    assert {tool.name for tool in session.tools} == task_names | {"project_tool"}
+    extension.write_text(source("task_request_input"), encoding="utf-8")
+    with pytest.raises(ConfigurationError, match="cannot replace A2A Task controls"):
+        await runtime.reload()
     await session.aclose()
 
 

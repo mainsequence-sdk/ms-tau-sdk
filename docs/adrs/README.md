@@ -13,6 +13,7 @@ These records are the normative decisions for Main Sequence TAU SDK:
 - [ADR 0008: Tau Board as a separate local development companion](./0008-tau-board-local-development-companion.md)
 - [ADR 0009: Backend model selection and Task timelines in Tau Board](./0009-tau-board-session-model-and-task-timeline.md)
 - [ADR 0010: Bundle Tau Board in the SDK distribution](./0010-bundle-tau-board-in-sdk-distribution.md)
+- [ADR 0011: Independent base-tool and Main Sequence MCP exclusion](./0011-independent-base-tool-and-main-sequence-mcp-exclusion.md)
 
 [ADR 56](./adr-56-main-sequence-tau-sdk-workspace-bound-library-deployment.md) is the accepted
 transition record and implementation ledger. Earlier decisions are preserved only in the

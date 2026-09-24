@@ -17,6 +17,27 @@ def test_settings_normalize_backend_and_origins(tmp_path):
     assert settings.trusted_origins == ("http://one.test", "http://two.test")
 
 
+def test_tool_exclusion_settings_default_and_environment(monkeypatch, tmp_path):
+    defaults = TauSDKSettings(_env_file=None, workspace=tmp_path)
+    assert defaults.exclude_base_tools is False
+    assert defaults.exclude_mainsequence_mcp is False
+
+    monkeypatch.setenv("TAU_EXCLUDE_BASE_TOOLS", "true")
+    monkeypatch.setenv("TAU_EXCLUDE_MAINSEQUENCE_MCP", "1")
+    configured = TauSDKSettings(_env_file=None, workspace=tmp_path)
+    assert configured.exclude_base_tools is True
+    assert configured.exclude_mainsequence_mcp is True
+
+    explicit = TauSDKSettings(
+        _env_file=None,
+        workspace=tmp_path,
+        exclude_base_tools=False,
+        exclude_mainsequence_mcp=False,
+    )
+    assert explicit.exclude_base_tools is False
+    assert explicit.exclude_mainsequence_mcp is False
+
+
 def test_settings_use_canonical_mainsequence_endpoint(monkeypatch):
     monkeypatch.setenv("MAINSEQUENCE_ENDPOINT", "https://development.example.test/")
 

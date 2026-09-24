@@ -38,7 +38,7 @@ from ms_tau_sdk.logging import conversation_log_fields
 from ms_tau_sdk.providers.factory import ProviderFactory
 from ms_tau_sdk.resources.loader import tau_resource_paths
 from ms_tau_sdk.runtime.events import TauRuntimeEvent
-from ms_tau_sdk.runtime.extensions import ProjectExtensionState
+from ms_tau_sdk.runtime.extensions import ProjectExtensionState, validate_tool_catalog
 from ms_tau_sdk.runtime.observability import TauTurnObserver
 from ms_tau_sdk.runtime.provenance import TurnProvenance
 from ms_tau_sdk.runtime.snapshots import (
@@ -139,7 +139,8 @@ class SessionRuntimeManager:
             if prefetch_provider is not None:
                 await prefetch_provider()
                 self._provider_control_ready = True
-            await self._get_mcp_client()
+            if not self.settings.exclude_mainsequence_mcp:
+                await self._get_mcp_client()
         self._startup_ready = True
         if self._eviction_task is None:
             self._eviction_task = asyncio.create_task(
@@ -158,6 +159,10 @@ class SessionRuntimeManager:
         }
         return {
             "mode": "local" if self.settings.local_mode else "managed",
+            "exclude_base_tools": self.settings.exclude_base_tools,
+            "exclude_mainsequence_mcp": self.settings.exclude_mainsequence_mcp,
+            "base_tool_count": 0 if self.settings.exclude_base_tools else 4,
+            "task_control_tool_count": 2,
             "workspace_digest": self.settings.workspace_digest,
             "holder_id": self.holder_id,
             "loaded_sessions": len(self._runtimes),
@@ -396,7 +401,9 @@ class SessionRuntimeManager:
                     provider_control=bootstrap.provider_control,
                 ),
             )
-            mcp_client = await self._get_mcp_client()
+            mcp_client = (
+                None if self.settings.exclude_mainsequence_mcp else await self._get_mcp_client()
+            )
             cwd = self._resolve_cwd()
             project_extension_state = ProjectExtensionState(enabled=True)
             caller_session_proof = None
@@ -406,15 +413,32 @@ class SessionRuntimeManager:
                     "lease_holder_id": lease.holder_id,
                     "lease_token": lease.lease_token,
                 }
-            tools = [
-                *create_coding_tools(cwd=cwd),
-                *create_mainsequence_mcp_tools(
-                    mcp_client,
-                    caller_session_proof=caller_session_proof,
-                    allow_missing_session_proof=self.settings.local_mode,
-                ),
-                *create_task_control_tools(),
-            ]
+            tools = []
+            if not self.settings.exclude_base_tools:
+                tools.extend(create_coding_tools(cwd=cwd))
+            if mcp_client is not None:
+                tools.extend(
+                    create_mainsequence_mcp_tools(
+                        mcp_client,
+                        caller_session_proof=caller_session_proof,
+                        allow_missing_session_proof=self.settings.local_mode,
+                    )
+                )
+            tools.extend(create_task_control_tools())
+            sdk_tool_names = frozenset(tool.name for tool in tools)
+            if len(sdk_tool_names) != len(tools):
+                raise ConfigurationError("SDK tool sources contain duplicate names")
+            require_complete_project_catalog = (
+                self.settings.exclude_base_tools and self.settings.exclude_mainsequence_mcp
+            )
+
+            def check_catalog(session: CodingSession) -> None:
+                validate_tool_catalog(
+                    session,
+                    sdk_tool_names=sdk_tool_names,
+                    require_complete_project_catalog=require_complete_project_catalog,
+                )
+
             coding_session = await CodingSession.load(
                 CodingSessionConfig(
                     provider=provider_runtime.provider,
@@ -425,7 +449,11 @@ class SessionRuntimeManager:
                     cwd=cwd,
                     tools=tools,
                     session_id=session_uid,
-                    append_system_prompt=mainsequence_mcp_resource_prompt(mcp_client),
+                    append_system_prompt=(
+                        mainsequence_mcp_resource_prompt(mcp_client)
+                        if mcp_client is not None
+                        else None
+                    ),
                     resource_paths=tau_resource_paths(
                         cwd,
                         state_home=self.settings.tau_state_home,
@@ -434,6 +462,12 @@ class SessionRuntimeManager:
                     trust_override="approve",
                 )
             )
+            try:
+                check_catalog(coding_session)
+            except BaseException:
+                with contextlib.suppress(Exception):
+                    await coding_session.aclose()
+                raise
             project_extension_state.update_from_session(coding_session)
             self._log_project_extension_diagnostics(
                 session_uid=session_uid,
@@ -454,6 +488,7 @@ class SessionRuntimeManager:
                 provider_control_schema=bootstrap.provider_control.schema_version,
                 catalog_digest=bootstrap.provider_control.catalog_digest,
                 project_extension_state=project_extension_state,
+                validate_tool_catalog=check_catalog,
             )
             state = bootstrap.runtime_state
             runtime.runtime_activity = state.runtime_activity or "loading"
@@ -479,8 +514,8 @@ class SessionRuntimeManager:
                 snapshot_selected=snapshot_selected,
                 snapshot_fallback_reason=fallback_reason,
                 history_entry_count=len(initial_entries),
-                mcp_tool_count=len(mcp_client.tools),
-                mcp_resource_count=len(mcp_client.resources),
+                mcp_tool_count=len(mcp_client.tools) if mcp_client is not None else 0,
+                mcp_resource_count=len(mcp_client.resources) if mcp_client is not None else 0,
                 provider_control_schema=bootstrap.provider_control.schema_version,
                 catalog_digest=bootstrap.provider_control.catalog_digest,
                 project_extensions_enabled=project_extension_state.enabled,

@@ -4,6 +4,10 @@ Status: Accepted
 
 Date: 2026-09-16
 
+Amended by [ADR 0011](./0011-independent-base-tool-and-main-sequence-mcp-exclusion.md):
+the catalog below is the default. A deployment may independently exclude the four
+coding tools and Main Sequence MCP; the A2A Task controls remain available.
+
 ## Context
 
 Migration-era optional tools expanded dependency size and implied product ownership of browsing,
