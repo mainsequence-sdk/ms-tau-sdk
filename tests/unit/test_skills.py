@@ -82,6 +82,11 @@ def test_sync_replaces_only_sdk_namespace_and_removes_retired_skills(tmp_path: P
     assert "namespace=ms_tau_sdk" in pin
     assert f"pinned_version={result.installed_version}" in pin
     assert "command=ms-tau skills sync --path ." in pin
+    customization = (destination / "tau_project_customization" / "SKILL.md").read_text()
+    assert "TAU_EXCLUDE_BASE_TOOLS" in customization
+    assert "TAU_EXCLUDE_MAINSEQUENCE_MCP" in customization
+    assert "harness_agent.spec.env_vars" in customization
+    assert "task_request_input" in customization
 
 
 def test_sync_dry_run_does_not_create_agents_directory(tmp_path: Path) -> None:

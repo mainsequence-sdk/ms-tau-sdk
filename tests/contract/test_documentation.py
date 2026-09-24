@@ -49,4 +49,5 @@ def test_active_adr_index_lists_the_complete_sdk_decision_set() -> None:
         "0008-tau-board-local-development-companion.md",
         "0009-tau-board-session-model-and-task-timeline.md",
         "0010-bundle-tau-board-in-sdk-distribution.md",
+        "0011-independent-base-tool-and-main-sequence-mcp-exclusion.md",
     }

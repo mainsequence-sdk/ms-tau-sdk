@@ -46,6 +46,33 @@ The project author owns:
 The SDK does not sandbox these extensions. Web, fetch, search, browser, video, and other optional
 tools are project choices and are not part of the base SDK.
 
+## Runtime tool composition
+
+Two independent process settings select the host-provided tools. Both default to `false`:
+
+| Setting | Effect when `true` |
+| --- | --- |
+| `TAU_EXCLUDE_BASE_TOOLS` | Omit Tau's `read`, `write`, `edit`, and `bash`. |
+| `TAU_EXCLUDE_MAINSEQUENCE_MCP` | Skip Main Sequence MCP connection, tools, resources, and resource prompt. |
+
+Set them in `harness_agent.spec.env_vars` in a managed repository workflow, in the process
+environment for local `ms-tau`, or through explicit `TauSDKSettings` fields in a Python host. They
+apply to all sessions in that process; neither Agent Card skills nor prompt text removes tools.
+
+| Exclude base tools | Exclude Main Sequence MCP | Model-facing sources |
+| --- | --- | --- |
+| `false` | `false` | Coding tools, Main Sequence MCP, project extension tools, A2A Task controls. |
+| `true` | `false` | Main Sequence MCP, project extension tools, A2A Task controls. |
+| `false` | `true` | Coding tools, project extension tools, A2A Task controls. |
+| `true` | `true` | Project extension tools and A2A Task controls. |
+
+The A2A Task controls are `task_request_input` and `task_request_authorization`. They remain
+available in every mode for the agent's own Task; extensions must not register those names.
+Register project tools under `.tau/extensions/` and verify the effective catalog after loading.
+With `read` excluded, Tau 0.4.2 does not insert discovered skills into the system prompt. Put
+needed guidance in the effective `.tau/SYSTEM.md` or expose it through a declared retrieval tool.
+Excluding coding tools does not sandbox extension Python code.
+
 ## Invariants extensions must not replace
 
 Extensions may change effective agent capabilities, but they must not replace or bypass:
@@ -57,8 +84,8 @@ Extensions may change effective agent capabilities, but they must not replace or
 - secret redaction and payload limits; or
 - HTTP, SSE, Responses, and A2A wire validation.
 
-Use canonical Main Sequence MCP operations for live platform state. Project tools do not grant new
-platform permissions merely because they run inside TAU.
+When Main Sequence MCP is enabled, use its canonical operations for live platform state. Project
+tools do not grant new platform permissions merely because they run inside TAU.
 
 ## Validation
 

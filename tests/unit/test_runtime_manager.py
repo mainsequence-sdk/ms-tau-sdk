@@ -21,7 +21,8 @@ from ms_tau_sdk.backend.models import (
     TauRuntimeBootstrap,
     TauTurnCommit,
 )
-from ms_tau_sdk.errors import BackendConflictError
+from ms_tau_sdk.errors import BackendConflictError, ConfigurationError
+from ms_tau_sdk.runtime.extensions import validate_tool_catalog
 from ms_tau_sdk.runtime.manager import RUNTIME_CAPABILITIES, SessionRuntimeManager
 from ms_tau_sdk.runtime.session import ActiveSessionRuntime
 from ms_tau_sdk.runtime.snapshots import (
@@ -31,6 +32,7 @@ from ms_tau_sdk.runtime.snapshots import (
 )
 from ms_tau_sdk.sessions.storage import SESSION_ENTRY_ADAPTER
 from ms_tau_sdk.settings import TauSDKSettings
+from ms_tau_sdk.tools.task_control import create_task_control_tools
 
 
 def _settings(tmp_path):
@@ -154,9 +156,64 @@ def _coding_session(
     session.tools = tools
     session.extension_names = extension_names
     session.extension_tool_sources = extension_tool_sources or {}
-    session.extension_runtime = SimpleNamespace(diagnostics=())
+    session.extension_runtime = SimpleNamespace(
+        diagnostics=(),
+        extension_metadata=tuple(
+            SimpleNamespace(name=name, source="project") for name in extension_names
+        ),
+    )
     session.aclose = AsyncMock()
     return session
+
+
+def _load_coding_session(session, config):
+    session.tools = tuple(config.tools)
+    return session
+
+
+def test_tool_only_catalog_requires_project_provenance_and_clean_extension_load():
+    project_tool = AgentTool(
+        name="project_tool",
+        label="Project Tool",
+        description="Project tool",
+        parameters={"type": "object", "properties": {}},
+        execute_fn=AsyncMock(),
+    )
+    session = _coding_session(
+        tools=(*create_task_control_tools(), project_tool),
+        extension_names=("project_extension",),
+        extension_tool_sources={"project_tool": "project_extension"},
+    )
+    required_names = frozenset({"task_request_input", "task_request_authorization"})
+    validate_tool_catalog(
+        session, sdk_tool_names=required_names, require_complete_project_catalog=True
+    )
+
+    session.extension_runtime.extension_metadata = (
+        SimpleNamespace(name="project_extension", source="user"),
+    )
+    with pytest.raises(ConfigurationError, match="non-project extension tool"):
+        validate_tool_catalog(
+            session, sdk_tool_names=required_names, require_complete_project_catalog=True
+        )
+
+    session.extension_runtime.extension_metadata = (
+        SimpleNamespace(name="project_extension", source="user"),
+        SimpleNamespace(name="project_extension", source="project"),
+    )
+    with pytest.raises(ConfigurationError, match="non-project extension tool"):
+        validate_tool_catalog(
+            session, sdk_tool_names=required_names, require_complete_project_catalog=True
+        )
+
+    session.extension_runtime.extension_metadata = (
+        SimpleNamespace(name="project_extension", source="project"),
+    )
+    session.extension_runtime.diagnostics = (SimpleNamespace(severity="error"),)
+    with pytest.raises(ConfigurationError, match="Project extension loading failed"):
+        validate_tool_catalog(
+            session, sdk_tool_names=required_names, require_complete_project_catalog=True
+        )
 
 
 def test_runtime_contract_versions():
@@ -289,6 +346,7 @@ async def test_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
     )
     mcp_client = _mcp_client()
     coding_sessions = [_coding_session(), _coding_session()]
+    coding_session_queue = list(coding_sessions)
 
     with (
         patch(
@@ -302,7 +360,9 @@ async def test_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
         patch("ms_tau_sdk.runtime.manager.create_coding_tools", return_value=[]),
         patch(
             "ms_tau_sdk.runtime.manager.CodingSession.load",
-            AsyncMock(side_effect=coding_sessions),
+            AsyncMock(
+                side_effect=lambda config: _load_coding_session(coding_session_queue.pop(0), config)
+            ),
         ) as load_coding_session,
     ):
         first = await manager.get("session-1")
@@ -373,7 +433,7 @@ async def test_default_catalog_keeps_tau_core_and_omits_removed_tools(tmp_path):
         patch("ms_tau_sdk.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
         patch(
             "ms_tau_sdk.runtime.manager.CodingSession.load",
-            AsyncMock(return_value=loaded_session),
+            AsyncMock(side_effect=lambda config: _load_coding_session(loaded_session, config)),
         ) as load_coding_session,
     ):
         await manager.get("session-1")
@@ -400,6 +460,137 @@ async def test_default_catalog_keeps_tau_core_and_omits_removed_tools(tmp_path):
         }
     )
     await manager.aclose()
+
+
+@pytest.mark.parametrize("local_mode", [False, True])
+@pytest.mark.parametrize("exclude_base_tools", [False, True])
+@pytest.mark.parametrize("exclude_mainsequence_mcp", [False, True])
+@pytest.mark.asyncio
+async def test_runtime_tool_sources_are_independent(
+    tmp_path, local_mode, exclude_base_tools, exclude_mainsequence_mcp
+):
+    manager, backend, _providers = _manager_dependencies(tmp_path, [_bootstrap("session-1")])
+    backend.auth.prefetch = AsyncMock()
+    manager.settings = manager.settings.model_copy(
+        update={
+            "local_mode": local_mode,
+            "exclude_base_tools": exclude_base_tools,
+            "exclude_mainsequence_mcp": exclude_mainsequence_mcp,
+            "startup_dependencies_enabled": True,
+        }
+    )
+    project_tool = AgentTool(
+        name="project_tool",
+        label="Project Tool",
+        description="Project-owned tool",
+        parameters={"type": "object", "properties": {}},
+        execute_fn=AsyncMock(),
+    )
+    mcp_tool = AgentTool(
+        name="mainsequence_test",
+        label="MCP Test",
+        description="Main Sequence tool",
+        parameters={"type": "object", "properties": {}},
+        execute_fn=AsyncMock(),
+    )
+    loaded_session = _coding_session(
+        extension_names=("project_extension",),
+        extension_tool_sources={"project_tool": "project_extension"},
+    )
+
+    async def load_session(config):
+        loaded_session.tools = (*config.tools, project_tool)
+        return loaded_session
+
+    with (
+        patch(
+            "ms_tau_sdk.runtime.manager.MainSequenceMCPClient.connect",
+            AsyncMock(return_value=_mcp_client()),
+        ) as connect,
+        patch(
+            "ms_tau_sdk.runtime.manager.create_mainsequence_mcp_tools",
+            return_value=[mcp_tool],
+        ) as create_mcp_tools,
+        patch(
+            "ms_tau_sdk.runtime.manager.mainsequence_mcp_resource_prompt",
+            return_value="MCP resource guidance",
+        ) as mcp_prompt,
+        patch(
+            "ms_tau_sdk.runtime.manager.CodingSession.load",
+            AsyncMock(side_effect=load_session),
+        ) as load_coding_session,
+    ):
+        await manager.start()
+        runtime = await manager.get("session-1")
+
+    config = load_coding_session.await_args.args[0]
+    names = {tool.name for tool in runtime.coding_session.tools}
+    expected = {"project_tool", "task_request_input", "task_request_authorization"}
+    if not exclude_base_tools:
+        expected.update({"read", "write", "edit", "bash"})
+    if not exclude_mainsequence_mcp:
+        expected.add("mainsequence_test")
+        connect.assert_awaited_once()
+        create_mcp_tools.assert_called_once()
+        mcp_prompt.assert_called_once()
+        assert config.append_system_prompt == "MCP resource guidance"
+    else:
+        connect.assert_not_awaited()
+        create_mcp_tools.assert_not_called()
+        mcp_prompt.assert_not_called()
+        assert config.append_system_prompt is None
+    assert names == expected
+    assert manager.snapshot()["exclude_base_tools"] is exclude_base_tools
+    assert manager.snapshot()["exclude_mainsequence_mcp"] is exclude_mainsequence_mcp
+    assert manager.snapshot()["base_tool_count"] == (0 if exclude_base_tools else 4)
+    assert manager.snapshot()["task_control_tool_count"] == 2
+    backend.auth.prefetch.assert_awaited_once()
+    assert runtime.project_extension_state.project_tool_count == 1
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_project_cannot_override_task_control_on_load_or_after_reload(tmp_path):
+    manager, backend, _providers = _manager_dependencies(tmp_path, [_bootstrap("session-1")])
+    manager.settings = manager.settings.model_copy(
+        update={"exclude_base_tools": True, "exclude_mainsequence_mcp": True}
+    )
+    loaded_session = _coding_session(
+        extension_tool_sources={"task_request_input": "project_extension"}
+    )
+    with (
+        patch("ms_tau_sdk.runtime.manager.MainSequenceMCPClient.connect") as connect,
+        patch(
+            "ms_tau_sdk.runtime.manager.CodingSession.load", AsyncMock(return_value=loaded_session)
+        ),
+    ):
+        with pytest.raises(ConfigurationError, match="cannot replace A2A Task controls"):
+            await manager.get("session-1")
+    connect.assert_not_called()
+    loaded_session.aclose.assert_awaited_once()
+    backend.release_runtime_lease.assert_awaited_once()
+
+    loaded_session.extension_tool_sources = {}
+    loaded_session.extension_runtime.extension_metadata = ()
+    loaded_session.tools = tuple(create_task_control_tools())
+    runtime = ActiveSessionRuntime(
+        session_uid="session-1",
+        holder_id=manager.holder_id,
+        coding_session=loaded_session,
+        storage=SimpleNamespace(),
+        provider=object(),
+        validate_tool_catalog=lambda session: validate_tool_catalog(
+            session,
+            sdk_tool_names=frozenset({"task_request_input", "task_request_authorization"}),
+            require_complete_project_catalog=True,
+        ),
+    )
+    loaded_session.extension_tool_sources = {"task_request_input": "project_extension"}
+    with pytest.raises(ConfigurationError, match="cannot replace A2A Task controls"):
+        async for _event in runtime.prompt(
+            "next turn", durability_task=lambda: asyncio.create_task(asyncio.sleep(0))
+        ):
+            pass
 
 
 @pytest.mark.asyncio
@@ -601,7 +792,7 @@ async def test_restores_compatible_snapshot_and_applies_only_delta(tmp_path):
         patch("ms_tau_sdk.runtime.manager.create_coding_tools", return_value=[]),
         patch(
             "ms_tau_sdk.runtime.manager.CodingSession.load",
-            AsyncMock(return_value=_coding_session()),
+            AsyncMock(side_effect=lambda config: _load_coding_session(_coding_session(), config)),
         ),
     ):
         runtime = await manager.get("session-1")
@@ -646,7 +837,7 @@ async def test_corrupt_snapshot_falls_back_to_canonical_history(tmp_path):
         patch("ms_tau_sdk.runtime.manager.create_coding_tools", return_value=[]),
         patch(
             "ms_tau_sdk.runtime.manager.CodingSession.load",
-            AsyncMock(return_value=_coding_session()),
+            AsyncMock(side_effect=lambda config: _load_coding_session(_coding_session(), config)),
         ),
     ):
         runtime = await manager.get("session-1")

@@ -138,10 +138,10 @@ the board process's safe environment values and edits named non-secret variables
 file; Tau or the board must restart before saved startup values take effect.
 
 Platform discovery of the unregistered process, internal backend dispatch/caller-delivery hooks,
-push notifications, and `resume_caller` remain unavailable. Outbound A2A through Main Sequence MCP
-supports Messages and Tasks with polling under authenticated-user semantics. Local mode binds to
-`127.0.0.1` unless a host was explicitly configured. Main Sequence MCP remains live, so its tools
-can still read or mutate real platform resources.
+push notifications, and `resume_caller` remain unavailable. When Main Sequence MCP is enabled,
+outbound A2A supports Messages and Tasks with polling under authenticated-user semantics, and MCP
+tools can read or mutate real platform resources. Local mode binds to `127.0.0.1` unless a host was
+explicitly configured.
 
 ## Workspace-owned Tau behavior
 
@@ -170,7 +170,7 @@ are not bundled into the SDK. Main Sequence transport and protocol behavior rema
 - durable Tau sessions, leases, restore, persistence, cancellation, eviction, and shutdown
 - local Tau execution without backend AgentSession pre-creation
 - chat, SSE, A2A, health, and readiness transports
-- Main Sequence MCP and protocol-required task controls
+- optional Main Sequence MCP and always-present protocol-required task controls
 - packaged defaults that participate in Tau's normal workspace configuration
 - explicit, version-matched development skills for repository integration, local debugging,
   project customization, and TAU's A2A host adapter

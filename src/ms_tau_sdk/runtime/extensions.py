@@ -7,7 +7,39 @@ from dataclasses import dataclass
 from tau_agent.types import JSONValue
 from tau_coding import CodingSession
 
+from ms_tau_sdk.errors import ConfigurationError
 from ms_tau_sdk.runtime.snapshots import sha256_json
+
+TASK_CONTROL_TOOL_NAMES = frozenset({"task_request_input", "task_request_authorization"})
+
+
+def validate_tool_catalog(
+    session: CodingSession,
+    *,
+    sdk_tool_names: frozenset[str],
+    require_complete_project_catalog: bool,
+) -> None:
+    """Reject extension overrides and catalog drift before a model can use tools."""
+    sources = session.extension_tool_sources
+    reserved = TASK_CONTROL_TOOL_NAMES & sources.keys()
+    if reserved:
+        raise ConfigurationError(
+            "Project extensions cannot replace A2A Task controls: " + ", ".join(sorted(reserved))
+        )
+    names = [tool.name for tool in session.tools]
+    expected = sdk_tool_names | sources.keys()
+    if len(names) != len(set(names)) or set(names) != expected:
+        raise ConfigurationError("Effective Tau tool catalog differs from configured tool sources")
+    if require_complete_project_catalog:
+        metadata = session.extension_runtime.extension_metadata
+        for owner in set(sources.values()):
+            matches = [item for item in metadata if item.name == owner]
+            if len(matches) != 1 or matches[0].source != "project":
+                raise ConfigurationError("Tool-only runtime includes a non-project extension tool")
+    if require_complete_project_catalog and any(
+        diagnostic.severity == "error" for diagnostic in session.extension_runtime.diagnostics
+    ):
+        raise ConfigurationError("Project extension loading failed in tool-only runtime mode")
 
 
 @dataclass(slots=True)
