@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.8 — 2026-09-24
+
+- Added independent `TAU_EXCLUDE_BASE_TOOLS` and `TAU_EXCLUDE_MAINSEQUENCE_MCP` process settings.
+  Deployments can expose only project extension tools plus the two required A2A Task controls.
+  The runtime skips MCP connection and resource guidance when excluded, rejects project overrides
+  of the Task controls, and checks the effective catalog on load and after extension reload.
+- Documented the settings for managed workflow `env_vars` and local runtimes in ADR 0011, the
+  reference guides, and the version-matched `tau-project-customization` skill.
+
 ## 1.2.7 — 2026-09-21
 
 - Bundle the local Tau Board command, Python package, and UI assets in the `ms-tau-sdk` wheel.

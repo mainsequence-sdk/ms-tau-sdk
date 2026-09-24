@@ -21,14 +21,14 @@ Local development execution:
 ```text
 chat or public A2A request with a local context
   -> user-JWT-authenticated provider evidence and credential hydration
-  -> workspace-bound Tau CodingSession with live Main Sequence MCP
+  -> workspace-bound Tau CodingSession with configured tool sources
   -> SQLite entries, leases, snapshots, and A2A Task/message/artifact/event state
   -> no Agent/AgentSession or platform task-persistence calls
 ```
 
 Local state defaults to `~/.tau/mainsequence/<workspace-hash>/runtime.sqlite3`. It is never
-uploaded when local mode is disabled. Main Sequence authentication, provider hydration, model
-inference, and MCP remain remote; MCP side effects are real platform side effects.
+uploaded when local mode is disabled. Main Sequence authentication, provider hydration, and model
+inference remain remote. When MCP is enabled, its side effects are real platform side effects.
 
 ## Operations
 
@@ -86,7 +86,7 @@ remains outside the SDK's public FastAPI operation surface.
 | A2A Message send | Supported with a workspace-local context identity. |
 | A2A Task send/stream/list/get/cancel/subscribe/continue | Supported through local SQLite. |
 | Local Agent Card | Supported; advertises Message, Task, and streaming without platform registration. |
-| Outbound A2A through MCP | Message and polled Task flows use authenticated-user semantics. |
+| Outbound A2A through MCP | Available when MCP is enabled; Message and polled Task flows use authenticated-user semantics. |
 | Internal backend dispatch/caller delivery | `local_mode_capability_unsupported`. |
 | Platform discovery, push notifications, `resume_caller` | Unsupported without explicit platform registration/callback support. |
 
@@ -100,8 +100,9 @@ restart. Outbound MCP Task workflows use `poll`; `resume_caller` is rejected in 
 
 ## Effective composition diagnostics
 
-Health reports safe process state: session counts, readiness, MCP catalog counts, snapshot counts,
-project-extension counts and errors, and the effective tool-catalog digest. It never reports
+Health reports safe process state: tool exclusion settings and source counts, session counts,
+readiness, MCP catalog counts, snapshot counts, project-extension counts and errors, and the
+effective tool-catalog digest. It never reports
 credential values or prompt content.
 
 ## Failures

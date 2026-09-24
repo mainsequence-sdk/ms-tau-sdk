@@ -55,6 +55,11 @@ class TauSDKSettings(BaseSettings):
         validation_alias="MAINSEQUENCE_REFRESH_TOKEN",
     )
     local_mode: bool = Field(default=False, validation_alias="TAU_LOCAL_MODE")
+    exclude_base_tools: bool = Field(default=False, validation_alias="TAU_EXCLUDE_BASE_TOOLS")
+    exclude_mainsequence_mcp: bool = Field(
+        default=False,
+        validation_alias="TAU_EXCLUDE_MAINSEQUENCE_MCP",
+    )
     local_provider: str | None = Field(default=None, validation_alias="TAU_LOCAL_PROVIDER")
     local_model: str | None = Field(default=None, validation_alias="TAU_LOCAL_MODEL")
     local_thinking: (

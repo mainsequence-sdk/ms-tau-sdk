@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 
 from tau_agent.types import JSONValue
 from tau_coding import CodingSession
+from tau_coding.reload import CodingReloadSummary
 
 from ms_tau_sdk.backend.mcp import MainSequenceMCPClient
 from ms_tau_sdk.backend.models import TauTurnCommit
@@ -46,6 +47,17 @@ class ActiveSessionRuntime:
     provider_control_schema: int = 0
     catalog_digest: str = ""
     project_extension_state: ProjectExtensionState | None = None
+    validate_tool_catalog: Callable[[CodingSession], None] | None = None
+
+    async def reload(self) -> CodingReloadSummary:
+        """Reload Tau resources and reject an invalid replacement catalog."""
+        async with self.lock:
+            summary = await self.coding_session.reload()
+            if self.validate_tool_catalog is not None:
+                self.validate_tool_catalog(self.coding_session)
+            if self.project_extension_state is not None:
+                self.project_extension_state.update_from_session(self.coding_session)
+            return summary
 
     async def prompt(
         self,
@@ -64,6 +76,8 @@ class ActiveSessionRuntime:
         async with self.lock:
             if self.evicting:
                 raise RuntimeError("Session runtime is being reconfigured")
+            if self.validate_tool_catalog is not None:
+                self.validate_tool_catalog(self.coding_session)
             self.last_used_at = time.monotonic()
             settled_event: TauRuntimeEvent | None = None
             if provenance:

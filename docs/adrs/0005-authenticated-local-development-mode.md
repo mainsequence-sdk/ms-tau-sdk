@@ -10,6 +10,10 @@ not require a platform AgentSession.
 Amended: 2026-09-19 — local mode durably writes structured, privacy-filtered operational logs to a
 workspace-scoped file without changing managed-mode logging.
 
+Amended: 2026-09-24 by [ADR 0011](./0011-independent-base-tool-and-main-sequence-mcp-exclusion.md)
+— Main Sequence MCP is enabled by default and can be excluded through a process setting in local
+as well as managed mode.
+
 Amends, when accepted:
 
 - [ADR 0002: Runtime and protocol contracts](./0002-runtime-and-protocol-contracts.md); and

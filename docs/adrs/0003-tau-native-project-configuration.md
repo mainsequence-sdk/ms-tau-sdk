@@ -4,6 +4,10 @@ Status: Accepted
 
 Date: 2026-09-16
 
+Amended by [ADR 0011](./0011-independent-base-tool-and-main-sequence-mcp-exclusion.md):
+the host may exclude SDK-provided coding tools and Main Sequence MCP through
+process settings. Project resource and extension configuration remains Tau-native.
+
 ## Context
 
 The SDK needs useful default agent behavior while allowing each project to own its behavior and
