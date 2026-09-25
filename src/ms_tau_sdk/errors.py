@@ -55,3 +55,18 @@ class SessionNotFoundError(TauSDKError):
 class LocalModeUnsupportedError(TauSDKError):
     code = "local_mode_capability_unsupported"
     status_code = 409
+
+
+class ToolWorkbenchError(TauSDKError):
+    code = "tool_workbench_error"
+    status_code = 409
+
+
+class ToolValidationError(TauSDKError):
+    code = "tool_arguments_invalid"
+    status_code = 422
+
+
+class ExtensionSourceError(TauSDKError):
+    code = "extension_source_unavailable"
+    status_code = 404

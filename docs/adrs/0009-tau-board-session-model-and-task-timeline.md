@@ -3,6 +3,7 @@
 Status: Accepted
 
 The separate-process design remains in force; distribution packaging is amended by ADR 0010.
+The A2A Task timestamp presentation is clarified by the 1.2.9 implementation.
 
 Date: 2026-09-22
 
@@ -45,6 +46,15 @@ Tau Board adds a dedicated Tasks tab alongside A2A. The tab lists recent Tasks, 
 selected local session, and can open a Task by ID. Its detail shows status, timestamps, attempts,
 artifacts, and all retained local Task state events. A2A remains the action composer; Tasks is
 the inspection surface.
+
+The public A2A Task contract exposes the timestamp of the current status as
+`task.status.timestamp`; it does not define top-level creation or completion fields. Tau Board
+therefore renders completion from that standard status timestamp when the current state is
+`TASK_STATE_COMPLETED`. It renders creation from the local read-only SQLite Task row, where Tau
+already persists `created_at`. For non-completed Tasks, the same protocol timestamp is labelled
+as the time the current status was recorded. If the Board is not connected to the matching local
+state directory, creation is shown as unavailable. Tau does not add non-standard fields to the
+A2A wire Task to satisfy a UI concern.
 
 Logs start with a session picker, then an optional Task picker. Level and event filters are
 secondary. A Task timeline combines its SQLite state events and attempts with structured logs

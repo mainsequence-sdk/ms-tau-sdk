@@ -5,8 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Tau Board</title>
   <link rel="stylesheet" href="/assets/bulma.min.css">
-  <link rel="stylesheet" href="/assets/board.css?v=2">
-  <script type="module" src="/assets/app.js?v=2"></script>
+  <link rel="stylesheet" href="/assets/board.css?v=3">
+  <script type="module" src="/assets/app.js?v=3"></script>
 </head>
 <body>
   <header class="board-header">
@@ -22,6 +22,7 @@
     <nav class="tabs is-boxed" aria-label="Board views">
       <ul>
         <li class="is-active" data-nav="connect"><a href="#connect">Connect</a></li>
+        <li data-nav="agent"><a href="#agent">Agent</a></li>
         <li data-nav="chat"><a href="#chat">Chat</a></li>
         <li data-nav="a2a"><a href="#a2a">A2A</a></li>
         <li data-nav="tasks"><a href="#tasks">Tasks</a></li>
@@ -59,6 +60,42 @@
       </div>
     </section>
 
+    <section id="view-agent" class="board-view is-hidden">
+      <div class="columns is-variable is-4">
+        <div class="column is-one-quarter"><div class="box">
+          <h2 class="title is-5">Loaded agent</h2>
+          <div class="field"><label class="label" for="agent-profile">Endpoint profile</label><div class="select is-fullwidth"><select id="agent-profile"></select></div></div>
+          <div class="field"><label class="label" for="agent-session">Local session</label><div class="select is-fullwidth"><select id="agent-session"><option value="">No session selected</option></select></div><p class="help">Inspection never loads a session. Start or resume it through Chat or A2A first.</p></div>
+          <button class="button is-primary is-fullwidth" id="agent-refresh">Inspect agent</button>
+          <div id="agent-overview" class="detail-list mt-4">Select an already loaded session.</div>
+          <details class="mt-4"><summary class="has-text-weight-semibold">Effective Agent Card</summary><div id="agent-card" class="detail-list mt-3"></div><pre id="agent-card-json" class="source-panel"></pre></details>
+          <details class="mt-4"><summary class="has-text-weight-semibold">Extensions and diagnostics</summary><div id="agent-extensions" class="mt-3"></div></details>
+        </div></div>
+        <div class="column is-one-quarter"><div class="box">
+          <h2 class="title is-5">Effective tools</h2>
+          <p class="help mb-3">The exact catalog exposed to the selected session, grouped by runtime ownership.</p>
+          <div id="agent-tools" class="tool-picker"></div>
+        </div></div>
+        <div class="column"><div class="box">
+          <h2 id="tool-title" class="title is-5">Tool details</h2>
+          <div id="tool-meta" class="tags"></div>
+          <p id="tool-description" class="mb-4">Select a tool to inspect its contract.</p>
+          <details open><summary class="has-text-weight-semibold">Argument schema</summary><pre id="tool-schema" class="source-panel"></pre></details>
+          <div class="buttons mt-3"><button class="button is-small" id="tool-source" disabled>View project source</button></div>
+          <pre id="tool-source-output" class="source-panel is-hidden"></pre>
+          <hr>
+          <h3 class="title is-6">Project tool workbench</h3>
+          <div class="notification is-warning is-light">This invokes real project Python code with Tau's filesystem, network, environment, and credential access. It is not a sandbox or rollback.</div>
+          <div id="tool-form"></div>
+          <div class="field"><label class="label" for="tool-arguments">Canonical JSON arguments</label><textarea class="textarea mono" id="tool-arguments" rows="8" spellcheck="false">{}</textarea></div>
+          <div class="buttons"><button class="button" id="tool-validate" disabled>Validate</button><button class="button is-danger" id="tool-run" disabled>Run tool</button><button class="button is-warning is-light" id="tool-cancel" disabled>Cancel</button></div>
+          <label class="checkbox mb-4"><input type="checkbox" id="tool-confirm"> I understand this executes real code and may cause side effects.</label>
+          <div id="tool-test-status" class="tags"></div>
+          <pre id="tool-output" class="output-panel">No tool test has run.</pre>
+        </div></div>
+      </div>
+    </section>
+
     <section id="view-chat" class="board-view is-hidden">
       <div class="columns is-variable is-5">
         <div class="column is-one-third"><div class="box">
@@ -93,7 +130,7 @@
       </div></div><div class="column"><div class="box">
         <div class="level"><div class="level-left"><h2 class="title is-5">Tasks</h2></div><div class="level-right"><button class="button is-small" id="refresh-tasks">Refresh</button></div></div>
         <div id="task-output" class="output-panel" aria-live="polite">Choose an action to begin.</div>
-        <div class="table-container"><table class="table is-fullwidth is-striped is-hoverable"><thead><tr><th>Task</th><th>Context</th><th>Status</th><th></th></tr></thead><tbody id="task-list"></tbody></table></div>
+        <div class="table-container"><table class="table is-fullwidth is-striped is-hoverable"><thead><tr><th>Task</th><th>Context</th><th>Status</th><th>Created</th><th>Completed / status time</th><th></th></tr></thead><tbody id="task-list"></tbody></table></div>
       </div></div></div>
     </section>
 

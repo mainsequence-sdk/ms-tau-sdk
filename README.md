@@ -132,7 +132,11 @@ Tau Board ships in the same SDK wheel. The `tau-board` extra declares its tested
 bounds; plain SDK installations never start the board.
 
 Open `http://127.0.0.1:8788` to chat, send A2A Messages and Tasks, inspect local SQLite state,
-and read logs. The board serves packaged Bulma CSS with no frontend build or CDN. It can select
+inspect the effective Agent Card and tool catalog, validate and explicitly run project extension
+tools, and read logs. The A2A view combines the standard current-status timestamp with Tau's local
+creation timestamp. Tool tests call the exact loaded tool without a model turn or history entry,
+but execute real project code with its normal side effects. The board serves packaged Bulma CSS
+with no frontend build or CDN. It can select
 another loopback Tau endpoint and local state directory in its Connect view. Its Settings tab shows
 the board process's safe environment values and edits named non-secret variables in a local `.env`
 file; Tau or the board must restart before saved startup values take effect.

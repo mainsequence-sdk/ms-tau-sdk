@@ -102,6 +102,27 @@ identity:
 These are the only A2A-adjacent capability boundaries; public local Message and Task requests must not return
 `local_mode_capability_unsupported`.
 
+Each standard A2A Task carries the time its current state was recorded in
+`task.status.timestamp`. For `TASK_STATE_COMPLETED`, that is the completion time. The A2A Task
+object has no standard top-level creation timestamp; Tau persists `created_at` in local SQLite,
+and Tau Board joins that local row when it displays the A2A Task list. Do not invent extra A2A
+wire fields for Board presentation.
+
+## Inspect and test with Tau Board
+
+Install `ms-tau-sdk[tau-board]`, run `tau-board` as a separate process, and connect it to the
+loopback local-mode Tau endpoint. The Agent tab requires an already loaded session: first send a
+Chat or A2A request, then select that session. It shows the effective Agent Card, loaded tools by
+source, project extension diagnostics, and registered project extension entry source.
+
+Only project-extension tools with an object JSON Schema are runnable in the workbench. Select the
+tool, fill its generated form or raw JSON, validate the exact canonical arguments, acknowledge
+the side-effect warning, then run it. Validation never calls the tool. Run invokes the exact
+loaded tool without a model call and without adding chat entries, A2A Tasks, or artifacts. The
+tool still has the Tau process's real filesystem, network, environment, and credential access;
+there is no automatic rollback. A busy session, stale catalog, expired confirmation, non-project
+tool, oversized output, timeout, or cancellation must fail explicitly.
+
 ## Outbound A2A through Main Sequence MCP
 
 Keep the projected `a2a.send_message` tool available. A local agent may send a Message or create a

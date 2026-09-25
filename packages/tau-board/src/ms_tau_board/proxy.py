@@ -27,6 +27,24 @@ ALLOWED: tuple[tuple[str, re.Pattern[str]], ...] = (
     ("GET", re.compile(r"/api/a2a/v1/tasks/[A-Za-z0-9._-]+:subscribe")),
     ("POST", re.compile(r"/api/a2a/v1/tasks/[A-Za-z0-9._-]+:cancel")),
     ("GET", re.compile(r"/api/a2a/v1/extendedAgentCard")),
+    (
+        "GET",
+        re.compile(r"/api/local/v1/sessions/[A-Za-z0-9._-]+/agent-inspection"),
+    ),
+    (
+        "GET",
+        re.compile(r"/api/local/v1/sessions/[A-Za-z0-9._-]+/extension-sources/[a-f0-9]{24}"),
+    ),
+    (
+        "POST",
+        re.compile(
+            r"/api/local/v1/sessions/[A-Za-z0-9._-]+/tools/[A-Za-z0-9._-]+:(?:validate|test)"
+        ),
+    ),
+    (
+        "POST",
+        re.compile(r"/api/local/v1/sessions/[A-Za-z0-9._-]+/tool-tests/[A-Za-z0-9-]+:cancel"),
+    ),
 )
 
 
@@ -82,7 +100,12 @@ async def forward(
         raise TauUnavailable("Tau endpoint redirected a board request")
     response_headers = {
         name: upstream.headers[name]
-        for name in ("x-agent-session-uid", "cache-control", "x-vercel-ai-ui-message-stream")
+        for name in (
+            "x-agent-session-uid",
+            "x-tau-tool-test-uid",
+            "cache-control",
+            "x-vercel-ai-ui-message-stream",
+        )
         if name in upstream.headers
     }
     media_type = upstream.headers.get("content-type", "application/json").split(";", 1)[0]

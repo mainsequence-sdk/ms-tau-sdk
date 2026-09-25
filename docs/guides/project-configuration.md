@@ -69,3 +69,15 @@ the two Task controls. If only one is enabled, the other built-in source remains
 or Agent Card skill description does not remove tools. Without `read`, Tau 0.4.2 does not insert
 discovered skills into the system prompt, so supply needed guidance in `.tau/SYSTEM.md` or through
 a declared retrieval tool.
+
+## Inspect and test project tools locally
+
+After local Tau has loaded a session, Tau Board's Agent tab shows the effective Agent Card, tools
+grouped by runtime source, project extension diagnostics, and the registered extension entry
+source. Project-extension tools with an object JSON Schema get a generated input form plus a raw
+JSON fallback. Validate the canonical arguments, confirm the visible side-effect warning, and run
+the exact loaded tool without starting a model turn or adding conversation or Task history.
+
+The workbench is not a sandbox or dry-run layer. The tool executes with the Tau process's real
+filesystem, network, environment, and credential access. Coding tools, Main Sequence MCP tools,
+and A2A Task-control tools are visible but cannot be executed from this project-tool workbench.

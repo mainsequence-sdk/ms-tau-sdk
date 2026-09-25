@@ -138,6 +138,50 @@ async def test_board_connects_proxies_and_inspects_state_without_writes(tmp_path
                 headers={"Content-Type": "text/event-stream"},
                 content=b'data: {"task":{"id":"task-1"}}\n\n',
             )
+        if request.url.path.endswith("/agent-inspection"):
+            return httpx.Response(
+                200,
+                json={
+                    "available": True,
+                    "sessionUid": "session-1",
+                    "catalogDigest": "sha256:catalog",
+                    "agentCard": {"name": "Fixture Agent"},
+                    "tools": [{"name": "lookup", "category": "project_extension"}],
+                },
+            )
+        if "/extension-sources/" in request.url.path:
+            return httpx.Response(
+                200,
+                json={
+                    "sourceUid": "a" * 24,
+                    "path": ".tau/extensions/fixture/extension.py",
+                    "content": "def setup(tau): pass",
+                },
+            )
+        if request.url.path.endswith("/tools/lookup:validate"):
+            return httpx.Response(
+                200,
+                json={
+                    "arguments": {"symbol": "MSFT"},
+                    "confirmation": "confirmation",
+                    "expiresInSeconds": 60,
+                },
+            )
+        if request.url.path.endswith("/tools/lookup:test"):
+            return httpx.Response(
+                200,
+                headers={
+                    "Content-Type": "text/event-stream",
+                    "X-Tau-Tool-Test-Uid": "test-1",
+                },
+                content=(
+                    b'data: {"type":"started","testUid":"test-1"}\n\n'
+                    b'data: {"type":"completed","result":{"content":[]}}\n\n'
+                    b"data: [DONE]\n\n"
+                ),
+            )
+        if request.url.path.endswith("/tool-tests/test-1:cancel"):
+            return httpx.Response(200, json={"ok": True, "testUid": "test-1"})
         return httpx.Response(404)
 
     settings = BoardSettings(
@@ -154,6 +198,8 @@ async def test_board_connects_proxies_and_inspects_state_without_writes(tmp_path
             index = await board.get("/")
             assert index.status_code == 200
             assert "Tau Board" in index.text
+            assert 'data-nav="agent"' in index.text
+            assert "Completed / status time" in index.text
             assert "'self'" in index.headers["Content-Security-Policy"]
             connected = await board.get("/api/board/connection")
             assert connected.json()["stateDir"] == str(directory)
@@ -210,8 +256,41 @@ async def test_board_connects_proxies_and_inspects_state_without_writes(tmp_path
             )
             assert '"task-1"' in task_stream.text
 
+            inspection = await board.get("/tau/api/local/v1/sessions/session-1/agent-inspection")
+            assert inspection.json()["agentCard"]["name"] == "Fixture Agent"
+            source = await board.get(
+                f"/tau/api/local/v1/sessions/session-1/extension-sources/{'a' * 24}"
+            )
+            assert source.json()["path"].startswith(".tau/extensions/")
+            validated = await board.post(
+                "/tau/api/local/v1/sessions/session-1/tools/lookup:validate",
+                json={"catalogDigest": "sha256:catalog", "arguments": {"symbol": "MSFT"}},
+            )
+            assert validated.json()["confirmation"] == "confirmation"
+            tool_stream = await board.post(
+                "/tau/api/local/v1/sessions/session-1/tools/lookup:test",
+                json={
+                    "catalogDigest": "sha256:catalog",
+                    "arguments": {"symbol": "MSFT"},
+                    "confirmation": "confirmation",
+                },
+            )
+            assert tool_stream.headers["X-Tau-Tool-Test-Uid"] == "test-1"
+            assert '"completed"' in tool_stream.text
+            cancelled = await board.post(
+                "/tau/api/local/v1/sessions/session-1/tool-tests/test-1:cancel", json={}
+            )
+            assert cancelled.json()["ok"] is True
+            blocked_source = await board.get(
+                "/tau/api/local/v1/sessions/session-1/extension-sources/not-a-source"
+            )
+            assert blocked_source.status_code == 404
+
             summary = await board.get("/api/board/state")
             assert summary.json()["tables"]["sessions"] == 1
+            task_rows = await board.get("/api/board/tasks")
+            assert task_rows.json()["tasks"][0]["created_at"] == ("2026-09-21T10:00:00+00:00")
+            assert task_rows.json()["tasks"][0]["status_timestamp"] == ("2026-09-21T10:00:01+00:00")
             rows = await board.get("/api/board/state/entries")
             assert rows.json()["rows"][0]["entry_json"] == "[open row to view]"
             rowid = rows.json()["rows"][0]["board_rowid"]
@@ -416,11 +495,12 @@ def test_loopback_validation_and_asset_budget() -> None:
     files = [path for path in assets.iterdir() if path.is_file()]
     assert sum(path.stat().st_size for path in files) < 800 * 1024
     assert sum(len(gzip.compress(path.read_bytes())) for path in files) < 120 * 1024
-    assert (assets / "app.js").stat().st_size < 50 * 1024
+    assert (assets / "app.js").stat().st_size < 56 * 1024
     html = (assets / "index.html").read_text()
     assert '<script src="http' not in html
     assert '<link href="http' not in html
     assert "bulma.min.css" in html
+    assert "Completed / status time" in html
 
 
 @pytest.mark.asyncio

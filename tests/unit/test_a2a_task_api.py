@@ -103,6 +103,7 @@ async def test_rest_task_list_get_cancel_and_subscribe_contract(asgi_client):
 
     assert listed.json()["tasks"][0]["status"]["state"] == "TASK_STATE_SUBMITTED"
     assert fetched.json()["task"]["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert fetched.json()["task"]["status"]["timestamp"] == "2026-08-24T00:00:00Z"
     assert cancelled.json()["task"]["status"]["state"] == "TASK_STATE_CANCELED"
     assert subscribed.headers["content-type"].startswith("text/event-stream")
     assert '"eventCursor":0' in subscribed.text

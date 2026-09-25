@@ -25,6 +25,20 @@ EXPECTED_OPERATIONS = frozenset(
         ("PUT", "/api/chat/session-model"),
         ("GET", "/api/chat/model-providers"),
         ("POST", "/api/chat/session/cancel"),
+        ("GET", "/api/local/v1/sessions/{session_uid}/agent-inspection"),
+        (
+            "GET",
+            "/api/local/v1/sessions/{session_uid}/extension-sources/{source_uid}",
+        ),
+        (
+            "POST",
+            "/api/local/v1/sessions/{session_uid}/tools/{tool_name}:validate",
+        ),
+        ("POST", "/api/local/v1/sessions/{session_uid}/tools/{tool_name}:test"),
+        (
+            "POST",
+            "/api/local/v1/sessions/{session_uid}/tool-tests/{test_uid}:cancel",
+        ),
         ("GET", "/health"),
         ("POST", "/internal/a2a/task-caller-delivery"),
         ("POST", "/internal/a2a/task-dispatch"),

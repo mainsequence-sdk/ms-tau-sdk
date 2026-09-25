@@ -172,8 +172,8 @@ def _verify_board_assets(archive: zipfile.ZipFile) -> None:
         raise DistributionError("Board assets exceed the 800 KiB raw limit")
     if sum(len(gzip.compress(value)) for value in assets) >= 120 * 1024:
         raise DistributionError("Board assets exceed the 120 KiB gzip limit")
-    if len(archive.read(f"{BOARD_PACKAGE}/static/app.js")) >= 50 * 1024:
-        raise DistributionError("Board JavaScript exceeds the 50 KiB limit")
+    if len(archive.read(f"{BOARD_PACKAGE}/static/app.js")) >= 56 * 1024:
+        raise DistributionError("Board JavaScript exceeds the 56 KiB limit")
     html = archive.read(f"{BOARD_PACKAGE}/static/index.html").decode("utf-8")
     if re.search(r"(?:src|href)=[\"']https?://", html):
         raise DistributionError("Board HTML loads a remote asset")

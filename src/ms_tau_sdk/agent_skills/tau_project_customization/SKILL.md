@@ -93,3 +93,10 @@ Verify each project-owned capability through its observable interface and focuse
 that documented tool names and schemas match the loaded catalog, lifecycle hooks clean up their
 resources, and health diagnostics report extension load errors without exposing prompt content or
 secrets.
+
+For interactive local verification, start Tau in local mode, load a session through Chat or A2A,
+then open Tau Board's Agent tab. Inspect the effective tool category, JSON Schema, extension entry
+source, and diagnostics. For a project-owned tool, fill the generated form or raw JSON, validate
+the canonical arguments, explicitly acknowledge the side-effect warning, and run it. This invokes
+the exact loaded tool without a model turn or conversation/Task-history entry. It is not a sandbox:
+filesystem, network, credential, and external-system side effects are the project's responsibility.

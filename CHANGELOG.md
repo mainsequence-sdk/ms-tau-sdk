@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.2.9 — 2026-09-25
+
+- Added Tau Board's Agent view for readable effective Agent Card inspection, source-grouped tool
+  catalog inspection, project extension diagnostics, and bounded registered-entry source viewing.
+- Added an explicit local project-tool workbench with schema-generated inputs, authoritative
+  validation, short-lived single-use confirmation, exact loaded-tool execution, streamed bounded
+  results, timeout and cancellation. It does not call the model or write conversation/Task history;
+  project code still has its normal real side effects.
+- Added creation and completion/status timing to the A2A Task view. Completion uses the standard
+  A2A `task.status.timestamp`; creation is joined from Tau's existing local SQLite Task state, so
+  the wire contract remains standard.
+
 ## 1.2.8 — 2026-09-24
 
 - Added independent `TAU_EXCLUDE_BASE_TOOLS` and `TAU_EXCLUDE_MAINSEQUENCE_MCP` process settings.

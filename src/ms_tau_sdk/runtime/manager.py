@@ -4,21 +4,27 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
+import secrets
 import socket
 import time
 import uuid
-from collections.abc import AsyncIterator, Coroutine
+from collections.abc import AsyncIterator, Coroutine, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import structlog
+from jsonschema.exceptions import SchemaError, ValidationError
+from jsonschema.validators import validator_for
 from structlog.contextvars import (
     bind_contextvars,
     bound_contextvars,
     clear_contextvars,
     get_contextvars,
 )
+from tau_agent.tools import AgentTool, AgentToolResult
+from tau_agent.types import JSONValue
 from tau_coding import CodingSession, CodingSessionConfig
 from tau_coding.tools import create_coding_tools
 
@@ -33,19 +39,34 @@ from ms_tau_sdk.backend.models import (
     TauRuntimeBootstrapRequest,
     TauTurnCommit,
 )
-from ms_tau_sdk.errors import BackendConflictError, ConfigurationError, LeaseLostError
+from ms_tau_sdk.errors import (
+    BackendConflictError,
+    ConfigurationError,
+    ExtensionSourceError,
+    LeaseLostError,
+    LocalModeUnsupportedError,
+    SessionBusyError,
+    ToolValidationError,
+    ToolWorkbenchError,
+)
 from ms_tau_sdk.logging import conversation_log_fields
 from ms_tau_sdk.providers.factory import ProviderFactory
 from ms_tau_sdk.resources.loader import tau_resource_paths
 from ms_tau_sdk.runtime.events import TauRuntimeEvent
-from ms_tau_sdk.runtime.extensions import ProjectExtensionState, validate_tool_catalog
+from ms_tau_sdk.runtime.extensions import (
+    TASK_CONTROL_TOOL_NAMES,
+    ProjectExtensionState,
+    validate_tool_catalog,
+)
 from ms_tau_sdk.runtime.observability import TauTurnObserver
 from ms_tau_sdk.runtime.provenance import TurnProvenance
 from ms_tau_sdk.runtime.snapshots import (
     SNAPSHOT_SCHEMA_VERSION,
     TAU_RUNTIME_VERSION,
     build_snapshot_upload,
+    canonical_json_bytes,
     restore_snapshot,
+    sha256_json,
 )
 from ms_tau_sdk.sessions.storage import SESSION_ENTRY_ADAPTER, BackendSessionStorage
 from ms_tau_sdk.settings import TauSDKSettings
@@ -65,12 +86,61 @@ RUNTIME_CAPABILITIES = {
     "tau_activity_sequence": "v1",
     "tau_turn_commit": "v1",
 }
+BASE_TOOL_NAMES = frozenset({"read", "write", "edit", "bash"})
+TOOL_TEST_ARGUMENT_MAX_BYTES = 256 * 1024
+TOOL_TEST_OUTPUT_MAX_BYTES = 1024 * 1024
+TOOL_TEST_UPDATE_MAX_BYTES = 64 * 1024
+TOOL_TEST_TIMEOUT_SECONDS = 60
+TOOL_CONFIRMATION_TTL_SECONDS = 60
+EXTENSION_SOURCE_MAX_BYTES = 256 * 1024
+_TOOL_TEST_END = object()
 
 
 @dataclass(frozen=True, slots=True)
 class RuntimeExecutionFence:
     holder_id: str
     lease_token: str
+
+
+class ToolTestCancellationToken:
+    """Cancellation signal passed to a project tool by the local workbench."""
+
+    def __init__(self) -> None:
+        self._cancelled = False
+
+    def cancel(self) -> None:
+        self._cancelled = True
+
+    def is_cancelled(self) -> bool:
+        return self._cancelled
+
+
+@dataclass(frozen=True, slots=True)
+class ToolTestConfirmation:
+    session_uid: str
+    tool_name: str
+    catalog_digest: str
+    arguments_digest: str
+    expires_at: float
+
+
+@dataclass(slots=True)
+class ToolTestExecution:
+    test_uid: str
+    session_uid: str
+    tool_name: str
+    queue: asyncio.Queue[dict[str, object] | object]
+    cancellation: ToolTestCancellationToken
+    task: asyncio.Task[object] | None = None
+    owns_runtime_lock: bool = False
+
+    async def events(self) -> AsyncIterator[dict[str, object]]:
+        while True:
+            event = await self.queue.get()
+            if event is _TOOL_TEST_END:
+                return
+            assert isinstance(event, dict)
+            yield event
 
 
 def _repository_relative_path(path: Path | None, *, cwd: Path) -> str | None:
@@ -97,6 +167,60 @@ def _extension_diagnostic_type(message: str) -> str:
     return "tau_extension_diagnostic"
 
 
+def _source_uid(session_uid: str, source_id: str) -> str:
+    return sha256_json([session_uid, source_id]).removeprefix("sha256:")[:24]
+
+
+def _metadata_for_owner(coding_session: CodingSession, owner: str) -> object | None:
+    matches = [
+        item for item in coding_session.extension_runtime.extension_metadata if item.name == owner
+    ]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _tool_category(coding_session: CodingSession, tool_name: str) -> tuple[str, object | None]:
+    owner = coding_session.extension_tool_sources.get(tool_name)
+    if owner is not None:
+        metadata = _metadata_for_owner(coding_session, owner)
+        source = str(getattr(metadata, "source", "unknown"))
+        return f"{source}_extension", metadata
+    if tool_name in TASK_CONTROL_TOOL_NAMES:
+        return "protocol", None
+    if tool_name in BASE_TOOL_NAMES:
+        return "tau_coding", None
+    return "mainsequence_mcp", None
+
+
+def _canonical_arguments(arguments: Mapping[str, JSONValue]) -> dict[str, JSONValue]:
+    payload = canonical_json_bytes(dict(arguments))
+    if len(payload) > TOOL_TEST_ARGUMENT_MAX_BYTES:
+        raise ToolValidationError(
+            "Tool arguments exceed the local workbench limit",
+            detail={"maxBytes": TOOL_TEST_ARGUMENT_MAX_BYTES},
+        )
+    value = json.loads(payload)
+    if not isinstance(value, dict):
+        raise ToolValidationError("Tool arguments must be a JSON object")
+    return value
+
+
+def _bounded_tool_result(result: AgentToolResult, *, limit: int) -> dict[str, object]:
+    payload = result.model_dump(mode="json", exclude_none=True)
+    encoded = canonical_json_bytes(payload)
+    if len(encoded) <= limit:
+        return {"result": payload, "truncated": False, "originalBytes": len(encoded)}
+    text = result.text
+    retained = text.encode("utf-8")[: min(limit // 2, 64 * 1024)].decode("utf-8", errors="ignore")
+    return {
+        "result": {
+            "content": ([{"type": "text", "text": retained}] if retained else []),
+            "details": None,
+        },
+        "truncated": True,
+        "originalBytes": len(encoded),
+    }
+
+
 class SessionRuntimeManager:
     def __init__(
         self,
@@ -116,6 +240,8 @@ class SessionRuntimeManager:
         self._background_tasks: set[asyncio.Task[object]] = set()
         self._a2a_task_executions: dict[str, asyncio.Task[object]] = {}
         self._a2a_caller_deliveries: dict[str, asyncio.Task[object]] = {}
+        self._tool_test_confirmations: dict[str, ToolTestConfirmation] = {}
+        self._tool_test_executions: dict[str, ToolTestExecution] = {}
         self._mcp_client: MainSequenceMCPClient | None = None
         self._mcp_lock = asyncio.Lock()
         self._startup_ready = False
@@ -211,6 +337,542 @@ class SessionRuntimeManager:
                 next(iter(tool_catalog_digests)) if len(tool_catalog_digests) == 1 else None
             ),
         }
+
+    def _loaded_local_runtime(self, session_uid: str) -> ActiveSessionRuntime:
+        if not self.settings.local_mode:
+            raise LocalModeUnsupportedError("Agent inspection is available only in local mode")
+        runtime = self._runtimes.get(session_uid)
+        if runtime is None or runtime.evicting or runtime.lease_lost:
+            raise ToolWorkbenchError(
+                "The local session is not loaded",
+                detail={"reason": "session_not_loaded", "sessionUid": session_uid},
+            )
+        return runtime
+
+    @staticmethod
+    def _assert_tool_workbench_idle(runtime: ActiveSessionRuntime) -> None:
+        if (
+            runtime.lock.locked()
+            or runtime.active_turn_uid is not None
+            or runtime.runtime_activity == "working"
+            or runtime.coding_session.is_running
+        ):
+            raise SessionBusyError(
+                "The local session is busy; wait for its active operation to finish"
+            )
+
+    @staticmethod
+    def _project_tool(
+        runtime: ActiveSessionRuntime,
+        tool_name: str,
+        catalog_digest: str,
+    ) -> AgentTool:
+        state = runtime.project_extension_state
+        if state is None or not state.tool_catalog_digest:
+            raise ToolWorkbenchError("The loaded session has no inspectable tool catalog")
+        if catalog_digest != state.tool_catalog_digest:
+            raise ToolWorkbenchError(
+                "The tool catalog changed; refresh the Agent view before continuing",
+                detail={"reason": "stale_catalog", "catalogDigest": state.tool_catalog_digest},
+            )
+        tool = next(
+            (
+                candidate
+                for candidate in runtime.coding_session.tools
+                if candidate.name == tool_name
+            ),
+            None,
+        )
+        if tool is None:
+            raise ToolWorkbenchError("The selected tool is not in the effective catalog")
+        category, _metadata = _tool_category(runtime.coding_session, tool.name)
+        if category != "project_extension":
+            raise ToolWorkbenchError(
+                "Only project extension tools can run in the local workbench",
+                detail={"reason": "tool_not_project_owned", "category": category},
+            )
+        if tool.parameters.get("type") != "object":
+            raise ToolWorkbenchError(
+                "The project tool does not declare an object argument schema",
+                detail={"reason": "unsupported_tool_schema"},
+            )
+        return tool
+
+    @staticmethod
+    def _prepare_tool_arguments(
+        tool: AgentTool,
+        arguments: Mapping[str, JSONValue],
+    ) -> dict[str, JSONValue]:
+        canonical = _canonical_arguments(arguments)
+        schema = dict(tool.parameters)
+        try:
+            validator_type = validator_for(schema)
+            validator_type.check_schema(schema)
+            errors = sorted(
+                validator_type(schema).iter_errors(canonical),
+                key=lambda item: tuple(str(part) for part in item.absolute_path),
+            )
+        except SchemaError as error:
+            raise ToolWorkbenchError(
+                "The project tool declares an invalid JSON Schema",
+                detail={"reason": "invalid_tool_schema"},
+            ) from error
+        if errors:
+            issues = [
+                {
+                    "path": "/".join(str(part) for part in error.absolute_path),
+                    "message": error.message[:512],
+                }
+                for error in errors[:32]
+            ]
+            raise ToolValidationError(
+                "Tool arguments do not match the declared schema",
+                detail={"issues": issues},
+            )
+        if tool.prepare_arguments is not None:
+            try:
+                prepared = tool.prepare_arguments(canonical)
+            except (TypeError, ValueError, ValidationError) as error:
+                raise ToolValidationError(
+                    "Tool argument preparation rejected the supplied values",
+                    detail={"issues": [{"path": "", "message": str(error)[:512]}]},
+                ) from error
+            canonical = _canonical_arguments(prepared)
+        return canonical
+
+    async def local_agent_inspection(self, session_uid: str) -> dict[str, object]:
+        """Describe one already-loaded local runtime without loading or mutating it."""
+
+        if not self.settings.local_mode:
+            raise LocalModeUnsupportedError("Agent inspection is available only in local mode")
+        runtime = self._runtimes.get(session_uid)
+        if runtime is None or runtime.evicting or runtime.lease_lost:
+            return {
+                "available": False,
+                "reason": "session_not_loaded",
+                "sessionUid": session_uid,
+            }
+        coding_session = runtime.coding_session
+        state = runtime.project_extension_state
+        if state is None:
+            return {
+                "available": False,
+                "reason": "catalog_unavailable",
+                "sessionUid": session_uid,
+            }
+        catalog_digest = state.tool_catalog_digest
+        metadata = coding_session.extension_runtime.extension_metadata
+        tools: list[dict[str, object]] = []
+        for tool in sorted(coding_session.tools, key=lambda item: item.name):
+            category, owner_metadata = _tool_category(coding_session, tool.name)
+            owner = coding_session.extension_tool_sources.get(tool.name)
+            source_uid = None
+            if (
+                category == "project_extension"
+                and owner_metadata is not None
+                and getattr(owner_metadata, "path", None) is not None
+            ):
+                source_uid = _source_uid(
+                    session_uid,
+                    str(getattr(owner_metadata, "source_id", "")),
+                )
+            schema = json.loads(canonical_json_bytes(dict(tool.parameters)))
+            schema_supported = isinstance(schema, dict) and schema.get("type") == "object"
+            testable = category == "project_extension" and schema_supported
+            reason = None
+            if category != "project_extension":
+                reason = "Only project extension tools are runnable"
+            elif not schema_supported:
+                reason = "An object JSON Schema is required"
+            tools.append(
+                {
+                    "name": tool.name,
+                    "label": tool.label,
+                    "description": tool.description,
+                    "parameters": schema,
+                    "executionMode": tool.execution_mode,
+                    "category": category,
+                    "extension": owner,
+                    "sourceUid": source_uid,
+                    "testable": testable,
+                    "testingReason": reason,
+                }
+            )
+        extensions: list[dict[str, object]] = []
+        for item in metadata:
+            path = getattr(item, "path", None)
+            is_project = item.source == "project"
+            extensions.append(
+                {
+                    "name": item.name,
+                    "origin": item.source,
+                    "hidden": item.hidden,
+                    "entryPath": (
+                        _repository_relative_path(path, cwd=self.settings.workspace)
+                        if is_project
+                        else None
+                    ),
+                    "sourceUid": (
+                        _source_uid(session_uid, item.source_id)
+                        if is_project and path is not None
+                        else None
+                    ),
+                    "tools": sorted(
+                        name
+                        for name, owner in coding_session.extension_tool_sources.items()
+                        if owner == item.name
+                    ),
+                }
+            )
+        diagnostics = [
+            {
+                "kind": diagnostic.kind,
+                "name": diagnostic.name,
+                "severity": diagnostic.severity,
+                "errorType": _extension_diagnostic_type(diagnostic.message),
+                "path": _repository_relative_path(
+                    diagnostic.path,
+                    cwd=self.settings.workspace,
+                ),
+            }
+            for diagnostic in coding_session.extension_runtime.diagnostics
+        ]
+        card = await self.backend.get_agent_card(session_uid)
+        if (
+            self._runtimes.get(session_uid) is not runtime
+            or state.tool_catalog_digest != catalog_digest
+        ):
+            raise ToolWorkbenchError(
+                "The loaded session changed during inspection",
+                detail={"reason": "stale_catalog"},
+            )
+        return {
+            "available": True,
+            "sessionUid": session_uid,
+            "agentUid": card.agent_uid,
+            "agentSessionUid": card.agent_session_uid,
+            "agentCard": card.agent_card,
+            "catalogDigest": catalog_digest,
+            "busy": (
+                runtime.lock.locked()
+                or runtime.active_turn_uid is not None
+                or runtime.runtime_activity == "working"
+                or runtime.coding_session.is_running
+            ),
+            "model": {"provider": runtime.provider_name, "model": runtime.model},
+            "tools": tools,
+            "extensions": extensions,
+            "diagnostics": diagnostics,
+        }
+
+    def local_extension_source(self, session_uid: str, source_uid: str) -> dict[str, object]:
+        """Read one registered project extension entry file through an opaque identity."""
+
+        runtime = self._loaded_local_runtime(session_uid)
+        match = next(
+            (
+                item
+                for item in runtime.coding_session.extension_runtime.extension_metadata
+                if item.source == "project"
+                and item.path is not None
+                and _source_uid(session_uid, item.source_id) == source_uid
+            ),
+            None,
+        )
+        if match is None:
+            raise ExtensionSourceError("The project extension source is not registered")
+        assert match.path is not None
+        registered = Path(match.path)
+        try:
+            if registered.is_symlink():
+                raise ExtensionSourceError("Symlinked extension source is not viewable")
+            candidate = registered.resolve(strict=True)
+            workspace = self.settings.workspace.resolve(strict=True)
+            extension_root = (workspace / ".tau" / "extensions").resolve(strict=True)
+            candidate.relative_to(workspace)
+            candidate.relative_to(extension_root)
+        except (OSError, ValueError) as error:
+            raise ExtensionSourceError(
+                "The registered extension source is outside the project boundary"
+            ) from error
+        if match.source_id != f"extension:{candidate.as_uri()}":
+            raise ExtensionSourceError("The registered extension source changed after loading")
+        if not candidate.is_file():
+            raise ExtensionSourceError("The registered extension source is not a regular file")
+        size = candidate.stat().st_size
+        if size > EXTENSION_SOURCE_MAX_BYTES:
+            raise ExtensionSourceError(
+                "The project extension source exceeds the display limit",
+                detail={"maxBytes": EXTENSION_SOURCE_MAX_BYTES},
+            )
+        raw = candidate.read_bytes()
+        if b"\x00" in raw:
+            raise ExtensionSourceError("Binary extension source is not viewable")
+        try:
+            content = raw.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise ExtensionSourceError("Extension source must be UTF-8") from error
+        return {
+            "sourceUid": source_uid,
+            "name": match.name,
+            "path": candidate.relative_to(workspace).as_posix(),
+            "content": content,
+            "bytes": len(raw),
+        }
+
+    def _expire_tool_confirmations(self) -> None:
+        now = time.monotonic()
+        self._tool_test_confirmations = {
+            token: confirmation
+            for token, confirmation in self._tool_test_confirmations.items()
+            if confirmation.expires_at > now
+        }
+        while len(self._tool_test_confirmations) >= 256:
+            self._tool_test_confirmations.pop(next(iter(self._tool_test_confirmations)))
+
+    def validate_project_tool_test(
+        self,
+        session_uid: str,
+        tool_name: str,
+        *,
+        catalog_digest: str,
+        arguments: Mapping[str, JSONValue],
+    ) -> dict[str, object]:
+        """Validate a project tool payload and issue a bound, single-use confirmation."""
+
+        runtime = self._loaded_local_runtime(session_uid)
+        self._assert_tool_workbench_idle(runtime)
+        tool = self._project_tool(runtime, tool_name, catalog_digest)
+        canonical = self._prepare_tool_arguments(tool, arguments)
+        self._expire_tool_confirmations()
+        token = secrets.token_urlsafe(32)
+        self._tool_test_confirmations[token] = ToolTestConfirmation(
+            session_uid=session_uid,
+            tool_name=tool_name,
+            catalog_digest=catalog_digest,
+            arguments_digest=sha256_json(canonical),
+            expires_at=time.monotonic() + TOOL_CONFIRMATION_TTL_SECONDS,
+        )
+        return {
+            "ok": True,
+            "sessionUid": session_uid,
+            "toolName": tool_name,
+            "catalogDigest": catalog_digest,
+            "arguments": canonical,
+            "confirmation": token,
+            "expiresInSeconds": TOOL_CONFIRMATION_TTL_SECONDS,
+        }
+
+    async def start_project_tool_test(
+        self,
+        session_uid: str,
+        tool_name: str,
+        *,
+        catalog_digest: str,
+        arguments: Mapping[str, JSONValue],
+        confirmation: str,
+    ) -> ToolTestExecution:
+        """Start one confirmed project-tool invocation against an idle loaded session."""
+
+        runtime = self._loaded_local_runtime(session_uid)
+        self._assert_tool_workbench_idle(runtime)
+        self._expire_tool_confirmations()
+        evidence = self._tool_test_confirmations.pop(confirmation, None)
+        canonical = _canonical_arguments(arguments)
+        expected = ToolTestConfirmation(
+            session_uid=session_uid,
+            tool_name=tool_name,
+            catalog_digest=catalog_digest,
+            arguments_digest=sha256_json(canonical),
+            expires_at=evidence.expires_at if evidence is not None else 0,
+        )
+        if evidence != expected:
+            raise ToolWorkbenchError(
+                "Tool execution confirmation is missing, expired, or does not match",
+                detail={"reason": "invalid_confirmation"},
+            )
+        tool = self._project_tool(runtime, tool_name, catalog_digest)
+        await runtime.lock.acquire()
+        try:
+            if (
+                runtime.active_turn_uid is not None
+                or runtime.runtime_activity == "working"
+                or runtime.coding_session.is_running
+                or self._runtimes.get(session_uid) is not runtime
+            ):
+                raise SessionBusyError("The local session became busy before the tool test")
+            tool = self._project_tool(runtime, tool_name, catalog_digest)
+            test_uid = str(uuid.uuid4())
+            execution = ToolTestExecution(
+                test_uid=test_uid,
+                session_uid=session_uid,
+                tool_name=tool_name,
+                queue=asyncio.Queue(maxsize=128),
+                cancellation=ToolTestCancellationToken(),
+                owns_runtime_lock=True,
+            )
+            tool_test_coroutine = self._execute_project_tool_test(
+                runtime, tool, canonical, execution
+            )
+            task = self.create_background_task(
+                tool_test_coroutine,
+                name=f"ms-tau-tool-test-{session_uid}-{test_uid}",
+                operation_uid=test_uid,
+            )
+            execution.task = task
+            task.add_done_callback(
+                lambda _task: self._release_unstarted_tool_test(
+                    runtime, execution, tool_test_coroutine
+                )
+            )
+            self._tool_test_executions[test_uid] = execution
+            return execution
+        except BaseException:
+            runtime.lock.release()
+            raise
+
+    def _release_unstarted_tool_test(
+        self,
+        runtime: ActiveSessionRuntime,
+        execution: ToolTestExecution,
+        coroutine: Coroutine[Any, Any, object],
+    ) -> None:
+        """Release ownership when cancellation prevents the worker from starting."""
+
+        if not execution.owns_runtime_lock:
+            return
+        coroutine.close()
+        execution.owns_runtime_lock = False
+        runtime.lock.release()
+        self._tool_test_executions.pop(execution.test_uid, None)
+        execution.cancellation.cancel()
+        self._tool_test_event(execution, {"type": "cancelled", "testUid": execution.test_uid})
+        self._tool_test_event(execution, {"type": "finished", "outcome": "cancelled"})
+        self._tool_test_event(execution, _TOOL_TEST_END)
+
+    @staticmethod
+    def _tool_test_event(
+        execution: ToolTestExecution,
+        event: dict[str, object] | object,
+    ) -> None:
+        try:
+            execution.queue.put_nowait(event)
+        except asyncio.QueueFull:
+            if isinstance(event, dict) and event.get("type") == "update":
+                return
+            with contextlib.suppress(asyncio.QueueEmpty):
+                execution.queue.get_nowait()
+            execution.queue.put_nowait(event)
+
+    async def _execute_project_tool_test(
+        self,
+        runtime: ActiveSessionRuntime,
+        tool: AgentTool,
+        arguments: dict[str, JSONValue],
+        execution: ToolTestExecution,
+    ) -> object:
+        started_at = time.monotonic()
+        self._tool_test_event(
+            execution,
+            {
+                "type": "started",
+                "testUid": execution.test_uid,
+                "toolCallId": execution.test_uid,
+                "toolName": execution.tool_name,
+            },
+        )
+        logger.info(
+            "runtime.tool_workbench.started",
+            session_uid=execution.session_uid,
+            tool_name=execution.tool_name,
+            test_uid=execution.test_uid,
+            source="tool_workbench",
+        )
+        accepting_updates = True
+
+        def on_update(update: AgentToolResult) -> None:
+            if not accepting_updates:
+                return
+            bounded = _bounded_tool_result(update, limit=TOOL_TEST_UPDATE_MAX_BYTES)
+            self._tool_test_event(
+                execution,
+                {"type": "update", "testUid": execution.test_uid, **bounded},
+            )
+
+        status = "completed"
+        try:
+            async with asyncio.timeout(TOOL_TEST_TIMEOUT_SECONDS):
+                result = await tool.execute(
+                    execution.test_uid,
+                    arguments,
+                    signal=execution.cancellation,
+                    on_update=on_update,
+                )
+            bounded = _bounded_tool_result(result, limit=TOOL_TEST_OUTPUT_MAX_BYTES)
+            self._tool_test_event(
+                execution,
+                {"type": "completed", "testUid": execution.test_uid, **bounded},
+            )
+        except TimeoutError:
+            status = "timed_out"
+            execution.cancellation.cancel()
+            self._tool_test_event(
+                execution,
+                {
+                    "type": "error",
+                    "testUid": execution.test_uid,
+                    "error": "tool_test_timed_out",
+                    "message": "The project tool exceeded the 60 second workbench timeout",
+                },
+            )
+        except asyncio.CancelledError:
+            status = "cancelled"
+            execution.cancellation.cancel()
+            self._tool_test_event(
+                execution,
+                {"type": "cancelled", "testUid": execution.test_uid},
+            )
+        except Exception as error:
+            status = "failed"
+            self._tool_test_event(
+                execution,
+                {
+                    "type": "error",
+                    "testUid": execution.test_uid,
+                    "error": "project_tool_failed",
+                    "errorType": type(error).__name__,
+                    "message": f"Project tool failed with {type(error).__name__}",
+                },
+            )
+        finally:
+            accepting_updates = False
+            runtime.last_used_at = time.monotonic()
+            if execution.owns_runtime_lock:
+                execution.owns_runtime_lock = False
+                runtime.lock.release()
+            if self._tool_test_executions.get(execution.test_uid) is execution:
+                self._tool_test_executions.pop(execution.test_uid, None)
+            logger.info(
+                "runtime.tool_workbench.completed",
+                session_uid=execution.session_uid,
+                tool_name=execution.tool_name,
+                test_uid=execution.test_uid,
+                source="tool_workbench",
+                outcome=status,
+                duration_ms=round((time.monotonic() - started_at) * 1000, 3),
+            )
+            self._tool_test_event(execution, {"type": "finished", "outcome": status})
+            self._tool_test_event(execution, _TOOL_TEST_END)
+        return None
+
+    def cancel_project_tool_test(self, session_uid: str, test_uid: str) -> bool:
+        execution = self._tool_test_executions.get(test_uid)
+        if execution is None or execution.session_uid != session_uid:
+            return False
+        execution.cancellation.cancel()
+        if execution.task is not None:
+            execution.task.cancel()
+        return True
 
     @property
     def draining(self) -> bool:
