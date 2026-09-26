@@ -108,9 +108,83 @@ async def test_rest_task_list_get_cancel_and_subscribe_contract(asgi_client):
     assert subscribed.headers["content-type"].startswith("text/event-stream")
     assert '"eventCursor":0' in subscribed.text
     assert '"state":"TASK_STATE_COMPLETED"' in subscribed.text
-    client.list_tasks.assert_awaited_once_with(context_id="session-1")
+    client.list_tasks.assert_awaited_once_with(
+        context_id="session-1",
+        history_length=100,
+    )
     manager.cancel.assert_awaited_once_with("session-1")
     client.cancel_task.assert_awaited_once_with("backend-task-1")
+
+
+async def test_task_history_length_is_bounded_and_uses_public_a2a_roles(asgi_client):
+    requester = {
+        "messageId": "message-1",
+        "taskId": "task-1",
+        "contextId": "session-1",
+        "role": "ROLE_REQUESTER",
+        "parts": [{"text": "Start."}],
+        "extensions": [],
+    }
+    responder = {
+        "messageId": "message-2",
+        "taskId": "task-1",
+        "contextId": "session-1",
+        "role": "ROLE_RESPONDER",
+        "parts": [{"text": "More input is required."}],
+        "extensions": ["https://example.test/input/v1"],
+        "metadata": {"https://example.test/input/v1": {"field": "account"}},
+    }
+    client = AsyncMock()
+    client.list_tasks.return_value = [_task().model_copy(update={"history": []})]
+    client.get_task_by_protocol_id.return_value = _task().model_copy(
+        update={"history": [responder]}
+    )
+
+    async with asgi_client(_app(client, AsyncMock()), headers=USER_CALLER_HEADERS) as http:
+        without_history = await http.get(
+            f"{REST_BASE}/tasks",
+            params={"historyLength": 0},
+        )
+        with_history = await http.get(
+            f"{REST_BASE}/tasks/task-1",
+            params={"historyLength": 1},
+        )
+        invalid = await http.post(
+            "/api/a2a/rpc",
+            json={
+                "jsonrpc": "2.0",
+                "id": "get-invalid-history",
+                "method": "tasks/get",
+                "params": {"id": "task-1", "historyLength": True},
+            },
+        )
+
+    assert "history" not in without_history.json()["tasks"][0]
+    public_message = with_history.json()["task"]["history"][0]
+    assert public_message == {**responder, "role": "ROLE_AGENT"}
+    assert public_message["extensions"] == ["https://example.test/input/v1"]
+    assert invalid.json()["error"] == {
+        "code": -32602,
+        "message": "historyLength must be a non-negative integer",
+    }
+    client.list_tasks.assert_awaited_once_with(context_id="", history_length=0)
+    client.get_task_by_protocol_id.assert_awaited_once_with(
+        "task-1",
+        history_length=1,
+    )
+
+    projected = _task().model_copy(update={"history": [requester, responder]})
+    client.list_tasks.return_value = [projected]
+    async with asgi_client(_app(client, AsyncMock()), headers=USER_CALLER_HEADERS) as http:
+        capped = await http.get(
+            f"{REST_BASE}/tasks",
+            params={"historyLength": 1000},
+        )
+    assert [message["role"] for message in capped.json()["tasks"][0]["history"]] == [
+        "ROLE_USER",
+        "ROLE_AGENT",
+    ]
+    assert client.list_tasks.await_args.kwargs["history_length"] == 100
 
 
 async def test_terminal_task_subscription_is_unsupported_for_rest_and_json_rpc(
@@ -158,7 +232,7 @@ async def test_json_rpc_direct_message_does_not_create_a_task(asgi_client):
                     "message": {
                         "messageId": "message-1",
                         "contextId": "session-1",
-                        "role": "ROLE_REQUESTER",
+                        "role": "ROLE_USER",
                         "parts": [{"text": "Answer directly."}],
                     }
                 },
@@ -225,7 +299,7 @@ async def test_response_kind_requires_extension_and_is_rejected_for_streaming(as
         "message": {
             "messageId": "message-1",
             "contextId": "session-1",
-            "role": "ROLE_REQUESTER",
+            "role": "ROLE_USER",
             "parts": [{"text": "Hello"}],
         },
         "configuration": {"responseKind": "message"},

@@ -1,10 +1,20 @@
 # Changelog
 
-## 1.2.9 — 2026-09-25
+## 1.2.9 — 2026-09-26
 
-- Fixed managed A2A Task creation and continuation to send dictionary-valued message extensions
-  to Django. Missing extensions now become `{}`; unsupported shapes return HTTP 400 before a
-  backend Task mutation, instead of surfacing Django validation as HTTP 502. (Issue #40.)
+- Added bounded A2A Task Message history with hard-cut A2A v1 role projection, canonical durable
+  status Messages, exact idempotent settlement replay, and reference-only status events.
+- Correlated every Task attempt with one immutable Tau turn and exact entry boundaries, including
+  local Task-owned lease fencing, committed/abandoned resolution, and late-write rejection.
+- Rebuilt Tau Board Task detail around Overview, Conversation, Result, Execution, and Technical
+  evidence, with byte-exact streamed Artifact reconstruction and bounded secret-redacted execution
+  entries.
+- Guaranteed A2A failure observability: standard terminal failed status events, conformant safe
+  status Messages, explicit terminalization-unknown transport errors, and bounded request waiting.
+- Added SDK-owned local Task reconciliation. Unclaimed submitted Tasks resume after restart;
+  exhausted starts fail terminally, while stale working attempts with uncertain side effects fail
+  as ambiguous instead of being blindly executed twice. Health, structured logs, and Tau Board now
+  expose recovery and failure evidence.
 - Added Tau Board's Agent view for readable effective Agent Card inspection, source-grouped tool
   catalog inspection, project extension diagnostics, and bounded registered-entry source viewing.
 - Added an explicit local project-tool workbench with schema-generated inputs, authoritative

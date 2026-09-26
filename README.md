@@ -85,6 +85,12 @@ from ms_tau_sdk import create_app
 app = create_app()
 ```
 
+Job-hosted batch execution is an [accepted design](docs/adrs/0015-job-hosted-batch-execution.md)
+with implementation pending. It will run this SDK's configured Tau composition for one assignment
+inside a project Job, close it, and exit without starting Uvicorn. The Job continues to own its
+status and logs. See the [batch guide](docs/guides/job-hosted-batch-execution.md) for the target
+Python integration; the current release does not expose that batch API.
+
 ## Local development without platform sessions
 
 Local mode runs the same workspace Tau runtime without registering an Agent or AgentSession. The
@@ -113,7 +119,25 @@ workspace default. Public A2A Message, Task, streaming, continuation, list/get/c
 subscription flows run without creating a platform AgentSession. Incoming local A2A calls do not
 need managed-gateway caller headers: supplied context IDs are mapped into the workspace-local
 session namespace and local provenance is recorded. Task records and event streams survive process
-restart.
+restart. On startup TAU reschedules unclaimed `submitted` Tasks. A stale `working` Task is not
+blindly executed again: if the previous process may have produced an external side effect, TAU
+settles it as `failed` with `ambiguous_execution_outcome`.
+
+Task terminality comes only from the standard A2A state. `completed`, `failed`, `canceled`, and
+`rejected` are terminal; `input_required` and `auth_required` are resumable interruptions. A normal
+provider, tool, validation, or execution failure is durably settled as `failed` with a safe A2A
+status Message. If TAU cannot persist that transition, a live stream reports
+`task_terminalization_unknown`; poll or subscribe to the Task while its recovery owner resolves the
+durable state. `returnImmediately=false` waits for at most the configured Task wait period and does
+not cancel a still-running Task when that transport wait expires.
+
+Task responses expose bounded A2A Message history separately from Artifacts and execution data.
+Use `configuration.historyLength` on Message send/stream and `historyLength` on Task get/list;
+omission selects the SDK's bounded 100-Message tail, zero omits history without reading it, and a
+positive value returns that latest tail oldest-to-newest. Public A2A roles are `ROLE_USER` and
+`ROLE_AGENT`; Main Sequence requester/responder direction values remain internal to persistence.
+Tau Board renders the conversation, final Artifacts, exact attempt/turn execution, and raw technical
+events as distinct sections.
 
 Local mode also appends privacy-filtered, structured JSON Lines to
 `~/.tau/mainsequence/<workspace-hash>/logs/tau.jsonl`, with bounded rotation. Both the database

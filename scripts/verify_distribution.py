@@ -56,6 +56,7 @@ BOARD_ASSETS = {
     "bulma.min.css",
     "BULMA-LICENSE.txt",
 }
+BOARD_JAVASCRIPT_MAX_BYTES = 64 * 1024
 # Everything the package legitimately ships, as the entries directly below
 # `ms_tau_sdk/`. Anything else in an artifact is residue, so adding a module or
 # data directory to the package is a deliberate release-contract change here.
@@ -172,8 +173,8 @@ def _verify_board_assets(archive: zipfile.ZipFile) -> None:
         raise DistributionError("Board assets exceed the 800 KiB raw limit")
     if sum(len(gzip.compress(value)) for value in assets) >= 120 * 1024:
         raise DistributionError("Board assets exceed the 120 KiB gzip limit")
-    if len(archive.read(f"{BOARD_PACKAGE}/static/app.js")) >= 56 * 1024:
-        raise DistributionError("Board JavaScript exceeds the 56 KiB limit")
+    if len(archive.read(f"{BOARD_PACKAGE}/static/app.js")) >= BOARD_JAVASCRIPT_MAX_BYTES:
+        raise DistributionError("Board JavaScript exceeds the 64 KiB limit")
     html = archive.read(f"{BOARD_PACKAGE}/static/index.html").decode("utf-8")
     if re.search(r"(?:src|href)=[\"']https?://", html):
         raise DistributionError("Board HTML loads a remote asset")

@@ -40,6 +40,7 @@ type AgentTaskStatus = Literal[
     "canceled",
     "rejected",
 ]
+type A2ATaskMessage = dict[str, Any]
 
 
 class BackendModel(BaseModel):
@@ -94,6 +95,7 @@ class SessionEntryRecord(BackendModel):
     entry_type: TauEntryType
     entry_json: dict[str, Any]
     idempotency_key: str
+    turn_uid: str | None = None
 
 
 class SessionEntryList(BackendModel):
@@ -170,6 +172,7 @@ class RuntimeLease(BackendModel):
     cancellation: dict[str, Any] | None = None
     runtime_activity: AgentRuntimeActivity | None = None
     active_turn_uid: str | None = None
+    active_task_attempt_uid: str | None = None
     activity_revision: int | None = None
     activity_sequence: int | None = None
     activity_updated_at: datetime | None = None
@@ -204,6 +207,7 @@ class RuntimeState(BackendModel):
     working: bool = False
     runtime_activity: AgentRuntimeActivity | None = None
     active_turn_uid: str | None = None
+    active_task_attempt_uid: str | None = None
     activity_revision: int | None = None
     activity_sequence: int | None = None
     activity_updated_at: datetime | None = None
@@ -356,13 +360,20 @@ class AgentTask(BackendModel):
     agent_uid: str
     agent_session_uid: str | None = None
     status: AgentTaskStatus
-    status_message: Any = None
+    status_message: A2ATaskMessage | None = None
     status_timestamp: datetime | None = None
     cancellation_requested: bool = False
-    latest_message: dict[str, Any] | None = None
+    latest_message: A2ATaskMessage | None = None
+    history: list[A2ATaskMessage] | None = None
     outputs: list[dict[str, Any]] = Field(default_factory=list)
     metadata: dict[str, Any] = Field(default_factory=dict)
     last_event_sequence: int = 0
+    failure_code: str = ""
+    failure_category: str = ""
+    failure_retryable: bool | None = None
+    correlation_id: str = ""
+    recovery_owner: str = ""
+    recovery_count: int = 0
 
 
 class AgentTaskCreateResult(BackendModel):
@@ -390,6 +401,10 @@ class AgentTaskExecutionAttempt(BackendModel):
         "expired",
         "ambiguous",
     ]
+    turn_uid: str | None = None
+    entry_start_sequence: int | None = Field(default=None, ge=0)
+    entry_end_sequence: int | None = Field(default=None, ge=0)
+    turn_resolution: Literal["pending", "committed", "abandoned"] | None = None
 
 
 class AgentTaskSnapshot(BackendModel):

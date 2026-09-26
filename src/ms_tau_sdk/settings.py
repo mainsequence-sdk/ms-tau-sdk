@@ -193,6 +193,34 @@ class TauSDKSettings(BaseSettings):
         le=10,
         validation_alias="MAINSEQUENCE_TAU_A2A_TASK_EVENT_POLL_SECONDS",
     )
+    a2a_task_wait_timeout_seconds: float = Field(
+        default=30.0,
+        ge=0.1,
+        le=300,
+        validation_alias="MAINSEQUENCE_TAU_A2A_TASK_WAIT_TIMEOUT_SECONDS",
+    )
+    local_a2a_task_reconcile_interval_seconds: float = Field(
+        default=5.0,
+        ge=0.1,
+        le=60,
+        validation_alias="TAU_LOCAL_A2A_TASK_RECONCILE_INTERVAL_SECONDS",
+    )
+    local_a2a_task_stale_after_seconds: float = Field(
+        default=120.0,
+        ge=1,
+        validation_alias="TAU_LOCAL_A2A_TASK_STALE_AFTER_SECONDS",
+    )
+    local_a2a_task_pending_timeout_seconds: float = Field(
+        default=300.0,
+        ge=1,
+        validation_alias="TAU_LOCAL_A2A_TASK_PENDING_TIMEOUT_SECONDS",
+    )
+    local_a2a_task_max_recovery_attempts: int = Field(
+        default=3,
+        ge=1,
+        le=20,
+        validation_alias="TAU_LOCAL_A2A_TASK_MAX_RECOVERY_ATTEMPTS",
+    )
     runtime_lease_ttl_seconds: int = Field(
         default=90,
         ge=10,

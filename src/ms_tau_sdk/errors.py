@@ -42,6 +42,13 @@ class LeaseLostError(TauSDKError):
     status_code = 409
 
 
+class TaskTerminalizationUnknownError(TauSDKError):
+    """Execution stopped before its terminal Task state could be proven durable."""
+
+    code = "task_terminalization_unknown"
+    status_code = 503
+
+
 class SessionBusyError(TauSDKError):
     code = "session_busy"
     status_code = 409

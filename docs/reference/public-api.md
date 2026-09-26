@@ -16,8 +16,8 @@ Builds the complete FastAPI application without starting network dependencies. W
 object is supplied, settings are loaded once from environment variables and `.env`.
 
 The application lifespan owns startup and shutdown of authentication, the backend client, provider
-construction, MCP, durable sessions, leases, and background tasks. Consumers should run the ASGI
-lifespan rather than manually starting private services.
+construction, MCP, durable sessions, leases, background tasks, and the local A2A Task reconciler.
+Consumers should run the ASGI lifespan rather than manually starting private services.
 
 ## `TauSDKSettings`
 
@@ -44,3 +44,20 @@ metadata, so a project can correlate Python composition with the serving process
 ## Command
 
 `ms-tau` resolves `TauSDKSettings`, builds the same application with `create_app`, and runs Uvicorn.
+
+## A2A Task history
+
+The HTTP application projects durable Task communication as the optional A2A `Task.history`
+array. This is Message history only: requester Messages and deliberately persisted responder/status
+Messages. Artifacts, Tau entries, Task events, logs, prompts, and tool traffic are not history.
+
+`configuration.historyLength` applies to REST/JSON-RPC Message send and stream operations;
+`historyLength` applies to Task get and list. Omission requests the SDK's bounded default tail of
+100 Messages, zero performs no history-tail read and omits `history`, and a positive integer returns
+at most that many latest Messages ordered oldest-to-newest. Values above 100 are capped; booleans,
+negative values, and non-integers are rejected.
+
+The public A2A v1 projection uses `ROLE_USER` and `ROLE_AGENT`. The SDK translates those roles to
+its persistence binding at ingress and back at egress without changing Message identity, Parts,
+metadata, extension URI order, or Task references. Status settlement accepts only a complete
+responder Message or no Message; the pre-cutover `{code, message}` status object is not supported.

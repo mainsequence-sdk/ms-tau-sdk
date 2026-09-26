@@ -76,7 +76,7 @@ class _TauEventManager:
         self.delivered_sessions: list[str] = []
         self.provenances: list[object] = []
 
-    async def prompt(self, _context_id: str, _prompt: str, *, provenance=None):
+    async def prompt(self, _context_id: str, _prompt: str, *, provenance=None, turn_uid=None):
         self.provenances.append(provenance)
         for event in self.events:
             yield translate_tau_event(event)
@@ -128,10 +128,11 @@ def _direct_message_client() -> tuple[AsyncMock, AgentTask]:
     client.create_task_output.return_value = {"uid": "output-1", "revision": 1}
     client.append_task_output.return_value = {"uid": "output-1", "revision": 2}
     client.finalize_task_output.return_value = {"uid": "output-1", "revision": 2}
+    client.list_task_messages.return_value = []
     working = task.model_copy(update={"status": "working"})
     completed = task.model_copy(update={"status": "completed"})
 
-    async def get_task(_task_uid):
+    async def get_task(_task_uid, **_kwargs):
         return completed if client.settle_task_attempt.await_count else working
 
     client.get_task.side_effect = get_task
@@ -158,7 +159,7 @@ async def _direct_message_response(
         body = {
             "message": {
                 "messageId": "message-1",
-                "role": "ROLE_REQUESTER",
+                "role": "ROLE_USER",
                 "contextId": "session-1",
                 "parts": [{"text": "What do the two DataNodes do?"}],
             },
@@ -251,7 +252,7 @@ def test_strict_json_message_uses_data_part():
         strict_json=True,
     )
 
-    assert message["role"] == "ROLE_RESPONDER"
+    assert message["role"] == "ROLE_AGENT"
     assert message["parts"] == [{"data": {"ok": True}, "mediaType": "application/json"}]
 
 
@@ -260,11 +261,11 @@ def test_strict_json_message_uses_data_part():
     [
         (
             {"role": "user"},
-            "message.role must identify the requester (wire value ROLE_REQUESTER)",
+            "A2A v1 Message role must be ROLE_USER or ROLE_AGENT",
         ),
         (
-            {"role": "ROLE_USER"},
-            "message.role must identify the requester (wire value ROLE_REQUESTER)",
+            {"role": "ROLE_RESPONDER"},
+            "A2A v1 Message role must be ROLE_USER or ROLE_AGENT",
         ),
         ({"kind": "message"}, "message.kind is not part of the A2A v1 Message envelope"),
         (
@@ -280,7 +281,7 @@ def test_request_parts_rejects_obsolete_v03_envelope(
     body = {
         "message": {
             "messageId": "message-1",
-            "role": "ROLE_REQUESTER",
+            "role": "ROLE_USER",
             "contextId": "session-1",
             "parts": [{"text": "Current part."}],
             **message_update,
@@ -458,7 +459,7 @@ async def test_omitted_response_kind_defaults_to_direct_message_without_task():
     )
 
     assert response.status_code == 200
-    assert response.json()["message"]["role"] == "ROLE_RESPONDER"
+    assert response.json()["message"]["role"] == "ROLE_AGENT"
     assert "kind" not in response.json()["message"]
     client.get_agent_card.assert_not_awaited()
     client.get_session.assert_not_awaited()
@@ -523,7 +524,7 @@ async def test_message_send_accepts_standard_return_immediately_for_message():
             json={
                 "message": {
                     "messageId": "message-1",
-                    "role": "ROLE_REQUESTER",
+                    "role": "ROLE_USER",
                     "contextId": "session-1",
                     "parts": [{"text": "Do this."}],
                 },
@@ -588,7 +589,7 @@ async def test_message_send_task_requires_advertised_task_and_returns_task():
             json={
                 "message": {
                     "messageId": "message-1",
-                    "role": "ROLE_REQUESTER",
+                    "role": "ROLE_USER",
                     "contextId": "session-1",
                     "parts": [{"text": "Run this asynchronously."}],
                 },
@@ -663,7 +664,7 @@ async def test_immediate_task_return_survives_local_accelerator_claim_failure():
             json={
                 "message": {
                     "messageId": "message-1",
-                    "role": "ROLE_REQUESTER",
+                    "role": "ROLE_USER",
                     "contextId": "session-1",
                     "parts": [{"text": "Run durably."}],
                 },
@@ -679,7 +680,7 @@ async def test_immediate_task_return_survives_local_accelerator_claim_failure():
     assert response.json()["task"]["status"]["state"] == "TASK_STATE_SUBMITTED"
     assert manager.background is None
     client.create_task.assert_awaited_once()
-    assert client.create_task.await_args.args[0]["initial_message"]["extensions"] == {}
+    assert client.create_task.await_args.args[0]["initial_message"]["extensions"] == []
 
 
 @pytest.mark.asyncio
@@ -703,7 +704,7 @@ async def test_message_send_task_waits_when_return_immediately_is_false():
     completed = task.model_copy(update={"status": "completed"})
     settled = False
 
-    async def get_task(_task_uid):
+    async def get_task(_task_uid, **_kwargs):
         return completed if settled else working
 
     async def settle_task_attempt(*args, **kwargs):
@@ -751,7 +752,7 @@ async def test_message_send_task_waits_when_return_immediately_is_false():
             json={
                 "message": {
                     "messageId": "message-1",
-                    "role": "ROLE_REQUESTER",
+                    "role": "ROLE_USER",
                     "contextId": "session-1",
                     "parts": [{"text": "Run and wait."}],
                 },
@@ -818,7 +819,7 @@ async def test_task_continuation_uses_authorized_backend_task_and_new_dispatch()
                 "message": {
                     "messageId": "message-2",
                     "taskId": "task-1",
-                    "role": "ROLE_REQUESTER",
+                    "role": "ROLE_USER",
                     "contextId": "session-1",
                     "parts": [{"text": "Use account A."}],
                 },
@@ -835,68 +836,18 @@ async def test_task_continuation_uses_authorized_backend_task_and_new_dispatch()
     client.continue_task.assert_awaited_once_with(
         interrupted.uid,
         {
-            "message_id": "message-2",
-            "role": "user",
+            "messageId": "message-2",
+            "contextId": "session-1",
+            "taskId": "task-1",
+            "role": "ROLE_REQUESTER",
             "parts": [{"text": "Use account A."}],
             "metadata": {},
-            "extensions": {},
-            "reference_task_ids": [],
+            "extensions": [],
+            "referenceTaskIds": [],
         },
     )
     assert manager.background is not None
     manager.background.close()
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("continuation", [False, True])
-async def test_task_message_rejects_list_extensions_before_backend_mutation(continuation):
-    client, _task = _direct_message_client()
-    client.get_agent_card.return_value = AgentCardEnvelope(
-        agent_session_uid="session-1",
-        agent_uid="agent-1",
-        agent_card={
-            "capabilities": {
-                "extensions": [
-                    {
-                        "uri": RESPONSE_KIND_EXTENSION_URI,
-                        "params": {"supportedResponseKinds": ["task"]},
-                    }
-                ]
-            }
-        },
-    )
-    app = FastAPI()
-    app.include_router(router)
-    app.dependency_overrides[backend] = lambda: client
-    app.dependency_overrides[runtime_manager] = lambda: _TauEventManager()
-    app.dependency_overrides[settings] = lambda: TauSDKSettings(_env_file=None)
-    message = {
-        "messageId": "message-1",
-        "role": "ROLE_REQUESTER",
-        "contextId": "session-1",
-        "parts": [{"text": "Run durably."}],
-        "extensions": [],
-    }
-    if continuation:
-        message["taskId"] = "task-1"
-
-    async with httpx.AsyncClient(
-        transport=httpx.ASGITransport(app=app),
-        base_url="http://test",
-    ) as http:
-        response = await http.post(
-            f"{REST_BASE}/message:send",
-            headers={"A2A-Extensions": RESPONSE_KIND_EXTENSION_URI, **USER_CALLER_HEADERS},
-            json={
-                "message": message,
-                "configuration": {"responseKind": "task", "returnImmediately": True},
-            },
-        )
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == "message.extensions must be an object"
-    client.create_task.assert_not_awaited()
-    client.continue_task.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -919,7 +870,7 @@ async def test_message_send_rejects_non_boolean_return_immediately():
             json={
                 "message": {
                     "messageId": "message-1",
-                    "role": "ROLE_REQUESTER",
+                    "role": "ROLE_USER",
                     "contextId": "session-1",
                     "parts": [{"text": "Do this."}],
                 },
@@ -952,7 +903,7 @@ async def test_message_send_rejects_task_when_agent_card_is_message_only():
             json={
                 "message": {
                     "messageId": "message-1",
-                    "role": "ROLE_REQUESTER",
+                    "role": "ROLE_USER",
                     "contextId": "session-1",
                     "parts": [{"text": "Run this asynchronously."}],
                 },
@@ -1018,7 +969,7 @@ async def test_direct_message_send_stamps_an_agent_caller_from_gateway_headers()
             json={
                 "message": {
                     "messageId": "message-1",
-                    "role": "ROLE_REQUESTER",
+                    "role": "ROLE_USER",
                     "contextId": "session-1",
                     "parts": [{"text": "Do this."}],
                     # Identity in the body must never win over the headers.
@@ -1071,7 +1022,7 @@ async def test_message_routes_reject_invalid_caller_identity_before_any_turn(hea
     body = {
         "message": {
             "messageId": "message-1",
-            "role": "ROLE_REQUESTER",
+            "role": "ROLE_USER",
             "contextId": "session-1",
             "parts": [{"text": "Do this."}],
         },

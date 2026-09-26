@@ -1,4 +1,5 @@
 import asyncio
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -7,9 +8,12 @@ from fastapi import HTTPException
 
 from ms_tau_sdk.api.a2a import (
     _execute_task,
+    _message_stream_response,
     _output_contract,
     _stream_task_events,
+    _task_payload,
     _task_subscription_events,
+    _wait_for_task_return_state,
     task_caller_delivery_available,
     task_dispatch_available,
 )
@@ -21,7 +25,11 @@ from ms_tau_sdk.backend.models import (
     AgentTaskExecutionAttempt,
     AgentTaskSnapshot,
 )
-from ms_tau_sdk.errors import BackendError
+from ms_tau_sdk.errors import BackendError, TaskTerminalizationUnknownError
+from ms_tau_sdk.protocols.a2a_failure import (
+    TASK_FAILURE_EXTENSION_URI,
+    TASK_STATUS_DETAIL_EXTENSION_URI,
+)
 from ms_tau_sdk.runtime.events import TauRuntimeEvent
 from ms_tau_sdk.runtime.task_context import (
     TaskExecutionContext,
@@ -78,7 +86,7 @@ class _ExecutionManager:
     async def task_execution_fence(self, _session_uid: str):
         return SimpleNamespace(holder_id="holder-1", lease_token="lease-1")
 
-    async def prompt(self, _context_id: str, _prompt: str, *, provenance=None):
+    async def prompt(self, _context_id: str, _prompt: str, *, provenance=None, turn_uid=None):
         self.prompt_started = True
         raise asyncio.CancelledError
         yield  # pragma: no cover
@@ -114,7 +122,7 @@ async def test_backend_outage_leaves_attempt_for_durable_recovery():
     client = _claimed_client(task)
 
     class Manager(_ExecutionManager):
-        async def prompt(self, _context_id: str, _prompt: str, *, provenance=None):
+        async def prompt(self, _context_id: str, _prompt: str, *, provenance=None, turn_uid=None):
             raise BackendError("backend unavailable")
             yield  # pragma: no cover
 
@@ -176,8 +184,8 @@ async def test_dispatch_signal_pulls_durable_task_then_claims_before_execution()
         update={
             "dispatch_uid": "dispatch-1",
             "latest_message": {
-                "message_id": "message-1",
-                "role": "user",
+                "messageId": "message-1",
+                "role": "ROLE_REQUESTER",
                 "parts": [{"text": "Do durable work."}],
             },
             "metadata": {
@@ -226,7 +234,7 @@ async def test_dispatch_signal_pulls_durable_task_then_claims_before_execution()
         async def task_execution_fence(self, _session_uid):
             return SimpleNamespace(holder_id="holder-1", lease_token="lease-1")
 
-        async def prompt(self, _context_id, _prompt, *, provenance=None):
+        async def prompt(self, _context_id, _prompt, *, provenance=None, turn_uid=None):
             self.prompt_started = True
             assert client.claim_task_dispatch.await_count == 1
             yield TauRuntimeEvent(
@@ -292,7 +300,7 @@ async def test_attempt_writes_refresh_the_rotating_canonical_session_lease_token
                 lease_token=f"lease-{self.fence_count}",
             )
 
-        async def prompt(self, _context_id, _prompt, *, provenance=None):
+        async def prompt(self, _context_id, _prompt, *, provenance=None, turn_uid=None):
             yield TauRuntimeEvent(
                 type="message_end",
                 data={
@@ -340,14 +348,14 @@ async def test_structured_interruption_settles_attempt_without_requiring_text_ou
         async def task_execution_fence(self, _session_uid):
             return SimpleNamespace(holder_id="holder-1", lease_token="lease-1")
 
-        async def prompt(self, _context_id, _prompt, *, provenance=None):
+        async def prompt(self, _context_id, _prompt, *, provenance=None, turn_uid=None):
             context = active_task_execution()
             assert context is not None
             context.request_interruption(
                 status="input_required",
-                message={
+                text="Which account should be used?",
+                details={
                     "reason": "missing_account",
-                    "message": "Which account should be used?",
                     "inputSchema": {"type": "string"},
                 },
             )
@@ -370,18 +378,13 @@ async def test_structured_interruption_settles_attempt_without_requiring_text_ou
     )
 
     assert result == {"taskId": "task-1", "state": "input_required"}
-    client.settle_task_attempt.assert_awaited_once_with(
-        working.uid,
-        attempt_uid="attempt-1",
-        holder_id="holder-1",
-        lease_token="lease-1",
-        status="input_required",
-        status_message={
-            "reason": "missing_account",
-            "message": "Which account should be used?",
-            "inputSchema": {"type": "string"},
-        },
-    )
+    settlement = client.settle_task_attempt.await_args
+    assert settlement.args == (working.uid,)
+    assert settlement.kwargs["status"] == "input_required"
+    status_message = settlement.kwargs["status_message"]
+    assert status_message["role"] == "ROLE_RESPONDER"
+    assert status_message["parts"] == [{"text": "Which account should be used?"}]
+    assert status_message["extensions"] == [TASK_STATUS_DETAIL_EXTENSION_URI]
     client.create_task_output.assert_not_awaited()
     client.append_task_output.assert_not_awaited()
     client.finalize_task_output.assert_not_awaited()
@@ -401,7 +404,7 @@ async def test_streaming_terminal_agent_failure_settles_task_failed_not_complete
         async def task_execution_fence(self, _session_uid):
             return SimpleNamespace(holder_id="holder-1", lease_token="lease-1")
 
-        async def prompt(self, _context_id, _prompt, *, provenance=None):
+        async def prompt(self, _context_id, _prompt, *, provenance=None, turn_uid=None):
             yield TauRuntimeEvent(
                 type="message_end",
                 data={
@@ -414,7 +417,56 @@ async def test_streaming_terminal_agent_failure_settles_task_failed_not_complete
                 },
             )
 
-    with pytest.raises(HTTPException, match="Provider failed"):
+    events = [
+        event
+        async for event in _stream_task_events(
+            client,
+            Manager(),  # type: ignore[arg-type]
+            working,
+            prompt="Do it.",
+            output_contract=_output_contract({}),
+            max_output_bytes=1024,
+            provenance={"channel": "a2a", "origin": "agent"},
+            history_length=0,
+        )
+    ]
+
+    assert events[-1]["statusUpdate"]["status"]["state"] == "TASK_STATE_FAILED"
+    assert events[-1]["statusUpdate"]["final"] is True
+    settled = client.settle_task_attempt.await_args.kwargs
+    assert settled["status"] == "failed"
+    assert settled["outcome_category"] == "execution"
+    assert settled["failure_detail"] == "HTTPException"
+    status_message = settled["status_message"]
+    assert status_message["role"] == "ROLE_RESPONDER"
+    assert status_message["parts"] == [{"text": "Task execution failed."}]
+    assert status_message["metadata"][TASK_FAILURE_EXTENSION_URI] == {
+        "code": "execution_failed",
+        "category": "execution",
+        "retryable": False,
+        "attemptNumber": 1,
+        "correlationId": "task-1",
+    }
+    client.list_task_messages.assert_not_awaited()
+
+
+async def test_streaming_reports_terminalization_unknown_when_failure_cannot_be_settled():
+    working = _task("working")
+    client = _claimed_client(working)
+    client.settle_task_attempt.side_effect = BackendError("backend unavailable")
+
+    class Manager:
+        settings = TauSDKSettings(_env_file=None)
+        draining = False
+
+        async def task_execution_fence(self, _session_uid):
+            return SimpleNamespace(holder_id="holder-1", lease_token="lease-1")
+
+        async def prompt(self, _context_id, _prompt, *, provenance=None, turn_uid=None):
+            raise ValueError("tool failed")
+            yield  # pragma: no cover
+
+    with pytest.raises(TaskTerminalizationUnknownError) as captured:
         _events = [
             event
             async for event in _stream_task_events(
@@ -428,16 +480,82 @@ async def test_streaming_terminal_agent_failure_settles_task_failed_not_complete
             )
         ]
 
-    client.settle_task_attempt.assert_awaited_once_with(
-        working.uid,
-        attempt_uid="attempt-1",
-        holder_id="holder-1",
-        lease_token="lease-1",
-        status="failed",
-        status_message={"message": "Task execution failed"},
-        outcome_category="execution",
-        failure_detail="HTTPException",
+    assert captured.value.code == "task_terminalization_unknown"
+    assert captured.value.detail == {
+        "taskId": "task-1",
+        "correlationId": "task-1",
+        "retryable": True,
+    }
+
+
+async def test_task_return_wait_is_bounded_without_terminalizing_the_task():
+    submitted = _task("submitted")
+    client = AsyncMock()
+    client.get_task_snapshot.return_value = AgentTaskSnapshot(task=submitted, event_cursor=1)
+
+    result = await _wait_for_task_return_state(
+        client,
+        submitted,
+        poll_interval_seconds=0.01,
+        wait_timeout_seconds=0.02,
     )
+
+    assert result.status == "submitted"
+    assert client.get_task_snapshot.await_count >= 1
+    client.settle_task_attempt.assert_not_awaited()
+
+
+def test_legacy_status_detail_is_rejected_instead_of_manufacturing_a_message():
+    interrupted = _task("input_required").model_copy(
+        update={
+            "status_message": {
+                "message": "Choose an account.",
+                "reason": "missing_account",
+                "inputSchema": {"type": "string"},
+            }
+        }
+    )
+
+    with pytest.raises(ValueError, match="complete Main Sequence A2A Message"):
+        _task_payload(interrupted)
+
+
+async def test_stream_transport_reports_unknown_terminalization_without_raw_error(monkeypatch):
+    async def failed_events(*_args, **_kwargs):
+        raise ValueError("provider secret must not leave the process")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr("ms_tau_sdk.api.a2a._stream_task_events", failed_events)
+
+    class Manager:
+        def mark_response_delivered(self, _session_uid):
+            return False
+
+    response = _message_stream_response(
+        client=AsyncMock(),
+        manager=Manager(),  # type: ignore[arg-type]
+        task=_task("working"),
+        prompt="Do it.",
+        output_contract=_output_contract({}),
+        max_output_bytes=1024,
+        provenance={"channel": "a2a", "origin": "agent"},
+    )
+    body = b"".join([chunk async for chunk in response.body_iterator]).decode()
+    payload = json.loads(body.removeprefix("data: ").strip())
+
+    assert payload == {
+        "error": {
+            "code": "task_terminalization_unknown",
+            "message": "Task execution stopped before its terminal state could be persisted",
+            "detail": {
+                "taskId": "task-1",
+                "correlationId": "task-1",
+                "retryable": True,
+            },
+        },
+        "final": True,
+    }
+    assert "provider secret" not in body
 
 
 async def test_subscription_replays_artifact_and_status_events_from_requested_cursor():
@@ -494,6 +612,7 @@ async def test_task_controls_bind_interruption_to_the_active_attempt():
     input_context = TaskExecutionContext(
         task_uid="backend-task-1",
         task_id="task-1",
+        context_id="session-1",
         attempt_uid="attempt-1",
         holder_id="holder-1",
         lease_token="lease-1",
@@ -510,15 +629,18 @@ async def test_task_controls_bind_interruption_to_the_active_attempt():
 
     assert input_result.details == {"accepted": True, "state": "input_required"}
     assert input_context.interruption_status == "input_required"
-    assert input_context.interruption_message == {
-        "message": "Which account should be used?",
-        "reason": "missing_account",
-        "inputSchema": {"type": "string"},
-    }
+    assert input_context.interruption_message is not None
+    assert input_context.interruption_message["role"] == "ROLE_RESPONDER"
+    assert input_context.interruption_message["contextId"] == "session-1"
+    assert input_context.interruption_message["taskId"] == "task-1"
+    assert input_context.interruption_message["parts"] == [
+        {"text": "Which account should be used?"}
+    ]
 
     authorization_context = TaskExecutionContext(
         task_uid="backend-task-1",
         task_id="task-1",
+        context_id="session-1",
         attempt_uid="attempt-2",
         holder_id="holder-1",
         lease_token="lease-1",
@@ -534,10 +656,11 @@ async def test_task_controls_bind_interruption_to_the_active_attempt():
 
     assert authorization_result.details == {"accepted": True, "state": "auth_required"}
     assert authorization_context.interruption_status == "auth_required"
-    assert authorization_context.interruption_message == {
-        "message": "Authorize the provider account.",
-        "requirementReference": "provider-auth-7",
-    }
+    assert authorization_context.interruption_message is not None
+    assert authorization_context.interruption_message["role"] == "ROLE_RESPONDER"
+    assert authorization_context.interruption_message["parts"] == [
+        {"text": "Authorize the provider account."}
+    ]
 
 
 async def test_active_caller_turn_leaves_durable_delivery_queued():

@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
-from typing import Annotated, Any
+from typing import Annotated, Any, cast
 
 import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
@@ -26,8 +26,12 @@ from ms_tau_sdk.backend.models import (
     AgentTaskCreateResult,
     AgentTaskSnapshot,
 )
-from ms_tau_sdk.errors import BackendError, LeaseLostError
+from ms_tau_sdk.errors import BackendError, LeaseLostError, TaskTerminalizationUnknownError
 from ms_tau_sdk.logging import bind_request_log_fields
+from ms_tau_sdk.protocols.a2a_failure import (
+    failure_status_message,
+    normalize_status_message,
+)
 from ms_tau_sdk.protocols.a2a_message import (
     agent_message as serialize_agent_message,
 )
@@ -40,7 +44,12 @@ from ms_tau_sdk.protocols.a2a_message import (
 from ms_tau_sdk.protocols.a2a_message import (
     sse as encode_sse,
 )
-from ms_tau_sdk.protocols.a2a_roles import A2AMessageDirection
+from ms_tau_sdk.protocols.a2a_roles import (
+    A2AMessageDirection,
+    A2AProtocolRole,
+    message_to_binding,
+    message_to_protocol,
+)
 from ms_tau_sdk.protocols.strict_json import (
     StrictJsonContract,
     StrictJsonError,
@@ -97,6 +106,22 @@ PUSH_NOTIFICATION_RPC_METHODS = frozenset(
     }
 )
 SAFE_CORRELATION_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
+DEFAULT_TASK_HISTORY_LENGTH = 100
+
+
+def _history_length(value: object, *, default: int = DEFAULT_TASK_HISTORY_LENGTH) -> int:
+    if value is None:
+        return default
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise HTTPException(status_code=400, detail="historyLength must be a non-negative integer")
+    return min(value, DEFAULT_TASK_HISTORY_LENGTH)
+
+
+def _body_history_length(body: dict[str, Any]) -> int:
+    configuration = body.get("configuration", {})
+    if not isinstance(configuration, dict):
+        raise HTTPException(status_code=400, detail="configuration must be an object")
+    return _history_length(configuration.get("historyLength"))
 
 
 def _safe_correlation(value: object) -> str | None:
@@ -412,13 +437,14 @@ def _materialize_pdfs(
 
 
 def _request_parts(body: dict[str, Any], config: TauSDKSettings) -> tuple[dict[str, Any], str]:
-    normalized_body = body
-    if isinstance(body.get("message"), dict) and "role" not in body["message"]:
-        normalized_body = dict(body)
-        normalized_body["message"] = {
-            **body["message"],
-            "role": A2AMessageDirection.REQUESTER.value,
-        }
+    normalized_body = dict(body)
+    if isinstance(body.get("message"), dict):
+        public_message = dict(body["message"])
+        public_message.setdefault("role", A2AProtocolRole.USER.value)
+        try:
+            normalized_body["message"] = message_to_binding(public_message)
+        except ValueError as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
     if config.local_mode and isinstance(normalized_body.get("message"), dict):
         normalized_body = dict(normalized_body)
         local_message = dict(normalized_body["message"])
@@ -458,14 +484,15 @@ def _agent_message(
     text: str,
     strict_json: bool,
 ) -> dict[str, Any]:
-    return serialize_agent_message(
+    binding_message = serialize_agent_message(
         context_id=context_id,
         text=text,
         strict_json=strict_json,
     )
+    return cast(dict[str, Any], message_to_protocol(binding_message))
 
 
-def _task_payload(task: AgentTask) -> dict[str, Any]:
+def _task_payload(task: AgentTask, *, history_length: int | None = None) -> dict[str, Any]:
     artifacts = [
         {
             "artifactId": str(output.get("artifact_id") or output.get("uid")),
@@ -474,27 +501,39 @@ def _task_payload(task: AgentTask) -> dict[str, Any]:
         }
         for output in task.outputs
     ]
-    latest = task.latest_message or {}
-    if not artifacts and latest.get("role") == "agent":
-        artifacts = [
-            {
-                "artifactId": str(latest.get("message_id") or latest.get("uid")),
-                "parts": latest.get("parts", []),
-            }
-        ]
     timestamp = task.status_timestamp or datetime.now(UTC)
     status: dict[str, Any] = {
         "state": STATE_MAP.get(task.status, "TASK_STATE_UNKNOWN"),
         "timestamp": timestamp.isoformat().replace("+00:00", "Z"),
     }
-    if task.status_message:
-        status["message"] = task.status_message
-    return {
+    status_message = normalize_status_message(
+        task.status_message,
+        context_id=task.context_id,
+        task_id=task.task_id,
+    )
+    if status_message is not None:
+        status["message"] = message_to_protocol(status_message)
+    payload: dict[str, Any] = {
         "id": task.task_id,
         "contextId": task.context_id,
         "status": status,
         "artifacts": artifacts,
     }
+    if history_length != 0 and task.history is not None:
+        payload["history"] = [message_to_protocol(message) for message in task.history]
+    return payload
+
+
+async def _task_with_history(
+    client: MainSequenceClient,
+    task: AgentTask,
+    *,
+    history_length: int,
+) -> AgentTask:
+    if history_length == 0:
+        return task.model_copy(update={"history": None})
+    history = await client.list_task_messages(task.uid, limit=history_length, offset=0)
+    return task.model_copy(update={"history": history})
 
 
 def _append_bounded(
@@ -670,9 +709,13 @@ async def _collect_turn(
     *,
     max_output_bytes: int,
     provenance: TurnProvenance,
+    turn_uid: str | None = None,
 ) -> str:
     accumulator = _TurnAccumulator(max_output_bytes=max_output_bytes)
-    async for event in manager.prompt(context_id, prompt, provenance=provenance):
+    prompt_options: dict[str, Any] = {"provenance": provenance}
+    if turn_uid is not None:
+        prompt_options["turn_uid"] = turn_uid
+    async for event in manager.prompt(context_id, prompt, **prompt_options):
         accumulator.consume(event)
     context = active_task_execution()
     if context is not None and context.interruption_status is not None:
@@ -698,6 +741,7 @@ async def _collect_validated_turn(
     *,
     max_output_bytes: int,
     provenance: TurnProvenance,
+    turn_uid: str | None = None,
 ) -> str:
     text = await _collect_turn(
         manager,
@@ -705,21 +749,23 @@ async def _collect_validated_turn(
         prompt,
         max_output_bytes=max_output_bytes,
         provenance=provenance,
+        turn_uid=turn_uid,
     )
     if not contract.enabled:
         return text
     original_text = text
-    for attempt in range(contract.repair_attempts + 1):
+    repair_attempts = 0 if turn_uid is not None else contract.repair_attempts
+    for attempt in range(repair_attempts + 1):
         try:
             canonical, _value = validate_strict_json(text, contract)
             return canonical
         except StrictJsonError as error:
-            if attempt >= contract.repair_attempts:
+            if attempt >= repair_attempts:
                 raise HTTPException(
                     status_code=502,
                     detail=(
                         "Agent did not satisfy the strict JSON output contract after "
-                        f"{contract.repair_attempts} repair attempts: {error}"
+                        f"{repair_attempts} repair attempts: {error}"
                     ),
                 ) from error
             text = await _collect_turn(
@@ -737,20 +783,6 @@ async def _collect_validated_turn(
     raise AssertionError("strict JSON repair loop did not terminate")
 
 
-def _backend_task_message(message: dict[str, Any]) -> dict[str, Any]:
-    extensions = message.get("extensions", {})
-    if not isinstance(extensions, dict):
-        raise HTTPException(status_code=400, detail="message.extensions must be an object")
-    return {
-        "message_id": message["messageId"],
-        "role": "user",
-        "parts": message["parts"],
-        "metadata": message.get("metadata", {}),
-        "extensions": extensions,
-        "reference_task_ids": message.get("referenceTaskIds", []),
-    }
-
-
 async def _create_backend_task(
     client: MainSequenceClient,
     *,
@@ -759,7 +791,6 @@ async def _create_backend_task(
     output_contract: StrictJsonContract | None = None,
     provenance: TurnProvenance | None = None,
 ) -> AgentTaskCreateResult:
-    initial_message = _backend_task_message(message)
     context_id = str(message["contextId"])
     session = await client.get_session(context_id)
     if not session.agent_uid:
@@ -770,7 +801,16 @@ async def _create_backend_task(
             "agent_session_uid": context_id,
             "context_id": context_id,
             "task_id": task_id,
-            "initial_message": initial_message,
+            "initial_message": {
+                "messageId": message["messageId"],
+                "contextId": context_id,
+                "taskId": task_id,
+                "role": A2AMessageDirection.REQUESTER.value,
+                "parts": message["parts"],
+                "metadata": message.get("metadata", {}),
+                "extensions": message.get("extensions", []),
+                "referenceTaskIds": message.get("referenceTaskIds", []),
+            },
             "metadata": {
                 "transport": "a2a",
                 "execution": {
@@ -793,10 +833,15 @@ async def _wait_for_task_return_state(
     task: AgentTask,
     *,
     poll_interval_seconds: float,
+    wait_timeout_seconds: float,
 ) -> AgentTask:
     current = task
+    deadline = time.monotonic() + wait_timeout_seconds
     while current.status not in TASK_RETURN_STATES:
-        await asyncio.sleep(poll_interval_seconds)
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        await asyncio.sleep(min(poll_interval_seconds, remaining))
         current = (await client.get_task_snapshot(current.uid)).task
     return current
 
@@ -804,6 +849,8 @@ async def _wait_for_task_return_state(
 @dataclass(frozen=True, slots=True)
 class _ClaimedTask:
     attempt_uid: str
+    attempt_number: int
+    turn_uid: str
     holder_id: str
     lease_token: str
 
@@ -846,14 +893,18 @@ async def _claim_backend_task(
         executor_instance_id=fence.holder_id,
     )
     fence = await manager.task_execution_fence(task.agent_session_uid or task.context_id)
+    turn_uid = str(uuid.uuid4())
     attempt = await client.start_task_attempt(
         task.uid,
         attempt_uid=attempt.uid,
         holder_id=fence.holder_id,
         lease_token=fence.lease_token,
+        turn_uid=turn_uid,
     )
     return _ClaimedTask(
         attempt_uid=attempt.uid,
+        attempt_number=attempt.attempt_number,
+        turn_uid=turn_uid,
         holder_id=fence.holder_id,
         lease_token=fence.lease_token,
     )
@@ -900,6 +951,66 @@ async def _settle_claimed_task(
         **optional,
     )
     return await client.get_task(task.uid)
+
+
+async def _settle_execution_failure(
+    client: MainSequenceClient,
+    manager: SessionRuntimeManager,
+    task: AgentTask,
+    claim: _ClaimedTask,
+    error: Exception,
+) -> AgentTask:
+    status_message = failure_status_message(
+        context_id=task.context_id,
+        task_id=task.task_id,
+        failure_code="execution_failed",
+        category="execution",
+        retryable=False,
+        attempt_number=claim.attempt_number,
+        correlation_id=task.task_id,
+    )
+    try:
+        failed = await _settle_claimed_task(
+            client,
+            manager,
+            task,
+            claim,
+            status="failed",
+            status_message=status_message,
+            outcome_category="execution",
+            failure_detail=type(error).__name__,
+        )
+    except Exception as settlement_error:
+        logger.error(
+            "a2a.task.terminalization_unknown",
+            message="Task execution failed before its terminal state could be persisted",
+            task_uid=task.uid,
+            task_id=task.task_id,
+            attempt_uid=claim.attempt_uid,
+            attempt_number=claim.attempt_number,
+            execution_error_type=type(error).__name__,
+            settlement_error_type=type(settlement_error).__name__,
+            outcome="terminalization_unknown",
+        )
+        raise TaskTerminalizationUnknownError(
+            "Task execution stopped before its terminal state could be persisted",
+            detail={
+                "taskId": task.task_id,
+                "correlationId": task.task_id,
+                "retryable": True,
+            },
+        ) from settlement_error
+    logger.info(
+        "a2a.task.failed",
+        message="Task execution failure was persisted",
+        task_uid=task.uid,
+        task_id=task.task_id,
+        attempt_uid=claim.attempt_uid,
+        attempt_number=claim.attempt_number,
+        error_type=type(error).__name__,
+        outcome="execution_failed",
+    )
+    return failed
 
 
 @dataclass(slots=True)
@@ -1024,6 +1135,7 @@ async def _collect_task_turn(
             contract,
             max_output_bytes=max_output_bytes,
             provenance=provenance,
+            turn_uid=writer.claim.turn_uid,
         )
         context = active_task_execution()
         if context is not None and context.interruption_status is not None:
@@ -1033,7 +1145,12 @@ async def _collect_task_turn(
         return text
 
     accumulator = _TurnAccumulator(max_output_bytes=max_output_bytes)
-    async for event in manager.prompt(task.context_id, prompt, provenance=provenance):
+    async for event in manager.prompt(
+        task.context_id,
+        prompt,
+        provenance=provenance,
+        turn_uid=writer.claim.turn_uid,
+    ):
         await writer.ensure_not_canceled()
         accumulator.consume(event)
         value = _event_text(event.type, event.data, has_chunks=bool(accumulator.delta_chunks[:-1]))
@@ -1090,6 +1207,7 @@ async def _execute_task(
     task_context = TaskExecutionContext(
         task_uid=task.uid,
         task_id=task.task_id,
+        context_id=task.context_id,
         attempt_uid=claim.attempt_uid,
         holder_id=claim.holder_id,
         lease_token=claim.lease_token,
@@ -1164,17 +1282,7 @@ async def _execute_task(
     except (BackendError, LeaseLostError):
         raise
     except Exception as error:
-        with contextlib.suppress(Exception):
-            await _settle_claimed_task(
-                client,
-                manager,
-                task,
-                claim,
-                status="failed",
-                status_message={"message": "Task execution failed"},
-                outcome_category="execution",
-                failure_detail=type(error).__name__,
-            )
+        await _settle_execution_failure(client, manager, task, claim, error)
         raise
 
 
@@ -1194,6 +1302,14 @@ async def _schedule_task_accelerator(
     try:
         claim = await _claim_backend_task(client, manager, task)
     except (BackendError, LeaseLostError, RuntimeError) as error:
+        record_failure = getattr(client, "record_a2a_recovery_failure", None)
+        if record_failure is not None:
+            with contextlib.suppress(Exception):
+                await record_failure(
+                    task.uid,
+                    recovery_owner=str(getattr(manager, "holder_id", "unknown")),
+                    error_type=type(error).__name__,
+                )
         logger.info(
             "a2a.task.accelerator.deferred",
             task_uid=task.uid,
@@ -1228,6 +1344,166 @@ async def _schedule_task_accelerator(
         )
         return False
     return scheduled
+
+
+async def _persist_local_recovery_contract(
+    client: MainSequenceClient,
+    task: AgentTask,
+    *,
+    output_contract: StrictJsonContract,
+    provenance: TurnProvenance,
+) -> AgentTask:
+    update = getattr(client, "update_task_recovery_metadata", None)
+    if update is None:
+        return task
+    return cast(
+        AgentTask,
+        await update(
+            task.uid,
+            output_contract={
+                "mode": output_contract.mode,
+                "schema": output_contract.schema,
+                "repair_attempts": output_contract.repair_attempts,
+            },
+            provenance=dict(provenance),
+        ),
+    )
+
+
+def _recovery_execution_contract(
+    task: AgentTask,
+    config: TauSDKSettings,
+) -> tuple[str, StrictJsonContract, TurnProvenance]:
+    latest = task.latest_message
+    if not isinstance(latest, dict):
+        raise ValueError("Persisted Task has no requester Message")
+    message = {
+        "messageId": str(latest.get("messageId") or ""),
+        "contextId": task.context_id,
+        "role": A2AProtocolRole.USER.value,
+        "parts": latest.get("parts"),
+        "metadata": latest.get("metadata") or {},
+        "extensions": latest.get("extensions") or [],
+        "referenceTaskIds": (latest.get("referenceTaskIds") or []),
+    }
+    _normalized, prompt = _request_parts({"message": message}, config)
+    execution = task.metadata.get("execution")
+    execution = execution if isinstance(execution, dict) else {}
+    raw_contract = execution.get("output_contract")
+    raw_contract = raw_contract if isinstance(raw_contract, dict) else {}
+    mode = str(raw_contract.get("mode") or "none")
+    if mode not in {"none", "json", "json_object", "json_schema"}:
+        raise ValueError("Persisted Task output contract is invalid")
+    raw_schema = raw_contract.get("schema")
+    output_contract = StrictJsonContract(
+        mode=mode,  # type: ignore[arg-type]
+        schema=raw_schema if isinstance(raw_schema, dict) else None,
+        repair_attempts=int(raw_contract.get("repair_attempts", 3)),
+    )
+    raw_provenance = execution.get("provenance")
+    provenance: TurnProvenance = (
+        dict(raw_provenance)
+        if isinstance(raw_provenance, dict)
+        else {
+            "channel": "a2a",
+            "origin": "agent",
+            "actorKind": "agent",
+            "actorUid": f"local-a2a-client-{config.workspace_digest}",
+        }
+    )
+    return prompt, output_contract, provenance
+
+
+async def _reconcile_local_tasks_once(
+    client: MainSequenceClient,
+    manager: SessionRuntimeManager,
+    config: TauSDKSettings,
+) -> None:
+    reconcile = getattr(client, "reconcile_a2a_tasks", None)
+    if reconcile is None:
+        return
+    tasks = await reconcile(
+        recovery_owner=manager.holder_id,
+        stale_after_seconds=config.local_a2a_task_stale_after_seconds,
+        pending_timeout_seconds=config.local_a2a_task_pending_timeout_seconds,
+        max_recovery_attempts=config.local_a2a_task_max_recovery_attempts,
+    )
+    for task in tasks:
+        try:
+            prompt, output_contract, provenance = _recovery_execution_contract(task, config)
+            await manager.get(task.context_id)
+            scheduled = await _schedule_task_accelerator(
+                client,
+                manager,
+                task,
+                prompt=prompt,
+                output_contract=output_contract,
+                max_output_bytes=config.max_turn_output_bytes,
+                provenance=provenance,
+                config=config,
+            )
+            logger.info(
+                "a2a.task.recovery.scheduled" if scheduled else "a2a.task.recovery.deferred",
+                message=(
+                    "Scheduled a durable local Task for recovery"
+                    if scheduled
+                    else "Deferred local Task recovery"
+                ),
+                task_uid=task.uid,
+                task_id=task.task_id,
+                recovery_owner=manager.holder_id,
+                outcome="scheduled" if scheduled else "deferred",
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            record_failure = getattr(client, "record_a2a_recovery_failure", None)
+            if record_failure is not None:
+                with contextlib.suppress(Exception):
+                    await record_failure(
+                        task.uid,
+                        recovery_owner=manager.holder_id,
+                        error_type=type(error).__name__,
+                    )
+            logger.warning(
+                "a2a.task.recovery.deferred",
+                message="Deferred local Task recovery after a safe startup failure",
+                task_uid=task.uid,
+                task_id=task.task_id,
+                recovery_owner=manager.holder_id,
+                error_type=type(error).__name__,
+                outcome="deferred",
+            )
+
+
+async def start_local_task_reconciler(
+    client: MainSequenceClient,
+    manager: SessionRuntimeManager,
+    config: TauSDKSettings,
+) -> asyncio.Task[None] | None:
+    """Run the startup pass and return the local periodic recovery owner."""
+
+    if not config.local_mode or getattr(client, "reconcile_a2a_tasks", None) is None:
+        return None
+    await _reconcile_local_tasks_once(client, manager, config)
+
+    async def loop() -> None:
+        while True:
+            await asyncio.sleep(config.local_a2a_task_reconcile_interval_seconds)
+            try:
+                await _reconcile_local_tasks_once(client, manager, config)
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                logger.error(
+                    "a2a.task.recovery.scan_failed",
+                    message="Local Task recovery scan failed and will be retried",
+                    recovery_owner=manager.holder_id,
+                    error_type=type(error).__name__,
+                    outcome="retry_scheduled",
+                )
+
+    return asyncio.create_task(loop(), name="ms-tau-local-a2a-reconciler")
 
 
 async def _execute_message(
@@ -1288,6 +1564,7 @@ async def _stream_task_events(
     max_output_bytes: int,
     provenance: TurnProvenance,
     config: TauSDKSettings | None = None,
+    history_length: int = DEFAULT_TASK_HISTORY_LENGTH,
 ) -> AsyncIterator[dict[str, Any]]:
     claim = await _claim_backend_task(client, manager, task)
     resolved = config or manager.settings
@@ -1303,12 +1580,14 @@ async def _stream_task_events(
     task_context = TaskExecutionContext(
         task_uid=task.uid,
         task_id=task.task_id,
+        context_id=task.context_id,
         attempt_uid=claim.attempt_uid,
         holder_id=claim.holder_id,
         lease_token=claim.lease_token,
     )
     working = await client.get_task(task.uid)
-    yield {"task": _task_payload(working)}
+    working = await _task_with_history(client, working, history_length=history_length)
+    yield {"task": _task_payload(working, history_length=history_length)}
     artifact_id = writer.artifact_id
     text = ""
     emitted = False
@@ -1323,6 +1602,7 @@ async def _stream_task_events(
                     output_contract,
                     max_output_bytes=max_output_bytes,
                     provenance=provenance,
+                    turn_uid=claim.turn_uid,
                 )
             if text and task_context.interruption_status is None:
                 await writer.write_strict_json(text)
@@ -1340,7 +1620,12 @@ async def _stream_task_events(
         else:
             accumulator = _TurnAccumulator(max_output_bytes=max_output_bytes)
             with task_execution_scope(task_context):
-                async for event in manager.prompt(task.context_id, prompt, provenance=provenance):
+                async for event in manager.prompt(
+                    task.context_id,
+                    prompt,
+                    provenance=provenance,
+                    turn_uid=claim.turn_uid,
+                ):
                     await writer.ensure_not_canceled()
                     accumulator.consume(event)
                     if event.type not in {"text_delta", "text-delta"}:
@@ -1384,7 +1669,10 @@ async def _stream_task_events(
                 status=task_context.interruption_status,
                 status_message=task_context.interruption_message,
             )
-            yield {"task": _task_payload(interrupted)}
+            interrupted = await _task_with_history(
+                client, interrupted, history_length=history_length
+            )
+            yield {"task": _task_payload(interrupted, history_length=history_length)}
             return
         if not output_contract.enabled:
             await writer.flush(final=True)
@@ -1404,7 +1692,11 @@ async def _stream_task_events(
                 append=True,
                 last_chunk=True,
             )
-        yield {"task": _task_payload(completed), "final": True}
+        completed = await _task_with_history(client, completed, history_length=history_length)
+        yield {
+            "task": _task_payload(completed, history_length=history_length),
+            "final": True,
+        }
     except _TaskCancellationRequested as cancellation:
         canceled = cancellation.task
         if canceled.status != "canceled":
@@ -1415,7 +1707,11 @@ async def _stream_task_events(
                 claim,
                 status="canceled",
             )
-        yield {"task": _task_payload(canceled), "final": True}
+        canceled = await _task_with_history(client, canceled, history_length=history_length)
+        yield {
+            "task": _task_payload(canceled, history_length=history_length),
+            "final": True,
+        }
     except asyncio.CancelledError:
         if not manager.draining:
             with contextlib.suppress(Exception):
@@ -1432,18 +1728,9 @@ async def _stream_task_events(
     except (BackendError, LeaseLostError):
         raise
     except Exception as error:
-        with contextlib.suppress(Exception):
-            await _settle_claimed_task(
-                client,
-                manager,
-                task,
-                claim,
-                status="failed",
-                status_message={"message": "Task execution failed"},
-                outcome_category="execution",
-                failure_detail=type(error).__name__,
-            )
-        raise
+        failed = await _settle_execution_failure(client, manager, task, claim, error)
+        failed = await _task_with_history(client, failed, history_length=history_length)
+        yield _status_update(failed, history_length=history_length)
 
 
 def _stream_payload(
@@ -1471,6 +1758,7 @@ def _message_stream_response(
     max_output_bytes: int,
     provenance: TurnProvenance,
     config: TauSDKSettings | None = None,
+    history_length: int = DEFAULT_TASK_HISTORY_LENGTH,
     json_rpc: bool = False,
     request_id: object = None,
 ) -> StreamingResponse:
@@ -1485,6 +1773,7 @@ def _message_stream_response(
                 max_output_bytes=max_output_bytes,
                 provenance=provenance,
                 config=config,
+                history_length=history_length,
             ):
                 yield _sse(
                     _stream_payload(
@@ -1501,10 +1790,19 @@ def _message_stream_response(
                     await manager.evict(task.context_id)
             raise
         except Exception as error:
+            detail = getattr(error, "detail", None)
+            safe_detail = dict(detail) if isinstance(detail, dict) else {}
             payload = {
                 "error": {
-                    "code": "task_failed",
-                    "message": str(error),
+                    "code": "task_terminalization_unknown",
+                    "message": (
+                        "Task execution stopped before its terminal state could be persisted"
+                    ),
+                    "detail": {
+                        "taskId": task.task_id,
+                        "correlationId": safe_detail.get("correlationId", task.task_id),
+                        "retryable": True,
+                    },
                 },
                 "final": True,
             }
@@ -1530,6 +1828,7 @@ def _existing_task_stream_response(
     *,
     client: MainSequenceClient,
     task: AgentTask,
+    history_length: int = DEFAULT_TASK_HISTORY_LENGTH,
     json_rpc: bool = False,
     request_id: object = None,
 ) -> StreamingResponse:
@@ -1539,7 +1838,10 @@ def _existing_task_stream_response(
         while True:
             marker = (current.status, str(current.status_timestamp))
             if marker != previous:
-                payload: dict[str, Any] = {"task": _task_payload(current)}
+                current = await _task_with_history(client, current, history_length=history_length)
+                payload: dict[str, Any] = {
+                    "task": _task_payload(current, history_length=history_length)
+                }
                 if current.status in TERMINAL:
                     payload["final"] = True
                 yield _sse(
@@ -1565,8 +1867,12 @@ def _existing_task_stream_response(
     )
 
 
-def _status_update(task: AgentTask) -> dict[str, Any]:
-    payload = _task_payload(task)
+def _status_update(
+    task: AgentTask,
+    *,
+    history_length: int | None = None,
+) -> dict[str, Any]:
+    payload = _task_payload(task, history_length=history_length)
     return {
         "statusUpdate": {
             "taskId": task.task_id,
@@ -1683,15 +1989,17 @@ def _durable_task_execution_input(
     config: TauSDKSettings,
 ) -> tuple[str, StrictJsonContract, TurnProvenance]:
     message = task.latest_message or {}
-    if message.get("role") != "user" or not isinstance(message.get("parts"), list):
+    if message.get("role") != A2AMessageDirection.REQUESTER.value or not isinstance(
+        message.get("parts"), list
+    ):
         raise HTTPException(
             status_code=409,
             detail="Durable Task dispatch has no executable requester Message",
         )
     body = {
         "message": {
-            "messageId": str(message.get("message_id") or message.get("messageId") or ""),
-            "role": "ROLE_REQUESTER",
+            "messageId": str(message.get("messageId") or ""),
+            "role": A2AProtocolRole.USER.value,
             "contextId": task.context_id,
             "parts": message["parts"],
             "metadata": message.get("metadata") or {},
@@ -1869,6 +2177,7 @@ async def message_send(
     except CallerIdentityError as error:
         return _caller_identity_rejection(request, error)  # type: ignore[return-value]
     message, prompt = _request_parts(body, config)
+    history_length = _body_history_length(body)
     _bind_a2a_context(
         request,
         method="message/send",
@@ -1895,9 +2204,27 @@ async def message_send(
                 status_code=400,
                 detail="A Task continuation requires configuration.responseKind 'task'",
             )
-        continued_message = _backend_task_message(message)
         existing_task = await client.get_task_by_protocol_id(continuation_task_id)
-        task = await client.continue_task(existing_task.uid, continued_message)
+        task = await client.continue_task(
+            existing_task.uid,
+            {
+                "messageId": message["messageId"],
+                "contextId": existing_task.context_id,
+                "taskId": existing_task.task_id,
+                "role": A2AMessageDirection.REQUESTER.value,
+                "parts": message["parts"],
+                "metadata": message.get("metadata", {}),
+                "extensions": message.get("extensions", []),
+                "referenceTaskIds": message.get("referenceTaskIds", []),
+            },
+        )
+        if config.local_mode:
+            task = await _persist_local_recovery_contract(
+                client,
+                task,
+                output_contract=output_contract,
+                provenance=provenance,
+            )
         await _schedule_task_accelerator(
             client,
             manager,
@@ -1909,13 +2236,16 @@ async def message_send(
             config=config,
         )
         if return_immediately:
-            return {"task": _task_payload(task)}
+            task = await _task_with_history(client, task, history_length=history_length)
+            return {"task": _task_payload(task, history_length=history_length)}
         task = await _wait_for_task_return_state(
             client,
             task,
             poll_interval_seconds=config.a2a_task_event_poll_interval_seconds,
+            wait_timeout_seconds=config.a2a_task_wait_timeout_seconds,
         )
-        return {"task": _task_payload(task)}
+        task = await _task_with_history(client, task, history_length=history_length)
+        return {"task": _task_payload(task, history_length=history_length)}
     if response_kind is ResponseKind.TASK:
         creation = await _create_backend_task(
             client,
@@ -1937,20 +2267,39 @@ async def message_send(
                 config=config,
             )
             if return_immediately:
-                return {"task": _task_payload(task)}
+                task = await _task_with_history(client, task, history_length=history_length)
+                return {"task": _task_payload(task, history_length=history_length)}
             task = await _wait_for_task_return_state(
                 client,
                 task,
                 poll_interval_seconds=config.a2a_task_event_poll_interval_seconds,
+                wait_timeout_seconds=config.a2a_task_wait_timeout_seconds,
             )
-            return {"task": _task_payload(task)}
+            task = await _task_with_history(client, task, history_length=history_length)
+            return {"task": _task_payload(task, history_length=history_length)}
+        if config.local_mode and task.status == "submitted":
+            recovered_prompt, recovered_contract, recovered_provenance = (
+                _recovery_execution_contract(task, config)
+            )
+            await _schedule_task_accelerator(
+                client,
+                manager,
+                task,
+                prompt=recovered_prompt,
+                output_contract=recovered_contract,
+                max_output_bytes=config.max_turn_output_bytes,
+                provenance=recovered_provenance,
+                config=config,
+            )
         if not return_immediately and task.status not in TASK_RETURN_STATES:
             task = await _wait_for_task_return_state(
                 client,
                 task,
                 poll_interval_seconds=config.a2a_task_event_poll_interval_seconds,
+                wait_timeout_seconds=config.a2a_task_wait_timeout_seconds,
             )
-        return {"task": _task_payload(task)}
+        task = await _task_with_history(client, task, history_length=history_length)
+        return {"task": _task_payload(task, history_length=history_length)}
     result = await _execute_message(
         manager,
         context_id=str(message["contextId"]),
@@ -1984,6 +2333,7 @@ async def message_stream(
         streaming=True,
     )
     message, prompt = _request_parts(body, config)
+    history_length = _body_history_length(body)
     _bind_a2a_context(
         request,
         method="message/stream",
@@ -2003,7 +2353,25 @@ async def message_stream(
     )
     task = creation.task
     if not creation.created:
-        return _existing_task_stream_response(client=client, task=task)
+        if config.local_mode and task.status == "submitted":
+            recovered_prompt, recovered_contract, recovered_provenance = (
+                _recovery_execution_contract(task, config)
+            )
+            await _schedule_task_accelerator(
+                client,
+                manager,
+                task,
+                prompt=recovered_prompt,
+                output_contract=recovered_contract,
+                max_output_bytes=config.max_turn_output_bytes,
+                provenance=recovered_provenance,
+                config=config,
+            )
+        return _existing_task_stream_response(
+            client=client,
+            task=task,
+            history_length=history_length,
+        )
     return _message_stream_response(
         client=client,
         manager=manager,
@@ -2013,13 +2381,22 @@ async def message_stream(
         max_output_bytes=config.max_turn_output_bytes,
         provenance=provenance,
         config=config,
+        history_length=history_length,
     )
 
 
 @router.get(f"{REST_BASE}/tasks")
-async def list_tasks(client: BackendDep, contextId: str | None = None) -> dict[str, Any]:
-    tasks = await client.list_tasks(context_id=contextId or "")
-    return {"tasks": [_task_payload(task) for task in tasks]}
+async def list_tasks(
+    client: BackendDep,
+    contextId: str | None = None,
+    historyLength: int | None = Query(default=None, ge=0),
+) -> dict[str, Any]:
+    history_length = _history_length(historyLength)
+    tasks = await client.list_tasks(
+        context_id=contextId or "",
+        history_length=history_length,
+    )
+    return {"tasks": [_task_payload(task, history_length=history_length) for task in tasks]}
 
 
 @router.post(f"{REST_BASE}/tasks/{{task_id}}:cancel")
@@ -2054,8 +2431,14 @@ async def subscribe_task(
 
 
 @router.get(f"{REST_BASE}/tasks/{{task_id}}")
-async def get_task(task_id: str, client: BackendDep) -> dict[str, Any]:
-    return {"task": _task_payload(await client.get_task_by_protocol_id(task_id))}
+async def get_task(
+    task_id: str,
+    client: BackendDep,
+    historyLength: int | None = Query(default=None, ge=0),
+) -> dict[str, Any]:
+    history_length = _history_length(historyLength)
+    task = await client.get_task_by_protocol_id(task_id, history_length=history_length)
+    return {"task": _task_payload(task, history_length=history_length)}
 
 
 @router.get(f"{REST_BASE}/tasks/{{task_id}}/pushNotificationConfigs")
@@ -2172,6 +2555,7 @@ async def json_rpc(
                 streaming=True,
             )
             message, prompt = _request_parts(params, config)
+            history_length = _body_history_length(params)
             _bind_a2a_context(
                 request,
                 method=method,
@@ -2192,9 +2576,24 @@ async def json_rpc(
             )
             task = creation.task
             if not creation.created:
+                if config.local_mode and task.status == "submitted":
+                    recovered_prompt, recovered_contract, recovered_provenance = (
+                        _recovery_execution_contract(task, config)
+                    )
+                    await _schedule_task_accelerator(
+                        client,
+                        manager,
+                        task,
+                        prompt=recovered_prompt,
+                        output_contract=recovered_contract,
+                        max_output_bytes=config.max_turn_output_bytes,
+                        provenance=recovered_provenance,
+                        config=config,
+                    )
                 return _existing_task_stream_response(
                     client=client,
                     task=task,
+                    history_length=history_length,
                     json_rpc=True,
                     request_id=request_id,
                 )
@@ -2208,14 +2607,23 @@ async def json_rpc(
                 max_output_bytes=config.max_turn_output_bytes,
                 provenance=provenance,
                 config=config,
+                history_length=history_length,
                 json_rpc=True,
                 request_id=request_id,
             )
         elif method in {"GetTask", "tasks/get"}:
-            result = await get_task(task_id(), client)
+            result = await get_task(
+                task_id(),
+                client,
+                _history_length(params.get("historyLength")),
+            )
         elif method in {"ListTasks", "tasks/list"}:
             context_id = str(params.get("contextId") or "")
-            result = await list_tasks(client, contextId=context_id)
+            result = await list_tasks(
+                client,
+                contextId=context_id,
+                historyLength=_history_length(params.get("historyLength")),
+            )
         elif method in {"CancelTask", "tasks/cancel"}:
             result = await cancel_task(
                 task_id(),

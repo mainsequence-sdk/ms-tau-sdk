@@ -26,6 +26,7 @@ type AgentTaskOperation = Literal[
     "outputs/finalize",
     "snapshot",
     "events",
+    "messages",
 ]
 
 

@@ -101,6 +101,13 @@ Local A2A callers do not send managed-gateway `X-Caller-*` headers. Use REST or 
 dispatch/caller-delivery hooks, push notifications, and `resume_caller` remain unavailable;
 outbound MCP Task workflows use polling.
 
+The standard Task state is the terminality authority. Normal execution errors settle as `failed`
+with a safe responder status Message. Local startup and periodic reconciliation reschedule an
+unclaimed `submitted` Task, but do not blindly replay a stale `working` Task whose external effects
+are uncertain; that Task fails with `ambiguous_execution_outcome`. A
+`task_terminalization_unknown` stream error means the terminal write itself was not proven—retrieve
+or subscribe to the Task while recovery resolves it.
+
 Local mode defaults to `127.0.0.1:8787`. Explicitly binding another interface exposes a process
 that acts with the authenticated user's live Main Sequence authority.
 

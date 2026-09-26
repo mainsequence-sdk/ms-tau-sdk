@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
@@ -62,15 +64,21 @@ def create_app(
         app.state.backend = services.backend
         app.state.provider_factory = services.providers
         app.state.runtime_manager = services.runtime
-        await services.start()
-        logger.info(
-            "runtime.ready",
-            message="Main Sequence TAU SDK process is ready",
-            runtime_kind="coding_agent",
-            runtime="tau",
-            version=__version__,
-        )
+        task_reconciler: asyncio.Task[None] | None = None
         try:
+            await services.start()
+            task_reconciler = await a2a.start_local_task_reconciler(
+                services.backend,
+                services.runtime,
+                resolved,
+            )
+            logger.info(
+                "runtime.ready",
+                message="Main Sequence TAU SDK process is ready",
+                runtime_kind="coding_agent",
+                runtime="tau",
+                version=__version__,
+            )
             yield
         finally:
             logger.info(
@@ -79,6 +87,10 @@ def create_app(
                 runtime_kind="coding_agent",
                 runtime="tau",
             )
+            if task_reconciler is not None:
+                task_reconciler.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task_reconciler
             await services.aclose()
             logger.info(
                 "runtime.shutdown",

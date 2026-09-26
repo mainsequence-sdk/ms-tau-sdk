@@ -38,6 +38,28 @@ def test_tool_exclusion_settings_default_and_environment(monkeypatch, tmp_path):
     assert explicit.exclude_mainsequence_mcp is False
 
 
+def test_a2a_terminalization_and_local_recovery_settings(monkeypatch, tmp_path):
+    defaults = TauSDKSettings(_env_file=None, workspace=tmp_path)
+    assert defaults.a2a_task_wait_timeout_seconds == 30
+    assert defaults.local_a2a_task_reconcile_interval_seconds == 5
+    assert defaults.local_a2a_task_stale_after_seconds == 120
+    assert defaults.local_a2a_task_pending_timeout_seconds == 300
+    assert defaults.local_a2a_task_max_recovery_attempts == 3
+
+    monkeypatch.setenv("MAINSEQUENCE_TAU_A2A_TASK_WAIT_TIMEOUT_SECONDS", "12")
+    monkeypatch.setenv("TAU_LOCAL_A2A_TASK_RECONCILE_INTERVAL_SECONDS", "2")
+    monkeypatch.setenv("TAU_LOCAL_A2A_TASK_STALE_AFTER_SECONDS", "45")
+    monkeypatch.setenv("TAU_LOCAL_A2A_TASK_PENDING_TIMEOUT_SECONDS", "90")
+    monkeypatch.setenv("TAU_LOCAL_A2A_TASK_MAX_RECOVERY_ATTEMPTS", "4")
+    configured = TauSDKSettings(_env_file=None, workspace=tmp_path)
+
+    assert configured.a2a_task_wait_timeout_seconds == 12
+    assert configured.local_a2a_task_reconcile_interval_seconds == 2
+    assert configured.local_a2a_task_stale_after_seconds == 45
+    assert configured.local_a2a_task_pending_timeout_seconds == 90
+    assert configured.local_a2a_task_max_recovery_attempts == 4
+
+
 def test_settings_use_canonical_mainsequence_endpoint(monkeypatch):
     monkeypatch.setenv("MAINSEQUENCE_ENDPOINT", "https://development.example.test/")
 

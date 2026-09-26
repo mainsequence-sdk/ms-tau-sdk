@@ -426,6 +426,19 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
                     "has_more": False,
                 },
             )
+        if path == "/api/v1/agent-tasks/task-uid-1/messages/":
+            return httpx.Response(
+                200,
+                json={
+                    "results": [
+                        {
+                            "messageId": "message-1",
+                            "role": "ROLE_REQUESTER",
+                            "parts": [{"text": "Run."}],
+                        }
+                    ]
+                },
+            )
         if path == "/api/v1/agent-tasks/task-uid-1/dispatches/":
             return httpx.Response(
                 200,
@@ -459,6 +472,7 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
                 "attempt_uid": "attempt-1",
                 "holder_id": "holder-1",
                 "lease_token": "lease-1",
+                "turn_uid": "turn-1",
             }
             return httpx.Response(
                 200,
@@ -544,8 +558,9 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
             holder_id="ms-tau-1",
         )
         created = await client.create_task({"task_id": "task-1"})
-        found = await client.get_task_by_protocol_id("task-1")
-        loaded = await client.get_task("task-uid-1")
+        found = await client.get_task_by_protocol_id("task-1", history_length=5)
+        loaded = await client.get_task("task-uid-1", history_length=0)
+        messages = await client.list_task_messages("task-uid-1", limit=5, offset=2)
         snapshot = await client.get_task_snapshot("task-uid-1")
         events = await client.list_task_events(
             "task-uid-1",
@@ -564,6 +579,7 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
             attempt_uid="attempt-1",
             holder_id="holder-1",
             lease_token="lease-1",
+            turn_uid="turn-1",
         )
         output = await client.create_task_output(
             "task-uid-1",
@@ -608,6 +624,7 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
     assert created.created is True
     assert created.task.uid == found.uid == "task-uid-1"
     assert loaded.status == "working"
+    assert messages[0]["messageId"] == "message-1"
     assert snapshot.event_cursor == 3
     assert events.events[0].sequence == 3
     assert dispatches[0].uid == "dispatch-1"
@@ -623,8 +640,9 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
         ("POST", "/api/v1/runtime-credentials/token/", ""),
         ("POST", "/api/v1/model-provider-credentials/hydrate/", ""),
         ("POST", "/api/v1/agent-tasks/", ""),
-        ("GET", "/api/v1/agent-tasks/", "task_id=task-1"),
-        ("GET", "/api/v1/agent-tasks/task-uid-1/", ""),
+        ("GET", "/api/v1/agent-tasks/", "task_id=task-1&history_length=5"),
+        ("GET", "/api/v1/agent-tasks/task-uid-1/", "history_length=0"),
+        ("GET", "/api/v1/agent-tasks/task-uid-1/messages/", "limit=5&offset=2"),
         ("GET", "/api/v1/agent-tasks/task-uid-1/snapshot/", ""),
         ("GET", "/api/v1/agent-tasks/task-uid-1/events/", "after_sequence=2&limit=100"),
         ("GET", "/api/v1/agent-tasks/task-uid-1/dispatches/", ""),

@@ -1,7 +1,7 @@
 {
   "message": {
     "messageId": "msg-agent-1",
-    "role": "ROLE_RESPONDER",
+    "role": "ROLE_AGENT",
     "contextId": "agent-session-uid-1",
     "parts": [
       {

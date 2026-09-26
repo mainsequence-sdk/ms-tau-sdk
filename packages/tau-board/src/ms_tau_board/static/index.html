@@ -146,9 +146,18 @@
         <div class="column"><div class="box">
           <h2 class="title is-5">Task detail</h2>
           <div id="tasks-detail" class="detail-list">Select a Task to inspect its status and events.</div>
-          <div class="buttons mt-4"><button class="button is-small" id="tasks-open-a2a" disabled>Open in A2A</button><button class="button is-small" id="tasks-open-session" disabled>Open session logs</button></div>
-          <h3 class="title is-6 mt-5">Event timeline</h3>
-          <p class="help">Task state events and related session logs are labelled separately. Raw event fields are available by expanding a row.</p>
+          <div class="buttons mt-4"><button class="button is-small" id="tasks-open-a2a" disabled>Open in A2A Console</button><button class="button is-small" id="tasks-open-session" disabled>Open session logs</button></div>
+          <h3 class="title is-6 mt-5">Conversation</h3>
+          <p class="help">Durable requester and responder Messages associated with this Task.</p>
+          <div id="tasks-conversation" class="task-section"></div>
+          <h3 class="title is-6 mt-5">Result</h3>
+          <p class="help">Final Artifacts. Streamed text fragments are joined without added separators.</p>
+          <div id="tasks-result" class="task-section"></div>
+          <h3 class="title is-6 mt-5">Execution</h3>
+          <p class="help">Exact attempt and Tau turn correlation. Internal evidence is operational data, not public Task history.</p>
+          <div id="tasks-execution" class="task-section"></div>
+          <h3 class="title is-6 mt-5">Technical</h3>
+          <p class="help">Task events and related session logs are labelled separately. Expand a row for raw evidence.</p>
           <div id="tasks-timeline" class="log-list"></div>
           <button class="button is-small mt-3 is-hidden" id="tasks-older">Load older logs</button>
         </div></div>

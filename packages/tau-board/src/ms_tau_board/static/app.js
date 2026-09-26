@@ -539,7 +539,8 @@ function displayTask(task) {
   $("a2a-context").value = task.contextId || "";
   const timing = taskTiming(task);
   const statusLabel = timing.completed ? "Completed" : (timing.terminal ? "Terminal status" : "Status recorded");
-  $("task-output").textContent = `${task.id} · ${task.status?.state || "unknown"}\nCreated: ${displayTime(timing.created)}\n${statusLabel}: ${displayTime(timing.statusTime)}\n\n${taskText(task)}`;
+  const statusText = (task.status?.message?.parts || []).map((part) => part.text || "").filter(Boolean).join("\n");
+  $("task-output").textContent = `${task.id} · ${task.status?.state || "unknown"}\nCreated: ${displayTime(timing.created)}\n${statusLabel}: ${displayTime(timing.statusTime)}${statusText ? `\nReason: ${statusText}` : ""}\n\n${taskText(task)}`;
 }
 function handleA2AFrame(frame) {
   const value = frame.result || frame;
@@ -713,7 +714,12 @@ async function refreshTaskExplorer() {
   const result = await json(`/api/board/tasks?${query}`, { headers });
   const list = $("tasks-list"); clear(list);
   for (const task of result.tasks || []) {
-    const button = node("button", `${task.task_id} · ${task.status}\n${task.context_id}`, "button is-light");
+    const threshold = task.status === "submitted" ? result.policy?.pending_timeout_seconds : result.policy?.stale_after_seconds;
+    const recorded = task.status === "submitted" ? task.created_at : task.status_timestamp;
+    const ageSeconds = recorded ? (Date.now() - new Date(recorded).valueOf()) / 1000 : 0;
+    const stale = ["submitted", "working"].includes(task.status) && threshold && ageSeconds > threshold;
+    const suffix = task.failure_code ? `\n${task.failure_code}` : (stale ? "\nRecovery overdue" : "");
+    const button = node("button", `${task.task_id} · ${task.status}\n${task.context_id}${suffix}`, stale ? "button is-warning" : "button is-light");
     button.type = "button";
     button.classList.toggle("is-selected", selectedTaskId === task.task_id);
     button.addEventListener("click", () => inspectTask(task.task_id).catch(report));
@@ -765,12 +771,89 @@ async function loadTaskLogs(reset = false) {
   renderTaskTimeline();
 }
 
+function renderTaskConversation() {
+  const list = $("tasks-conversation"); clear(list);
+  for (const record of selectedTaskData?.messages || []) {
+    const message = record.message || {};
+    const card = node("article", "", "task-card");
+    const head = node("div", "", "task-card-head");
+    const role = message.role === "ROLE_REQUESTER" ? "Requester" : (message.role === "ROLE_RESPONDER" ? "Responder" : (message.role || "Message"));
+    head.append(node("strong", role), node("span", `#${record.sequence}`, "tag is-light"), node("span", displayTime(record.created_at), "mono"));
+    card.append(head);
+    for (const part of message.parts || []) {
+      if (typeof part.text === "string") card.append(node("pre", part.text));
+      else if (Object.hasOwn(part, "data")) card.append(node("pre", JSON.stringify(part.data, null, 2)));
+      else card.append(node("pre", JSON.stringify(part, null, 2)));
+    }
+    list.append(card);
+  }
+  if (!(selectedTaskData?.messages || []).length) list.append(node("p", "No durable Task Messages.", "help"));
+}
+
+function renderTaskResults() {
+  const list = $("tasks-result"); clear(list);
+  for (const artifact of selectedTaskData?.outputs || []) {
+    const card = node("article", "", "task-card");
+    const head = node("div", "", "task-card-head");
+    head.append(node("strong", artifact.name || artifact.artifact_id), node("span", `revision ${artifact.revision}`, "tag is-light"), node("span", artifact.finalized ? "Final" : "Open", artifact.finalized ? "tag is-success is-light" : "tag is-warning is-light"), node("span", `${artifact.byte_size || 0} bytes`, "tag is-light"));
+    card.append(head);
+    if (artifact.text) card.append(node("pre", artifact.text));
+    for (const part of artifact.parts || []) {
+      if (!Object.hasOwn(part, "data")) continue;
+      card.append(node("pre", JSON.stringify(part.data, null, 2)));
+    }
+    list.append(card);
+  }
+  if (!(selectedTaskData?.outputs || []).length) list.append(node("p", "No Task Artifacts.", "help"));
+}
+
+function executionLabel(entry) {
+  const raw = JSON.stringify(entry.entry || {}).toLowerCase();
+  if (raw.includes("tool_result") || raw.includes("toolresult")) return "Tool result";
+  if (raw.includes("tool_call") || raw.includes("toolcall")) return "Tool call";
+  if (raw.includes("reasoning") || raw.includes("thinking")) return "Recorded reasoning";
+  if (entry.entry_type === "message") return "Model message";
+  return entry.entry_type || "Tau entry";
+}
+
+function executionOutcome(entry) {
+  const value = entry.entry || {};
+  const raw = JSON.stringify(value).toLowerCase();
+  if (raw.includes('"is_error":true') || raw.includes('"error":true') || raw.includes('"status":"failed"')) return "Failed";
+  if (raw.includes('"status":"completed"') || raw.includes('"status":"success"') || raw.includes('"success":true')) return "Succeeded";
+  return "";
+}
+
+function renderTaskExecution() {
+  const list = $("tasks-execution"); clear(list);
+  const entries = selectedTaskData?.executionEntries || [];
+  for (const attempt of selectedTaskData?.attempts || []) {
+    const card = node("article", "", "task-card");
+    const head = node("div", "", "task-card-head");
+    head.append(node("strong", `Attempt ${attempt.attempt_number}`), node("span", attempt.state, "tag is-info is-light"), node("span", attempt.turn_resolution || "unresolved", attempt.turn_resolution === "committed" ? "tag is-success is-light" : "tag is-warning is-light"));
+    card.append(head);
+    detailLine(card, "Turn", attempt.turn_uid || "—");
+    detailLine(card, "Entry interval", attempt.entry_start_sequence == null ? "—" : `[${attempt.entry_start_sequence}, ${attempt.entry_end_sequence ?? "?"})`);
+    const attemptEntries = entries.filter((entry) => entry.turn_uid && entry.turn_uid === attempt.turn_uid && (attempt.entry_start_sequence == null || entry.sequence >= attempt.entry_start_sequence) && (attempt.entry_end_sequence == null || entry.sequence < attempt.entry_end_sequence));
+    for (const entry of attemptEntries) card.append(taskEventItem("Tau", `#${entry.sequence}`, executionLabel(entry), entry, executionOutcome(entry)));
+    if (!attemptEntries.length) card.append(node("p", "No retained entries in this turn interval.", "help"));
+    list.append(card);
+  }
+  if (!(selectedTaskData?.attempts || []).length) list.append(node("p", "No execution attempts.", "help"));
+}
+
 async function inspectTask(taskId) {
   selectedTaskId = taskId;
   selectedTaskData = await json(`/api/board/tasks/${encodeURIComponent(taskId)}`, { headers: { "X-Tau-Board-Profile": $("tasks-profile").value } });
   const task = selectedTaskData.task;
   const detail = $("tasks-detail"); clear(detail);
-  for (const [label, value] of [["Task ID", task.task_id], ["Session", task.context_id], ["Status", task.status], ["Created", task.created_at], ["Updated", task.updated_at], ["Attempts", selectedTaskData.attempts.length], ["Artifacts", selectedTaskData.outputs.length]]) detailLine(detail, label, value);
+  const failure = task.failure || {};
+  const runtime = task.runtime || {};
+  const duration = task.created_at && (task.terminal_at || task.status_timestamp) ? Math.max(0, new Date(task.terminal_at || task.status_timestamp).valueOf() - new Date(task.created_at).valueOf()) : null;
+  for (const [label, value] of [["Task ID", task.task_id], ["Session", task.context_id], ["Status", task.status], ["Created", displayTime(task.created_at)], ["Status time", displayTime(task.status_timestamp)], ["Terminal time", displayTime(task.terminal_at)], ["Duration", duration == null || Number.isNaN(duration) ? "—" : `${duration} ms`], ["Provider", runtime.provider || "—"], ["Model", runtime.model || "—"], ["Thinking", runtime.thinking || "—"], ["Failure", failure.message || "—"], ["Failure code", failure.code || "—"], ["Failure category", failure.category || "—"], ["Retry safe", failure.retryable == null ? "—" : String(failure.retryable)], ["Recovery owner", task.recovery_owner || "—"], ["Recovery attempts", task.recovery_count || 0], ["Correlation ID", failure.correlationId || "—"], ["Attempts", selectedTaskData.attempts.length], ["Messages", selectedTaskData.messages.length], ["Artifacts", selectedTaskData.outputs.length]]) detailLine(detail, label, value);
+  renderTaskConversation();
+  renderTaskResults();
+  renderTaskExecution();
   $("tasks-open-a2a").disabled = false;
   $("tasks-open-session").disabled = false;
   for (const button of $("tasks-list").querySelectorAll("button")) button.classList.toggle("is-selected", button.textContent.startsWith(`${taskId} ·`));
@@ -928,7 +1011,7 @@ async function start() {
   bind("a2a-new-task", "click", () => { $("a2a-task-id").value = ""; $("a2a-kind").value = "task"; $("a2a-input").focus(); });
   bind("refresh-tasks", "click", refreshTasks);
   bind("tasks-refresh", "click", refreshTaskExplorer);
-  bind("tasks-profile", "change", () => { selectedTaskId = ""; selectedTaskData = null; clear($("tasks-detail")); clear($("tasks-timeline")); return refreshTaskExplorer(); });
+  bind("tasks-profile", "change", () => { selectedTaskId = ""; selectedTaskData = null; for (const id of ["tasks-detail", "tasks-conversation", "tasks-result", "tasks-execution", "tasks-timeline"]) clear($(id)); return refreshTaskExplorer(); });
   bind("tasks-session", "change", refreshTaskExplorer);
   bind("tasks-open-id", "click", () => inspectTask($("tasks-id").value.trim()));
   bind("tasks-older", "click", () => loadTaskLogs());

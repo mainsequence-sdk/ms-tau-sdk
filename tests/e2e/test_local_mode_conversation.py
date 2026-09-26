@@ -14,6 +14,8 @@ from ms_tau_sdk.backend.models import (
     ProviderControl,
     ProviderCredential,
     ProviderExecutionEvidence,
+    SessionEntryBatchAppendRequest,
+    TauTurnLifecycle,
 )
 from ms_tau_sdk.providers.factory import ProviderFactory, ProviderRuntime
 from ms_tau_sdk.runtime.manager import SessionRuntimeManager
@@ -193,9 +195,12 @@ async def test_first_local_chat_reaches_provider_execution(
                 "task_id": "local-continuation-1",
                 "context_id": continuation_context,
                 "initial_message": {
-                    "message_id": "local-message-5",
-                    "role": "user",
+                    "messageId": "local-message-5",
+                    "contextId": continuation_context,
+                    "taskId": "local-continuation-1",
+                    "role": "ROLE_REQUESTER",
                     "parts": [{"text": "Ask for input."}],
+                    "extensions": [],
                 },
             }
         )
@@ -214,6 +219,22 @@ async def test_first_local_chat_reaches_provider_execution(
             attempt_uid=continuation_attempt.uid,
             holder_id=continuation_fence.holder_id,
             lease_token=continuation_fence.lease_token,
+            turn_uid="local-continuation-turn-1",
+        )
+        next_sequence = (await backend.get_entries(continuation_context)).next_sequence
+        await backend.append_entries(
+            continuation_context,
+            SessionEntryBatchAppendRequest(
+                lease_token=continuation_fence.lease_token,
+                holder_id=continuation_fence.holder_id,
+                expected_sequence=next_sequence,
+                entries=[],
+                turn=TauTurnLifecycle(
+                    turn_uid="local-continuation-turn-1",
+                    phase="committed",
+                    activity_sequence=1,
+                ),
+            ),
         )
         await backend.settle_task_attempt(
             continuation_creation.task.uid,
@@ -221,7 +242,14 @@ async def test_first_local_chat_reaches_provider_execution(
             holder_id=continuation_fence.holder_id,
             lease_token=continuation_fence.lease_token,
             status="input_required",
-            status_message={"message": "Provide input."},
+            status_message={
+                "messageId": "local-status-message-1",
+                "contextId": continuation_creation.task.context_id,
+                "taskId": "local-continuation-1",
+                "role": "ROLE_RESPONDER",
+                "parts": [{"text": "Provide input."}],
+                "extensions": [],
+            },
         )
         continued_task = await http.post(
             "/api/a2a/v1/message:send",
@@ -241,9 +269,10 @@ async def test_first_local_chat_reaches_provider_execution(
                 "task_id": "local-subscription-1",
                 "context_id": "local-subscription",
                 "initial_message": {
-                    "message_id": "local-message-7",
-                    "role": "user",
+                    "messageId": "local-message-7",
+                    "role": "ROLE_REQUESTER",
                     "parts": [{"text": "Wait for cancellation."}],
+                    "extensions": [],
                 },
             }
         )
@@ -261,6 +290,7 @@ async def test_first_local_chat_reaches_provider_execution(
     assert a2a_message.json()["message"]["parts"] == [{"text": "Local A2A message succeeded."}]
     assert a2a_task.status_code == 200
     assert a2a_task.json()["task"]["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert a2a_task.json()["task"]["history"][0]["role"] == "ROLE_USER"
     assert listed_tasks.status_code == 200
     assert [task["id"] for task in listed_tasks.json()["tasks"]] == ["local-task-1"]
     assert fetched_task.status_code == 200
@@ -271,6 +301,7 @@ async def test_first_local_chat_reaches_provider_execution(
     assert a2a_stream.headers["content-type"].startswith("text/event-stream")
     assert "Local A2A stream succeeded." in a2a_stream.text
     assert "TASK_STATE_COMPLETED" in a2a_stream.text
+    assert '"history"' in a2a_stream.text
     assert a2a_rpc.status_code == 200
     assert a2a_rpc.json()["result"]["message"]["parts"] == [
         {"text": "Local A2A JSON-RPC succeeded."}

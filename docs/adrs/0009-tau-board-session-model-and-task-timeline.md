@@ -4,6 +4,10 @@ Status: Accepted
 
 The separate-process design remains in force; distribution packaging is amended by ADR 0010.
 The A2A Task timestamp presentation is clarified by the 1.2.9 implementation.
+Failure and recovery inspection is amended by
+[ADR 0013](./0013-guaranteed-a2a-task-terminalization-and-failure-observability.md).
+Human-readable Task conversation, result, and exact execution narratives are amended by
+[ADR 0014](./0014-human-readable-a2a-task-history-and-execution-narratives.md).
 
 Date: 2026-09-22
 

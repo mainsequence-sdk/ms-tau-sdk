@@ -18,6 +18,12 @@ from ms_tau_sdk.errors import (
     LocalModeUnsupportedError,
     SessionNotFoundError,
 )
+from ms_tau_sdk.protocols.a2a_failure import (
+    failure_details,
+    failure_status_message,
+    validate_status_message,
+)
+from ms_tau_sdk.protocols.a2a_roles import A2AMessageDirection, message_to_protocol
 from ms_tau_sdk.settings import TauSDKSettings
 
 from .client import MainSequenceClient
@@ -62,7 +68,7 @@ LOCAL_RUNTIME_CAPABILITIES = {
     "tau_activity_sequence": "v1",
     "tau_turn_commit": "v1",
 }
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 4
 _T = TypeVar("_T")
 
 _LOCAL_A2A_RESPONSE_KIND_EXTENSION_URI = "https://mainsequence.ai/a2a/extensions/response-kind/v1"
@@ -96,6 +102,15 @@ class LocalDevelopmentBackend(MainSequenceClient):
         self._path = settings.local_state_path
         self._database_lock = asyncio.Lock()
         self._initialized = False
+        self._recovery_metrics: dict[str, int | float] = {
+            "submitted": 0,
+            "working": 0,
+            "stale_attempts": 0,
+            "recovery_failures": 0,
+            "ambiguous_outcomes": 0,
+            "oldest_pending_seconds": 0.0,
+            "oldest_working_seconds": 0.0,
+        }
 
     @property
     def state_path(self) -> Path:
@@ -147,6 +162,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     next_sequence INTEGER NOT NULL DEFAULT 0,
                     runtime_activity TEXT NOT NULL DEFAULT 'idle',
                     active_turn_uid TEXT,
+                    active_task_attempt_uid TEXT,
                     activity_revision INTEGER NOT NULL DEFAULT 0,
                     activity_sequence INTEGER NOT NULL DEFAULT 0,
                     last_committed_turn_uid TEXT,
@@ -161,6 +177,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     entry_type TEXT NOT NULL,
                     entry_json TEXT NOT NULL,
                     idempotency_key TEXT NOT NULL,
+                    turn_uid TEXT,
                     PRIMARY KEY (session_uid, sequence),
                     UNIQUE (session_uid, idempotency_key)
                 );
@@ -203,6 +220,13 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     last_event_sequence INTEGER NOT NULL DEFAULT 0,
                     dispatch_uid TEXT,
                     current_attempt_uid TEXT,
+                    failure_code TEXT NOT NULL DEFAULT '',
+                    failure_category TEXT NOT NULL DEFAULT '',
+                    failure_retryable INTEGER,
+                    correlation_id TEXT NOT NULL DEFAULT '',
+                    recovery_owner TEXT NOT NULL DEFAULT '',
+                    recovery_count INTEGER NOT NULL DEFAULT 0,
+                    terminal_at TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
@@ -237,6 +261,16 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     attempt_number INTEGER NOT NULL,
                     state TEXT NOT NULL,
                     holder_id TEXT NOT NULL,
+                    outcome_category TEXT NOT NULL DEFAULT '',
+                    failure_code TEXT NOT NULL DEFAULT '',
+                    failure_detail TEXT NOT NULL DEFAULT '',
+                    retryable INTEGER,
+                    correlation_id TEXT NOT NULL DEFAULT '',
+                    turn_uid TEXT,
+                    entry_start_sequence INTEGER,
+                    entry_end_sequence INTEGER,
+                    turn_resolution TEXT,
+                    settlement_fingerprint TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
                     UNIQUE (task_uid, attempt_number)
@@ -255,10 +289,78 @@ class LocalDevelopmentBackend(MainSequenceClient):
                 );
                 """
             )
+            self._ensure_schema_column(
+                connection, "a2a_tasks", "failure_code", "TEXT NOT NULL DEFAULT ''"
+            )
+            self._ensure_schema_column(
+                connection, "a2a_tasks", "failure_category", "TEXT NOT NULL DEFAULT ''"
+            )
+            self._ensure_schema_column(connection, "a2a_tasks", "failure_retryable", "INTEGER")
+            self._ensure_schema_column(
+                connection, "a2a_tasks", "correlation_id", "TEXT NOT NULL DEFAULT ''"
+            )
+            self._ensure_schema_column(
+                connection, "a2a_tasks", "recovery_owner", "TEXT NOT NULL DEFAULT ''"
+            )
+            self._ensure_schema_column(
+                connection, "a2a_tasks", "recovery_count", "INTEGER NOT NULL DEFAULT 0"
+            )
+            self._ensure_schema_column(connection, "a2a_tasks", "terminal_at", "TEXT")
+            self._ensure_schema_column(
+                connection,
+                "a2a_task_attempts",
+                "outcome_category",
+                "TEXT NOT NULL DEFAULT ''",
+            )
+            self._ensure_schema_column(
+                connection,
+                "a2a_task_attempts",
+                "failure_code",
+                "TEXT NOT NULL DEFAULT ''",
+            )
+            self._ensure_schema_column(
+                connection,
+                "a2a_task_attempts",
+                "failure_detail",
+                "TEXT NOT NULL DEFAULT ''",
+            )
+            self._ensure_schema_column(connection, "a2a_task_attempts", "retryable", "INTEGER")
+            self._ensure_schema_column(
+                connection,
+                "a2a_task_attempts",
+                "correlation_id",
+                "TEXT NOT NULL DEFAULT ''",
+            )
+            self._ensure_schema_column(connection, "sessions", "active_task_attempt_uid", "TEXT")
+            self._ensure_schema_column(connection, "entries", "turn_uid", "TEXT")
+            self._ensure_schema_column(connection, "a2a_task_attempts", "turn_uid", "TEXT")
+            self._ensure_schema_column(
+                connection, "a2a_task_attempts", "entry_start_sequence", "INTEGER"
+            )
+            self._ensure_schema_column(
+                connection, "a2a_task_attempts", "entry_end_sequence", "INTEGER"
+            )
+            self._ensure_schema_column(connection, "a2a_task_attempts", "turn_resolution", "TEXT")
+            self._ensure_schema_column(
+                connection, "a2a_task_attempts", "settlement_fingerprint", "TEXT"
+            )
             connection.execute(
                 "INSERT OR REPLACE INTO schema_metadata(key, value) VALUES('schema_version', ?)",
                 (str(_SCHEMA_VERSION),),
             )
+
+    @staticmethod
+    def _ensure_schema_column(
+        connection: sqlite3.Connection,
+        table: str,
+        column: str,
+        declaration: str,
+    ) -> None:
+        columns = {
+            str(row["name"]) for row in connection.execute(f"PRAGMA table_info({table})").fetchall()
+        }
+        if column not in columns:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
     async def _run(self, operation: Callable[[], _T]) -> _T:
         await self._ensure_initialized()
@@ -473,6 +575,8 @@ class LocalDevelopmentBackend(MainSequenceClient):
         self,
         connection: sqlite3.Connection,
         row: sqlite3.Row,
+        *,
+        history_length: int | None = None,
     ) -> AgentTask:
         message = connection.execute(
             """
@@ -500,6 +604,11 @@ class LocalDevelopmentBackend(MainSequenceClient):
             }
             for output in output_rows
         ]
+        history = (
+            self._task_messages(connection, str(row["uid"]), limit=history_length)
+            if history_length is not None and history_length > 0
+            else ([] if history_length is not None else None)
+        )
         return AgentTask(
             uid=str(row["uid"]),
             task_id=str(row["task_id"]),
@@ -515,10 +624,74 @@ class LocalDevelopmentBackend(MainSequenceClient):
             latest_message=(
                 self._json_load(message["message_json"], {}) if message is not None else None
             ),
+            history=history,
             outputs=outputs,
             metadata=self._json_load(row["metadata_json"], {}),
             last_event_sequence=int(row["last_event_sequence"]),
+            failure_code=str(row["failure_code"]),
+            failure_category=str(row["failure_category"]),
+            failure_retryable=(
+                bool(row["failure_retryable"]) if row["failure_retryable"] is not None else None
+            ),
+            correlation_id=str(row["correlation_id"]),
+            recovery_owner=str(row["recovery_owner"]),
+            recovery_count=int(row["recovery_count"]),
         )
+
+    def _task_messages(
+        self,
+        connection: sqlite3.Connection,
+        task_uid: str,
+        *,
+        limit: int,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        bounded = max(0, min(int(limit), 100))
+        if bounded == 0:
+            return []
+        rows = connection.execute(
+            """
+            SELECT message_json FROM (
+                SELECT sequence, message_json FROM a2a_task_messages
+                WHERE task_uid = ? ORDER BY sequence DESC LIMIT ? OFFSET ?
+            ) ORDER BY sequence
+            """,
+            (task_uid, bounded, max(0, int(offset))),
+        ).fetchall()
+        return [self._json_load(item["message_json"], {}) for item in rows]
+
+    def _task_message_tails(
+        self,
+        connection: sqlite3.Connection,
+        task_uids: list[str],
+        *,
+        limit: int,
+    ) -> dict[str, list[dict[str, Any]]]:
+        """Load one bounded Message tail for every Task in a single storage query."""
+
+        bounded = max(0, min(int(limit), 100))
+        if bounded == 0 or not task_uids:
+            return {task_uid: [] for task_uid in task_uids}
+        placeholders = ",".join("?" for _ in task_uids)
+        rows = connection.execute(
+            f"""
+            SELECT task_uid, sequence, message_json FROM (
+                SELECT task_uid, sequence, message_json,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY task_uid ORDER BY sequence DESC
+                    ) AS tail_position
+                FROM a2a_task_messages
+                WHERE task_uid IN ({placeholders})
+            )
+            WHERE tail_position <= ?
+            ORDER BY task_uid, sequence
+            """,
+            (*task_uids, bounded),
+        ).fetchall()
+        histories: dict[str, list[dict[str, Any]]] = {task_uid: [] for task_uid in task_uids}
+        for row in rows:
+            histories[str(row["task_uid"])].append(self._json_load(row["message_json"], {}))
+        return histories
 
     def _append_task_event(
         self,
@@ -566,11 +739,18 @@ class LocalDevelopmentBackend(MainSequenceClient):
         message: Mapping[str, Any],
     ) -> dict[str, Any]:
         normalized = dict(message)
-        message_id = str(
-            normalized.get("message_id") or normalized.get("messageId") or uuid.uuid4()
-        )
-        normalized["message_id"] = message_id
-        normalized.pop("messageId", None)
+        message_id = str(normalized.get("messageId") or "").strip()
+        if not message_id:
+            raise BackendConflictError("Local A2A Message.messageId is required")
+        if normalized.get("role") not in {
+            A2AMessageDirection.REQUESTER.value,
+            A2AMessageDirection.RESPONDER.value,
+        }:
+            raise BackendConflictError("Local A2A Message has an invalid binding role")
+        try:
+            message_to_protocol(normalized)
+        except ValueError as error:
+            raise BackendConflictError(str(error)) from error
         existing = connection.execute(
             """
             SELECT message_json FROM a2a_task_messages
@@ -611,7 +791,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
             task_uid,
             event_type="message_added",
             message_uid=message_id,
-            payload={"message": normalized},
+            payload={"messageId": message_id},
         )
         return normalized
 
@@ -651,6 +831,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
             working=activity in {"working", "persisting"},
             runtime_activity=activity,
             active_turn_uid=row["active_turn_uid"],
+            active_task_attempt_uid=row["active_task_attempt_uid"],
             activity_revision=int(row["activity_revision"]),
             activity_sequence=int(row["activity_sequence"]),
             activity_updated_at=_from_iso(str(row["updated_at"])),
@@ -675,6 +856,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
                 str(session["runtime_activity"]),
             ),
             active_turn_uid=session["active_turn_uid"],
+            active_task_attempt_uid=session["active_task_attempt_uid"],
             activity_revision=int(session["activity_revision"]),
             activity_sequence=int(session["activity_sequence"]),
             activity_updated_at=_from_iso(str(session["updated_at"])),
@@ -765,6 +947,15 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     "SELECT * FROM leases WHERE session_uid = ?",
                     (session_uid,),
                 ).fetchone()
+                active_task_attempt_uid = str(row["active_task_attempt_uid"] or "")
+                if active_task_attempt_uid and (
+                    current_lease is None
+                    or _from_iso(str(current_lease["expires_at"])) <= now
+                    or str(current_lease["holder_id"]) != request.holder_id
+                ):
+                    raise BackendConflictError(
+                        "Local Task turn recovery is pending before lease replacement"
+                    )
                 if (
                     current_lease is not None
                     and _from_iso(str(current_lease["expires_at"])) > now
@@ -842,7 +1033,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
             raise SessionNotFoundError(f"Local session not found: {session_uid}")
         rows = connection.execute(
             """
-            SELECT sequence, entry_type, entry_json, idempotency_key
+            SELECT sequence, entry_type, entry_json, idempotency_key, turn_uid
             FROM entries
             WHERE session_uid = ? AND sequence >= ?
             ORDER BY sequence
@@ -856,6 +1047,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     entry_type=cast(TauEntryType, str(row["entry_type"])),
                     entry_json=json.loads(str(row["entry_json"])),
                     idempotency_key=str(row["idempotency_key"]),
+                    turn_uid=(str(row["turn_uid"]) if row["turn_uid"] else None),
                 )
                 for row in rows
             ],
@@ -912,6 +1104,38 @@ class LocalDevelopmentBackend(MainSequenceClient):
                 ).fetchone()
                 if session is None:
                     raise SessionNotFoundError(f"Local session not found: {session_uid}")
+                active_task_attempt_uid = str(session["active_task_attempt_uid"] or "")
+                active_turn_uid = str(session["active_turn_uid"] or "")
+                if active_task_attempt_uid:
+                    attempt = connection.execute(
+                        "SELECT * FROM a2a_task_attempts WHERE uid = ?",
+                        (active_task_attempt_uid,),
+                    ).fetchone()
+                    if attempt is None or str(attempt["turn_resolution"] or "") != "pending":
+                        raise BackendConflictError("Local Task turn reservation is inconsistent")
+                    if request.turn is None or request.turn.turn_uid != str(attempt["turn_uid"]):
+                        raise BackendConflictError(
+                            "Tau entries must use the active Task attempt turn"
+                        )
+                elif active_turn_uid and (
+                    request.turn is None or request.turn.turn_uid != active_turn_uid
+                ):
+                    raise BackendConflictError("Tau entries must use the active turn")
+                if request.turn is not None:
+                    resolved_attempt = connection.execute(
+                        "SELECT turn_resolution FROM a2a_task_attempts WHERE turn_uid = ?",
+                        (request.turn.turn_uid,),
+                    ).fetchone()
+                    if resolved_attempt is not None and str(
+                        resolved_attempt["turn_resolution"] or ""
+                    ) in {"committed", "abandoned"}:
+                        exact_commit_replay = (
+                            str(resolved_attempt["turn_resolution"]) == "committed"
+                            and request.turn.phase == "committed"
+                            and not request.entries
+                        )
+                        if not exact_commit_replay:
+                            raise BackendConflictError("Resolved Task turn cannot accept writes")
                 current_sequence = int(session["next_sequence"])
                 records: list[SessionEntryRecord] = []
                 replayed = False
@@ -921,7 +1145,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
                         expected_sequence = request.expected_sequence + offset
                         row = connection.execute(
                             """
-                            SELECT sequence, entry_type, entry_json, idempotency_key
+                            SELECT sequence, entry_type, entry_json, idempotency_key, turn_uid
                             FROM entries WHERE session_uid = ? AND idempotency_key = ?
                             """,
                             (session_uid, item.idempotency_key),
@@ -940,6 +1164,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
                                 ),
                                 entry_json=entry_json,
                                 idempotency_key=str(row["idempotency_key"]),
+                                turn_uid=(str(row["turn_uid"]) if row["turn_uid"] else None),
                             )
                         )
                 else:
@@ -959,8 +1184,9 @@ class LocalDevelopmentBackend(MainSequenceClient):
                             connection.execute(
                                 """
                                 INSERT INTO entries(
-                                    session_uid, sequence, entry_type, entry_json, idempotency_key
-                                ) VALUES (?, ?, ?, ?, ?)
+                                    session_uid, sequence, entry_type, entry_json,
+                                    idempotency_key, turn_uid
+                                ) VALUES (?, ?, ?, ?, ?, ?)
                                 """,
                                 (
                                     session_uid,
@@ -968,6 +1194,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
                                     entry_type,
                                     canonical,
                                     item.idempotency_key,
+                                    request.turn.turn_uid if request.turn is not None else None,
                                 ),
                             )
                         except sqlite3.IntegrityError as error:
@@ -980,6 +1207,9 @@ class LocalDevelopmentBackend(MainSequenceClient):
                                 entry_type=entry_type,
                                 entry_json=item.entry,
                                 idempotency_key=item.idempotency_key,
+                                turn_uid=(
+                                    request.turn.turn_uid if request.turn is not None else None
+                                ),
                             )
                         )
                     current_sequence += len(request.entries)
@@ -1021,6 +1251,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
                             """
                             UPDATE sessions SET
                                 runtime_activity='idle', active_turn_uid=NULL,
+                                active_task_attempt_uid=NULL,
                                 activity_sequence=?, last_committed_turn_uid=?,
                                 cancel_requested=0, cancellation_id=NULL, updated_at=?
                             WHERE uid=?
@@ -1037,6 +1268,20 @@ class LocalDevelopmentBackend(MainSequenceClient):
                             next_sequence=current_sequence,
                             committed_at=committed_at,
                         )
+                        if active_task_attempt_uid:
+                            connection.execute(
+                                """
+                                UPDATE a2a_task_attempts SET entry_end_sequence=?,
+                                    turn_resolution='committed', updated_at=?
+                                WHERE uid=? AND turn_uid=? AND turn_resolution='pending'
+                                """,
+                                (
+                                    current_sequence,
+                                    _iso(now),
+                                    active_task_attempt_uid,
+                                    request.turn.turn_uid,
+                                ),
+                            )
                     else:
                         connection.execute(
                             """
@@ -1134,6 +1379,14 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     lease_token=request.lease_token,
                     holder_id=request.holder_id,
                 )
+                session = connection.execute(
+                    "SELECT active_task_attempt_uid FROM sessions WHERE uid=?",
+                    (session_uid,),
+                ).fetchone()
+                if session is not None and session["active_task_attempt_uid"]:
+                    raise BackendConflictError(
+                        "Local Task turn must be resolved before releasing its lease"
+                    )
                 connection.execute("DELETE FROM leases WHERE session_uid=?", (session_uid,))
 
         await self._run(operation)
@@ -1204,6 +1457,13 @@ class LocalDevelopmentBackend(MainSequenceClient):
                         sequence = request.activity_sequence
                         revision += 1
                 if applied:
+                    active_task_attempt_uid = str(row["active_task_attempt_uid"] or "")
+                    if active_task_attempt_uid and request.active_turn_uid != str(
+                        row["active_turn_uid"] or ""
+                    ):
+                        raise BackendConflictError(
+                            "Generic runtime activity cannot replace or clear a Task turn"
+                        )
                     connection.execute(
                         """
                         UPDATE sessions SET runtime_activity=?, active_turn_uid=?,
@@ -1419,12 +1679,14 @@ class LocalDevelopmentBackend(MainSequenceClient):
 
         return await self._run(operation)
 
-    async def list_tasks(self, **filters: str) -> list[AgentTask]:
+    async def list_tasks(self, **filters: Any) -> list[AgentTask]:
         def operation() -> list[AgentTask]:
             clauses: list[str] = []
             values: list[str] = []
             context_id = str(filters.get("context_id") or "").strip()
             task_id = str(filters.get("task_id") or "").strip()
+            history_value = filters.get("history_length")
+            history_length = int(history_value) if history_value is not None else None
             if context_id:
                 clauses.append("context_id = ?")
                 values.append(self.settings.local_session_uid(context_id))
@@ -1437,14 +1699,52 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     "SELECT * FROM a2a_tasks" + where + " ORDER BY created_at, uid",
                     values,
                 ).fetchall()
-                return [self._task_from_row(connection, row) for row in rows]
+                tasks = [self._task_from_row(connection, row) for row in rows]
+                if history_length is None:
+                    return tasks
+                if history_length <= 0:
+                    return [task.model_copy(update={"history": []}) for task in tasks]
+                histories = self._task_message_tails(
+                    connection,
+                    [task.uid for task in tasks],
+                    limit=history_length,
+                )
+                return [task.model_copy(update={"history": histories[task.uid]}) for task in tasks]
 
         return await self._run(operation)
 
-    async def get_task(self, task_uid: str) -> AgentTask:
+    async def get_task(
+        self,
+        task_uid: str,
+        *,
+        history_length: int | None = None,
+    ) -> AgentTask:
         def operation() -> AgentTask:
             with closing(self._connect()) as connection, connection:
-                return self._task_from_row(connection, self._task_row(connection, task_uid))
+                return self._task_from_row(
+                    connection,
+                    self._task_row(connection, task_uid),
+                    history_length=history_length,
+                )
+
+        return await self._run(operation)
+
+    async def list_task_messages(
+        self,
+        task_uid: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        def operation() -> list[dict[str, Any]]:
+            with closing(self._connect()) as connection:
+                self._task_row(connection, task_uid)
+                return self._task_messages(
+                    connection,
+                    task_uid,
+                    limit=limit,
+                    offset=offset,
+                )
 
         return await self._run(operation)
 
@@ -1550,6 +1850,27 @@ class LocalDevelopmentBackend(MainSequenceClient):
         )
         return cast(sqlite3.Row, attempt)
 
+    @staticmethod
+    def _attempt_from_row(row: sqlite3.Row) -> AgentTaskExecutionAttempt:
+        return AgentTaskExecutionAttempt(
+            uid=str(row["uid"]),
+            dispatch_uid=str(row["dispatch_uid"]),
+            attempt_number=int(row["attempt_number"]),
+            state=cast(Any, str(row["state"])),
+            turn_uid=(str(row["turn_uid"]) if row["turn_uid"] else None),
+            entry_start_sequence=(
+                int(row["entry_start_sequence"])
+                if row["entry_start_sequence"] is not None
+                else None
+            ),
+            entry_end_sequence=(
+                int(row["entry_end_sequence"]) if row["entry_end_sequence"] is not None else None
+            ),
+            turn_resolution=(
+                cast(Any, str(row["turn_resolution"])) if row["turn_resolution"] else None
+            ),
+        )
+
     async def claim_task_dispatch(
         self,
         task_uid: str,
@@ -1603,7 +1924,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
                 connection.execute(
                     """
                     UPDATE a2a_tasks SET status='working', status_timestamp=?,
-                        dispatch_uid=?, current_attempt_uid=?, updated_at=?
+                        dispatch_uid=?, current_attempt_uid=?, recovery_owner='', updated_at=?
                     WHERE uid=?
                     """,
                     (
@@ -1620,14 +1941,281 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     event_type="status_changed",
                     status="working",
                 )
-                return AgentTaskExecutionAttempt(
-                    uid=attempt_uid,
-                    dispatch_uid=resolved_dispatch_uid,
-                    attempt_number=attempt_number,
-                    state="claimed",
-                )
+                attempt = connection.execute(
+                    "SELECT * FROM a2a_task_attempts WHERE uid=?", (attempt_uid,)
+                ).fetchone()
+                assert attempt is not None
+                return self._attempt_from_row(attempt)
 
         return await self._run(operation)
+
+    def _terminalize_recovery_failure(
+        self,
+        connection: sqlite3.Connection,
+        task: sqlite3.Row,
+        *,
+        recovery_owner: str,
+        failure_code: str,
+        category: str,
+        text: str,
+        ambiguous: bool,
+    ) -> None:
+        task_uid = str(task["uid"])
+        attempt_uid = str(task["current_attempt_uid"] or "")
+        attempt = (
+            connection.execute(
+                "SELECT * FROM a2a_task_attempts WHERE uid = ? AND task_uid = ?",
+                (attempt_uid, task_uid),
+            ).fetchone()
+            if attempt_uid
+            else None
+        )
+        if attempt is None:
+            attempt_number = int(
+                connection.execute(
+                    "SELECT COUNT(*) FROM a2a_task_attempts WHERE task_uid = ?",
+                    (task_uid,),
+                ).fetchone()[0]
+            )
+        else:
+            attempt_number = int(attempt["attempt_number"])
+        correlation_id = str(task["correlation_id"] or task["task_id"])
+        status_message = failure_status_message(
+            context_id=str(task["context_id"]),
+            task_id=str(task["task_id"]),
+            failure_code=failure_code,
+            category=category,
+            retryable=False,
+            attempt_number=attempt_number,
+            correlation_id=correlation_id,
+            text=text,
+        )
+        now = _utcnow()
+        persisted_message = self._append_task_message(connection, task_uid, status_message)
+        connection.execute(
+            """
+            UPDATE a2a_tasks SET status='failed', status_message_json=?,
+                status_timestamp=?, failure_code=?, failure_category=?,
+                failure_retryable=0, correlation_id=?, recovery_owner=?,
+                terminal_at=?, updated_at=? WHERE uid=?
+            """,
+            (
+                self._json_dump(status_message),
+                _iso(now),
+                failure_code,
+                category,
+                correlation_id,
+                recovery_owner,
+                _iso(now),
+                _iso(now),
+                task_uid,
+            ),
+        )
+        if attempt is not None:
+            session = connection.execute(
+                "SELECT next_sequence FROM sessions WHERE uid=?",
+                (str(task["context_id"]),),
+            ).fetchone()
+            entry_end_sequence = int(session["next_sequence"]) if session is not None else None
+            connection.execute(
+                """
+                UPDATE a2a_task_attempts SET state=?, outcome_category=?,
+                    failure_code=?, failure_detail=?, retryable=0,
+                    correlation_id=?, entry_end_sequence=?,
+                    turn_resolution=CASE
+                        WHEN turn_resolution='pending' THEN 'abandoned'
+                        ELSE turn_resolution
+                    END, updated_at=? WHERE uid=?
+                """,
+                (
+                    "ambiguous" if ambiguous else "failed",
+                    category,
+                    failure_code,
+                    failure_code,
+                    correlation_id,
+                    entry_end_sequence,
+                    _iso(now),
+                    attempt_uid,
+                ),
+            )
+            connection.execute(
+                """
+                UPDATE sessions SET runtime_activity='idle', active_turn_uid=NULL,
+                    active_task_attempt_uid=NULL, updated_at=?
+                WHERE uid=? AND active_task_attempt_uid=?
+                """,
+                (_iso(now), str(task["context_id"]), attempt_uid),
+            )
+        self._append_task_event(
+            connection,
+            task_uid,
+            event_type="status_changed",
+            status="failed",
+            message_uid=str(persisted_message["messageId"]),
+            payload={"messageId": persisted_message["messageId"], "recovery": True},
+        )
+
+    async def reconcile_a2a_tasks(
+        self,
+        *,
+        recovery_owner: str,
+        stale_after_seconds: float,
+        pending_timeout_seconds: float,
+        max_recovery_attempts: int,
+    ) -> list[AgentTask]:
+        """Resolve abandoned work and return safe submitted Tasks for scheduling."""
+
+        def operation() -> list[AgentTask]:
+            now = _utcnow()
+            stale_before = now - timedelta(seconds=stale_after_seconds)
+            pending_before = now - timedelta(seconds=pending_timeout_seconds)
+            submitted: list[AgentTask] = []
+            stale_attempts = 0
+            ambiguous_outcomes = 0
+            recovery_failures = 0
+            with closing(self._connect()) as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                rows = connection.execute(
+                    """
+                    SELECT * FROM a2a_tasks
+                    WHERE status IN ('submitted', 'working')
+                    ORDER BY created_at, uid
+                    """
+                ).fetchall()
+                for row in rows:
+                    status = str(row["status"])
+                    if status == "submitted":
+                        lease = connection.execute(
+                            "SELECT holder_id, expires_at FROM leases WHERE session_uid = ?",
+                            (str(row["context_id"]),),
+                        ).fetchone()
+                        owned_elsewhere = bool(
+                            lease is not None
+                            and str(lease["holder_id"]) != recovery_owner
+                            and _from_iso(str(lease["expires_at"])) > now
+                        )
+                        if owned_elsewhere:
+                            continue
+                        exhausted = int(row["recovery_count"]) >= max_recovery_attempts
+                        timed_out = _from_iso(str(row["created_at"])) <= pending_before
+                        if exhausted or timed_out:
+                            self._terminalize_recovery_failure(
+                                connection,
+                                row,
+                                recovery_owner=recovery_owner,
+                                failure_code="recovery_exhausted",
+                                category="recovery",
+                                text="Task could not be started within its recovery policy.",
+                                ambiguous=False,
+                            )
+                            recovery_failures += 1
+                            continue
+                        submitted.append(self._task_from_row(connection, row))
+                        continue
+
+                    attempt_uid = str(row["current_attempt_uid"] or "")
+                    attempt = (
+                        connection.execute(
+                            "SELECT * FROM a2a_task_attempts WHERE uid = ?",
+                            (attempt_uid,),
+                        ).fetchone()
+                        if attempt_uid
+                        else None
+                    )
+                    lease = connection.execute(
+                        "SELECT holder_id, expires_at FROM leases WHERE session_uid = ?",
+                        (str(row["context_id"]),),
+                    ).fetchone()
+                    lease_active = bool(
+                        attempt is not None
+                        and lease is not None
+                        and str(lease["holder_id"]) == str(attempt["holder_id"])
+                        and _from_iso(str(lease["expires_at"])) > now
+                    )
+                    last_activity_value = (
+                        attempt["updated_at"] if attempt is not None else row["status_timestamp"]
+                    )
+                    last_activity = _from_iso(str(last_activity_value))
+                    if lease_active or last_activity > stale_before:
+                        continue
+                    stale_attempts += 1
+                    self._terminalize_recovery_failure(
+                        connection,
+                        row,
+                        recovery_owner=recovery_owner,
+                        failure_code="ambiguous_execution_outcome",
+                        category="ambiguous_outcome",
+                        text=(
+                            "Task execution ownership was lost and its external effects "
+                            "could not be proven safe to replay."
+                        ),
+                        ambiguous=True,
+                    )
+                    ambiguous_outcomes += 1
+
+                current = connection.execute(
+                    "SELECT status, created_at, status_timestamp FROM a2a_tasks "
+                    "WHERE status IN ('submitted', 'working')"
+                ).fetchall()
+                pending_ages = [
+                    (now - _from_iso(str(item["created_at"]))).total_seconds()
+                    for item in current
+                    if item["status"] == "submitted"
+                ]
+                working_ages = [
+                    (now - _from_iso(str(item["status_timestamp"]))).total_seconds()
+                    for item in current
+                    if item["status"] == "working"
+                ]
+                self._recovery_metrics = {
+                    "submitted": len(pending_ages),
+                    "working": len(working_ages),
+                    "stale_attempts": stale_attempts,
+                    "recovery_failures": recovery_failures,
+                    "ambiguous_outcomes": ambiguous_outcomes,
+                    "oldest_pending_seconds": max(pending_ages, default=0.0),
+                    "oldest_working_seconds": max(working_ages, default=0.0),
+                }
+            return submitted
+
+        return await self._run(operation)
+
+    async def record_a2a_recovery_failure(
+        self,
+        task_uid: str,
+        *,
+        recovery_owner: str,
+        error_type: str,
+    ) -> AgentTask:
+        """Persist one safe deferred-recovery attempt for a submitted Task."""
+
+        def operation() -> AgentTask:
+            with closing(self._connect()) as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                task = self._task_row(connection, task_uid)
+                if str(task["status"]) != "submitted":
+                    return self._task_from_row(connection, task)
+                count = int(task["recovery_count"]) + 1
+                now = _utcnow()
+                connection.execute(
+                    """
+                    UPDATE a2a_tasks SET recovery_owner=?, recovery_count=?, updated_at=?
+                    WHERE uid=?
+                    """,
+                    (recovery_owner, count, _iso(now), task_uid),
+                )
+                self._append_task_event(
+                    connection,
+                    task_uid,
+                    event_type="recovery_deferred",
+                    payload={"attempt": count, "errorType": error_type},
+                )
+                return self._task_from_row(connection, self._task_row(connection, task_uid))
+
+        return await self._run(operation)
+
+    def a2a_recovery_snapshot(self) -> dict[str, int | float]:
+        return dict(self._recovery_metrics)
 
     async def start_task_attempt(
         self,
@@ -1636,6 +2224,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
         attempt_uid: str,
         holder_id: str,
         lease_token: str,
+        turn_uid: str,
     ) -> AgentTaskExecutionAttempt:
         def operation() -> AgentTaskExecutionAttempt:
             with closing(self._connect()) as connection, connection:
@@ -1650,17 +2239,42 @@ class LocalDevelopmentBackend(MainSequenceClient):
                 )
                 if str(attempt["state"]) not in {"claimed", "running"}:
                     raise BackendConflictError("Local A2A task attempt cannot be started")
+                existing_turn_uid = str(attempt["turn_uid"] or "")
+                if existing_turn_uid and existing_turn_uid != turn_uid:
+                    raise BackendConflictError("Local A2A task attempt turn is immutable")
+                session = connection.execute(
+                    "SELECT * FROM sessions WHERE uid=?",
+                    (str(task["context_id"]),),
+                ).fetchone()
+                if session is None:
+                    raise SessionNotFoundError(f"Local session not found: {task['context_id']!s}")
+                owner = str(session["active_task_attempt_uid"] or "")
+                active_turn = str(session["active_turn_uid"] or "")
+                if owner and owner != attempt_uid:
+                    raise BackendConflictError("Another Task owns the local Tau turn")
+                if active_turn and active_turn != turn_uid:
+                    raise BackendConflictError("Another Tau turn is already active")
                 now = _utcnow()
                 connection.execute(
-                    "UPDATE a2a_task_attempts SET state='running', updated_at=? WHERE uid=?",
-                    (_iso(now), attempt_uid),
+                    """
+                    UPDATE a2a_task_attempts SET state='running', turn_uid=?,
+                        entry_start_sequence=?, turn_resolution='pending', updated_at=?
+                    WHERE uid=?
+                    """,
+                    (turn_uid, int(session["next_sequence"]), _iso(now), attempt_uid),
                 )
-                return AgentTaskExecutionAttempt(
-                    uid=attempt_uid,
-                    dispatch_uid=str(attempt["dispatch_uid"]),
-                    attempt_number=int(attempt["attempt_number"]),
-                    state="running",
+                connection.execute(
+                    """
+                    UPDATE sessions SET runtime_activity='working', active_turn_uid=?,
+                        active_task_attempt_uid=?, updated_at=? WHERE uid=?
+                    """,
+                    (turn_uid, attempt_uid, _iso(now), str(task["context_id"])),
                 )
+                refreshed = connection.execute(
+                    "SELECT * FROM a2a_task_attempts WHERE uid=?", (attempt_uid,)
+                ).fetchone()
+                assert refreshed is not None
+                return self._attempt_from_row(refreshed)
 
         return await self._run(operation)
 
@@ -1878,6 +2492,41 @@ class LocalDevelopmentBackend(MainSequenceClient):
             with closing(self._connect()) as connection, connection:
                 connection.execute("BEGIN IMMEDIATE")
                 task = self._task_row(connection, task_uid)
+                message_payload = validate_status_message(
+                    status_message,
+                    context_id=str(task["context_id"]),
+                    task_id=str(task["task_id"]),
+                )
+                if status in {"input_required", "auth_required", "failed", "rejected"} and (
+                    message_payload is None
+                ):
+                    raise BackendConflictError(
+                        f"Local A2A {status} settlement requires a complete status Message"
+                    )
+                normalized_settlement = {
+                    "task_uid": task_uid,
+                    "attempt_uid": attempt_uid,
+                    "status": status,
+                    "status_message": message_payload,
+                    "outcome_category": str(outcome_category),
+                    "failure_detail": str(failure_detail)[:512],
+                }
+                fingerprint = hashlib.sha256(
+                    self._json_dump(normalized_settlement).encode("utf-8")
+                ).hexdigest()
+                stored_attempt = connection.execute(
+                    "SELECT * FROM a2a_task_attempts WHERE uid=? AND task_uid=?",
+                    (attempt_uid, task_uid),
+                ).fetchone()
+                if stored_attempt is None or str(stored_attempt["holder_id"]) != holder_id:
+                    raise BackendConflictError("Local A2A task attempt ownership is invalid")
+                existing_fingerprint = str(stored_attempt["settlement_fingerprint"] or "")
+                if existing_fingerprint:
+                    if existing_fingerprint != fingerprint:
+                        raise BackendConflictError("Local A2A settlement replay diverged")
+                    return self._attempt_from_row(stored_attempt)
+                if str(stored_attempt["state"]) not in {"claimed", "running"}:
+                    raise BackendConflictError("Pre-cutover local A2A settlement is not replayable")
                 attempt = self._validate_task_attempt(
                     connection,
                     task,
@@ -1885,53 +2534,109 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     holder_id=holder_id,
                     lease_token=lease_token,
                 )
+                turn_resolution = str(attempt["turn_resolution"] or "")
+                if status in {"completed", "input_required", "auth_required"} and (
+                    turn_resolution != "committed"
+                ):
+                    raise BackendConflictError(
+                        f"Local A2A {status} settlement requires the matching Tau turn commit"
+                    )
                 now = _utcnow()
-                message_payload = dict(status_message or {})
-                if outcome_category:
-                    message_payload["outcomeCategory"] = outcome_category
-                if failure_detail:
-                    message_payload["failureDetail"] = failure_detail
+                public_failure = failure_details(message_payload)
+                failure_code = str(public_failure.get("code") or "")
+                failure_category = str(public_failure.get("category") or outcome_category or "")
+                failure_retryable = public_failure.get("retryable")
+                correlation_id = str(public_failure.get("correlationId") or "")
+                is_terminal = status in _LOCAL_A2A_TERMINAL_STATES
+                if turn_resolution == "pending":
+                    session = connection.execute(
+                        "SELECT next_sequence FROM sessions WHERE uid=?",
+                        (str(task["context_id"]),),
+                    ).fetchone()
+                    if session is None:
+                        raise SessionNotFoundError(
+                            f"Local session not found: {task['context_id']!s}"
+                        )
+                    turn_resolution = "abandoned"
+                    connection.execute(
+                        """
+                        UPDATE sessions SET runtime_activity='idle', active_turn_uid=NULL,
+                            active_task_attempt_uid=NULL, updated_at=? WHERE uid=?
+                            AND active_task_attempt_uid=?
+                        """,
+                        (_iso(now), str(task["context_id"]), attempt_uid),
+                    )
+                    entry_end_sequence = int(session["next_sequence"])
+                else:
+                    entry_end_sequence = attempt["entry_end_sequence"]
+                persisted_message = (
+                    self._append_task_message(connection, task_uid, message_payload)
+                    if message_payload is not None
+                    else None
+                )
+                message_uid = (
+                    str(persisted_message["messageId"]) if persisted_message is not None else None
+                )
                 connection.execute(
                     """
                     UPDATE a2a_tasks SET status=?, status_message_json=?,
-                        status_timestamp=?, cancellation_requested=?, updated_at=?
+                        status_timestamp=?, cancellation_requested=?,
+                        failure_code=?, failure_category=?, failure_retryable=?,
+                        correlation_id=?, terminal_at=?, recovery_owner='', updated_at=?
                     WHERE uid=?
                     """,
                     (
                         status,
-                        self._json_dump(message_payload) if message_payload else None,
+                        self._json_dump(message_payload) if message_payload is not None else None,
                         _iso(now),
                         int(status == "canceled"),
+                        failure_code,
+                        failure_category,
+                        (int(bool(failure_retryable)) if failure_retryable is not None else None),
+                        correlation_id,
+                        _iso(now) if is_terminal else None,
                         _iso(now),
                         task_uid,
                     ),
                 )
                 connection.execute(
                     """
-                    UPDATE a2a_task_attempts SET state=?, updated_at=? WHERE uid=?
+                    UPDATE a2a_task_attempts SET state=?, outcome_category=?,
+                        failure_code=?, failure_detail=?, retryable=?, correlation_id=?,
+                        entry_end_sequence=?, turn_resolution=?, settlement_fingerprint=?,
+                        updated_at=? WHERE uid=?
                     """,
                     (
                         "interrupted" if status in {"input_required", "auth_required"} else status,
+                        outcome_category,
+                        failure_code,
+                        failure_detail,
+                        (int(bool(failure_retryable)) if failure_retryable is not None else None),
+                        correlation_id,
+                        entry_end_sequence,
+                        turn_resolution or None,
+                        fingerprint,
                         _iso(now),
                         attempt_uid,
                     ),
+                )
+                connection.execute(
+                    "UPDATE a2a_tasks SET current_attempt_uid=NULL WHERE uid=?",
+                    (task_uid,),
                 )
                 self._append_task_event(
                     connection,
                     task_uid,
                     event_type="status_changed",
                     status=status,
-                    payload={"statusMessage": message_payload} if message_payload else {},
+                    message_uid=message_uid,
+                    payload=({"messageId": message_uid} if message_uid else {}),
                 )
-                return AgentTaskExecutionAttempt(
-                    uid=attempt_uid,
-                    dispatch_uid=str(attempt["dispatch_uid"]),
-                    attempt_number=int(attempt["attempt_number"]),
-                    state=cast(
-                        Any,
-                        "interrupted" if status in {"input_required", "auth_required"} else status,
-                    ),
-                )
+                refreshed = connection.execute(
+                    "SELECT * FROM a2a_task_attempts WHERE uid=?", (attempt_uid,)
+                ).fetchone()
+                assert refreshed is not None
+                return self._attempt_from_row(refreshed)
 
         return await self._run(operation)
 
@@ -1952,7 +2657,9 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     """
                     UPDATE a2a_tasks SET status='submitted', status_message_json=NULL,
                         status_timestamp=?, cancellation_requested=0, dispatch_uid=?,
-                        current_attempt_uid=NULL, updated_at=? WHERE uid=?
+                        current_attempt_uid=NULL, failure_code='', failure_category='',
+                        failure_retryable=NULL, correlation_id='', recovery_owner='',
+                        recovery_count=0, terminal_at=NULL, updated_at=? WHERE uid=?
                     """,
                     (_iso(now), str(uuid.uuid4()), _iso(now), task_uid),
                 )
@@ -1969,6 +2676,36 @@ class LocalDevelopmentBackend(MainSequenceClient):
 
         return await self._run(operation)
 
+    async def update_task_recovery_metadata(
+        self,
+        task_uid: str,
+        *,
+        output_contract: Mapping[str, Any],
+        provenance: Mapping[str, Any],
+    ) -> AgentTask:
+        """Persist the exact continuation execution contract used after a safe restart."""
+
+        def operation() -> AgentTask:
+            with closing(self._connect()) as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                task = self._task_row(connection, task_uid)
+                if str(task["status"]) != "submitted":
+                    raise BackendConflictError(
+                        "Local A2A recovery metadata requires a submitted Task"
+                    )
+                metadata = self._json_load(task["metadata_json"], {})
+                metadata["execution"] = {
+                    "output_contract": dict(output_contract),
+                    "provenance": dict(provenance),
+                }
+                connection.execute(
+                    "UPDATE a2a_tasks SET metadata_json=?, updated_at=? WHERE uid=?",
+                    (self._json_dump(metadata), _iso(_utcnow()), task_uid),
+                )
+                return self._task_from_row(connection, self._task_row(connection, task_uid))
+
+        return await self._run(operation)
+
     async def cancel_task(self, task_uid: str) -> AgentTask:
         def operation() -> AgentTask:
             with closing(self._connect()) as connection, connection:
@@ -1980,18 +2717,57 @@ class LocalDevelopmentBackend(MainSequenceClient):
                 connection.execute(
                     """
                     UPDATE a2a_tasks SET status='canceled', cancellation_requested=1,
-                        status_timestamp=?, updated_at=? WHERE uid=?
+                        status_timestamp=?, terminal_at=?, recovery_owner='',
+                        current_attempt_uid=NULL, updated_at=?
+                    WHERE uid=?
                     """,
-                    (_iso(now), _iso(now), task_uid),
+                    (_iso(now), _iso(now), _iso(now), task_uid),
                 )
                 if task["current_attempt_uid"]:
+                    attempt_uid = str(task["current_attempt_uid"])
+                    attempt = connection.execute(
+                        "SELECT * FROM a2a_task_attempts WHERE uid=? AND task_uid=?",
+                        (attempt_uid, task_uid),
+                    ).fetchone()
+                    session = connection.execute(
+                        "SELECT next_sequence FROM sessions WHERE uid=?",
+                        (str(task["context_id"]),),
+                    ).fetchone()
+                    pending_turn = bool(
+                        attempt is not None and str(attempt["turn_resolution"] or "") == "pending"
+                    )
                     connection.execute(
                         """
-                        UPDATE a2a_task_attempts SET state='canceled', updated_at=?
+                        UPDATE a2a_task_attempts SET state='canceled',
+                            entry_end_sequence=CASE
+                                WHEN turn_resolution='pending' THEN ?
+                                ELSE entry_end_sequence
+                            END,
+                            turn_resolution=CASE
+                                WHEN turn_resolution='pending' THEN 'abandoned'
+                                ELSE turn_resolution
+                            END,
+                            updated_at=?
                         WHERE uid=?
                         """,
-                        (_iso(now), str(task["current_attempt_uid"])),
+                        (
+                            int(session["next_sequence"])
+                            if pending_turn and session is not None
+                            else None,
+                            _iso(now),
+                            attempt_uid,
+                        ),
                     )
+                    if pending_turn:
+                        connection.execute(
+                            """
+                            UPDATE sessions SET runtime_activity='idle',
+                                active_turn_uid=NULL, active_task_attempt_uid=NULL,
+                                updated_at=?
+                            WHERE uid=? AND active_task_attempt_uid=?
+                            """,
+                            (_iso(now), str(task["context_id"]), attempt_uid),
+                        )
                 self._append_task_event(
                     connection,
                     task_uid,

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import inspect
 import json
 import secrets
 import socket
@@ -283,6 +284,16 @@ class SessionRuntimeManager:
         tool_catalog_digests = {
             state.tool_catalog_digest for state in extension_states if state.tool_catalog_digest
         }
+        recovery_snapshot = (
+            getattr(self.backend, "a2a_recovery_snapshot", None)
+            if self.settings.local_mode
+            else None
+        )
+        local_task_recovery = (
+            recovery_snapshot()
+            if callable(recovery_snapshot) and not inspect.iscoroutinefunction(recovery_snapshot)
+            else None
+        )
         return {
             "mode": "local" if self.settings.local_mode else "managed",
             "exclude_base_tools": self.settings.exclude_base_tools,
@@ -316,6 +327,22 @@ class SessionRuntimeManager:
             "snapshot_restore_count": self._snapshot_restore_count,
             "snapshot_fallback_count": self._snapshot_fallback_count,
             "snapshot_upload_count": self._snapshot_upload_count,
+            "a2a_task_recovery": local_task_recovery,
+            "a2a_task_policy": (
+                {
+                    "wait_timeout_seconds": self.settings.a2a_task_wait_timeout_seconds,
+                    "reconcile_interval_seconds": (
+                        self.settings.local_a2a_task_reconcile_interval_seconds
+                    ),
+                    "stale_after_seconds": self.settings.local_a2a_task_stale_after_seconds,
+                    "pending_timeout_seconds": (
+                        self.settings.local_a2a_task_pending_timeout_seconds
+                    ),
+                    "max_recovery_attempts": (self.settings.local_a2a_task_max_recovery_attempts),
+                }
+                if self.settings.local_mode
+                else {"wait_timeout_seconds": self.settings.a2a_task_wait_timeout_seconds}
+            ),
             "project_extensions_enabled": True,
             "loaded_extension_count": max(
                 (state.loaded_extension_count for state in extension_states),
@@ -1247,14 +1274,15 @@ class SessionRuntimeManager:
         *,
         provenance: TurnProvenance | None = None,
         platform_event: PlatformEvent | None = None,
+        turn_uid: str | None = None,
     ) -> AsyncIterator[TauRuntimeEvent]:
         agent_run_uid = str(uuid.uuid4())
-        turn_uid = str(uuid.uuid4())
+        resolved_turn_uid = turn_uid or str(uuid.uuid4())
         with bound_contextvars(
             session_uid=session_uid,
             agent_session_uid=session_uid,
             agent_run_uid=agent_run_uid,
-            turn_uid=turn_uid,
+            turn_uid=resolved_turn_uid,
             agent_uid="ms-tau-sdk",
         ):
             async for event in self._prompt_with_context(

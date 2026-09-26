@@ -21,9 +21,22 @@ process. Chat and A2A load provider, model, and thinking options from the authen
 Sequence catalog through Tau. Choosing a different model updates the same idle local session
 before the next action; a working session must finish or be cancelled first.
 
-The **Tasks** tab selects a local Task and shows its status, attempts, artifacts, state events,
-and related Task and session logs. The **Logs** tab starts with a local session picker and can
-narrow to a Task. Log history is limited by Tau's rotated local files.
+The **Tasks** tab is the human Task inspector. It separates:
+
+- **Overview** — state, creation/status/terminal time, duration, failure, recovery, and counts;
+- **Conversation** — ordered durable requester and responder Messages;
+- **Result** — complete Artifacts, with streamed text fragments joined byte-for-byte;
+- **Execution** — each attempt's immutable Tau turn, sequence interval, resolution, and correlated
+  retained entries; and
+- **Technical** — Task events and related structured logs.
+
+Artifact revision events do not appear as multiple human results. Secret-shaped values in the
+execution projection are redacted and oversized entry bodies are replaced by a bounded marker;
+conversation Messages and Task Artifacts remain the explicit content surfaces. Pending or working
+Tasks older than the connected runtime's recovery policy are highlighted. The board never retries,
+settles, or otherwise mutates a Task; **Open in A2A Console** only transfers its identifiers to the
+action composer. The **Logs** tab starts with a local session picker and can narrow to a Task. Log
+history is limited by Tau's rotated local files.
 
 The **A2A** Task list shows when Tau created each local Task and when its current status was
 recorded. For a completed Task, the latter is labelled **Completed**. Creation comes from Tau's

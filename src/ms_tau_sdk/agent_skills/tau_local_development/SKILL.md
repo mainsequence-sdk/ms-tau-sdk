@@ -77,13 +77,42 @@ a platform AgentSession. Local mode supports:
 - subscription resumption with `afterSequence`;
 - continuation of a Task in `input_required` or `auth_required` by sending a new Message carrying
   that `taskId`; and
-- Task status, messages, artifacts, attempts, and events surviving process restart.
+- Task status, messages, artifacts, attempts, and events surviving process restart, with the SDK
+  rescheduling safe unclaimed work and terminalizing stale uncertain work rather than replaying
+  possible side effects.
 
 To request a Task from `message:send`, send the response-kind extension header
 `A2A-Extensions: https://mainsequence.ai/a2a/extensions/response-kind/v1` together with
 `configuration.responseKind: "task"`. Omit that selection for the default completed Message
 response. `message:stream` is always Task-oriented and does not accept `responseKind` or
 `returnImmediately`.
+
+Task terminality is derived only from its A2A state. `completed`, `failed`, `canceled`, and
+`rejected` are terminal; `input_required` and `auth_required` are resumable. A normal execution
+failure produces a durable failed Task and a standard responder `status.message`. A
+`task_terminalization_unknown` stream error means the terminal write itself could not be proven;
+retrieve or subscribe to the Task while recovery resolves it. Never treat an HTTP disconnect or
+bounded wait expiry as Task cancellation.
+
+Task responses include a bounded Message tail by default. Set `configuration.historyLength` on
+Message send/stream or `historyLength` on Task get/list: zero omits history and performs no tail
+read, while a positive value returns the latest Messages oldest-to-newest, capped at 100. History
+contains requester and deliberately durable responder/status Messages only. Final output remains
+under `artifacts`; Tau entries, tool activity, events, and logs never become public history. Public
+roles are `ROLE_USER`/`ROLE_AGENT`; the local SQLite binding stores requester/responder directions.
+
+Each local Task attempt reserves one immutable Tau turn. Its entries share that turn UID and remain
+inside the recorded half-open sequence interval. Completed and interrupted settlement requires a
+committed turn; failed, rejected, or canceled settlement can abandon a pending turn, after which
+late append or commit is rejected. An unresolved Task-owned turn prevents lease replacement until
+the local Task reconciler records its recovery outcome. Ordinary chat/direct-Message turns have no
+Task owner and retain normal lease cleanup.
+
+After restart, the local reconciler schedules an unclaimed `submitted` Task from its persisted
+request. It does not blindly rerun a stale `working` Task: once the old lease and stale interval
+expire, an attempt without replay-safe checkpoint evidence becomes failed with
+`ambiguous_execution_outcome`. Inspect the failure code, attempt, recovery owner, and correlation ID
+in Tau Board and the structured log.
 
 Incoming local A2A requests do not need managed-gateway `X-Caller-*` headers. TAU assigns
 workspace-local provenance and maps each supplied `contextId` into the same workspace-scoped local
@@ -122,6 +151,12 @@ loaded tool without a model call and without adding chat entries, A2A Tasks, or 
 tool still has the Tau process's real filesystem, network, environment, and credential access;
 there is no automatic rollback. A busy session, stale catalog, expired confirmation, non-project
 tool, oversized output, timeout, or cancellation must fail explicitly.
+
+The Tasks tab is the primary inspection surface: Overview states the lifecycle, Conversation shows
+durable Messages, Result shows complete Artifacts, Execution uses exact attempt/turn correlation,
+and Technical retains mutation events and logs. **Open in A2A Console** is an action shortcut, not
+the Task explanation. Many `output_updated` records represent revisions of one Artifact and must
+not be interpreted as many agent responses.
 
 ## Outbound A2A through Main Sequence MCP
 

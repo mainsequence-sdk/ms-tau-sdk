@@ -15,6 +15,9 @@ These records are the normative decisions for Main Sequence TAU SDK:
 - [ADR 0010: Bundle Tau Board in the SDK distribution](./0010-bundle-tau-board-in-sdk-distribution.md)
 - [ADR 0011: Independent base-tool and Main Sequence MCP exclusion](./0011-independent-base-tool-and-main-sequence-mcp-exclusion.md)
 - [ADR 0012: Tau Board Agent inspection and project tool workbench](./0012-tau-board-agent-inspection-and-project-tool-workbench.md)
+- [ADR 0013: Guaranteed A2A Task terminalization and failure observability](./0013-guaranteed-a2a-task-terminalization-and-failure-observability.md)
+- [ADR 0014: Human-readable A2A Task history and execution narratives](./0014-human-readable-a2a-task-history-and-execution-narratives.md)
+- [ADR 0015: Job-hosted batch execution](./0015-job-hosted-batch-execution.md)
 
 [ADR 56](./adr-56-main-sequence-tau-sdk-workspace-bound-library-deployment.md) is the accepted
 transition record and implementation ledger. Earlier decisions are preserved only in the

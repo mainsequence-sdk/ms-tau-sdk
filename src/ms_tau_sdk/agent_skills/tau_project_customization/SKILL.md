@@ -59,6 +59,11 @@ Set them in `harness_agent.spec.env_vars` in a managed repository workflow, in t
 environment for local `ms-tau`, or through explicit `TauSDKSettings` fields in a Python host. They
 apply to all sessions in that process; neither Agent Card skills nor prompt text removes tools.
 
+The accepted, pending job-hosted batch entry point uses these same two settings. It must not
+start Main Sequence MCP or add coding tools when the corresponding source is excluded. The table
+below describes the currently implemented service and local modes; batch behavior for A2A-only
+Task controls requires an actual Task context and is specified by ADR 0015.
+
 | Exclude base tools | Exclude Main Sequence MCP | Model-facing sources |
 | --- | --- | --- |
 | `false` | `false` | Coding tools, Main Sequence MCP, project extension tools, A2A Task controls. |

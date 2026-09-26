@@ -18,7 +18,7 @@ def _store(root: Path, digest: str = "a1b2c3d4e5f6") -> Path:
     directory.mkdir()
     with sqlite3.connect(directory / "runtime.sqlite3") as connection:
         connection.execute("CREATE TABLE schema_metadata(key TEXT PRIMARY KEY, value TEXT)")
-        connection.execute("INSERT INTO schema_metadata VALUES('schema_version', '2')")
+        connection.execute("INSERT INTO schema_metadata VALUES('schema_version', '4')")
         for table in TABLES:
             if table == "sessions":
                 connection.execute(
@@ -34,23 +34,34 @@ def _store(root: Path, digest: str = "a1b2c3d4e5f6") -> Path:
                     ),
                 )
             elif table == "entries":
-                connection.execute("CREATE TABLE entries(session_uid TEXT, entry_json TEXT)")
                 connection.execute(
-                    "INSERT INTO entries VALUES(?, ?)",
-                    ("local-a1b2c3d4e5f6-default", '{"secret":"text"}'),
+                    "CREATE TABLE entries(session_uid TEXT, sequence INTEGER, "
+                    "entry_type TEXT, entry_json TEXT, idempotency_key TEXT, turn_uid TEXT)"
+                )
+                connection.execute(
+                    "INSERT INTO entries VALUES(?, 0, 'custom', ?, 'entry-1', 'turn-1')",
+                    (
+                        "local-a1b2c3d4e5f6-default",
+                        '{"type":"tool_call","name":"lookup",'
+                        '"arguments":{"api_key":"provider-secret","symbol":"MSFT"}}',
+                    ),
                 )
             elif table == "a2a_tasks":
                 connection.execute(
                     "CREATE TABLE a2a_tasks(uid TEXT, task_id TEXT, context_id TEXT, "
                     "agent_session_uid TEXT, status TEXT, status_timestamp TEXT, "
-                    "cancellation_requested INTEGER, created_at TEXT, updated_at TEXT)"
+                    "cancellation_requested INTEGER, failure_code TEXT, "
+                    "failure_category TEXT, failure_retryable INTEGER, correlation_id TEXT, "
+                    "recovery_owner TEXT, recovery_count INTEGER, terminal_at TEXT, "
+                    "status_message_json TEXT, created_at TEXT, updated_at TEXT)"
                 )
                 connection.execute(
                     "INSERT INTO a2a_tasks VALUES('internal-1', 'task-1', ?, ?, "
-                    "'completed', ?, 0, ?, ?)",
+                    "'completed', ?, 0, '', '', NULL, 'task-1', '', 0, ?, NULL, ?, ?)",
                     (
                         "local-a1b2c3d4e5f6-default",
                         "local-a1b2c3d4e5f6-default",
+                        "2026-09-21T10:00:01+00:00",
                         "2026-09-21T10:00:01+00:00",
                         "2026-09-21T10:00:00+00:00",
                         "2026-09-21T10:00:01+00:00",
@@ -62,16 +73,51 @@ def _store(root: Path, digest: str = "a1b2c3d4e5f6") -> Path:
                     "event_type TEXT, status TEXT, message_uid TEXT, output_uid TEXT, "
                     "payload_json TEXT, created_at TEXT)"
                 )
+            elif table == "a2a_task_messages":
+                connection.execute(
+                    "CREATE TABLE a2a_task_messages(task_uid TEXT, sequence INTEGER, "
+                    "message_id TEXT, role TEXT, message_json TEXT, created_at TEXT)"
+                )
+                connection.execute(
+                    "INSERT INTO a2a_task_messages VALUES('internal-1', 1, 'message-1', "
+                    "'ROLE_REQUESTER', ?, '2026-09-21T10:00:00+00:00')",
+                    (
+                        json.dumps(
+                            {
+                                "messageId": "message-1",
+                                "role": "ROLE_REQUESTER",
+                                "parts": [{"text": "Run the Task."}],
+                            }
+                        ),
+                    ),
+                )
             elif table == "a2a_task_attempts":
                 connection.execute(
                     "CREATE TABLE a2a_task_attempts(uid TEXT, task_uid TEXT, "
-                    "attempt_number INTEGER, state TEXT, created_at TEXT, updated_at TEXT)"
+                    "attempt_number INTEGER, state TEXT, outcome_category TEXT, "
+                    "failure_code TEXT, failure_detail TEXT, retryable INTEGER, "
+                    "correlation_id TEXT, turn_uid TEXT, entry_start_sequence INTEGER, "
+                    "entry_end_sequence INTEGER, turn_resolution TEXT, "
+                    "created_at TEXT, updated_at TEXT)"
+                )
+                connection.execute(
+                    "INSERT INTO a2a_task_attempts VALUES('attempt-1', 'internal-1', 1, "
+                    "'completed', '', '', '', NULL, 'task-1', 'turn-1', 0, 1, "
+                    "'committed', '2026-09-21T10:00:00+00:00', "
+                    "'2026-09-21T10:00:01+00:00')"
                 )
             elif table == "a2a_task_outputs":
                 connection.execute(
                     "CREATE TABLE a2a_task_outputs(task_uid TEXT, artifact_id TEXT, "
-                    "revision INTEGER, name TEXT, finalized INTEGER, "
+                    "revision INTEGER, name TEXT, parts_json TEXT, metadata_json TEXT, "
+                    "finalized INTEGER, "
                     "created_at TEXT, updated_at TEXT)"
+                )
+                connection.execute(
+                    "INSERT INTO a2a_task_outputs VALUES('internal-1', 'artifact-1', 3, "
+                    "'Answer', ?, '{}', 1, '2026-09-21T10:00:00+00:00', "
+                    "'2026-09-21T10:00:01+00:00')",
+                    (json.dumps([{"text": "Hello "}, {"text": "world"}]),),
                 )
             else:
                 connection.execute(f"CREATE TABLE {table}(id TEXT)")
@@ -291,6 +337,22 @@ async def test_board_connects_proxies_and_inspects_state_without_writes(tmp_path
             task_rows = await board.get("/api/board/tasks")
             assert task_rows.json()["tasks"][0]["created_at"] == ("2026-09-21T10:00:00+00:00")
             assert task_rows.json()["tasks"][0]["status_timestamp"] == ("2026-09-21T10:00:01+00:00")
+            task_detail = await board.get("/api/board/tasks/task-1")
+            assert task_detail.json()["messages"][0]["message"]["parts"] == [
+                {"text": "Run the Task."}
+            ]
+            assert task_detail.json()["outputs"][0]["text"] == "Hello world"
+            assert task_detail.json()["outputs"][0]["byte_size"] == 11
+            assert task_detail.json()["task"]["runtime"] == {
+                "provider": "openai",
+                "model": "gpt-5.4",
+                "thinking": None,
+            }
+            assert task_detail.json()["attempts"][0]["turn_uid"] == "turn-1"
+            assert task_detail.json()["executionEntries"][0]["entry"]["arguments"] == {
+                "api_key": "[REDACTED]",
+                "symbol": "MSFT",
+            }
             rows = await board.get("/api/board/state/entries")
             assert rows.json()["rows"][0]["entry_json"] == "[open row to view]"
             rowid = rows.json()["rows"][0]["board_rowid"]
@@ -373,14 +435,26 @@ async def test_task_tab_data_includes_task_and_related_session_events(tmp_path: 
         connection.execute(
             "CREATE TABLE a2a_tasks(uid TEXT, task_id TEXT, context_id TEXT, "
             "agent_session_uid TEXT, status TEXT, status_timestamp TEXT, "
-            "cancellation_requested INTEGER, created_at TEXT, updated_at TEXT)"
+            "cancellation_requested INTEGER, failure_code TEXT, failure_category TEXT, "
+            "failure_retryable INTEGER, correlation_id TEXT, recovery_owner TEXT, "
+            "recovery_count INTEGER, terminal_at TEXT, status_message_json TEXT, "
+            "created_at TEXT, updated_at TEXT)"
         )
         connection.execute(
-            "INSERT INTO a2a_tasks VALUES('internal-1', 'task-1', ?, ?, 'completed', ?, 0, ?, ?)",
+            "INSERT INTO a2a_tasks VALUES('internal-1', 'task-1', ?, ?, 'failed', ?, 0, "
+            "'execution_failed', 'execution', 0, 'task-1', '', 0, ?, ?, ?, ?)",
             (
                 session_uid,
                 session_uid,
                 "2026-09-21T10:01:00+00:00",
+                "2026-09-21T10:01:00+00:00",
+                json.dumps(
+                    {
+                        "messageId": "failure-1",
+                        "role": "ROLE_RESPONDER",
+                        "parts": [{"text": "Task execution failed."}],
+                    }
+                ),
                 "2026-09-21T10:00:00+00:00",
                 "2026-09-21T10:01:00+00:00",
             ),
@@ -392,15 +466,19 @@ async def test_task_tab_data_includes_task_and_related_session_events(tmp_path: 
         )
         connection.execute(
             "INSERT INTO a2a_task_events VALUES('internal-1', 1, 'event-1', "
-            "'status', 'completed', NULL, NULL, '{}', '2026-09-21T10:01:00+00:00')"
+            "'status', 'failed', NULL, NULL, '{}', '2026-09-21T10:01:00+00:00')"
         )
         connection.execute(
             "CREATE TABLE a2a_task_attempts(uid TEXT, task_uid TEXT, attempt_number INTEGER, "
-            "state TEXT, created_at TEXT, updated_at TEXT)"
+            "state TEXT, outcome_category TEXT, failure_code TEXT, failure_detail TEXT, "
+            "retryable INTEGER, correlation_id TEXT, turn_uid TEXT, "
+            "entry_start_sequence INTEGER, entry_end_sequence INTEGER, "
+            "turn_resolution TEXT, created_at TEXT, updated_at TEXT)"
         )
         connection.execute(
             "CREATE TABLE a2a_task_outputs(task_uid TEXT, artifact_id TEXT, revision INTEGER, "
-            "name TEXT, finalized INTEGER, created_at TEXT, updated_at TEXT)"
+            "name TEXT, parts_json TEXT, metadata_json TEXT, finalized INTEGER, "
+            "created_at TEXT, updated_at TEXT)"
         )
     (directory / "logs" / "tau.jsonl").write_text(
         json.dumps(
@@ -453,7 +531,14 @@ async def test_task_tab_data_includes_task_and_related_session_events(tmp_path: 
             tasks = await board.get("/api/board/tasks", params={"sessionUid": session_uid})
             assert [task["task_id"] for task in tasks.json()["tasks"]] == ["task-1"]
             detail = await board.get("/api/board/tasks/task-1")
-            assert detail.json()["events"][0]["status"] == "completed"
+            assert detail.json()["events"][0]["status"] == "failed"
+            assert detail.json()["task"]["failure"] == {
+                "code": "execution_failed",
+                "category": "execution",
+                "retryable": False,
+                "message": "Task execution failed.",
+                "correlationId": "task-1",
+            }
             timeline = await board.get("/api/board/tasks/task-1/logs")
             assert {record["event"] for record in timeline.json()["records"]} == {
                 "a2a.task.started",
@@ -495,7 +580,7 @@ def test_loopback_validation_and_asset_budget() -> None:
     files = [path for path in assets.iterdir() if path.is_file()]
     assert sum(path.stat().st_size for path in files) < 800 * 1024
     assert sum(len(gzip.compress(path.read_bytes())) for path in files) < 120 * 1024
-    assert (assets / "app.js").stat().st_size < 56 * 1024
+    assert (assets / "app.js").stat().st_size < 64 * 1024
     html = (assets / "index.html").read_text()
     assert '<script src="http' not in html
     assert '<link href="http' not in html
