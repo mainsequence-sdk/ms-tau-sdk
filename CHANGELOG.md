@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.2.10 — 2026-09-26
+
+- Restored the managed A2A Task creation and continuation adapter removed before the 1.2.9
+  release. It sends Django's required snake_case `message_id` and `reference_task_ids` fields
+  and omits empty `extensions`, which the backend defaults. Local Task messages retain the
+  complete A2A binding shape. A nonempty extension URI list on a managed Task returns HTTP 400
+  until the backend can persist it. A clean-wheel check now guards this contract. Fixes #42.
+
 ## 1.2.9 — 2026-09-26
 
 - Added bounded A2A Task Message history with hard-cut A2A v1 role projection, canonical durable

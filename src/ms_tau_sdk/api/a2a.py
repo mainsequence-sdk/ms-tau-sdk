@@ -783,15 +783,53 @@ async def _collect_validated_turn(
     raise AssertionError("strict JSON repair loop did not terminate")
 
 
+def _task_message_for_backend(
+    message: dict[str, Any],
+    *,
+    context_id: str,
+    task_id: str,
+    local_mode: bool,
+) -> dict[str, Any]:
+    extensions = message.get("extensions", [])
+    if local_mode:
+        return {
+            "messageId": message["messageId"],
+            "contextId": context_id,
+            "taskId": task_id,
+            "role": A2AMessageDirection.REQUESTER.value,
+            "parts": message["parts"],
+            "metadata": message.get("metadata", {}),
+            "extensions": extensions,
+            "referenceTaskIds": message.get("referenceTaskIds", []),
+        }
+    if extensions:
+        raise HTTPException(
+            status_code=400,
+            detail="message.extensions is not supported for managed Tasks",
+        )
+    # Django's AgentTaskInitialMessageSerializer requires message_id and defaults
+    # optional extensions. Omission works with both its dictionary and URI-list forms.
+    return {
+        "message_id": message["messageId"],
+        "parts": message["parts"],
+        "metadata": message.get("metadata", {}),
+        "reference_task_ids": message.get("referenceTaskIds", []),
+    }
+
+
 async def _create_backend_task(
     client: MainSequenceClient,
     *,
     message: dict[str, Any],
     task_id: str,
+    local_mode: bool,
     output_contract: StrictJsonContract | None = None,
     provenance: TurnProvenance | None = None,
 ) -> AgentTaskCreateResult:
     context_id = str(message["contextId"])
+    initial_message = _task_message_for_backend(
+        message, context_id=context_id, task_id=task_id, local_mode=local_mode
+    )
     session = await client.get_session(context_id)
     if not session.agent_uid:
         raise HTTPException(status_code=409, detail="Session has no bound agent")
@@ -801,16 +839,7 @@ async def _create_backend_task(
             "agent_session_uid": context_id,
             "context_id": context_id,
             "task_id": task_id,
-            "initial_message": {
-                "messageId": message["messageId"],
-                "contextId": context_id,
-                "taskId": task_id,
-                "role": A2AMessageDirection.REQUESTER.value,
-                "parts": message["parts"],
-                "metadata": message.get("metadata", {}),
-                "extensions": message.get("extensions", []),
-                "referenceTaskIds": message.get("referenceTaskIds", []),
-            },
+            "initial_message": initial_message,
             "metadata": {
                 "transport": "a2a",
                 "execution": {
@@ -2205,19 +2234,13 @@ async def message_send(
                 detail="A Task continuation requires configuration.responseKind 'task'",
             )
         existing_task = await client.get_task_by_protocol_id(continuation_task_id)
-        task = await client.continue_task(
-            existing_task.uid,
-            {
-                "messageId": message["messageId"],
-                "contextId": existing_task.context_id,
-                "taskId": existing_task.task_id,
-                "role": A2AMessageDirection.REQUESTER.value,
-                "parts": message["parts"],
-                "metadata": message.get("metadata", {}),
-                "extensions": message.get("extensions", []),
-                "referenceTaskIds": message.get("referenceTaskIds", []),
-            },
+        continued_message = _task_message_for_backend(
+            message,
+            context_id=existing_task.context_id,
+            task_id=existing_task.task_id,
+            local_mode=config.local_mode,
         )
+        task = await client.continue_task(existing_task.uid, continued_message)
         if config.local_mode:
             task = await _persist_local_recovery_contract(
                 client,
@@ -2251,6 +2274,7 @@ async def message_send(
             client,
             message=message,
             task_id=_task_id(body),
+            local_mode=config.local_mode,
             output_contract=output_contract,
             provenance=provenance,
         )
@@ -2348,6 +2372,7 @@ async def message_stream(
         client,
         message=message,
         task_id=_task_id(body),
+        local_mode=config.local_mode,
         output_contract=output_contract,
         provenance=provenance,
     )
@@ -2571,6 +2596,7 @@ async def json_rpc(
                 client,
                 message=message,
                 task_id=_task_id(params),
+                local_mode=config.local_mode,
                 output_contract=output_contract,
                 provenance=provenance,
             )
