@@ -2,6 +2,9 @@
 
 ## 1.2.9 — 2026-09-25
 
+- Fixed managed A2A Task creation and continuation to send dictionary-valued message extensions
+  to Django. Missing extensions now become `{}`; unsupported shapes return HTTP 400 before a
+  backend Task mutation, instead of surfacing Django validation as HTTP 502. (Issue #40.)
 - Added Tau Board's Agent view for readable effective Agent Card inspection, source-grouped tool
   catalog inspection, project extension diagnostics, and bounded registered-entry source viewing.
 - Added an explicit local project-tool workbench with schema-generated inputs, authoritative

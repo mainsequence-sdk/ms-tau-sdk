@@ -737,6 +737,20 @@ async def _collect_validated_turn(
     raise AssertionError("strict JSON repair loop did not terminate")
 
 
+def _backend_task_message(message: dict[str, Any]) -> dict[str, Any]:
+    extensions = message.get("extensions", {})
+    if not isinstance(extensions, dict):
+        raise HTTPException(status_code=400, detail="message.extensions must be an object")
+    return {
+        "message_id": message["messageId"],
+        "role": "user",
+        "parts": message["parts"],
+        "metadata": message.get("metadata", {}),
+        "extensions": extensions,
+        "reference_task_ids": message.get("referenceTaskIds", []),
+    }
+
+
 async def _create_backend_task(
     client: MainSequenceClient,
     *,
@@ -745,6 +759,7 @@ async def _create_backend_task(
     output_contract: StrictJsonContract | None = None,
     provenance: TurnProvenance | None = None,
 ) -> AgentTaskCreateResult:
+    initial_message = _backend_task_message(message)
     context_id = str(message["contextId"])
     session = await client.get_session(context_id)
     if not session.agent_uid:
@@ -755,14 +770,7 @@ async def _create_backend_task(
             "agent_session_uid": context_id,
             "context_id": context_id,
             "task_id": task_id,
-            "initial_message": {
-                "message_id": message["messageId"],
-                "role": "user",
-                "parts": message["parts"],
-                "metadata": message.get("metadata", {}),
-                "extensions": message.get("extensions", []),
-                "reference_task_ids": message.get("referenceTaskIds", []),
-            },
+            "initial_message": initial_message,
             "metadata": {
                 "transport": "a2a",
                 "execution": {
@@ -1887,18 +1895,9 @@ async def message_send(
                 status_code=400,
                 detail="A Task continuation requires configuration.responseKind 'task'",
             )
+        continued_message = _backend_task_message(message)
         existing_task = await client.get_task_by_protocol_id(continuation_task_id)
-        task = await client.continue_task(
-            existing_task.uid,
-            {
-                "message_id": message["messageId"],
-                "role": "user",
-                "parts": message["parts"],
-                "metadata": message.get("metadata", {}),
-                "extensions": message.get("extensions", []),
-                "reference_task_ids": message.get("referenceTaskIds", []),
-            },
-        )
+        task = await client.continue_task(existing_task.uid, continued_message)
         await _schedule_task_accelerator(
             client,
             manager,

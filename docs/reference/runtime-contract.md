@@ -53,6 +53,10 @@ starts the returned attempt through `attempts/start`, writes artifacts through
 the resulting protocol state. The SDK does not post attempt Messages or use combined mutation or
 route aliases that Django does not expose.
 
+Task creation and continuation send their backend message `extensions` as a dictionary.
+An omitted A2A `message.extensions` becomes an empty dictionary; a supplied value must be an
+object, or the A2A request returns HTTP 400 before the backend Task mutation.
+
 Caller delivery flows in the other direction. Django sends the signed internal delivery signal,
 including the canonical caller AgentSession UID as a selector. The runtime persists the platform
 event idempotently by delivery UID and flushes session storage before returning success, then

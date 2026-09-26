@@ -679,6 +679,7 @@ async def test_immediate_task_return_survives_local_accelerator_claim_failure():
     assert response.json()["task"]["status"]["state"] == "TASK_STATE_SUBMITTED"
     assert manager.background is None
     client.create_task.assert_awaited_once()
+    assert client.create_task.await_args.args[0]["initial_message"]["extensions"] == {}
 
 
 @pytest.mark.asyncio
@@ -838,12 +839,64 @@ async def test_task_continuation_uses_authorized_backend_task_and_new_dispatch()
             "role": "user",
             "parts": [{"text": "Use account A."}],
             "metadata": {},
-            "extensions": [],
+            "extensions": {},
             "reference_task_ids": [],
         },
     )
     assert manager.background is not None
     manager.background.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("continuation", [False, True])
+async def test_task_message_rejects_list_extensions_before_backend_mutation(continuation):
+    client, _task = _direct_message_client()
+    client.get_agent_card.return_value = AgentCardEnvelope(
+        agent_session_uid="session-1",
+        agent_uid="agent-1",
+        agent_card={
+            "capabilities": {
+                "extensions": [
+                    {
+                        "uri": RESPONSE_KIND_EXTENSION_URI,
+                        "params": {"supportedResponseKinds": ["task"]},
+                    }
+                ]
+            }
+        },
+    )
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[backend] = lambda: client
+    app.dependency_overrides[runtime_manager] = lambda: _TauEventManager()
+    app.dependency_overrides[settings] = lambda: TauSDKSettings(_env_file=None)
+    message = {
+        "messageId": "message-1",
+        "role": "ROLE_REQUESTER",
+        "contextId": "session-1",
+        "parts": [{"text": "Run durably."}],
+        "extensions": [],
+    }
+    if continuation:
+        message["taskId"] = "task-1"
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as http:
+        response = await http.post(
+            f"{REST_BASE}/message:send",
+            headers={"A2A-Extensions": RESPONSE_KIND_EXTENSION_URI, **USER_CALLER_HEADERS},
+            json={
+                "message": message,
+                "configuration": {"responseKind": "task", "returnImmediately": True},
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "message.extensions must be an object"
+    client.create_task.assert_not_awaited()
+    client.continue_task.assert_not_awaited()
 
 
 @pytest.mark.asyncio
