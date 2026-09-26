@@ -39,10 +39,16 @@ def _replayed_task(status: str) -> AgentTask:
         status=status,
         status_timestamp=datetime(2026, 8, 24, tzinfo=UTC),
         latest_message={
-            "message_id": "answer-1",
-            "role": "agent",
-            "parts": [{"text": "Stored answer."}],
+            "messageId": "message-1",
+            "role": "ROLE_REQUESTER",
+            "parts": [{"text": "Run this once."}],
         },
+        outputs=[
+            {
+                "artifact_id": "answer-1",
+                "parts": [{"text": "Stored answer."}],
+            }
+        ],
     )
 
 
@@ -82,6 +88,7 @@ def _client(task: AgentTask) -> AsyncMock:
         task=task,
         created=False,
     )
+    client.list_task_messages.return_value = []
     return client
 
 
@@ -90,7 +97,7 @@ def _body() -> dict:
         "taskId": "task-1",
         "message": {
             "messageId": "message-1",
-            "role": "ROLE_REQUESTER",
+            "role": "ROLE_USER",
             "contextId": "session-1",
             "parts": [{"text": "Run this once."}],
         },

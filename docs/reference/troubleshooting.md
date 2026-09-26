@@ -59,6 +59,37 @@ the unregistered local process, push notifications, or `resume_caller`. For loca
 use polling. Incoming local calls do not need managed-gateway `X-Caller-*` headers. If a public
 Message or Task route returns this error, the running SDK is stale.
 
+## An A2A Task remains submitted or working
+
+Check `a2a_task_recovery` and `a2a_task_policy` in `/health`, then inspect the Task in Tau Board.
+Local mode scans for recovery at startup and on the configured interval. A submitted Task is
+rescheduled from its durable requester Message; repeated safe-start failures eventually produce
+`failed` with `recovery_exhausted`. A working Task is not stale while its owner still holds a live
+session lease. After ownership and the stale interval expire, an uncheckpointed attempt becomes
+`failed` with `ambiguous_execution_outcome` so project or MCP side effects are not duplicated.
+
+In managed mode, dispatch, lease expiry, retry, and exhausted-recovery terminalization belong to
+the Main Sequence backend. `task_terminalization_unknown` means TAU observed execution failure but
+could not prove that its terminal settlement was stored. Retrieve or subscribe to the Task instead
+of assuming either success or failure from the disconnected request.
+
+## Task history, result, or execution looks wrong
+
+First identify the missing ontology. Requester/responder communication belongs to `Task.history`;
+agent output belongs to `artifacts`; model/tool activity belongs to the correlated Tau turn; and
+mutation/replay evidence belongs to Task events and logs. Repeated `output_updated` events normally
+mean revisions of one streaming Artifact, not repeated responses.
+
+Use `historyLength=0` to prove a client is not requesting history, or a positive bound to inspect
+the latest Message tail. Omission requests 100. Public payloads must use `ROLE_USER`/`ROLE_AGENT`;
+local persistence uses `ROLE_REQUESTER`/`ROLE_RESPONDER`. A legacy `{code, message}` status object,
+object-valued `extensions`, or mismatched Task/context ID is rejected by design.
+
+In Tau Board, compare the attempt's turn UID and half-open entry interval with Execution. A pending
+resolution after lease loss means Task recovery must commit or abandon the reservation before a
+replacement runtime can load the Session. Do not clear SQLite lease/turn fields manually: that can
+detach entries from their Task or hide an ambiguous external side effect.
+
 ## An MCP tool fails only in local mode
 
 Main Sequence MCP remains connected with user JWT authentication. Tools marked as requiring a real

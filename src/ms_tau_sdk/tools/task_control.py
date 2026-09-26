@@ -36,8 +36,8 @@ async def _request_input(
         return _inactive_result()
     context.request_interruption(
         status="input_required",
-        message={
-            "message": str(arguments["prompt"]),
+        text=str(arguments["prompt"]),
+        details={
             "reason": str(arguments["reason"]),
             "inputSchema": cast(JSONValue, arguments.get("schema") or {}),
         },
@@ -65,8 +65,8 @@ async def _request_authorization(
         return _inactive_result()
     context.request_interruption(
         status="auth_required",
-        message={
-            "message": str(arguments["prompt"]),
+        text=str(arguments["prompt"]),
+        details={
             "requirementReference": str(arguments["requirement_reference"]),
         },
     )

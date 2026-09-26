@@ -635,26 +635,59 @@ class MainSequenceClient:
             created=status_code == 201,
         )
 
-    async def list_tasks(self, **filters: str) -> list[AgentTask]:
-        query = urlencode({key: value for key, value in filters.items() if value})
+    async def list_tasks(self, **filters: Any) -> list[AgentTask]:
+        query = urlencode({key: value for key, value in filters.items() if value is not None})
         path = AGENT_TASKS + (f"?{query}" if query else "")
         data = await self._request("GET", path, idempotent=True)
         values = data.get("results", []) if isinstance(data, dict) else data
         return TypeAdapter(list[AgentTask]).validate_python(values or [])
 
-    async def get_task_by_protocol_id(self, task_id: str) -> AgentTask:
-        tasks = await self.list_tasks(task_id=task_id)
+    async def get_task_by_protocol_id(
+        self,
+        task_id: str,
+        *,
+        history_length: int | None = None,
+    ) -> AgentTask:
+        tasks = await self.list_tasks(task_id=task_id, history_length=history_length)
         if not tasks:
             raise SessionNotFoundError(f"A2A task not found: {task_id}")
         return tasks[0]
 
-    async def get_task(self, task_uid: str) -> AgentTask:
+    async def get_task(
+        self,
+        task_uid: str,
+        *,
+        history_length: int | None = None,
+    ) -> AgentTask:
+        query = (
+            f"?{urlencode({'history_length': history_length})}"
+            if history_length is not None
+            else ""
+        )
         data = await self._request(
             "GET",
-            f"{AGENT_TASKS}{task_uid}/",
+            f"{AGENT_TASKS}{task_uid}/{query}",
             idempotent=True,
         )
         return AgentTask.model_validate(data)
+
+    async def list_task_messages(
+        self,
+        task_uid: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[dict[str, Any]]:
+        query = urlencode({"limit": max(0, min(int(limit), 100)), "offset": max(0, int(offset))})
+        data = await self._request(
+            "GET",
+            f"{agent_task_operation(task_uid, 'messages')}?{query}",
+            idempotent=True,
+        )
+        values = data.get("results", []) if isinstance(data, dict) else data
+        if not isinstance(values, list) or any(not isinstance(item, dict) for item in values):
+            raise BackendError("Backend Task-message response is invalid")
+        return [dict(item) for item in values]
 
     async def get_task_snapshot(self, task_uid: str) -> AgentTaskSnapshot:
         data = await self._request(
@@ -723,6 +756,7 @@ class MainSequenceClient:
         attempt_uid: str,
         holder_id: str,
         lease_token: str,
+        turn_uid: str,
     ) -> AgentTaskExecutionAttempt:
         data = await self._request(
             "POST",
@@ -731,6 +765,7 @@ class MainSequenceClient:
                 "attempt_uid": attempt_uid,
                 "holder_id": holder_id,
                 "lease_token": lease_token,
+                "turn_uid": turn_uid,
             },
             idempotent=True,
         )

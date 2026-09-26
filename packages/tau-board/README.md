@@ -21,9 +21,37 @@ process. Chat and A2A load provider, model, and thinking options from the authen
 Sequence catalog through Tau. Choosing a different model updates the same idle local session
 before the next action; a working session must finish or be cancelled first.
 
-The **Tasks** tab selects a local Task and shows its status, attempts, artifacts, state events,
-and related Task and session logs. The **Logs** tab starts with a local session picker and can
-narrow to a Task. Log history is limited by Tau's rotated local files.
+The **Tasks** tab is the human Task inspector. It separates:
+
+- **Overview** — state, creation/status/terminal time, duration, failure, recovery, and counts;
+- **Conversation** — ordered durable requester and responder Messages;
+- **Result** — complete Artifacts, with streamed text fragments joined byte-for-byte;
+- **Execution** — each attempt's immutable Tau turn, sequence interval, resolution, and correlated
+  retained entries; and
+- **Technical** — Task events and related structured logs.
+
+Artifact revision events do not appear as multiple human results. Secret-shaped values in the
+execution projection are redacted and oversized entry bodies are replaced by a bounded marker;
+conversation Messages and Task Artifacts remain the explicit content surfaces. Pending or working
+Tasks older than the connected runtime's recovery policy are highlighted. The board never retries,
+settles, or otherwise mutates a Task; **Open in A2A Console** only transfers its identifiers to the
+action composer. The **Logs** tab starts with a local session picker and can narrow to a Task. Log
+history is limited by Tau's rotated local files.
+
+The **A2A** Task list shows when Tau created each local Task and when its current status was
+recorded. For a completed Task, the latter is labelled **Completed**. Creation comes from Tau's
+read-only local Task row; completion/status time is the standard A2A `task.status.timestamp`.
+Creation displays as unavailable if the selected Board state directory does not match the Tau
+process.
+
+The **Agent** tab inspects an already loaded local session. It renders the effective Agent Card,
+the complete executable tool catalog grouped by source, project extension diagnostics, and the
+registered project extension entry source. A project-extension tool with an object JSON Schema
+can be tested directly: choose it, fill the generated form or raw JSON, validate the exact
+arguments, acknowledge the side-effect warning, and run it. This calls the exact loaded tool and
+does not call the model or add conversation/Task history. It is real project code with the Tau
+process's filesystem, network, environment, and credential access; there is no generic dry-run or
+rollback. SDK coding tools, Main Sequence MCP tools, and A2A Task controls are inspect-only.
 
 The board's SQLite access is read-only. Chat and Task changes use Tau's HTTP API. Bulma CSS and
 all other UI assets are packaged locally; no Node or browser CDN is needed.

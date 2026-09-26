@@ -53,6 +53,11 @@ starts the returned attempt through `attempts/start`, writes artifacts through
 the resulting protocol state. The SDK does not post attempt Messages or use combined mutation or
 route aliases that Django does not expose.
 
+Task creation and continuation send one complete Main Sequence binding Message to the control
+plane. Its role is `ROLE_REQUESTER`; `extensions` is an ordered array of absolute URI strings and
+defaults to `[]`. Object-valued extensions and other non-A2A-v1 shapes return HTTP 400 before the
+backend Task mutation.
+
 Caller delivery flows in the other direction. Django sends the signed internal delivery signal,
 including the canonical caller AgentSession UID as a selector. The runtime persists the platform
 event idempotently by delivery UID and flushes session storage before returning success, then
@@ -96,14 +101,73 @@ hidden records to satisfy them. Incoming local Message and Task calls do not req
 gateway `X-Caller-*` headers: the runtime records workspace-local provenance, canonicalizes each
 caller-supplied `contextId` into the workspace session namespace, and preserves the caller's public
 `taskId`. Local Task rows, messages, artifacts, attempts, and event sequences survive process
-restart. Outbound MCP Task workflows use `poll`; `resume_caller` is rejected in local mode.
+restart. The SDK reconciles unclaimed `submitted` Tasks at startup and periodically. It expires a
+stale `working` attempt only after its local session lease is no longer live. Because project tools
+may already have produced external effects, an uncheckpointed stale attempt becomes a terminal
+`failed` Task with an ambiguous-outcome classification instead of being executed twice. Outbound
+MCP Task workflows use `poll`; `resume_caller` is rejected in local mode.
+
+### Task terminalization and failure
+
+The Task state is the only terminality authority. `completed`, `failed`, `canceled`, and `rejected`
+are terminal; `input_required` and `auth_required` are interrupted and resumable. There is no
+parallel terminal-status flag.
+
+An ordinary execution failure is persisted as `failed` with a complete responder Message in
+`Task.status.message`. Safe machine-readable failure evidence is under the Main Sequence
+task-failure metadata extension and includes code, category, retryability, attempt number, and
+correlation ID. Raw exception strings, prompts, tool arguments/results, credentials, and paths are
+not failure payloads.
+
+After persistence succeeds, streaming emits the authoritative terminal failed status update with
+`final=true`. If persistence itself fails, the stream reports `task_terminalization_unknown`
+instead of fabricating a failed Task; the durable recovery owner resolves it. Managed recovery
+belongs to the backend dispatch system and must expire stale attempts, bound redispatch, handle
+ambiguous outcomes, and terminalize exhausted recovery. The SDK does not run a competing managed
+dispatcher.
+
+`configuration.returnImmediately=false` uses a bounded server wait. Reaching that bound returns
+the latest non-terminal Task handle and leaves execution running. Caller disconnect and transport
+timeout never imply Task cancellation.
+
+### Task conversation, result, and execution correlation
+
+A Task has four separate durable projections: ordered Message history, current/final Artifacts,
+Tau execution entries, and technical Task events/logs. Public `Task.history` contains only complete
+A2A Messages. A completed Artifact is not duplicated as a responder Message, and streaming
+Artifact revisions are not additional Messages. `historyLength` reads a bounded latest tail and
+returns it oldest-to-newest; zero skips the history read entirely.
+
+The Main Sequence storage binding persists requester/responder direction and maps it to public A2A
+v1 `ROLE_USER`/`ROLE_AGENT` only at the protocol boundary. Status Messages have stable identities,
+non-empty Parts, matching Task/context IDs, and URI-array extensions whose payload is stored under
+Message metadata. A status event references that durable Message; stream projection reloads the
+coherent Task instead of trusting an embedded event copy.
+
+Before an attempt starts, Tau allocates its immutable turn UID. Attempt start reserves that turn
+on the Session and captures `entry_start_sequence`; every accepted entry carries the same UID.
+Commit or abandonment captures the exclusive `entry_end_sequence` and immutable resolution. Task
+settlement that reports completion or a resumable interruption requires the matching commit;
+failure, rejection, or cancellation may abandon a pending turn atomically. Later writes to an
+abandoned turn are rejected.
+
+Runtime state distinguishes an ordinary direct Tau turn from a Task-owned reservation with the
+attempt owner UID. Lease expiry never clears a Task reservation. A replacement lease receives a
+recovery-pending conflict until Task recovery commits or abandons that exact turn; ordinary turns
+retain normal lease behavior. An identical settlement retry returns the stored attempt without
+another mutation, while any changed normalized settlement conflicts.
+
+The SDK models and sends the same fields in managed mode. A managed control plane must implement
+the bounded Message endpoint, Task-list history projection, turn ownership/boundaries, per-entry
+turn UID, and settlement fingerprint contract before the managed feature is available; the SDK
+does not infer missing history or correlation from events, timestamps, or text.
 
 ## Effective composition diagnostics
 
 Health reports safe process state: tool exclusion settings and source counts, session counts,
-readiness, MCP catalog counts, snapshot counts, project-extension counts and errors, and the
-effective tool-catalog digest. It never reports
-credential values or prompt content.
+readiness, MCP catalog counts, snapshot counts, project-extension counts and errors, the effective
+tool-catalog digest, Task recovery policy, and local pending/working/recovery counters. It never
+reports credential values or prompt content.
 
 ## Failures
 

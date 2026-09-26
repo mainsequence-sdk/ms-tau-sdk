@@ -283,10 +283,14 @@ async def session_list(request: Request) -> Response:
 
 async def task_list(request: Request) -> Response:
     token, session, new = _session(request)
-    directory = _directory(request, session, _selected(request, session))
+    profile = _selected(request, session)
+    directory = _directory(request, session, profile)
     result = await asyncio.to_thread(
         state.tasks, directory, session_uid=request.query_params.get("sessionUid", "")
     )
+    health = session.health.get(profile.name, {})
+    policy = health.get("a2a_task_policy")
+    result["policy"] = policy if isinstance(policy, dict) else {}
     return _cookie(JSONResponse(result), token, new)
 
 

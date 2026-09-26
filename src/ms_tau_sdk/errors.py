@@ -42,6 +42,13 @@ class LeaseLostError(TauSDKError):
     status_code = 409
 
 
+class TaskTerminalizationUnknownError(TauSDKError):
+    """Execution stopped before its terminal Task state could be proven durable."""
+
+    code = "task_terminalization_unknown"
+    status_code = 503
+
+
 class SessionBusyError(TauSDKError):
     code = "session_busy"
     status_code = 409
@@ -55,3 +62,18 @@ class SessionNotFoundError(TauSDKError):
 class LocalModeUnsupportedError(TauSDKError):
     code = "local_mode_capability_unsupported"
     status_code = 409
+
+
+class ToolWorkbenchError(TauSDKError):
+    code = "tool_workbench_error"
+    status_code = 409
+
+
+class ToolValidationError(TauSDKError):
+    code = "tool_arguments_invalid"
+    status_code = 422
+
+
+class ExtensionSourceError(TauSDKError):
+    code = "extension_source_unavailable"
+    status_code = 404

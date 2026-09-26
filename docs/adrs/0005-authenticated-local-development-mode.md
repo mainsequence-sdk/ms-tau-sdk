@@ -1,6 +1,7 @@
 # ADR 0005: Authenticated Local Development Mode
 
-Status: Accepted — SDK implementation complete; live backend capability evidence remains external
+Status: Accepted — SDK implementation complete except A2A Task reconciliation tracked by ADR 0013;
+live backend capability evidence remains external
 
 Date: 2026-09-16
 
@@ -13,6 +14,10 @@ workspace-scoped file without changing managed-mode logging.
 Amended: 2026-09-24 by [ADR 0011](./0011-independent-base-tool-and-main-sequence-mcp-exclusion.md)
 — Main Sequence MCP is enabled by default and can be excluded through a process setting in local
 as well as managed mode.
+
+Amended: 2026-09-25 by
+[ADR 0013](./0013-guaranteed-a2a-task-terminalization-and-failure-observability.md) — persisted
+local A2A Task rows require SDK-owned reconciliation; persistence alone is not restart recovery.
 
 Amends, when accepted:
 
@@ -242,8 +247,10 @@ canonical workspace path:
 ~/.tau/mainsequence/<workspace-hash>/runtime.sqlite3
 ```
 
-The store uses transactions for ordered entry batches and turn commits. It must support clean
-restart recovery and must not place mutable state inside the project's tracked `.tau` directory.
+The store uses transactions for ordered entry batches and turn commits. It must support
+restart-safe persistence and must not place mutable state inside the project's tracked `.tau`
+directory. Recovery and terminalization of Task execution after restart are governed by ADR 0013;
+persisting the Task row alone does not satisfy that requirement.
 Provider credentials, Main Sequence access tokens, MCP payloads, and arbitrary tool results are not
 stored unless they are already part of the normal Tau conversation record.
 
@@ -610,7 +617,7 @@ without the `mainsequence` distribution installed in the runtime environment.
 | --- | --- | --- |
 | C0 | JWT environment names and refresh URL verified against `mainsequence-sdk`; client inventory classified | Deploy and live-test authenticated-user provider hydration without agent identity |
 | C1 | Complete | None |
-| C2 | Complete for local chat, session, and durable A2A Task state | None |
+| C2 | Complete for local chat/session durability and A2A Task persistence; Task reconciliation is pending under ADR 0013 | Local recovery evidence required by ADR 0013 |
 | C3 | Client complete; dependency/import guards and secret-persistence tests pass | Live backend authorization/hydration conformance |
 | C4 | Client composition complete; no fake session proof is emitted | Live read and mutating MCP conformance under user JWT |
 | C5 | Complete: local REST/JSON-RPC A2A Message/Task execution and narrow platform-only failures | None |

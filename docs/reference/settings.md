@@ -26,6 +26,10 @@ Managed mode uses `MAINSEQUENCE_AUTH_MODE=runtime_credential` and remains the de
 | `TAU_LOCAL_MODEL` | Required exact model selection; contains no secret. |
 | `TAU_LOCAL_THINKING` | Optional Tau thinking level. |
 | `TAU_LOCAL_STATE_ROOT` | Local state root; defaults to `~/.tau/mainsequence`. |
+| `TAU_LOCAL_A2A_TASK_RECONCILE_INTERVAL_SECONDS` | Local Task recovery scan interval; default `5`. |
+| `TAU_LOCAL_A2A_TASK_STALE_AFTER_SECONDS` | Age after which an unowned working attempt is stale; default `120`. |
+| `TAU_LOCAL_A2A_TASK_PENDING_TIMEOUT_SECONDS` | Maximum age for a Task that cannot be started; default `300`. |
+| `TAU_LOCAL_A2A_TASK_MAX_RECOVERY_ATTEMPTS` | Deferred local start attempts before terminal failure; default `3`. |
 
 The SDK consumes the JWT environment handoff directly. It does not depend on, import, dynamically
 load, or call the `mainsequence` Python package/CLI. The JWT authenticates Main Sequence provider
@@ -101,6 +105,13 @@ The lease-renew interval must be lower than the lease TTL.
 | `MAINSEQUENCE_TAU_A2A_TASK_OUTPUT_FLUSH_INTERVAL_MS` | `200` |
 | `MAINSEQUENCE_TAU_A2A_TASK_OUTPUT_FLUSH_BYTES` | `8192` |
 | `MAINSEQUENCE_TAU_A2A_TASK_EVENT_POLL_SECONDS` | `0.5` |
+| `MAINSEQUENCE_TAU_A2A_TASK_WAIT_TIMEOUT_SECONDS` | `30`; bounds request waiting but does not cancel the Task |
+
+The local reconciler is the recovery owner for SQLite-backed Tasks. It safely schedules unclaimed
+`submitted` work, expires stale attempts after their session lease is no longer active, and marks
+uncertain external effects failed/ambiguous instead of replaying them. Lowering these values makes
+development failure detection faster but can exhaust recovery during a temporary provider or
+workspace outage.
 
 ## Logging
 

@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.2.9 — 2026-09-26
+
+- Added bounded A2A Task Message history with hard-cut A2A v1 role projection, canonical durable
+  status Messages, exact idempotent settlement replay, and reference-only status events.
+- Correlated every Task attempt with one immutable Tau turn and exact entry boundaries, including
+  local Task-owned lease fencing, committed/abandoned resolution, and late-write rejection.
+- Rebuilt Tau Board Task detail around Overview, Conversation, Result, Execution, and Technical
+  evidence, with byte-exact streamed Artifact reconstruction and bounded secret-redacted execution
+  entries.
+- Guaranteed A2A failure observability: standard terminal failed status events, conformant safe
+  status Messages, explicit terminalization-unknown transport errors, and bounded request waiting.
+- Added SDK-owned local Task reconciliation. Unclaimed submitted Tasks resume after restart;
+  exhausted starts fail terminally, while stale working attempts with uncertain side effects fail
+  as ambiguous instead of being blindly executed twice. Health, structured logs, and Tau Board now
+  expose recovery and failure evidence.
+- Added Tau Board's Agent view for readable effective Agent Card inspection, source-grouped tool
+  catalog inspection, project extension diagnostics, and bounded registered-entry source viewing.
+- Added an explicit local project-tool workbench with schema-generated inputs, authoritative
+  validation, short-lived single-use confirmation, exact loaded-tool execution, streamed bounded
+  results, timeout and cancellation. It does not call the model or write conversation/Task history;
+  project code still has its normal real side effects.
+- Added creation and completion/status timing to the A2A Task view. Completion uses the standard
+  A2A `task.status.timestamp`; creation is joined from Tau's existing local SQLite Task state, so
+  the wire contract remains standard.
+
 ## 1.2.8 — 2026-09-24
 
 - Added independent `TAU_EXCLUDE_BASE_TOOLS` and `TAU_EXCLUDE_MAINSEQUENCE_MCP` process settings.

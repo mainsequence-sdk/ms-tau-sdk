@@ -32,7 +32,18 @@ td { max-width: 24rem; overflow-wrap: anywhere; font-size: .82rem; }
 .task-picker { max-height: 65vh; overflow: auto; }
 .task-picker button { display: block; width: 100%; text-align: left; white-space: normal; height: auto; margin: .35rem 0; overflow-wrap: anywhere; }
 .task-picker button.is-selected { border-color: var(--bulma-primary); background: var(--bulma-scheme-main-ter); color: var(--bulma-text); font-weight: 700; }
+.tool-picker { max-height: 72vh; overflow: auto; }
+.tool-group { margin: 1rem 0 .4rem; color: var(--bulma-text-weak); font-size: .7rem; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+.tool-picker button { display: block; width: 100%; height: auto; margin-bottom: .4rem; padding: .65rem; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.tool-picker button.is-selected { border-color: var(--bulma-primary); background: var(--bulma-primary-soft); }
+.source-panel { max-height: 30rem; overflow: auto; margin-top: .75rem; padding: .75rem; border: 1px solid var(--bulma-border); border-radius: .4rem; background: var(--bulma-scheme-main-bis); white-space: pre-wrap; overflow-wrap: anywhere; font-size: .78rem; }
+.tool-field { margin-bottom: .8rem; }
+.extension-card { border-bottom: 1px solid var(--bulma-border-weak); padding: .55rem 0; font-size: .82rem; overflow-wrap: anywhere; }
 #tasks-detail { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 1rem; }
+.task-section { display: grid; gap: .7rem; }
+.task-card { border: 1px solid var(--bulma-border-weak); border-radius: .45rem; padding: .8rem; background: var(--bulma-scheme-main-bis); }
+.task-card .task-card-head { display: flex; flex-wrap: wrap; gap: .45rem; align-items: center; margin-bottom: .55rem; }
+.task-card pre { margin-top: .5rem; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 24rem; overflow: auto; }
 .settings-table td { vertical-align: middle; }
 .settings-table td:first-child { min-width: 15rem; }
 .settings-table td:last-child { min-width: 14rem; }

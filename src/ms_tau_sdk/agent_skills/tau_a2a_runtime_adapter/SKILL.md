@@ -76,5 +76,25 @@ When an A2A operation fails, identify the boundary before changing code:
 5. Wire validation: request/response role, context, extension, or payload invalid.
 6. Task lifecycle: fence, lease, cancellation, event order, or retry semantics violated.
 
+For Task lifecycle diagnosis, derive terminality from the Task state; never introduce a second
+terminal flag. Normal execution errors must settle `failed` and streaming must emit that
+authoritative terminal status update. `task_terminalization_unknown` means settlement durability
+is unknown and belongs to the recovery owner. Local SQLite recovery is SDK-owned; managed dispatch
+recovery is backend-owned. Do not retry a stale working attempt when project or MCP side effects may
+have occurred unless a checkpoint or idempotency contract proves replay safe.
+
+Treat Task Messages, Artifacts, Tau entries, Task events, and logs as separate ontologies. Use
+`historyLength` only for the bounded durable Message tail. Omission means the SDK default of 100,
+zero omits history without a tail read, and positive values return the latest bounded tail in
+oldest-to-newest order. Public A2A v1 roles are `ROLE_USER` and `ROLE_AGENT`; persistence uses the
+Main Sequence requester/responder direction values. Never expose internal Tau entries, reasoning,
+tool traffic, prompts, or logs as public Task history.
+
+Allocate the Tau turn UID before attempt start and pass that exact UID to the runtime prompt. A
+Task attempt owns one turn and one half-open entry interval with a `committed` or `abandoned`
+resolution. Do not correlate by timestamps. A status settlement is absent or one complete durable
+responder Message; never send the removed ad hoc status-detail shape. Status events reference that
+Message and consumers reload the Task snapshot.
+
 Change this SDK only for catalog projection, proof attachment, runtime execution, or transport
 translation defects. Platform contract changes belong to Django.

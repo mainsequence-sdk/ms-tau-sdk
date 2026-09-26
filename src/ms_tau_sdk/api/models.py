@@ -61,3 +61,14 @@ class SessionModelSelection(ApiModel):
     provider: str
     model: str
     thinking_level: str | None = Field(default=None, validation_alias="thinkingLevel")
+
+
+class ToolValidationRequest(ApiModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    catalog_digest: str = Field(validation_alias=AliasChoices("catalogDigest", "catalog_digest"))
+    arguments: dict[str, Any] = Field(default_factory=dict)
+
+
+class ToolTestRequest(ToolValidationRequest):
+    confirmation: str

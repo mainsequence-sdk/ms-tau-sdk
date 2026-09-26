@@ -50,4 +50,8 @@ def test_active_adr_index_lists_the_complete_sdk_decision_set() -> None:
         "0009-tau-board-session-model-and-task-timeline.md",
         "0010-bundle-tau-board-in-sdk-distribution.md",
         "0011-independent-base-tool-and-main-sequence-mcp-exclusion.md",
+        "0012-tau-board-agent-inspection-and-project-tool-workbench.md",
+        "0013-guaranteed-a2a-task-terminalization-and-failure-observability.md",
+        "0014-human-readable-a2a-task-history-and-execution-narratives.md",
+        "0015-job-hosted-batch-execution.md",
     }

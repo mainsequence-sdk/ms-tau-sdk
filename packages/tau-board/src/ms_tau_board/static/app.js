@@ -1,5 +1,5 @@
 const $ = (id) => document.getElementById(id);
-const views = ["connect", "chat", "a2a", "tasks", "state", "logs", "settings"];
+const views = ["connect", "agent", "chat", "a2a", "tasks", "state", "logs", "settings"];
 const tables = ["sessions", "entries", "a2a_tasks", "a2a_task_messages", "a2a_task_outputs", "a2a_task_attempts", "a2a_task_events", "snapshots"];
 let config = { profiles: [], selectedProfile: "" };
 let activeView = "connect";
@@ -20,6 +20,12 @@ let logOffset = 0;
 let logRecords = [];
 let logHasMore = false;
 let requestedLogSession = "";
+let agentInspection = null;
+let selectedTool = null;
+let toolConfirmation = "";
+let currentToolTest = "";
+let toolTestAbort = null;
+const a2aTaskState = new Map();
 const catalogs = new Map();
 const desiredSelection = { chat: null, a2a: null };
 
@@ -37,7 +43,11 @@ function notice(message, kind = "is-info") {
 }
 function dismissNotice() { $("notice").className = "notification is-hidden"; }
 function errorMessage(data, status) {
-  if (data && typeof data === "object") return data.error || data.message || data.detail || `HTTP ${status}`;
+  if (data && typeof data === "object") {
+    const value = data.error || data.message || data.detail;
+    if (value && typeof value === "object") return value.message || JSON.stringify(value);
+    return value || `HTTP ${status}`;
+  }
   return String(data || `HTTP ${status}`);
 }
 async function json(url, options = {}) {
@@ -62,7 +72,7 @@ function populateSelect(select, values, selected) {
   select.value = selected;
 }
 function renderProfiles() {
-  for (const id of ["connect-select", "chat-profile", "a2a-profile", "tasks-profile", "log-profile"]) {
+  for (const id of ["connect-select", "agent-profile", "chat-profile", "a2a-profile", "tasks-profile", "log-profile"]) {
     const select = $(id);
     const selected = id === "connect-select" ? config.selectedProfile : (select.value || config.selectedProfile);
     clear(select);
@@ -214,10 +224,190 @@ function showView(view) {
     document.querySelector(`[data-nav="${item}"]`).classList.toggle("is-active", item === activeView);
   }
   if (activeView === "a2a") refreshTasks().catch(report);
+  if (activeView === "agent") refreshAgentSessions().catch(report);
   if (activeView === "tasks") refreshTaskExplorer().catch(report);
   if (activeView === "state") refreshState().catch(report);
   if (activeView === "logs") refreshLogChoices().then(() => refreshLogs()).catch(report);
   if (activeView === "settings") refreshSettings().catch(report);
+}
+function agentHeaders(extra = {}) { return { "X-Tau-Board-Profile": $("agent-profile").value, ...extra }; }
+function agentSession() { return $("agent-session").value; }
+function invalidateToolConfirmation() {
+  toolConfirmation = "";
+  $("tool-run").disabled = true;
+  clear($("tool-test-status"));
+}
+async function refreshAgentSessions() {
+  const previous = agentSession() || $("chat-session").value.trim() || $("a2a-context").value.trim();
+  const result = await json("/api/board/sessions", { headers: agentHeaders() });
+  const select = $("agent-session"); clear(select);
+  select.append(option("", "Select a loaded local session"));
+  for (const session of result.sessions || []) select.append(option(session.uid, `${session.uid} · ${session.model || "unknown model"}`));
+  select.value = previous;
+  if (!select.value && select.options.length === 2) select.selectedIndex = 1;
+  if (select.value) await inspectAgent();
+}
+function renderAgentCard(card) {
+  const box = $("agent-card"); clear(box);
+  if (!card) { box.append(node("p", "No Agent Card was returned.", "help")); $("agent-card-json").textContent = "null"; return; }
+  for (const [label, value] of [["Name", card.name], ["Description", card.description], ["Version", card.version], ["URL", card.url]]) detailLine(box, label, value);
+  const capabilities = card.capabilities || {};
+  detailLine(box, "Capabilities", Object.entries(capabilities).filter(([, value]) => typeof value === "boolean" && value).map(([name]) => name).join(", ") || "None declared");
+  detailLine(box, "Protocol extensions", (capabilities.extensions || []).map((item) => item.uri || "unnamed").join(", ") || "None");
+  detailLine(box, "Agent Card skills", (card.skills || []).map((item) => item.name || item.id || "unnamed").join(", ") || "None");
+  $("agent-card-json").textContent = JSON.stringify(card, null, 2);
+}
+function renderExtensions(items, diagnostics) {
+  const box = $("agent-extensions"); clear(box);
+  for (const item of items || []) {
+    const card = node("div", "", "extension-card");
+    card.append(node("strong", item.name), node("span", ` ${item.origin}`, "tag is-light ml-2"));
+    card.append(node("p", item.entryPath || "Source is not exposed", "mono"));
+    card.append(node("p", `Tools: ${(item.tools || []).join(", ") || "none"}`, "help")); box.append(card);
+  }
+  for (const item of diagnostics || []) {
+    const card = node("div", "", "extension-card has-text-danger");
+    card.textContent = `${item.severity} · ${item.name} · ${item.errorType}${item.path ? ` · ${item.path}` : ""}`; box.append(card);
+  }
+  if (!(items || []).length && !(diagnostics || []).length) box.append(node("p", "No project extensions or diagnostics.", "help"));
+}
+function renderTools(tools) {
+  const box = $("agent-tools"); clear(box);
+  const labels = { project_extension: "Project extensions", tau_coding: "Tau coding", mainsequence_mcp: "Main Sequence MCP", protocol: "A2A Task controls", user_extension: "User extensions", built_in_extension: "Tau extensions", explicit_extension: "Explicit extensions", unknown_extension: "Other extensions" };
+  const groups = new Map();
+  for (const tool of tools || []) {
+    if (!groups.has(tool.category)) groups.set(tool.category, []);
+    groups.get(tool.category).push(tool);
+  }
+  const order = ["project_extension", "tau_coding", "mainsequence_mcp", "protocol", ...groups.keys()];
+  for (const category of [...new Set(order)]) {
+    if (!groups.has(category)) continue;
+    box.append(node("p", labels[category] || category, "tool-group"));
+    for (const tool of groups.get(category)) {
+      const button = node("button", "", "button is-light"); button.type = "button";
+      button.append(node("strong", tool.label || tool.name), node("span", `\n${tool.name}`, "mono help"));
+      button.addEventListener("click", () => selectTool(tool, button)); box.append(button);
+    }
+  }
+  if (!(tools || []).length) box.append(node("p", "This session has no executable tools.", "help"));
+}
+function defaultFieldValue(schema) {
+  if (Object.hasOwn(schema, "default")) return schema.default;
+  if (Array.isArray(schema.examples) && schema.examples.length) return schema.examples[0];
+  return "";
+}
+function renderToolForm(schema) {
+  const form = $("tool-form"); clear(form);
+  const required = new Set(schema.required || []);
+  for (const [name, field] of Object.entries(schema.properties || {})) {
+    const wrapper = node("div", "", "field tool-field");
+    wrapper.append(node("label", `${name}${required.has(name) ? " *" : ""}`, "label"));
+    let input;
+    if (Array.isArray(field.enum)) {
+      const control = node("div", "", "select is-fullwidth"); input = node("select");
+      if (!required.has(name)) input.append(option("", "Not set"));
+      for (const value of field.enum) input.append(option(JSON.stringify(value), String(value)));
+      control.append(input); wrapper.append(control); input.dataset.encoding = "json";
+    } else if (field.type === "boolean") {
+      const control = node("div", "", "select is-fullwidth"); input = node("select");
+      if (!required.has(name)) input.append(option("", "Not set"));
+      input.append(option("true", "True"), option("false", "False")); control.append(input); wrapper.append(control); input.dataset.encoding = "json";
+    } else if (field.type === "object" || field.type === "array") {
+      input = node("textarea", "", "textarea mono"); input.rows = 3; input.dataset.encoding = "json"; wrapper.append(input);
+    } else {
+      input = node("input", "", "input"); input.type = field.type === "number" || field.type === "integer" ? "number" : "text";
+      if (field.type === "integer") input.step = "1"; input.dataset.encoding = field.type || "string"; wrapper.append(input);
+    }
+    input.dataset.toolField = name; input.dataset.required = required.has(name) ? "true" : "false";
+    const initial = defaultFieldValue(field);
+    if (initial !== "") input.value = input.dataset.encoding === "json" ? JSON.stringify(initial) : String(initial);
+    if (field.description) wrapper.append(node("p", field.description, "help"));
+    input.addEventListener("input", () => { invalidateToolConfirmation(); try { $("tool-arguments").value = JSON.stringify(formArguments(), null, 2); } catch (_) { /* raw editor remains available */ } });
+    form.append(wrapper);
+  }
+  if (!Object.keys(schema.properties || {}).length) form.append(node("p", "This tool has no declared fields. Use the JSON editor for additional properties.", "help mb-3"));
+  try { $("tool-arguments").value = JSON.stringify(formArguments(), null, 2); } catch (_) { $("tool-arguments").value = "{}"; }
+}
+function formArguments() {
+  const result = {};
+  for (const input of document.querySelectorAll("[data-tool-field]")) {
+    if (input.value === "" && input.dataset.required !== "true") continue;
+    let value = input.value;
+    if (input.dataset.encoding === "json") value = JSON.parse(value || "null");
+    else if (input.dataset.encoding === "number") value = Number(value);
+    else if (input.dataset.encoding === "integer") value = Number.parseInt(value, 10);
+    result[input.dataset.toolField] = value;
+  }
+  return result;
+}
+function selectTool(tool, button) {
+  selectedTool = tool; invalidateToolConfirmation(); currentToolTest = "";
+  for (const item of $("agent-tools").querySelectorAll("button")) item.classList.toggle("is-selected", item === button);
+  $("tool-title").textContent = tool.label || tool.name;
+  $("tool-description").textContent = tool.description || "No description.";
+  const meta = $("tool-meta"); clear(meta);
+  for (const value of [tool.name, tool.category, tool.executionMode, tool.extension]) if (value) meta.append(node("span", value, "tag is-light"));
+  $("tool-schema").textContent = JSON.stringify(tool.parameters, null, 2);
+  $("tool-source").disabled = !tool.sourceUid; $("tool-source-output").classList.add("is-hidden");
+  renderToolForm(tool.parameters || { type: "object", properties: {} });
+  $("tool-validate").disabled = !tool.testable;
+  $("tool-confirm").checked = false; $("tool-cancel").disabled = true;
+  $("tool-output").textContent = tool.testable ? "Fill the arguments, then validate before running." : (tool.testingReason || "This tool is inspect-only.");
+}
+async function inspectAgent() {
+  const session = agentSession();
+  if (!session) throw new Error("Select a local session to inspect.");
+  agentInspection = await json(`/tau/api/local/v1/sessions/${encodeURIComponent(session)}/agent-inspection`, { headers: agentHeaders() });
+  if (!agentInspection.available) {
+    clear($("agent-tools")); clear($("agent-card")); clear($("agent-extensions"));
+    $("agent-overview").textContent = "Session is not loaded. Send a Chat or A2A message, then inspect again."; return;
+  }
+  const overview = $("agent-overview"); clear(overview);
+  for (const [label, value] of [["Agent", agentInspection.agentUid], ["Session", agentInspection.sessionUid], ["Provider", agentInspection.model?.provider], ["Model", agentInspection.model?.model], ["Catalog", agentInspection.catalogDigest], ["State", agentInspection.busy ? "Busy" : "Idle"]]) detailLine(overview, label, value);
+  renderAgentCard(agentInspection.agentCard); renderExtensions(agentInspection.extensions, agentInspection.diagnostics); renderTools(agentInspection.tools);
+}
+async function viewToolSource() {
+  if (!selectedTool?.sourceUid) return;
+  const result = await json(`/tau/api/local/v1/sessions/${encodeURIComponent(agentSession())}/extension-sources/${selectedTool.sourceUid}`, { headers: agentHeaders() });
+  const output = $("tool-source-output"); output.textContent = `${result.path}\n\n${result.content}`; output.classList.remove("is-hidden");
+}
+function rawToolArguments() {
+  const value = JSON.parse($("tool-arguments").value || "{}");
+  if (!value || Array.isArray(value) || typeof value !== "object") throw new Error("Tool arguments must be a JSON object.");
+  return value;
+}
+async function validateTool() {
+  if (!selectedTool?.testable) throw new Error("Select a testable project tool.");
+  const body = { catalogDigest: agentInspection.catalogDigest, arguments: rawToolArguments() };
+  const result = await json(`/tau/api/local/v1/sessions/${encodeURIComponent(agentSession())}/tools/${encodeURIComponent(selectedTool.name)}:validate`, { method: "POST", headers: agentHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(body) });
+  toolConfirmation = result.confirmation; $("tool-arguments").value = JSON.stringify(result.arguments, null, 2);
+  const status = $("tool-test-status"); clear(status); status.append(node("span", `Validated · confirmation expires in ${result.expiresInSeconds}s`, "tag is-success is-light"));
+  $("tool-run").disabled = !$("tool-confirm").checked;
+}
+async function runTool() {
+  if (!toolConfirmation || !$("tool-confirm").checked) throw new Error("Validate the arguments and confirm the side-effect warning first.");
+  const body = { catalogDigest: agentInspection.catalogDigest, arguments: rawToolArguments(), confirmation: toolConfirmation };
+  toolConfirmation = ""; $("tool-run").disabled = true; $("tool-validate").disabled = true; $("tool-output").textContent = "Starting tool…";
+  toolTestAbort = new AbortController();
+  try {
+    const response = await fetch(`/tau/api/local/v1/sessions/${encodeURIComponent(agentSession())}/tools/${encodeURIComponent(selectedTool.name)}:test`, { method: "POST", headers: agentHeaders({ "Content-Type": "application/json" }), body: JSON.stringify(body), signal: toolTestAbort.signal });
+    if (!response.ok) throw new Error(errorMessage(await response.json().catch(() => ({})), response.status));
+    currentToolTest = response.headers.get("X-Tau-Tool-Test-Uid") || ""; $("tool-cancel").disabled = !currentToolTest;
+    await readSSE(response, (event) => {
+      if (event.type === "started") $("tool-output").textContent = `Running ${event.toolName}…`;
+      if (event.type === "update") $("tool-output").textContent += `\n\nUpdate:\n${JSON.stringify(event.result, null, 2)}`;
+      if (event.type === "completed") $("tool-output").textContent = `${event.truncated ? "TRUNCATED\n" : ""}${JSON.stringify(event.result, null, 2)}`;
+      if (event.type === "error") $("tool-output").textContent = `${event.errorType || event.error}: ${event.message}`;
+      if (event.type === "cancelled") $("tool-output").textContent += "\n\nCancelled.";
+      if (event.type === "finished") { const status = $("tool-test-status"); clear(status); status.append(node("span", event.outcome, `tag ${event.outcome === "completed" ? "is-success" : "is-warning"} is-light`)); }
+    });
+  } finally {
+    currentToolTest = ""; toolTestAbort = null; $("tool-cancel").disabled = true; $("tool-validate").disabled = !selectedTool?.testable; $("tool-confirm").checked = false;
+  }
+}
+async function cancelTool() {
+  if (!currentToolTest) return;
+  await json(`/tau/api/local/v1/sessions/${encodeURIComponent(agentSession())}/tool-tests/${encodeURIComponent(currentToolTest)}:cancel`, { method: "POST", headers: agentHeaders({ "Content-Type": "application/json" }), body: "{}" });
 }
 function report(error) { notice(error.message || String(error), "is-danger"); }
 function chatLine(who, type = "agent") {
@@ -319,11 +509,38 @@ function taskText(task) {
   const parts = (task.artifacts || []).flatMap((artifact) => artifact.parts || []);
   return parts.map((part) => part.text ?? (part.data ? JSON.stringify(part.data, null, 2) : "")).filter(Boolean).join("\n");
 }
+const terminalTaskStates = new Set([
+  "TASK_STATE_COMPLETED", "TASK_STATE_FAILED", "TASK_STATE_CANCELED", "TASK_STATE_REJECTED",
+]);
+function taskTiming(task) {
+  const local = a2aTaskState.get(task.id) || {};
+  const statusTime = task.status?.timestamp || local.status_timestamp || "";
+  const state = task.status?.state || "TASK_STATE_UNKNOWN";
+  return {
+    created: local.created_at || "",
+    statusTime,
+    terminal: terminalTaskStates.has(state),
+    completed: state === "TASK_STATE_COMPLETED",
+  };
+}
+function displayTime(value) {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.valueOf()) ? value : parsed.toLocaleString();
+}
+function timedCell(value, label = "") {
+  const cell = node("td", label ? `${label}: ${displayTime(value)}` : displayTime(value));
+  if (value) { cell.classList.add("mono"); cell.title = value; }
+  return cell;
+}
 function displayTask(task) {
   if (!task) return;
   $("a2a-task-id").value = task.id || "";
   $("a2a-context").value = task.contextId || "";
-  $("task-output").textContent = `${task.id} · ${task.status?.state || "unknown"}\n\n${taskText(task)}`;
+  const timing = taskTiming(task);
+  const statusLabel = timing.completed ? "Completed" : (timing.terminal ? "Terminal status" : "Status recorded");
+  const statusText = (task.status?.message?.parts || []).map((part) => part.text || "").filter(Boolean).join("\n");
+  $("task-output").textContent = `${task.id} · ${task.status?.state || "unknown"}\nCreated: ${displayTime(timing.created)}\n${statusLabel}: ${displayTime(timing.statusTime)}${statusText ? `\nReason: ${statusText}` : ""}\n\n${taskText(task)}`;
 }
 function handleA2AFrame(frame) {
   const value = frame.result || frame;
@@ -392,11 +609,26 @@ async function cancelTask(id) {
 async function refreshTasks() {
   const contextId = $("a2a-context").value.trim();
   const url = "/tau/api/a2a/v1/tasks" + (contextId ? `?contextId=${encodeURIComponent(contextId)}` : "");
-  const value = await json(url, { headers: tauHeaders("a2a") });
+  const headers = tauHeaders("a2a");
+  const localUrl = "/api/board/tasks" + (contextId ? `?sessionUid=${encodeURIComponent(contextId)}` : "");
+  const [value, localValue] = await Promise.all([
+    json(url, { headers }),
+    json(localUrl, { headers }),
+  ]);
+  a2aTaskState.clear();
+  for (const task of localValue.tasks || []) a2aTaskState.set(task.task_id, task);
   const body = $("task-list"); clear(body);
   for (const task of (value.tasks || []).slice(-100).reverse()) {
     const row = node("tr");
-    row.append(node("td", task.id, "mono"), node("td", task.contextId || "", "mono"), node("td", task.status?.state || ""));
+    const timing = taskTiming(task);
+    const statusLabel = timing.completed ? "Completed" : (timing.terminal ? "Terminal" : "Status");
+    row.append(
+      node("td", task.id, "mono"),
+      node("td", task.contextId || "", "mono"),
+      node("td", task.status?.state || ""),
+      timedCell(timing.created),
+      timedCell(timing.statusTime, statusLabel),
+    );
     const actions = node("td");
     for (const [label, action] of [["Open", () => getTask(task.id)], ["Inspect", () => { $("tasks-profile").value = $("a2a-profile").value; selectedTaskId = task.id; showView("tasks"); }], ["Follow", () => subscribeTask(task.id)], ["Cancel", () => cancelTask(task.id)], ["Continue", () => {
       $("a2a-kind").value = "continue"; $("a2a-task-id").value = task.id; $("a2a-context").value = task.contextId || ""; $("a2a-input").focus();
@@ -407,7 +639,10 @@ async function refreshTasks() {
     }
     row.append(actions); body.append(row);
   }
-  if (!(value.tasks || []).length) { const row = node("tr"); const cell = node("td", "No Tasks in this context yet."); cell.colSpan = 4; row.append(cell); body.append(row); }
+  if (!(value.tasks || []).length) { const row = node("tr"); const cell = node("td", "No Tasks in this context yet."); cell.colSpan = 6; row.append(cell); body.append(row); }
+  const currentId = $("a2a-task-id").value.trim();
+  const current = (value.tasks || []).find((task) => task.id === currentId);
+  if (current) displayTask(current);
 }
 async function refreshState() {
   const result = await json("/api/board/state");
@@ -479,7 +714,12 @@ async function refreshTaskExplorer() {
   const result = await json(`/api/board/tasks?${query}`, { headers });
   const list = $("tasks-list"); clear(list);
   for (const task of result.tasks || []) {
-    const button = node("button", `${task.task_id} · ${task.status}\n${task.context_id}`, "button is-light");
+    const threshold = task.status === "submitted" ? result.policy?.pending_timeout_seconds : result.policy?.stale_after_seconds;
+    const recorded = task.status === "submitted" ? task.created_at : task.status_timestamp;
+    const ageSeconds = recorded ? (Date.now() - new Date(recorded).valueOf()) / 1000 : 0;
+    const stale = ["submitted", "working"].includes(task.status) && threshold && ageSeconds > threshold;
+    const suffix = task.failure_code ? `\n${task.failure_code}` : (stale ? "\nRecovery overdue" : "");
+    const button = node("button", `${task.task_id} · ${task.status}\n${task.context_id}${suffix}`, stale ? "button is-warning" : "button is-light");
     button.type = "button";
     button.classList.toggle("is-selected", selectedTaskId === task.task_id);
     button.addEventListener("click", () => inspectTask(task.task_id).catch(report));
@@ -531,12 +771,89 @@ async function loadTaskLogs(reset = false) {
   renderTaskTimeline();
 }
 
+function renderTaskConversation() {
+  const list = $("tasks-conversation"); clear(list);
+  for (const record of selectedTaskData?.messages || []) {
+    const message = record.message || {};
+    const card = node("article", "", "task-card");
+    const head = node("div", "", "task-card-head");
+    const role = message.role === "ROLE_REQUESTER" ? "Requester" : (message.role === "ROLE_RESPONDER" ? "Responder" : (message.role || "Message"));
+    head.append(node("strong", role), node("span", `#${record.sequence}`, "tag is-light"), node("span", displayTime(record.created_at), "mono"));
+    card.append(head);
+    for (const part of message.parts || []) {
+      if (typeof part.text === "string") card.append(node("pre", part.text));
+      else if (Object.hasOwn(part, "data")) card.append(node("pre", JSON.stringify(part.data, null, 2)));
+      else card.append(node("pre", JSON.stringify(part, null, 2)));
+    }
+    list.append(card);
+  }
+  if (!(selectedTaskData?.messages || []).length) list.append(node("p", "No durable Task Messages.", "help"));
+}
+
+function renderTaskResults() {
+  const list = $("tasks-result"); clear(list);
+  for (const artifact of selectedTaskData?.outputs || []) {
+    const card = node("article", "", "task-card");
+    const head = node("div", "", "task-card-head");
+    head.append(node("strong", artifact.name || artifact.artifact_id), node("span", `revision ${artifact.revision}`, "tag is-light"), node("span", artifact.finalized ? "Final" : "Open", artifact.finalized ? "tag is-success is-light" : "tag is-warning is-light"), node("span", `${artifact.byte_size || 0} bytes`, "tag is-light"));
+    card.append(head);
+    if (artifact.text) card.append(node("pre", artifact.text));
+    for (const part of artifact.parts || []) {
+      if (!Object.hasOwn(part, "data")) continue;
+      card.append(node("pre", JSON.stringify(part.data, null, 2)));
+    }
+    list.append(card);
+  }
+  if (!(selectedTaskData?.outputs || []).length) list.append(node("p", "No Task Artifacts.", "help"));
+}
+
+function executionLabel(entry) {
+  const raw = JSON.stringify(entry.entry || {}).toLowerCase();
+  if (raw.includes("tool_result") || raw.includes("toolresult")) return "Tool result";
+  if (raw.includes("tool_call") || raw.includes("toolcall")) return "Tool call";
+  if (raw.includes("reasoning") || raw.includes("thinking")) return "Recorded reasoning";
+  if (entry.entry_type === "message") return "Model message";
+  return entry.entry_type || "Tau entry";
+}
+
+function executionOutcome(entry) {
+  const value = entry.entry || {};
+  const raw = JSON.stringify(value).toLowerCase();
+  if (raw.includes('"is_error":true') || raw.includes('"error":true') || raw.includes('"status":"failed"')) return "Failed";
+  if (raw.includes('"status":"completed"') || raw.includes('"status":"success"') || raw.includes('"success":true')) return "Succeeded";
+  return "";
+}
+
+function renderTaskExecution() {
+  const list = $("tasks-execution"); clear(list);
+  const entries = selectedTaskData?.executionEntries || [];
+  for (const attempt of selectedTaskData?.attempts || []) {
+    const card = node("article", "", "task-card");
+    const head = node("div", "", "task-card-head");
+    head.append(node("strong", `Attempt ${attempt.attempt_number}`), node("span", attempt.state, "tag is-info is-light"), node("span", attempt.turn_resolution || "unresolved", attempt.turn_resolution === "committed" ? "tag is-success is-light" : "tag is-warning is-light"));
+    card.append(head);
+    detailLine(card, "Turn", attempt.turn_uid || "—");
+    detailLine(card, "Entry interval", attempt.entry_start_sequence == null ? "—" : `[${attempt.entry_start_sequence}, ${attempt.entry_end_sequence ?? "?"})`);
+    const attemptEntries = entries.filter((entry) => entry.turn_uid && entry.turn_uid === attempt.turn_uid && (attempt.entry_start_sequence == null || entry.sequence >= attempt.entry_start_sequence) && (attempt.entry_end_sequence == null || entry.sequence < attempt.entry_end_sequence));
+    for (const entry of attemptEntries) card.append(taskEventItem("Tau", `#${entry.sequence}`, executionLabel(entry), entry, executionOutcome(entry)));
+    if (!attemptEntries.length) card.append(node("p", "No retained entries in this turn interval.", "help"));
+    list.append(card);
+  }
+  if (!(selectedTaskData?.attempts || []).length) list.append(node("p", "No execution attempts.", "help"));
+}
+
 async function inspectTask(taskId) {
   selectedTaskId = taskId;
   selectedTaskData = await json(`/api/board/tasks/${encodeURIComponent(taskId)}`, { headers: { "X-Tau-Board-Profile": $("tasks-profile").value } });
   const task = selectedTaskData.task;
   const detail = $("tasks-detail"); clear(detail);
-  for (const [label, value] of [["Task ID", task.task_id], ["Session", task.context_id], ["Status", task.status], ["Created", task.created_at], ["Updated", task.updated_at], ["Attempts", selectedTaskData.attempts.length], ["Artifacts", selectedTaskData.outputs.length]]) detailLine(detail, label, value);
+  const failure = task.failure || {};
+  const runtime = task.runtime || {};
+  const duration = task.created_at && (task.terminal_at || task.status_timestamp) ? Math.max(0, new Date(task.terminal_at || task.status_timestamp).valueOf() - new Date(task.created_at).valueOf()) : null;
+  for (const [label, value] of [["Task ID", task.task_id], ["Session", task.context_id], ["Status", task.status], ["Created", displayTime(task.created_at)], ["Status time", displayTime(task.status_timestamp)], ["Terminal time", displayTime(task.terminal_at)], ["Duration", duration == null || Number.isNaN(duration) ? "—" : `${duration} ms`], ["Provider", runtime.provider || "—"], ["Model", runtime.model || "—"], ["Thinking", runtime.thinking || "—"], ["Failure", failure.message || "—"], ["Failure code", failure.code || "—"], ["Failure category", failure.category || "—"], ["Retry safe", failure.retryable == null ? "—" : String(failure.retryable)], ["Recovery owner", task.recovery_owner || "—"], ["Recovery attempts", task.recovery_count || 0], ["Correlation ID", failure.correlationId || "—"], ["Attempts", selectedTaskData.attempts.length], ["Messages", selectedTaskData.messages.length], ["Artifacts", selectedTaskData.outputs.length]]) detailLine(detail, label, value);
+  renderTaskConversation();
+  renderTaskResults();
+  renderTaskExecution();
   $("tasks-open-a2a").disabled = false;
   $("tasks-open-session").disabled = false;
   for (const button of $("tasks-list").querySelectorAll("button")) button.classList.toggle("is-selected", button.textContent.startsWith(`${taskId} ·`));
@@ -674,6 +991,15 @@ async function start() {
   bind("save-profile", "click", saveProfile);
   bind("delete-profile", "click", deleteProfile);
   bind("check-connection", "click", checkConnection);
+  bind("agent-profile", "change", refreshAgentSessions);
+  bind("agent-session", "change", inspectAgent);
+  bind("agent-refresh", "click", inspectAgent);
+  bind("tool-source", "click", viewToolSource);
+  bind("tool-validate", "click", validateTool);
+  bind("tool-run", "click", runTool);
+  bind("tool-cancel", "click", cancelTool);
+  bind("tool-confirm", "change", () => { $("tool-run").disabled = !toolConfirmation || !$("tool-confirm").checked; });
+  $("tool-arguments").addEventListener("input", invalidateToolConfirmation);
   for (const kind of ["chat", "a2a"]) {
     bind(`${kind}-profile`, "change", () => loadCatalog(kind));
     for (const field of ["provider", "model", "thinking"]) bind(`${kind}-${field}`, "change", () => selectionChanged(kind, field));
@@ -685,7 +1011,7 @@ async function start() {
   bind("a2a-new-task", "click", () => { $("a2a-task-id").value = ""; $("a2a-kind").value = "task"; $("a2a-input").focus(); });
   bind("refresh-tasks", "click", refreshTasks);
   bind("tasks-refresh", "click", refreshTaskExplorer);
-  bind("tasks-profile", "change", () => { selectedTaskId = ""; selectedTaskData = null; clear($("tasks-detail")); clear($("tasks-timeline")); return refreshTaskExplorer(); });
+  bind("tasks-profile", "change", () => { selectedTaskId = ""; selectedTaskData = null; for (const id of ["tasks-detail", "tasks-conversation", "tasks-result", "tasks-execution", "tasks-timeline"]) clear($(id)); return refreshTaskExplorer(); });
   bind("tasks-session", "change", refreshTaskExplorer);
   bind("tasks-open-id", "click", () => inspectTask($("tasks-id").value.trim()));
   bind("tasks-older", "click", () => loadTaskLogs());

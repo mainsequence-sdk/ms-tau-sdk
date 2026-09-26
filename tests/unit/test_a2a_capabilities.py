@@ -238,7 +238,7 @@ async def test_a2a_stream_emits_incremental_artifact_and_final_task():
         async def task_execution_fence(self, _context_id):
             return SimpleNamespace(holder_id="holder-1", lease_token="lease-1")
 
-        async def prompt(self, _context_id, _prompt, *, provenance=None):
+        async def prompt(self, _context_id, _prompt, *, provenance=None, turn_uid=None):
             yield TauRuntimeEvent(
                 type="text_delta",
                 data={"contentIndex": 0, "delta": "hel"},
