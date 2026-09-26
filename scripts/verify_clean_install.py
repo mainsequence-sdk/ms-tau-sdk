@@ -117,6 +117,36 @@ def main() -> None:
             check=True,
         )
 
+        # Exercise the installed wheel, not the source checkout. The committed Django
+        # AgentTaskInitialMessageSerializer requires message_id, accepts parts,
+        # metadata and reference_task_ids, and defaults omitted extensions.
+        task_message_check = """
+from ms_tau_sdk.api.a2a import _task_message_for_backend
+message = {
+    "messageId": "release-check-message",
+    "parts": [{"text": "Check Task creation."}],
+    "extensions": [],
+}
+expected = {
+    "message_id": "release-check-message",
+    "parts": [{"text": "Check Task creation."}],
+    "metadata": {},
+    "reference_task_ids": [],
+}
+assert _task_message_for_backend(
+    message, context_id="session-1", task_id="task-1", local_mode=False
+) == expected
+assert _task_message_for_backend(
+    message, context_id="session-1", task_id="task-1", local_mode=True
+)["extensions"] == []
+"""
+        subprocess.run(
+            [str(python), "-P", "-c", task_message_check],
+            cwd=workspace,
+            env=environment,
+            check=True,
+        )
+
         command = _venv_executable(venv, "ms-tau")
         subprocess.run(
             [str(command), "skills", "sync", "--path", str(workspace), "--json"],

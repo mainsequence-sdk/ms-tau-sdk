@@ -680,7 +680,12 @@ async def test_immediate_task_return_survives_local_accelerator_claim_failure():
     assert response.json()["task"]["status"]["state"] == "TASK_STATE_SUBMITTED"
     assert manager.background is None
     client.create_task.assert_awaited_once()
-    assert client.create_task.await_args.args[0]["initial_message"]["extensions"] == []
+    assert client.create_task.await_args.args[0]["initial_message"] == {
+        "message_id": "message-1",
+        "parts": [{"text": "Run durably."}],
+        "metadata": {},
+        "reference_task_ids": [],
+    }
 
 
 @pytest.mark.asyncio
@@ -836,18 +841,67 @@ async def test_task_continuation_uses_authorized_backend_task_and_new_dispatch()
     client.continue_task.assert_awaited_once_with(
         interrupted.uid,
         {
-            "messageId": "message-2",
-            "contextId": "session-1",
-            "taskId": "task-1",
-            "role": "ROLE_REQUESTER",
+            "message_id": "message-2",
             "parts": [{"text": "Use account A."}],
             "metadata": {},
-            "extensions": [],
-            "referenceTaskIds": [],
+            "reference_task_ids": [],
         },
     )
     assert manager.background is not None
     manager.background.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("continuation", [False, True])
+async def test_managed_task_rejects_nonempty_message_extensions(continuation):
+    client, task = _direct_message_client()
+    client.get_task_by_protocol_id.return_value = task
+    client.get_agent_card.return_value = AgentCardEnvelope(
+        agent_session_uid="session-1",
+        agent_uid="agent-1",
+        agent_card={
+            "capabilities": {
+                "extensions": [
+                    {
+                        "uri": RESPONSE_KIND_EXTENSION_URI,
+                        "params": {"supportedResponseKinds": ["task"]},
+                    }
+                ]
+            }
+        },
+    )
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[backend] = lambda: client
+    app.dependency_overrides[runtime_manager] = lambda: _TauEventManager()
+    app.dependency_overrides[settings] = lambda: TauSDKSettings(_env_file=None)
+    message = {
+        "messageId": "message-1",
+        "role": "ROLE_USER",
+        "contextId": "session-1",
+        "parts": [{"text": "Run durably."}],
+        "extensions": [RESPONSE_KIND_EXTENSION_URI],
+    }
+    if continuation:
+        message["taskId"] = "task-1"
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app),
+        base_url="http://test",
+    ) as http:
+        response = await http.post(
+            f"{REST_BASE}/message:send",
+            headers={"A2A-Extensions": RESPONSE_KIND_EXTENSION_URI, **USER_CALLER_HEADERS},
+            json={
+                "message": message,
+                "configuration": {"responseKind": "task", "returnImmediately": True},
+            },
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "message.extensions is not supported for managed Tasks"
+    client.create_task.assert_not_awaited()
+    client.continue_task.assert_not_awaited()
 
 
 @pytest.mark.asyncio

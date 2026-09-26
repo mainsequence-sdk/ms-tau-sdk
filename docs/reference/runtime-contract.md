@@ -53,10 +53,12 @@ starts the returned attempt through `attempts/start`, writes artifacts through
 the resulting protocol state. The SDK does not post attempt Messages or use combined mutation or
 route aliases that Django does not expose.
 
-Task creation and continuation send one complete Main Sequence binding Message to the control
-plane. Its role is `ROLE_REQUESTER`; `extensions` is an ordered array of absolute URI strings and
-defaults to `[]`. Object-valued extensions and other non-A2A-v1 shapes return HTTP 400 before the
-backend Task mutation.
+Local Task creation and continuation persist one complete Main Sequence binding Message with
+`ROLE_REQUESTER` and ordered URI-array `extensions`. Managed Task creation and continuation
+translate the A2A Message into Django's snake_case `message_id`, `parts`, `metadata`, and
+`reference_task_ids` fields. An empty `extensions` array is omitted so the backend supplies its
+default; a nonempty array returns HTTP 400 before a managed Task mutation until the backend can
+persist extension URIs. Object-valued extensions and other non-A2A-v1 shapes also return HTTP 400.
 
 Caller delivery flows in the other direction. Django sends the signed internal delivery signal,
 including the canonical caller AgentSession UID as a selector. The runtime persists the platform
