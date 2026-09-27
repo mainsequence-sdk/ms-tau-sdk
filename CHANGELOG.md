@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Local `/api/chat` sessions now survive a UI reload and a Tau restart. Local mode records each chat
+  session and adds `GET /api/local/v1/chat-sessions` to list them and
+  `GET /api/local/v1/chat-sessions/{sessionUid}/history` to read one back. The history uses the
+  shape of the platform's `GET /api/v1/agent-sessions/{uid}/history/`: user and assistant text,
+  reasoning, and tool calls with their arguments, results, and `isError`, projected from the Tau
+  transcript by the platform's rules. A turn still running is returned in `inProgressMessage`.
+  `GET /api/local/v1/agent` returns the Agent's name and description from the workspace's
+  `.agents/agent_card.json`. A local chat turn now runs to its durable end when its client
+  disconnects or reloads, and only `POST /api/chat/session/cancel` stops it. A second turn for a
+  session that is still running returns 409 `session_busy`. After a Stop, the next turn in a local
+  session used to fail with "Runtime cancellation was requested" until the idle runtime was
+  evicted; the session's next turn now runs on a fresh runtime. Managed chat behavior is unchanged.
+  With `MAINSEQUENCE_TAU_TRUSTED_ORIGINS` set, CORS also exposes `X-Agent-Session-Uid` and
+  `x-vercel-ai-ui-message-stream`. See ADR 0018. Fixes #47.
 - Added `MAINSEQUENCE_TAU_PROVIDER_TIMEOUT_SECONDS`, the HTTP timeout for model-provider calls.
   It was fixed at 60 seconds for every provider hydrated from the platform, with no setting
   or environment variable to change it. A self-hosted OpenAI-compatible provider such as an

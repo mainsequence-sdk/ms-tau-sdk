@@ -47,7 +47,7 @@ absent.
 | `MAINSEQUENCE_TAU_WORKSPACE` | Current directory |
 | `MAINSEQUENCE_TAU_HOST` | `0.0.0.0` managed; `127.0.0.1` local unless explicitly set |
 | `MAINSEQUENCE_TAU_PORT` | `8787` |
-| `MAINSEQUENCE_TAU_TRUSTED_ORIGINS` | Empty |
+| `MAINSEQUENCE_TAU_TRUSTED_ORIGINS` | Empty; comma-separated CORS origins, which can also read the `X-Agent-Session-Uid` and `x-vercel-ai-ui-message-stream` chat headers |
 | `MAINSEQUENCE_TAU_STARTUP_DEPENDENCIES_ENABLED` | `true` |
 | `TAU_EXCLUDE_BASE_TOOLS` | `false`; omit `read`, `write`, `edit`, and `bash` when `true` |
 | `TAU_EXCLUDE_MAINSEQUENCE_MCP` | `false`; skip Main Sequence MCP connection, tools, resources, and resource prompt when `true` |

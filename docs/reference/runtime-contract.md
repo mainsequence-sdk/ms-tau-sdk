@@ -36,6 +36,7 @@ The executable operation contract covers:
 
 - `/health`, `/ready`, and `/version`;
 - `/api/chat`, mock chat, session model, and cancellation;
+- local chat session discovery, platform-shaped chat history, and the local Agent identity;
 - local direct A2A conversation discovery and bounded Message hydration;
 - A2A message send/stream, task list/get/cancel/subscribe, push-notification compatibility routes,
   and JSON-RPC; and
@@ -43,6 +44,14 @@ The executable operation contract covers:
 
 The exact methods and paths are frozen in `tests/contract/test_http_surface.py`. Wire examples and
 schema behavior are tested rather than duplicated manually here.
+
+### Chat turns and client disconnects
+
+A managed `/api/chat` turn is bound to the request that streams it: a client disconnect before the
+terminal frame cancels the turn. A local turn outlives its request (ADR 0018). A disconnect only
+detaches the stream; the turn runs to its durable end and stays visible through the local chat
+history. Only `POST /api/chat/session/cancel` stops it. A local session runs one turn at a time,
+and `POST /api/chat` for a session with a running turn returns 409 `session_busy`.
 
 ### Managed AgentTask execution
 
@@ -88,9 +97,11 @@ remains outside the SDK's public FastAPI operation surface.
 | Surface | Local behavior |
 | --- | --- |
 | Health, readiness, version | Supported; reports local mode and dependency readiness. |
-| Chat stream | Supported; `sessionUid` may be omitted. |
+| Chat stream | Supported; `sessionUid` may be omitted. The turn is recorded as a chat session and runs to its durable end if the client disconnects. |
 | Session model and cancellation | Supported for an existing local session. |
 | Mock chat | Supported. |
+| Chat session list/history | Supported through `/api/local/v1/chat-sessions`; history uses the platform's projected-history shape, with text, reasoning, tool calls, and the running turn in `inProgressMessage`, for the authenticated process principal's sessions only. |
+| Local Agent identity | Supported through `/api/local/v1/agent`, from the workspace's `.agents/agent_card.json`. |
 | A2A Message send | Supported with a workspace-local context identity. |
 | Direct Message conversation list/history | Supported through `/api/local/v1/conversations`; returns only the authenticated process principal's public requester/responder projection. |
 | A2A Task send/stream/list/get/cancel/subscribe/continue | Supported through local SQLite. |

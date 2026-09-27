@@ -20,6 +20,7 @@ These records are the normative decisions for Main Sequence TAU SDK:
 - [ADR 0015: Job-hosted batch execution](./0015-job-hosted-batch-execution.md)
 - [ADR 0016: Version-locked Tau provider error compatibility](./0016-version-locked-tau-provider-error-compatibility.md)
 - [ADR 0017: Local direct A2A conversation discovery](./0017-local-direct-a2a-conversation-discovery.md)
+- [ADR 0018: Reload-safe local chat sessions](./0018-reload-safe-local-chat-sessions.md)
 
 [ADR 56](./adr-56-main-sequence-tau-sdk-workspace-bound-library-deployment.md) is the accepted
 transition record and implementation ledger. Earlier decisions are preserved only in the

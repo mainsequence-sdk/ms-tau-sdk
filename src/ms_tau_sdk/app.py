@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from ms_tau_sdk import __version__
-from ms_tau_sdk.api import a2a, chat, conversations, health, inspection, sessions
+from ms_tau_sdk.api import a2a, chat, conversations, health, inspection, local_chat, sessions
 from ms_tau_sdk.application import ApplicationServices
 from ms_tau_sdk.errors import TauSDKError
 from ms_tau_sdk.logging import RequestContextMiddleware, configure_logging
@@ -24,6 +24,9 @@ from ms_tau_sdk.settings import TauSDKSettings, get_settings
 
 logger = structlog.get_logger(__name__)
 LOCAL_UNSUPPORTED_PATH_PREFIXES = ("/internal/a2a",)
+# Response headers a trusted cross-origin chat client must read: the canonical
+# session of a `POST /api/chat` stream and the stream protocol marker.
+CORS_EXPOSED_HEADERS = ("X-Agent-Session-Uid", "x-vercel-ai-ui-message-stream")
 
 
 def create_app(
@@ -113,6 +116,7 @@ def create_app(
             allow_credentials=True,
             allow_methods=["*"],
             allow_headers=["*"],
+            expose_headers=list(CORS_EXPOSED_HEADERS),
         )
     app.add_middleware(RequestContextMiddleware)
 
@@ -152,6 +156,7 @@ def create_app(
     app.include_router(chat.router)
     app.include_router(a2a.router)
     app.include_router(conversations.router)
+    app.include_router(local_chat.router)
     app.include_router(sessions.router)
     app.include_router(inspection.router)
     return app

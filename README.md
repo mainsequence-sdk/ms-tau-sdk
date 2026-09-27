@@ -141,6 +141,15 @@ events as distinct sections. Correlated provider failures appear first as one hu
 incident with cause, phase, retries, duration, and bounded traceback frames; raw JSON is an
 expandable secondary view.
 
+Local `/api/chat` sessions are reload-safe as well. List them with
+`GET /api/local/v1/chat-sessions` and read one back with
+`GET /api/local/v1/chat-sessions/{sessionUid}/history`, which returns the platform's chat history
+shape: user and assistant text, reasoning, and tool calls with their results, plus a turn still
+running in `inProgressMessage`. Continue a session by sending its `sessionUid` to `POST /api/chat`.
+A local chat turn keeps running when its client disconnects; stop it with
+`POST /api/chat/session/cancel`. `GET /api/local/v1/agent` returns the Agent's name and description
+from the workspace's `.agents/agent_card.json`.
+
 Direct local A2A Message conversations are also reload-safe without becoming Tasks. List them with
 `GET /api/local/v1/conversations`, then hydrate one with
 `GET /api/local/v1/conversations/{contextId}/messages`; both reads are bounded and scoped to the

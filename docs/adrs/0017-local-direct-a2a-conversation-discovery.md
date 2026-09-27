@@ -4,6 +4,10 @@ Status: Accepted — implemented
 
 Date: 2026-09-27
 
+Amended: 2026-09-27 by [ADR 0018](./0018-reload-safe-local-chat-sessions.md) — local `/api/chat`
+sessions have their own projection under the same owner scope, and a direct Message cannot
+continue another user's chat session.
+
 Amends:
 
 - [ADR 0005: Authenticated local development mode](./0005-authenticated-local-development-mode.md)
