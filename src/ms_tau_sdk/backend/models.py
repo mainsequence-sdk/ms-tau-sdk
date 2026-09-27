@@ -118,6 +118,37 @@ class LocalConversationMessagePage(BackendModel):
     next_before_sequence: int | None = None
 
 
+class LocalChatSessionSummary(BackendModel):
+    """Durable metadata for one local session that `/api/chat` has used."""
+
+    session_uid: str
+    title: str
+    message_count: int = Field(ge=0)
+    latest_message_preview: str | None = None
+    created_at: datetime
+    updated_at: datetime
+    working: bool = False
+
+
+class LocalChatSessionPage(BackendModel):
+    sessions: list[LocalChatSessionSummary] = Field(default_factory=list)
+    next_cursor: str | None = None
+
+
+class LocalChatTranscriptEntry(BackendModel):
+    sequence: int
+    turn_uid: str | None = None
+    entry: dict[str, Any]
+
+
+class LocalChatTranscript(BackendModel):
+    """One local chat session's durable Tau entries, oldest first."""
+
+    session: LocalChatSessionSummary
+    entries: list[LocalChatTranscriptEntry] = Field(default_factory=list)
+    turn_committed: bool = False
+
+
 class SessionEntryRecord(BackendModel):
     sequence: int
     entry_type: TauEntryType

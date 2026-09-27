@@ -1,7 +1,21 @@
 # Changelog
 
-## Unreleased
+## 1.2.12 — 2026-09-27
 
+- Local `/api/chat` sessions now survive a UI reload and a Tau restart. Local mode records each chat
+  session and adds `GET /api/local/v1/chat-sessions` to list them and
+  `GET /api/local/v1/chat-sessions/{sessionUid}/history` to read one back. The history uses the
+  shape of the platform's `GET /api/v1/agent-sessions/{uid}/history/`: user and assistant text,
+  reasoning, and tool calls with their arguments, results, and `isError`, projected from the Tau
+  transcript by the platform's rules. A turn still running is returned in `inProgressMessage`.
+  `GET /api/local/v1/agent` returns the Agent's name and description from the workspace's
+  `.agents/agent_card.json`. A local chat turn now runs to its durable end when its client
+  disconnects or reloads, and only `POST /api/chat/session/cancel` stops it. A second turn for a
+  session that is still running returns 409 `session_busy`. After a Stop, the next turn in a local
+  session used to fail with "Runtime cancellation was requested" until the idle runtime was
+  evicted; the session's next turn now runs on a fresh runtime. Managed chat behavior is unchanged.
+  With `MAINSEQUENCE_TAU_TRUSTED_ORIGINS` set, CORS also exposes `X-Agent-Session-Uid` and
+  `x-vercel-ai-ui-message-stream`. See ADR 0018. Fixes #47.
 - Added `MAINSEQUENCE_TAU_PROVIDER_TIMEOUT_SECONDS`, the HTTP timeout for model-provider calls.
   It was fixed at 60 seconds for every provider hydrated from the platform, with no setting
   or environment variable to change it. A self-hosted OpenAI-compatible provider such as an
@@ -9,15 +23,15 @@
   prompt exhausted all three attempts, and Tau reported only an empty transport failure. The
   default stays 60 seconds, and an explicit `timeout_seconds` passed to `ProviderFactory.build`
   still takes precedence.
+
+## 1.2.11 — 2026-09-27
+
 - Added authenticated-process-scoped discovery and bounded hydration for direct local A2A Message
   conversations. The SDK now persists exact public requester/responder Messages independently from
   Tau execution entries, returns stable context and Message identities across restart, supports
   cursor pagination and exact completed-request replay, and exposes
   `GET /api/local/v1/conversations` plus its bounded Message-history route. Existing internal
   sessions are not heuristically reconstructed. Fixes #45.
-
-## 1.2.11 — 2026-09-27
-
 - Added a version-locked `tau-ai==0.4.2` compatibility patch for OpenAI-compatible transport
   failures that exhausted retries with an empty terminal message. The SDK now preserves the
   concrete HTTPX error type, transport phase, retry evidence, total provider duration, one failure

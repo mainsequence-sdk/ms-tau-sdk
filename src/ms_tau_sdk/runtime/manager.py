@@ -59,6 +59,7 @@ from ms_tau_sdk.runtime.extensions import (
     ProjectExtensionState,
     validate_tool_catalog,
 )
+from ms_tau_sdk.runtime.live_turns import LiveTurn, LocalChatTurn
 from ms_tau_sdk.runtime.observability import TauTurnObserver
 from ms_tau_sdk.runtime.provenance import TurnProvenance
 from ms_tau_sdk.runtime.snapshots import (
@@ -241,6 +242,8 @@ class SessionRuntimeManager:
         self._background_tasks: set[asyncio.Task[object]] = set()
         self._a2a_task_executions: dict[str, asyncio.Task[object]] = {}
         self._a2a_caller_deliveries: dict[str, asyncio.Task[object]] = {}
+        self._live_turns: dict[str, LiveTurn] = {}
+        self._local_chat_turns: dict[str, asyncio.Task[object]] = {}
         self._tool_test_confirmations: dict[str, ToolTestConfirmation] = {}
         self._tool_test_executions: dict[str, ToolTestExecution] = {}
         self._mcp_client: MainSequenceMCPClient | None = None
@@ -945,15 +948,29 @@ class SessionRuntimeManager:
         if self._draining or self._closed:
             raise RuntimeError("Main Sequence TAU SDK runtime is shutting down")
         runtime = self._runtimes.get(session_uid)
-        if runtime is not None and not runtime.evicting and not runtime.lease_lost:
+        if runtime is not None and self._reusable(runtime):
             return runtime
         async with self._registry_lock:
             load_lock = self._load_locks.setdefault(session_uid, asyncio.Lock())
         async with load_lock:
             runtime = self._runtimes.get(session_uid)
-            if runtime is not None and not runtime.evicting and not runtime.lease_lost:
+            if runtime is not None and self._reusable(runtime):
                 return runtime
+            if (
+                self.settings.local_mode
+                and runtime is not None
+                and runtime.cancellation_requested
+                and not runtime.evicting
+            ):
+                # A stopped local runtime is replaced, as a lease renewal replaces a
+                # cancelled managed one; the next turn runs on a fresh load.
+                await self._evict_with_context(session_uid)
             return await self._load(session_uid)
+
+    def _reusable(self, runtime: ActiveSessionRuntime) -> bool:
+        if runtime.evicting or runtime.lease_lost:
+            return False
+        return not (self.settings.local_mode and runtime.cancellation_requested)
 
     async def _load(self, session_uid: str) -> ActiveSessionRuntime:
         with bound_contextvars(
@@ -1301,6 +1318,145 @@ class SessionRuntimeManager:
         provenance: TurnProvenance | None = None,
         platform_event: PlatformEvent | None = None,
     ) -> AsyncIterator[TauRuntimeEvent]:
+        live_turn = self._open_live_turn(session_uid, content, provenance)
+        try:
+            async for event in self._run_turn(
+                session_uid,
+                content,
+                provenance=provenance,
+                platform_event=platform_event,
+            ):
+                if live_turn is not None:
+                    live_turn.observe(event)
+                yield event
+        finally:
+            if live_turn is not None:
+                self._close_live_turn(live_turn)
+
+    def _open_live_turn(
+        self,
+        session_uid: str,
+        content: str,
+        provenance: TurnProvenance | None,
+    ) -> LiveTurn | None:
+        """Track a local turn in memory so chat history can show it before it commits."""
+
+        if not self.settings.local_mode or session_uid in self._live_turns:
+            return None
+        live_turn = LiveTurn(
+            session_uid=session_uid,
+            turn_uid=str(get_contextvars().get("turn_uid") or ""),
+            prompt=content,
+            provenance=dict(provenance) if provenance else None,
+        )
+        self._live_turns[session_uid] = live_turn
+        return live_turn
+
+    def _close_live_turn(self, live_turn: LiveTurn) -> None:
+        """Stop tracking a turn once its entries are durable or will not become durable."""
+
+        def release(_task: object = None) -> None:
+            if self._live_turns.get(live_turn.session_uid) is live_turn:
+                self._live_turns.pop(live_turn.session_uid, None)
+
+        runtime = self._runtimes.get(live_turn.session_uid)
+        persistence = runtime.persistence_task if runtime is not None else None
+        if persistence is not None and not persistence.done():
+            persistence.add_done_callback(release)
+        else:
+            release()
+
+    def live_turn(self, session_uid: str) -> LiveTurn | None:
+        """Return the local turn running for a session, if any."""
+
+        return self._live_turns.get(session_uid)
+
+    def local_session_running(self, session_uid: str) -> bool:
+        """Whether this process is running, starting, or settling a turn for a session."""
+
+        return (
+            session_uid in self._local_chat_turns
+            or session_uid in self._live_turns
+            or self.session_turn_active(session_uid)
+        )
+
+    def _require_idle_local_session(self, session_uid: str) -> None:
+        if self.local_session_running(session_uid):
+            raise SessionBusyError(
+                "The local session is already running a turn; stop it or wait for it to finish",
+                detail={"sessionUid": session_uid},
+            )
+
+    async def start_local_chat_turn(
+        self,
+        session_uid: str,
+        content: str,
+        *,
+        provenance: TurnProvenance | None = None,
+    ) -> LocalChatTurn:
+        """Record and start a local chat turn that runs to its durable end.
+
+        The turn runs in a manager-owned task, so a client that disconnects or
+        reloads does not cancel it. Only an explicit cancellation stops it early.
+        A session runs one turn at a time: a second turn is refused while one is
+        running.
+        """
+
+        if not self.settings.local_mode:
+            raise LocalModeUnsupportedError("Detached chat turns are available only in local mode")
+        self._require_idle_local_session(session_uid)
+        await self.backend.begin_local_chat_turn(session_uid, content)
+        self._require_idle_local_session(session_uid)
+        turn = LocalChatTurn(session_uid)
+        task = self.create_background_task(
+            self._drive_local_chat_turn(turn, content, provenance),
+            name=f"ms-tau-local-chat-{session_uid}",
+        )
+        self._local_chat_turns[session_uid] = task
+
+        def discard(completed: asyncio.Task[object]) -> None:
+            if self._local_chat_turns.get(session_uid) is completed:
+                self._local_chat_turns.pop(session_uid, None)
+
+        task.add_done_callback(discard)
+        return turn
+
+    async def _drive_local_chat_turn(
+        self,
+        turn: LocalChatTurn,
+        content: str,
+        provenance: TurnProvenance | None,
+    ) -> object:
+        try:
+            async for event in self.prompt(turn.session_uid, content, provenance=provenance):
+                turn.publish(event)
+        except asyncio.CancelledError:
+            turn.fail(RuntimeError("Main Sequence TAU SDK runtime is shutting down"))
+            raise
+        except Exception as error:
+            if not turn.attached:
+                logger.warning(
+                    "chat.turn.failed",
+                    message="Local chat turn failed after its client disconnected",
+                    session_uid=turn.session_uid,
+                    agent_session_uid=turn.session_uid,
+                    error_type=type(error).__name__,
+                )
+            turn.fail(error)
+            return None
+        turn.finish()
+        with contextlib.suppress(RuntimeError):
+            self.mark_response_delivered(turn.session_uid)
+        return None
+
+    async def _run_turn(
+        self,
+        session_uid: str,
+        content: str,
+        *,
+        provenance: TurnProvenance | None = None,
+        platform_event: PlatformEvent | None = None,
+    ) -> AsyncIterator[TauRuntimeEvent]:
         logger.info(
             "agent.run.accepted",
             message="Accepted Tau agent run",
@@ -1622,6 +1778,14 @@ class SessionRuntimeManager:
             return False
         runtime.cancellation_requested = True
         cancelled = runtime.cancel()
+        if self.settings.local_mode and not runtime.evicting:
+            # A managed lease renewal replaces a cancelled runtime. The local store
+            # clears the request when the stopped turn commits, so replace it here.
+            with contextlib.suppress(RuntimeError):
+                self.create_background_task(
+                    self._evict_after_cancellation(runtime),
+                    name=f"ms-tau-cancel-evict-{session_uid}",
+                )
         return cancelled
 
     def session_turn_active(self, session_uid: str) -> bool:
@@ -1874,7 +2038,8 @@ class SessionRuntimeManager:
     ) -> object:
         async with runtime.lock:
             pass
-        await self.evict(runtime.session_uid)
+        if self._runtimes.get(runtime.session_uid) is runtime:
+            await self.evict(runtime.session_uid)
         return None
 
     async def _eviction_loop(self) -> None:
@@ -2020,7 +2185,9 @@ class SessionRuntimeManager:
         if close is not None:
             with contextlib.suppress(Exception):
                 await close()
-        self._runtimes.pop(session_uid, None)
+        # A turn may have loaded a replacement while this runtime was closing.
+        if self._runtimes.get(session_uid) is runtime:
+            self._runtimes.pop(session_uid, None)
         logger.info(
             "runtime.session.evicted",
             message="Evicted Tau session runtime",

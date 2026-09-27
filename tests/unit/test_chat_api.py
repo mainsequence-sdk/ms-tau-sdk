@@ -1,9 +1,12 @@
+import asyncio
+
 from fastapi import FastAPI
 
 from ms_tau_sdk.api.chat import router
 from ms_tau_sdk.api.dependencies import runtime_manager
 from ms_tau_sdk.errors import BackendConflictError
 from ms_tau_sdk.runtime.events import TauRuntimeEvent
+from ms_tau_sdk.runtime.live_turns import LocalChatTurn
 from ms_tau_sdk.settings import TauSDKSettings
 
 USER_CALLER_HEADERS = {
@@ -28,6 +31,23 @@ class _ChatManager:
         self.prompts: list[tuple[str, str]] = []
         self.provenances: list[object] = []
         self.delivered_sessions: list[str] = []
+        self.local_turns: list[asyncio.Task[None]] = []
+
+    async def start_local_chat_turn(self, session_uid: str, prompt: str, *, provenance=None):
+        turn = LocalChatTurn(session_uid)
+
+        async def drive() -> None:
+            try:
+                async for event in self.prompt(session_uid, prompt, provenance=provenance):
+                    turn.publish(event)
+            except Exception as error:
+                turn.fail(error)
+                return
+            turn.finish()
+            self.mark_response_delivered(session_uid)
+
+        self.local_turns.append(asyncio.create_task(drive()))
+        return turn
 
     async def prompt(self, session_uid: str, prompt: str, *, provenance=None):
         self.prompts.append((session_uid, prompt))

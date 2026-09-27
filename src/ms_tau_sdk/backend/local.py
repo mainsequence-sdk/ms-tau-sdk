@@ -26,6 +26,11 @@ from ms_tau_sdk.protocols.a2a_failure import (
     validate_status_message,
 )
 from ms_tau_sdk.protocols.a2a_roles import A2AMessageDirection, message_to_protocol
+from ms_tau_sdk.protocols.chat_history import (
+    current_branch,
+    latest_message_preview,
+    project_history,
+)
 from ms_tau_sdk.settings import TauSDKSettings
 
 from .client import MainSequenceClient
@@ -41,6 +46,10 @@ from .models import (
     AgentTaskExecutionAttempt,
     AgentTaskSnapshot,
     AgentTaskStatus,
+    LocalChatSessionPage,
+    LocalChatSessionSummary,
+    LocalChatTranscript,
+    LocalChatTranscriptEntry,
     LocalConversationMessage,
     LocalConversationMessagePage,
     LocalConversationPage,
@@ -74,8 +83,10 @@ LOCAL_RUNTIME_CAPABILITIES = {
     "tau_activity_sequence": "v1",
     "tau_turn_commit": "v1",
 }
-_SCHEMA_VERSION = 5
+_SCHEMA_VERSION = 6
 _T = TypeVar("_T")
+_CHAT_TITLE_MAX_CHARACTERS = 80
+_CHAT_TITLE_FALLBACK = "Local chat"
 
 _LOCAL_A2A_RESPONSE_KIND_EXTENSION_URI = "https://mainsequence.ai/a2a/extensions/response-kind/v1"
 _LOCAL_A2A_TERMINAL_STATES = {"completed", "failed", "canceled", "rejected"}
@@ -212,6 +223,18 @@ class LocalDevelopmentBackend(MainSequenceClient):
                 CREATE UNIQUE INDEX IF NOT EXISTS a2a_conversation_response_idx
                     ON a2a_conversation_messages(context_id, reply_to_message_id)
                     WHERE reply_to_message_id IS NOT NULL;
+                CREATE TABLE IF NOT EXISTS local_chat_sessions (
+                    session_uid TEXT PRIMARY KEY,
+                    owner_scope TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    message_count INTEGER NOT NULL DEFAULT 0,
+                    latest_message_preview TEXT,
+                    summary_sequence INTEGER,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS local_chat_sessions_owner_activity_idx
+                    ON local_chat_sessions(owner_scope, updated_at DESC, session_uid DESC);
                 CREATE TABLE IF NOT EXISTS leases (
                     session_uid TEXT PRIMARY KEY REFERENCES sessions(uid) ON DELETE CASCADE,
                     lease_token TEXT NOT NULL,
@@ -599,7 +622,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
 
     async def get_agent_card(self, session_uid: str) -> AgentCardEnvelope:
         context_id = self.settings.local_session_uid(session_uid)
-        agent_uid = f"local-agent-{self.settings.workspace_digest}"
+        agent_uid = self.settings.local_agent_uid
         return AgentCardEnvelope(
             agent_session_uid=context_id,
             agent_uid=agent_uid,
@@ -747,7 +770,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
                 if (
                     conversation is not None
                     and str(conversation["owner_scope"]) != self._owner_scope
-                ):
+                ) or self._foreign_chat_session(connection, context_id):
                     raise SessionNotFoundError("Local conversation not found")
                 if conversation is None:
                     connection.execute(
@@ -993,6 +1016,221 @@ class LocalDevelopmentBackend(MainSequenceClient):
         return await self._run(operation)
 
     @staticmethod
+    def _chat_title(prompt: str) -> str:
+        normalized = " ".join(prompt.split())
+        if not normalized:
+            return _CHAT_TITLE_FALLBACK
+        if len(normalized) <= _CHAT_TITLE_MAX_CHARACTERS:
+            return normalized
+        return normalized[: _CHAT_TITLE_MAX_CHARACTERS - 1].rstrip() + "…"
+
+    def _foreign_chat_session(self, connection: sqlite3.Connection, session_uid: str) -> bool:
+        row = connection.execute(
+            "SELECT owner_scope FROM local_chat_sessions WHERE session_uid = ?",
+            (session_uid,),
+        ).fetchone()
+        return row is not None and str(row["owner_scope"]) != self._owner_scope
+
+    @staticmethod
+    def _chat_session_query() -> str:
+        return """
+            SELECT c.session_uid, c.title, c.message_count, c.latest_message_preview,
+                   c.created_at, c.updated_at, s.runtime_activity,
+                   l.expires_at AS lease_expires_at
+            FROM local_chat_sessions AS c
+            LEFT JOIN sessions AS s ON s.uid = c.session_uid
+            LEFT JOIN leases AS l ON l.session_uid = c.session_uid
+        """
+
+    @staticmethod
+    def _chat_session_summary_from_row(
+        row: sqlite3.Row,
+        *,
+        now: datetime,
+    ) -> LocalChatSessionSummary:
+        lease_expires_at = row["lease_expires_at"]
+        return LocalChatSessionSummary(
+            session_uid=str(row["session_uid"]),
+            title=str(row["title"]),
+            message_count=int(row["message_count"]),
+            latest_message_preview=row["latest_message_preview"],
+            created_at=_from_iso(str(row["created_at"])),
+            updated_at=_from_iso(str(row["updated_at"])),
+            # A turn is running only while its owner still holds the session lease; a
+            # process that stopped mid-turn leaves the activity behind but not the lease.
+            working=(
+                str(row["runtime_activity"] or "") in {"working", "persisting"}
+                and lease_expires_at is not None
+                and _from_iso(str(lease_expires_at)) > now
+            ),
+        )
+
+    def _refresh_chat_session_summaries(self, connection: sqlite3.Connection) -> None:
+        """Recompute cached list summaries whose Tau entries changed since the last read."""
+
+        stale = connection.execute(
+            """
+            SELECT c.session_uid, c.updated_at, COALESCE(s.next_sequence, 0) AS next_sequence
+            FROM local_chat_sessions AS c
+            LEFT JOIN sessions AS s ON s.uid = c.session_uid
+            WHERE c.owner_scope = ?
+              AND (c.summary_sequence IS NULL
+                   OR c.summary_sequence != COALESCE(s.next_sequence, 0))
+            """,
+            (self._owner_scope,),
+        ).fetchall()
+        for row in stale:
+            session_uid = str(row["session_uid"])
+            entries: list[dict[str, Any]] = [
+                self._json_load(entry["entry_json"], {})
+                for entry in connection.execute(
+                    "SELECT entry_json FROM entries WHERE session_uid = ? ORDER BY sequence",
+                    (session_uid,),
+                ).fetchall()
+            ]
+            projected = project_history(current_branch(entries))
+            updated_at = _from_iso(str(row["updated_at"]))
+            if projected.last_timestamp is not None:
+                updated_at = max(updated_at, projected.last_timestamp)
+            connection.execute(
+                """
+                UPDATE local_chat_sessions SET message_count = ?, latest_message_preview = ?,
+                    summary_sequence = ?, updated_at = ?
+                WHERE session_uid = ?
+                """,
+                (
+                    len(projected.messages),
+                    latest_message_preview(projected.messages),
+                    int(row["next_sequence"]),
+                    _iso(updated_at),
+                    session_uid,
+                ),
+            )
+
+    async def begin_local_chat_turn(self, session_uid: str, prompt: str) -> None:
+        """Record a local chat session, or its new activity, before `/api/chat` runs a turn."""
+
+        canonical = self.settings.local_session_uid(session_uid)
+        title = self._chat_title(prompt)
+
+        def operation() -> None:
+            now = _iso(_utcnow())
+            with closing(self._connect()) as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                conversation = connection.execute(
+                    "SELECT owner_scope FROM a2a_conversations WHERE context_id = ?",
+                    (canonical,),
+                ).fetchone()
+                if (
+                    conversation is not None
+                    and str(conversation["owner_scope"]) != self._owner_scope
+                ) or self._foreign_chat_session(connection, canonical):
+                    raise SessionNotFoundError("Local chat session not found")
+                connection.execute(
+                    """
+                    INSERT INTO local_chat_sessions(
+                        session_uid, owner_scope, title, created_at, updated_at
+                    ) VALUES (?, ?, ?, ?, ?)
+                    ON CONFLICT(session_uid) DO UPDATE SET
+                        updated_at = MAX(local_chat_sessions.updated_at, excluded.updated_at)
+                    """,
+                    (canonical, self._owner_scope, title, now, now),
+                )
+
+        await self._run(operation)
+
+    async def list_local_chat_sessions(
+        self,
+        *,
+        limit: int,
+        cursor: str | None,
+    ) -> LocalChatSessionPage:
+        boundary = self._decode_conversation_cursor(cursor) if cursor else None
+
+        def operation() -> LocalChatSessionPage:
+            now = _utcnow()
+            where = " WHERE c.owner_scope = ?"
+            parameters: list[object] = [self._owner_scope]
+            if boundary is not None:
+                where += " AND (c.updated_at < ? OR (c.updated_at = ? AND c.session_uid < ?))"
+                parameters.extend((boundary[0], boundary[0], boundary[1]))
+            parameters.append(limit + 1)
+            with closing(self._connect()) as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                self._refresh_chat_session_summaries(connection)
+                rows = connection.execute(
+                    self._chat_session_query()
+                    + where
+                    + " ORDER BY c.updated_at DESC, c.session_uid DESC LIMIT ?",
+                    tuple(parameters),
+                ).fetchall()
+            has_more = len(rows) > limit
+            selected = rows[:limit]
+            next_cursor = None
+            if has_more and selected:
+                last = selected[-1]
+                next_cursor = self._encode_conversation_cursor(
+                    str(last["updated_at"]), str(last["session_uid"])
+                )
+            return LocalChatSessionPage(
+                sessions=[self._chat_session_summary_from_row(row, now=now) for row in selected],
+                next_cursor=next_cursor,
+            )
+
+        return await self._run(operation)
+
+    async def get_local_chat_transcript(
+        self,
+        session_uid: str,
+        *,
+        turn_uid: str | None = None,
+    ) -> LocalChatTranscript:
+        """Return one chat session's durable entries and whether ``turn_uid`` committed."""
+
+        canonical = self.settings.local_session_uid(session_uid)
+
+        def operation() -> LocalChatTranscript:
+            now = _utcnow()
+            with closing(self._connect()) as connection, connection:
+                # One read transaction keeps the entries and the commit marker consistent.
+                connection.execute("BEGIN")
+                row = connection.execute(
+                    self._chat_session_query() + " WHERE c.session_uid = ? AND c.owner_scope = ?",
+                    (canonical, self._owner_scope),
+                ).fetchone()
+                if row is None:
+                    raise SessionNotFoundError("Local chat session not found")
+                entries = connection.execute(
+                    """
+                    SELECT sequence, turn_uid, entry_json FROM entries
+                    WHERE session_uid = ? ORDER BY sequence
+                    """,
+                    (canonical,),
+                ).fetchall()
+                committed = (
+                    turn_uid is not None
+                    and connection.execute(
+                        "SELECT 1 FROM turn_commits WHERE session_uid = ? AND turn_uid = ?",
+                        (canonical, turn_uid),
+                    ).fetchone()
+                    is not None
+                )
+            return LocalChatTranscript(
+                session=self._chat_session_summary_from_row(row, now=now),
+                entries=[
+                    LocalChatTranscriptEntry(
+                        sequence=int(entry["sequence"]),
+                        turn_uid=(str(entry["turn_uid"]) if entry["turn_uid"] else None),
+                        entry=self._json_load(entry["entry_json"], {}),
+                    )
+                    for entry in entries
+                ],
+                turn_committed=committed,
+            )
+
+        return await self._run(operation)
+
+    @staticmethod
     def _task_row(connection: sqlite3.Connection, task_uid: str) -> sqlite3.Row:
         row = connection.execute(
             "SELECT * FROM a2a_tasks WHERE uid = ?",
@@ -1230,7 +1468,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
         return AgentSession.model_validate(
             {
                 "uid": str(row["uid"]),
-                "agent_uid": f"local-agent-{self.settings.workspace_digest}",
+                "agent_uid": self.settings.local_agent_uid,
                 "harness": "tau",
                 "harness_protocol": "tau-session-v1",
                 "harness_version": "local",
@@ -2050,7 +2288,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
         if not task_id or not requested_context:
             raise BackendConflictError("Local A2A task_id and context_id are required")
         context_id = self.settings.local_session_uid(requested_context)
-        agent_uid = f"local-agent-{self.settings.workspace_digest}"
+        agent_uid = self.settings.local_agent_uid
 
         def operation() -> AgentTaskCreateResult:
             with closing(self._connect()) as connection, connection:

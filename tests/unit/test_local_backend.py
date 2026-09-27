@@ -479,7 +479,7 @@ async def test_local_backend_persists_complete_a2a_task_lifecycle(tmp_path):
         task_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(a2a_tasks)").fetchall()
         }
-    assert schema_version == "5"
+    assert schema_version == "6"
     assert {"failure_code", "recovery_owner", "terminal_at"} <= task_columns
 
     await backend.aclose()
@@ -1078,3 +1078,150 @@ async def test_local_reconciliation_fails_stale_working_task_as_ambiguous(tmp_pa
     assert resumed.lease.holder_id == "runtime-2"
     assert resumed.runtime_state.active_task_attempt_uid is None
     await backend.aclose()
+
+
+def _other_user(tmp_path) -> TauSDKSettings:
+    settings = _settings(tmp_path)
+    settings.access_token = SecretStr("different-access-token")
+    settings.refresh_token = SecretStr("different-refresh-token")
+    return settings
+
+
+@pytest.mark.asyncio
+async def test_local_chat_sessions_record_titles_and_refresh_cached_summaries(tmp_path):
+    settings = _settings(tmp_path)
+    backend = LocalDevelopmentBackend(settings, _services(_evidence()))
+    session_uid = settings.local_session_uid("chat")
+
+    await backend.begin_local_chat_turn(session_uid, "  Summarize\n the   quarterly report  ")
+    await backend.begin_local_chat_turn(session_uid, "A later question keeps the first title")
+    await backend.begin_local_chat_turn(settings.local_session_uid("long"), "word " * 40)
+    await backend.begin_local_chat_turn(settings.local_session_uid("blank"), "   ")
+    registered = await backend.list_local_chat_sessions(limit=10, cursor=None)
+    titles = {item.session_uid: item.title for item in registered.sessions}
+
+    assert titles[session_uid] == "Summarize the quarterly report"
+    assert len(titles[settings.local_session_uid("long")]) == 80
+    assert titles[settings.local_session_uid("long")].endswith("…")
+    assert titles[settings.local_session_uid("blank")] == "Local chat"
+    assert {item.message_count for item in registered.sessions} == {0}
+    assert not any(item.working for item in registered.sessions)
+
+    bootstrap = await backend.bootstrap_tau_runtime(session_uid, _bootstrap("holder-1"))
+    entries = [
+        {
+            "type": "custom",
+            "id": "stamp",
+            "parent_id": None,
+            "timestamp": 1784851200.0,
+            "namespace": "io.mainsequence.provenance",
+            "data": {"channel": "chat", "origin": "user"},
+        },
+        {
+            "type": "message",
+            "id": "question",
+            "parent_id": "stamp",
+            "timestamp": 1784851200.0,
+            "message": {"role": "user", "content": "Summarize", "timestamp": 1784851200000},
+        },
+        {
+            "type": "message",
+            "id": "answer",
+            "parent_id": "question",
+            "timestamp": 1784851201.0,
+            "message": {
+                "role": "assistant",
+                "content": [{"type": "text", "text": "Revenue grew."}],
+                "timestamp": 1784851201000,
+            },
+        },
+    ]
+    await backend.append_entries(
+        session_uid,
+        SessionEntryBatchAppendRequest(
+            lease_token=bootstrap.lease.lease_token,
+            holder_id="holder-1",
+            expected_sequence=0,
+            entries=[
+                SessionEntryBatchItem(idempotency_key=entry["id"], entry=entry) for entry in entries
+            ],
+            turn=TauTurnLifecycle(turn_uid="turn-1", phase="committed", activity_sequence=1),
+        ),
+    )
+
+    refreshed = await backend.list_local_chat_sessions(limit=10, cursor=None)
+    summary = next(item for item in refreshed.sessions if item.session_uid == session_uid)
+    transcript = await backend.get_local_chat_transcript(session_uid, turn_uid="turn-1")
+    pending = await backend.get_local_chat_transcript(session_uid, turn_uid="turn-2")
+    restarted = LocalDevelopmentBackend(settings, _services(_evidence()))
+    recovered = await restarted.list_local_chat_sessions(limit=10, cursor=None)
+
+    assert summary.message_count == 2
+    assert summary.latest_message_preview == "Revenue grew."
+    assert summary.working is False
+    assert [item.entry["id"] for item in transcript.entries] == ["stamp", "question", "answer"]
+    assert {item.turn_uid for item in transcript.entries} == {"turn-1"}
+    assert transcript.turn_committed is True
+    assert pending.turn_committed is False
+    assert transcript.session.title == "Summarize the quarterly report"
+    assert recovered == refreshed
+
+    await backend.aclose()
+    await restarted.aclose()
+
+
+@pytest.mark.asyncio
+async def test_local_chat_sessions_are_scoped_to_the_authenticated_local_user(tmp_path):
+    settings = _settings(tmp_path)
+    backend = LocalDevelopmentBackend(settings, _services(_evidence()))
+    other_user = LocalDevelopmentBackend(_other_user(tmp_path), _services(_evidence()))
+    chat_uid = settings.local_session_uid("private-chat")
+    conversation_uid = settings.local_session_uid("private-conversation")
+    await backend.begin_local_chat_turn(chat_uid, "Private chat")
+    await backend.begin_local_conversation_message(
+        {
+            "messageId": "request-1",
+            "contextId": conversation_uid,
+            "role": "ROLE_USER",
+            "parts": [{"text": "Private conversation"}],
+        }
+    )
+
+    assert (await other_user.list_local_chat_sessions(limit=10, cursor=None)).sessions == []
+    with pytest.raises(SessionNotFoundError, match="Local chat session not found"):
+        await other_user.get_local_chat_transcript(chat_uid)
+    with pytest.raises(SessionNotFoundError, match="Local chat session not found"):
+        await other_user.begin_local_chat_turn(chat_uid, "Let me in")
+    with pytest.raises(SessionNotFoundError, match="Local chat session not found"):
+        await other_user.begin_local_chat_turn(conversation_uid, "Let me in")
+    with pytest.raises(SessionNotFoundError, match="Local conversation not found"):
+        await other_user.begin_local_conversation_message(
+            {
+                "messageId": "request-2",
+                "contextId": chat_uid,
+                "role": "ROLE_USER",
+                "parts": [{"text": "Let me in"}],
+            }
+        )
+    with pytest.raises(ValueError, match="Invalid conversation cursor"):
+        await backend.list_local_chat_sessions(limit=10, cursor="not-a-cursor")
+
+    await backend.aclose()
+    await other_user.aclose()
+
+
+@pytest.mark.asyncio
+async def test_managed_client_has_no_local_chat_sessions(tmp_path):
+    client = MainSequenceClient(
+        TauSDKSettings(_env_file=None, workspace=tmp_path),
+        Mock(bind_client=Mock()),
+    )
+
+    with pytest.raises(LocalModeUnsupportedError):
+        await client.begin_local_chat_turn("session", "prompt")
+    with pytest.raises(LocalModeUnsupportedError):
+        await client.list_local_chat_sessions(limit=10, cursor=None)
+    with pytest.raises(LocalModeUnsupportedError):
+        await client.get_local_chat_transcript("session")
+
+    await client.aclose()

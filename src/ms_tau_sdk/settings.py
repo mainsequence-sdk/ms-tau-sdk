@@ -361,6 +361,11 @@ class TauSDKSettings(BaseSettings):
         return self.local_state_root / self.workspace_digest / "logs" / "tau.jsonl"
 
     @property
+    def local_agent_uid(self) -> str:
+        """The unregistered Agent identity local mode reports for this workspace."""
+        return f"local-agent-{self.workspace_digest}"
+
+    @property
     def loopback_bind(self) -> bool:
         return self.host.strip().lower() in {"127.0.0.1", "::1", "localhost"}
 

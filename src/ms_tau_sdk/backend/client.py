@@ -33,6 +33,8 @@ from .models import (
     AgentTaskEventPage,
     AgentTaskExecutionAttempt,
     AgentTaskSnapshot,
+    LocalChatSessionPage,
+    LocalChatTranscript,
     LocalConversationMessagePage,
     LocalConversationPage,
     ProviderControl,
@@ -184,6 +186,30 @@ class MainSequenceClient:
     ) -> LocalConversationMessagePage:
         del context_id, limit, before_sequence
         raise LocalModeUnsupportedError("Local conversation history requires TAU local mode")
+
+    async def begin_local_chat_turn(self, session_uid: str, prompt: str) -> None:
+        """Record that `/api/chat` is starting a turn in a local session."""
+
+        del session_uid, prompt
+        raise LocalModeUnsupportedError("Local chat sessions require TAU local mode")
+
+    async def list_local_chat_sessions(
+        self,
+        *,
+        limit: int,
+        cursor: str | None,
+    ) -> LocalChatSessionPage:
+        del limit, cursor
+        raise LocalModeUnsupportedError("Local chat session discovery requires TAU local mode")
+
+    async def get_local_chat_transcript(
+        self,
+        session_uid: str,
+        *,
+        turn_uid: str | None = None,
+    ) -> LocalChatTranscript:
+        del session_uid, turn_uid
+        raise LocalModeUnsupportedError("Local chat session history requires TAU local mode")
 
     async def _request(
         self,

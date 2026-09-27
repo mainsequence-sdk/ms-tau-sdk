@@ -32,6 +32,15 @@ all `ms-tau` processes for that workspace before moving or deleting its workspac
 Removing local state cannot remove a platform AgentSession because local state is never attached
 to one.
 
+## A local chat keeps running after a reload or returns `session_busy`
+
+A local `/api/chat` turn runs to its end even when the page that started it reloads or closes. Its
+session shows `working: true` in `GET /api/local/v1/chat-sessions`, and its history returns the
+running turn in `inProgressMessage`. While it runs, `POST /api/chat` for the same session returns
+409 `session_busy`: wait for `working` to clear, or stop the turn with
+`POST /api/chat/session/cancel`. A session a stopped process left mid-turn stops reporting
+`working` when its lease expires.
+
 ## Inspect local operational logs
 
 Local-mode structured events are appended to

@@ -95,11 +95,24 @@ async def chat(
             message_count=len(body.messages) if body.messages else None,
         ),
     )
+    # A local turn is recorded as a chat session and outlives this request, so a
+    # reload or a closed tab leaves it running; only session/cancel stops it. A
+    # managed turn stays bound to the request that streams it.
+    local_turn = (
+        await manager.start_local_chat_turn(session_uid, prompt, provenance=provenance)
+        if manager.settings.local_mode
+        else None
+    )
+    events = (
+        local_turn.events()
+        if local_turn is not None
+        else manager.prompt(session_uid, prompt, provenance=provenance)
+    )
 
     async def stream() -> AsyncIterator[bytes]:
         encoder = AssistantUiEncoder()
         try:
-            async for event in manager.prompt(session_uid, prompt, provenance=provenance):
+            async for event in events:
                 for payload in encoder.encode(event):
                     yield encoder.sse(payload)
             try:
@@ -107,9 +120,10 @@ async def chat(
                     yield encoder.sse(payload)
                 yield encoder.done()
             finally:
-                manager.mark_response_delivered(session_uid)
+                if local_turn is None:
+                    manager.mark_response_delivered(session_uid)
         except asyncio.CancelledError:
-            if not encoder.finished:
+            if local_turn is None and not encoder.finished:
                 await manager.cancel(session_uid)
             raise
         except Exception as error:
@@ -144,6 +158,9 @@ async def chat(
                     }
                 )
             yield encoder.done()
+        finally:
+            if local_turn is not None:
+                local_turn.detach()
 
     return StreamingResponse(
         stream(),

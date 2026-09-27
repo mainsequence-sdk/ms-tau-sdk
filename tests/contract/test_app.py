@@ -77,3 +77,28 @@ async def test_local_mode_rejects_internal_dispatch_and_has_no_one_shot_agent_ro
     assert dispatch.status_code == 409
     assert dispatch.json()["error"] == "local_mode_capability_unsupported"
     assert dispatch.json()["detail"]["mode"] == "local"
+
+
+async def test_trusted_origins_can_read_the_chat_stream_headers(asgi_client, test_settings):
+    test_settings.trusted_origins = ("http://app.test",)
+    app = create_app(test_settings)
+
+    async with asgi_client(app) as http:
+        response = await http.post(
+            "/api/chat/mock",
+            headers={"Origin": "http://app.test"},
+            json={"message": "hello"},
+        )
+        untrusted = await http.post(
+            "/api/chat/mock",
+            headers={"Origin": "http://elsewhere.test"},
+            json={"message": "hello"},
+        )
+
+    assert response.headers["access-control-allow-origin"] == "http://app.test"
+    exposed = {
+        header.strip().lower()
+        for header in response.headers["access-control-expose-headers"].split(",")
+    }
+    assert exposed == {"x-agent-session-uid", "x-vercel-ai-ui-message-stream"}
+    assert "access-control-allow-origin" not in untrusted.headers

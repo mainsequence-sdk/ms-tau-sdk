@@ -21,7 +21,7 @@ from ms_tau_sdk.backend.models import (
     TauRuntimeBootstrap,
     TauTurnCommit,
 )
-from ms_tau_sdk.errors import BackendConflictError, ConfigurationError
+from ms_tau_sdk.errors import BackendConflictError, ConfigurationError, LocalModeUnsupportedError
 from ms_tau_sdk.runtime.extensions import validate_tool_catalog
 from ms_tau_sdk.runtime.manager import RUNTIME_CAPABILITIES, SessionRuntimeManager
 from ms_tau_sdk.runtime.session import ActiveSessionRuntime
@@ -985,4 +985,45 @@ async def test_turn_commit_blocks_done_but_snapshot_upload_does_not(tmp_path):
 
     release_snapshot.set()
     manager._runtimes.clear()
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_eviction_keeps_a_replacement_runtime_registered_while_it_closed(tmp_path):
+    manager, _backend, _providers = _manager_dependencies(tmp_path, [])
+    replacement = ActiveSessionRuntime(
+        session_uid="session-1",
+        holder_id=manager.holder_id,
+        coding_session=_coding_session(),
+        storage=SimpleNamespace(lease_token="lease-2", flush=AsyncMock()),
+        provider=SimpleNamespace(aclose=AsyncMock()),
+    )
+    closing = _coding_session()
+
+    def replace_while_closing() -> None:
+        manager._runtimes["session-1"] = replacement
+
+    closing.aclose.side_effect = replace_while_closing
+    manager._runtimes["session-1"] = ActiveSessionRuntime(
+        session_uid="session-1",
+        holder_id=manager.holder_id,
+        coding_session=closing,
+        storage=SimpleNamespace(lease_token="lease-1", flush=AsyncMock()),
+        provider=SimpleNamespace(aclose=AsyncMock()),
+    )
+
+    await manager.evict("session-1")
+
+    assert manager._runtimes["session-1"] is replacement
+    manager._runtimes.clear()
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_managed_chat_turns_stay_bound_to_their_request(tmp_path):
+    manager, _backend, _providers = _manager_dependencies(tmp_path, [])
+
+    with pytest.raises(LocalModeUnsupportedError):
+        await manager.start_local_chat_turn("session-1", "hello")
+    assert manager.live_turn("session-1") is None
     await manager.aclose()

@@ -24,6 +24,10 @@ Amended: 2026-09-27 by
 also have an SDK-owned, user-scoped public transcript projection and bounded discovery API; it is
 separate from Tau entries and A2A Task history.
 
+Amended: 2026-09-27 by [ADR 0018](./0018-reload-safe-local-chat-sessions.md) — local `/api/chat`
+sessions are listable and readable in the platform's history shape, and a local chat turn runs to
+its durable end when its client disconnects; only explicit cancellation stops it.
+
 Amends, when accepted:
 
 - [ADR 0002: Runtime and protocol contracts](./0002-runtime-and-protocol-contracts.md); and

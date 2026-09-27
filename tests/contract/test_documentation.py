@@ -56,4 +56,5 @@ def test_active_adr_index_lists_the_complete_sdk_decision_set() -> None:
         "0015-job-hosted-batch-execution.md",
         "0016-version-locked-tau-provider-error-compatibility.md",
         "0017-local-direct-a2a-conversation-discovery.md",
+        "0018-reload-safe-local-chat-sessions.md",
     }

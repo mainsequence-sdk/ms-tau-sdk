@@ -81,6 +81,16 @@ a platform AgentSession. Local mode supports:
   rescheduling safe unclaimed work and terminalizing stale uncertain work rather than replaying
   possible side effects.
 
+For a chat UI over `POST /api/chat`, do not read `runtime.sqlite3` or keep a browser-only
+transcript either. List sessions with `GET /api/local/v1/chat-sessions?limit=<n>&cursor=<opaque>`
+and hydrate one with `GET /api/local/v1/chat-sessions/{sessionUid}/history`. The history has the
+platform's `GET /api/v1/agent-sessions/{uid}/history/` shape, including reasoning, tool calls with
+results, and a running turn in `inProgressMessage`, so one reader serves local and deployed
+Agents. Reuse the listed `sessionUid` in `POST /api/chat`. A local chat turn keeps running when
+the client disconnects or reloads; stop it only with `POST /api/chat/session/cancel`, and queue a
+new message while a session is `working` (`POST /api/chat` returns 409 `session_busy`). Title the
+UI from `GET /api/local/v1/agent`, which reads the workspace's `.agents/agent_card.json`.
+
 For the default direct Message flow, do not read `runtime.sqlite3` or keep a browser-only source of
 truth. Discover conversations with `GET /api/local/v1/conversations?limit=<n>&cursor=<opaque>` and
 hydrate the latest bounded Message tail with

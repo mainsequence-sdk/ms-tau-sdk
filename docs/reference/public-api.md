@@ -62,6 +62,34 @@ its persistence binding at ingress and back at egress without changing Message i
 metadata, extension URI order, or Task references. Status settlement accepts only a complete
 responder Message or no Message; the pre-cutover `{code, message}` status object is not supported.
 
+## Local chat sessions
+
+Local mode records every `POST /api/chat` session and serves it back after a UI reload or a Tau
+restart:
+
+```text
+GET /api/local/v1/chat-sessions?limit=50&cursor=<opaque>
+GET /api/local/v1/chat-sessions/{sessionUid}/history
+GET /api/local/v1/agent
+```
+
+The list returns the authenticated local process user's sessions, newest activity first, each with
+its canonical `sessionUid` (the value of `X-Agent-Session-Uid`), title, message count, latest-text
+preview, creation and activity times, and whether a turn is `working`. The history returns the
+envelope of the platform's `GET /api/v1/agent-sessions/{uid}/history/`: `version`, `session`,
+`messages`, and `inProgressMessage`. Messages carry user text, assistant text, reasoning, and tool
+calls with their arguments, results, and `isError`. A turn still running is returned in
+`inProgressMessage` with session status `running`. Continue a session by sending its `sessionUid`
+to `POST /api/chat`.
+
+`GET /api/local/v1/agent` returns `{name, displayName, description}` from the workspace's
+`.agents/agent_card.json`, or nulls without a readable card. All three routes return 409 in managed
+mode, where the platform owns sessions and history.
+
+A local chat turn keeps running when its client disconnects; stop it with
+`POST /api/chat/session/cancel`. While a session has a running turn, `POST /api/chat` for it returns
+409 `session_busy`.
+
 ## Local direct A2A conversation history
 
 Local mode exposes an SDK-owned extension for direct `message:send` conversations:
