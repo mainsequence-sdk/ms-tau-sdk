@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.12 — 2026-09-27
 
 - Local `/api/chat` sessions now survive a UI reload and a Tau restart. Local mode records each chat
   session and adds `GET /api/local/v1/chat-sessions` to list them and
@@ -23,15 +23,15 @@
   prompt exhausted all three attempts, and Tau reported only an empty transport failure. The
   default stays 60 seconds, and an explicit `timeout_seconds` passed to `ProviderFactory.build`
   still takes precedence.
+
+## 1.2.11 — 2026-09-27
+
 - Added authenticated-process-scoped discovery and bounded hydration for direct local A2A Message
   conversations. The SDK now persists exact public requester/responder Messages independently from
   Tau execution entries, returns stable context and Message identities across restart, supports
   cursor pagination and exact completed-request replay, and exposes
   `GET /api/local/v1/conversations` plus its bounded Message-history route. Existing internal
   sessions are not heuristically reconstructed. Fixes #45.
-
-## 1.2.11 — 2026-09-27
-
 - Added a version-locked `tau-ai==0.4.2` compatibility patch for OpenAI-compatible transport
   failures that exhausted retries with an empty terminal message. The SDK now preserves the
   concrete HTTPX error type, transport phase, retry evidence, total provider duration, one failure
