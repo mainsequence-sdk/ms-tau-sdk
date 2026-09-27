@@ -81,8 +81,17 @@ class ProviderRuntime:
 
 
 class ProviderFactory:
-    def __init__(self, backend: MainSequenceClient) -> None:
+    def __init__(
+        self,
+        backend: MainSequenceClient,
+        *,
+        provider_timeout_seconds: float = 60,
+    ) -> None:
         self.backend = backend
+        # A self-hosted provider can send no bytes until its first token, so the HTTP read
+        # timeout bounds time-to-first-token; a cold model load plus a long prompt needs more
+        # than a hosted API does, and only the operator knows which one they run.
+        self.provider_timeout_seconds = provider_timeout_seconds
 
     @staticmethod
     def _validate_custom_base_url(base_url: str) -> None:
@@ -351,8 +360,10 @@ class ProviderFactory:
         credential_resolver: CredentialResolver | None = None,
         thinking_level: str | None = None,
         max_tokens: int | None = None,
-        timeout_seconds: float = 60,
+        timeout_seconds: float | None = None,
     ) -> ModelProvider:
+        if timeout_seconds is None:
+            timeout_seconds = self.provider_timeout_seconds
         definition = PROVIDER_DEFINITIONS.get(credential.provider)
         catalog_provider = CATALOG_BY_NAME.get(credential.provider)
         is_custom_provider = catalog_provider is None

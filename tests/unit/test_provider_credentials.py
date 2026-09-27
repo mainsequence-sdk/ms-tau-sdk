@@ -640,6 +640,35 @@ def test_factory_reuses_openai_compatible_constructor_for_custom_auth_modes(cred
     assert provider._config.omit_authorization_header is (not bool(credential.secret()))
 
 
+def test_factory_applies_its_configured_timeout_to_a_custom_provider():
+    credential = ProviderCredential(
+        provider="acme-gateway",
+        credential_kind="organization_custom",
+        api="openai-completions",
+        base_url="https://models.example.test/v1",
+    )
+    control = _custom_provider_control()
+    default_factory = ProviderFactory(backend=None)  # type: ignore[arg-type]
+    configured_factory = ProviderFactory(
+        backend=None,  # type: ignore[arg-type]
+        provider_timeout_seconds=300,
+    )
+
+    default = default_factory.build(credential, provider_control=control, model="acme-model")
+    configured = configured_factory.build(credential, provider_control=control, model="acme-model")
+    explicit = configured_factory.build(
+        credential,
+        provider_control=control,
+        model="acme-model",
+        timeout_seconds=12,
+    )
+
+    assert isinstance(configured, OpenAICompatibleProvider)
+    assert default._config.timeout_seconds == 60
+    assert configured._config.timeout_seconds == 300
+    assert explicit._config.timeout_seconds == 12
+
+
 def test_factory_rejects_invalid_custom_provider_evidence_before_construction():
     factory = ProviderFactory(backend=None)  # type: ignore[arg-type]
     unsupported = _custom_provider_control(api="anthropic-messages")

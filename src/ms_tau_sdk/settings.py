@@ -144,6 +144,11 @@ class TauSDKSettings(BaseSettings):
         gt=0,
         validation_alias="MAINSEQUENCE_TAU_BACKEND_POOL_TIMEOUT_SECONDS",
     )
+    provider_timeout_seconds: float = Field(
+        default=60.0,
+        gt=0,
+        validation_alias="MAINSEQUENCE_TAU_PROVIDER_TIMEOUT_SECONDS",
+    )
     mcp_read_concurrency: int = Field(
         default=8,
         ge=1,
