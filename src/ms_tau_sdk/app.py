@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from ms_tau_sdk import __version__
-from ms_tau_sdk.api import a2a, chat, health, inspection, sessions
+from ms_tau_sdk.api import a2a, chat, conversations, health, inspection, sessions
 from ms_tau_sdk.application import ApplicationServices
 from ms_tau_sdk.errors import TauSDKError
 from ms_tau_sdk.logging import RequestContextMiddleware, configure_logging
@@ -151,6 +151,7 @@ def create_app(
     app.include_router(health.router)
     app.include_router(chat.router)
     app.include_router(a2a.router)
+    app.include_router(conversations.router)
     app.include_router(sessions.router)
     app.include_router(inspection.router)
     return app

@@ -42,6 +42,13 @@ the path instead of silently discarding durable diagnostics. The file excludes r
 messages and known secret-bearing fields, but project extensions must also avoid logging their
 own sensitive content. Do not commit or upload the local state directory.
 
+For an OpenAI-compatible provider failure, inspect the human-readable incident in Tau Board before
+the raw JSON. The incident shows the concrete HTTPX type, transport phase, attempts, total provider
+duration, failure UID, and bounded traceback frames when the SDK could observe them. A diagnostic
+that explicitly says the dependency did not expose its cause must not be guessed into a timeout.
+`ms-tau-sdk` temporarily restores the missing Tau 0.4.2 terminal diagnostic under ADR 0016; the
+patch never records credentials, headers, prompts, response bodies, or Python locals.
+
 ## Tau runtime state cannot be written
 
 Both modes keep durable Tau runtime state — built-in extension state, provider credentials, project

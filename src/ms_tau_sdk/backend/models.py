@@ -90,6 +90,34 @@ class AgentCardEnvelope(BackendModel):
     agent_card: dict[str, Any] | None = None
 
 
+class LocalConversationSummary(BackendModel):
+    """Public metadata for one direct local A2A Message conversation."""
+
+    context_id: str
+    title: str
+    message_count: int = Field(ge=0)
+    latest_message_preview: str | None = None
+    created_at: datetime
+    updated_at: datetime
+
+
+class LocalConversationPage(BackendModel):
+    conversations: list[LocalConversationSummary] = Field(default_factory=list)
+    next_cursor: str | None = None
+
+
+class LocalConversationMessage(BackendModel):
+    sequence: int = Field(ge=1)
+    message: dict[str, Any]
+    created_at: datetime
+
+
+class LocalConversationMessagePage(BackendModel):
+    conversation: LocalConversationSummary
+    messages: list[LocalConversationMessage] = Field(default_factory=list)
+    next_before_sequence: int | None = None
+
+
 class SessionEntryRecord(BackendModel):
     sequence: int
     entry_type: TauEntryType

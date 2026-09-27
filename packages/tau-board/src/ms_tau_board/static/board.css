@@ -29,6 +29,14 @@ td { max-width: 24rem; overflow-wrap: anywhere; font-size: .82rem; }
 .log-item summary { display: flex; gap: .75rem; cursor: pointer; align-items: baseline; }
 .log-item summary .event { font-weight: 700; }
 .log-item pre { margin-top: .6rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; max-height: 20rem; }
+.failure-incident { margin-top: .7rem; padding: .8rem; border: 1px solid var(--bulma-danger); border-radius: .45rem; background: color-mix(in srgb, var(--bulma-danger) 7%, transparent); }
+.failure-title { font-weight: 800; color: var(--bulma-danger); margin-bottom: .55rem; }
+.failure-subtitle { font-weight: 700; margin-top: .65rem; }
+.failure-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(13rem, 1fr)); gap: .35rem .9rem; }
+.failure-facts div { display: flex; justify-content: space-between; gap: .75rem; border-bottom: 1px solid var(--bulma-border-weak); }
+.failure-trace { border-left: .2rem solid var(--bulma-danger); padding-left: .7rem; }
+.raw-event { margin-top: .65rem; }
+.raw-event > summary { cursor: pointer; font-weight: 700; }
 .task-picker { max-height: 65vh; overflow: auto; }
 .task-picker button { display: block; width: 100%; text-align: left; white-space: normal; height: auto; margin: .35rem 0; overflow-wrap: anywhere; }
 .task-picker button.is-selected { border-color: var(--bulma-primary); background: var(--bulma-scheme-main-ter); color: var(--bulma-text); font-weight: 700; }

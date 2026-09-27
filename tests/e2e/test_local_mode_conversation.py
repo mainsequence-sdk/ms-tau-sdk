@@ -144,6 +144,16 @@ async def test_first_local_chat_reaches_provider_execution(
                 }
             },
         )
+        a2a_message_replay = await http.post(
+            "/api/a2a/v1/message:send",
+            json={
+                "message": {
+                    "messageId": "local-message-1",
+                    "contextId": "local-a2a",
+                    "parts": [{"text": "Answer over A2A."}],
+                }
+            },
+        )
         a2a_task = await http.post(
             "/api/a2a/v1/message:send",
             headers={"A2A-Extensions": ("https://mainsequence.ai/a2a/extensions/response-kind/v1")},
@@ -188,6 +198,9 @@ async def test_first_local_chat_reaches_provider_execution(
                 },
             },
         )
+        conversations = await http.get("/api/local/v1/conversations", params={"limit": 20})
+        direct_context = a2a_message.json()["message"]["contextId"]
+        direct_history = await http.get(f"/api/local/v1/conversations/{direct_context}/messages")
         continuation_context = settings.local_session_uid("local-a2a-continuation")
         await runtime.get(continuation_context)
         continuation_creation = await backend.create_task(
@@ -288,6 +301,7 @@ async def test_first_local_chat_reaches_provider_execution(
     assert '"type":"error"' not in response.text
     assert a2a_message.status_code == 200
     assert a2a_message.json()["message"]["parts"] == [{"text": "Local A2A message succeeded."}]
+    assert a2a_message_replay.json()["message"] == a2a_message.json()["message"]
     assert a2a_task.status_code == 200
     assert a2a_task.json()["task"]["status"]["state"] == "TASK_STATE_COMPLETED"
     assert a2a_task.json()["task"]["history"][0]["role"] == "ROLE_USER"
@@ -305,6 +319,19 @@ async def test_first_local_chat_reaches_provider_execution(
     assert a2a_rpc.status_code == 200
     assert a2a_rpc.json()["result"]["message"]["parts"] == [
         {"text": "Local A2A JSON-RPC succeeded."}
+    ]
+    assert conversations.status_code == 200
+    assert {item["contextId"] for item in conversations.json()["conversations"]} == {
+        settings.local_session_uid("local-a2a"),
+        settings.local_session_uid("local-a2a-rpc"),
+    }
+    assert [item["message"]["role"] for item in direct_history.json()["messages"]] == [
+        "ROLE_USER",
+        "ROLE_AGENT",
+    ]
+    assert [item["message"]["messageId"] for item in direct_history.json()["messages"]] == [
+        "local-message-1",
+        a2a_message.json()["message"]["messageId"],
     ]
     assert continued_task.status_code == 200
     assert continued_task.json()["task"]["status"]["state"] == "TASK_STATE_COMPLETED"

@@ -9,10 +9,12 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = "4"
+SCHEMA_VERSION = "5"
 TABLES = (
     "sessions",
     "entries",
+    "a2a_conversations",
+    "a2a_conversation_messages",
     "a2a_tasks",
     "a2a_task_messages",
     "a2a_task_outputs",

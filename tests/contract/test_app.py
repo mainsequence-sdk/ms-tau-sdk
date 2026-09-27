@@ -53,6 +53,7 @@ async def test_local_mode_rejects_internal_dispatch_and_has_no_one_shot_agent_ro
     settings = TauSDKSettings(
         _env_file=None,
         workspace=tmp_path,
+        local_state_root=tmp_path / "state",
         auth_mode="jwt",
         local_mode=True,
         access_token="access-token",

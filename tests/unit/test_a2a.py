@@ -468,6 +468,63 @@ async def test_omitted_response_kind_defaults_to_direct_message_without_task():
 
 
 @pytest.mark.asyncio
+async def test_local_direct_message_persists_public_transcript_before_return(tmp_path):
+    client, _task = _direct_message_client()
+    client.begin_local_conversation_message.return_value = None
+    client.complete_local_conversation_message.side_effect = (
+        lambda _context_id, _request_message_id, message: message
+    )
+    manager = _TauEventManager(
+        MessageEndEvent(message=_assistant_message("A durable direct answer.")),
+        SessionAgentEndEvent(
+            messages=[_assistant_message("A durable direct answer.")], will_retry=False
+        ),
+    )
+    config = TauSDKSettings(
+        _env_file=None,
+        workspace=tmp_path,
+        auth_mode="jwt",
+        local_mode=True,
+        access_token="access-token",
+        refresh_token="refresh-token",
+        local_provider="openai",
+        local_model="gpt-5.4",
+    )
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[backend] = lambda: client
+    app.dependency_overrides[runtime_manager] = lambda: manager
+    app.dependency_overrides[settings] = lambda: config
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://test"
+    ) as http:
+        response = await http.post(
+            f"{REST_BASE}/message:send",
+            json={
+                "message": {
+                    "messageId": "request-1",
+                    "role": "ROLE_USER",
+                    "contextId": "browser-context",
+                    "parts": [{"text": "Answer durably"}],
+                }
+            },
+        )
+
+    assert response.status_code == 200
+    canonical_context = config.local_session_uid("browser-context")
+    persisted_request = client.begin_local_conversation_message.await_args.args[0]
+    assert persisted_request["contextId"] == canonical_context
+    assert persisted_request["role"] == "ROLE_USER"
+    assert client.complete_local_conversation_message.await_args.args[:2] == (
+        canonical_context,
+        "request-1",
+    )
+    assert response.json()["message"]["role"] == "ROLE_AGENT"
+    assert manager.delivered_sessions == [canonical_context]
+
+
+@pytest.mark.asyncio
 async def test_direct_message_send_rejects_empty_tau_answer():
     final = _assistant_message()
     response, client = await _direct_message_response(

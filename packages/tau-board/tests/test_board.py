@@ -18,7 +18,7 @@ def _store(root: Path, digest: str = "a1b2c3d4e5f6") -> Path:
     directory.mkdir()
     with sqlite3.connect(directory / "runtime.sqlite3") as connection:
         connection.execute("CREATE TABLE schema_metadata(key TEXT PRIMARY KEY, value TEXT)")
-        connection.execute("INSERT INTO schema_metadata VALUES('schema_version', '4')")
+        connection.execute("INSERT INTO schema_metadata VALUES('schema_version', '5')")
         for table in TABLES:
             if table == "sessions":
                 connection.execute(

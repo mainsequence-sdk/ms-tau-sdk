@@ -39,6 +39,7 @@ from ms_tau_sdk.backend.models import (
 from ms_tau_sdk.errors import ConfigurationError
 
 from .definitions import PROVIDER_DEFINITIONS
+from .tau_compat import install_openai_compatible_provider_error_patch
 
 CredentialResolver = Callable[[], Awaitable[ProviderCredential]]
 CATALOG_BY_NAME = {provider.name: provider for provider in BUILTIN_PROVIDER_CATALOG}
@@ -483,6 +484,7 @@ class ProviderFactory:
         if api == "mistral-conversations":
             return MistralConversationsProvider(config)
         if api in {"openai-completions", "openai-responses"}:
+            install_openai_compatible_provider_error_patch()
             return OpenAICompatibleProvider(config)
         raise ConfigurationError(
             f"Provider {credential.provider} uses unsupported Tau API transport {api}"

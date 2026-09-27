@@ -25,6 +25,8 @@ EXPECTED_OPERATIONS = frozenset(
         ("PUT", "/api/chat/session-model"),
         ("GET", "/api/chat/model-providers"),
         ("POST", "/api/chat/session/cancel"),
+        ("GET", "/api/local/v1/conversations"),
+        ("GET", "/api/local/v1/conversations/{context_id}/messages"),
         ("GET", "/api/local/v1/sessions/{session_uid}/agent-inspection"),
         (
             "GET",
