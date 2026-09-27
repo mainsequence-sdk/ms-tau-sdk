@@ -78,3 +78,17 @@ def test_application_builds_local_state_and_remote_service_composite(tmp_path):
     assert isinstance(services.auth, JWTAuth)
     assert isinstance(services.backend, LocalDevelopmentBackend)
     assert services.backend.auth is services.auth
+
+
+def test_application_passes_the_provider_timeout_to_the_factory(tmp_path):
+    settings = TauSDKSettings(
+        _env_file=None,
+        workspace=tmp_path,
+        runtime_credential_id="credential-id",
+        runtime_credential_secret="credential-secret",
+        provider_timeout_seconds=300,
+    )
+
+    services = ApplicationServices.create(settings)
+
+    assert services.providers.provider_timeout_seconds == 300

@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 
 from ms_tau_sdk.errors import ConfigurationError
 from ms_tau_sdk.resources.loader import resource_root
@@ -224,3 +225,16 @@ def test_the_state_root_is_explicitly_overridable(tmp_path, monkeypatch):
 
     assert from_env.state_root == (tmp_path / "from-env").resolve()
     assert explicit.state_root == (tmp_path / "explicit").resolve()
+
+
+def test_provider_timeout_defaults_to_sixty_seconds_and_reads_the_environment(
+    monkeypatch, tmp_path
+):
+    assert TauSDKSettings(_env_file=None, workspace=tmp_path).provider_timeout_seconds == 60
+
+    monkeypatch.setenv("MAINSEQUENCE_TAU_PROVIDER_TIMEOUT_SECONDS", "300")
+    assert TauSDKSettings(_env_file=None, workspace=tmp_path).provider_timeout_seconds == 300
+
+    monkeypatch.setenv("MAINSEQUENCE_TAU_PROVIDER_TIMEOUT_SECONDS", "0")
+    with pytest.raises(ValidationError):
+        TauSDKSettings(_env_file=None, workspace=tmp_path)

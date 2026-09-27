@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Added `MAINSEQUENCE_TAU_PROVIDER_TIMEOUT_SECONDS`, the HTTP timeout for model-provider calls.
+  It was fixed at 60 seconds for every provider hydrated from the platform, with no setting
+  or environment variable to change it. A self-hosted OpenAI-compatible provider such as an
+  Ollama gateway sends no bytes until its first token, so a cold model load plus a long
+  prompt exhausted all three attempts, and Tau reported only an empty transport failure. The
+  default stays 60 seconds, and an explicit `timeout_seconds` passed to `ProviderFactory.build`
+  still takes precedence.
 - Added authenticated-process-scoped discovery and bounded hydration for direct local A2A Message
   conversations. The SDK now persists exact public requester/responder Messages independently from
   Tau execution entries, returns stable context and Message identities across restart, supports

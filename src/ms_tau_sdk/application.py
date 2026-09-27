@@ -34,7 +34,10 @@ class ApplicationServices:
         else:
             auth = RuntimeCredentialAuth(settings)
             backend = MainSequenceClient(settings, auth)
-        providers = ProviderFactory(backend)
+        providers = ProviderFactory(
+            backend,
+            provider_timeout_seconds=settings.provider_timeout_seconds,
+        )
         runtime = SessionRuntimeManager(
             settings=settings,
             backend=backend,
