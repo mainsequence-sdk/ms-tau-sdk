@@ -4,6 +4,10 @@ Status: Accepted — SDK implementation complete; deployed control-plane rollout
 
 Date: 2026-09-26
 
+Amended: 2026-09-27 by
+[ADR 0017](./0017-local-direct-a2a-conversation-discovery.md) — `Task.history` remains scoped to
+one A2A Task. Direct Message conversations use a separate local extension projection and API.
+
 Amends:
 
 - [ADR 0002: Runtime and protocol contracts](./0002-runtime-and-protocol-contracts.md) by defining

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import base64
+import binascii
 import hashlib
 import json
 import sqlite3
@@ -39,6 +41,10 @@ from .models import (
     AgentTaskExecutionAttempt,
     AgentTaskSnapshot,
     AgentTaskStatus,
+    LocalConversationMessage,
+    LocalConversationMessagePage,
+    LocalConversationPage,
+    LocalConversationSummary,
     ProviderCredential,
     ProviderExecutionEvidence,
     RuntimeActivityPatch,
@@ -68,7 +74,7 @@ LOCAL_RUNTIME_CAPABILITIES = {
     "tau_activity_sequence": "v1",
     "tau_turn_commit": "v1",
 }
-_SCHEMA_VERSION = 4
+_SCHEMA_VERSION = 5
 _T = TypeVar("_T")
 
 _LOCAL_A2A_RESPONSE_KIND_EXTENSION_URI = "https://mainsequence.ai/a2a/extensions/response-kind/v1"
@@ -100,6 +106,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
         self.auth = services.auth
         self._services = services
         self._path = settings.local_state_path
+        self._owner_scope = self._local_owner_scope(settings)
         self._database_lock = asyncio.Lock()
         self._initialized = False
         self._recovery_metrics: dict[str, int | float] = {
@@ -181,6 +188,30 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     PRIMARY KEY (session_uid, sequence),
                     UNIQUE (session_uid, idempotency_key)
                 );
+                CREATE TABLE IF NOT EXISTS a2a_conversations (
+                    context_id TEXT PRIMARY KEY,
+                    owner_scope TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS a2a_conversations_owner_activity_idx
+                    ON a2a_conversations(owner_scope, updated_at DESC, context_id DESC);
+                CREATE TABLE IF NOT EXISTS a2a_conversation_messages (
+                    context_id TEXT NOT NULL
+                        REFERENCES a2a_conversations(context_id) ON DELETE CASCADE,
+                    sequence INTEGER NOT NULL,
+                    message_id TEXT NOT NULL,
+                    role TEXT NOT NULL,
+                    reply_to_message_id TEXT,
+                    message_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (context_id, sequence),
+                    UNIQUE (context_id, message_id)
+                );
+                CREATE UNIQUE INDEX IF NOT EXISTS a2a_conversation_response_idx
+                    ON a2a_conversation_messages(context_id, reply_to_message_id)
+                    WHERE reply_to_message_id IS NOT NULL;
                 CREATE TABLE IF NOT EXISTS leases (
                     session_uid TEXT PRIMARY KEY REFERENCES sessions(uid) ON DELETE CASCADE,
                     lease_token TEXT NOT NULL,
@@ -366,6 +397,52 @@ class LocalDevelopmentBackend(MainSequenceClient):
         await self._ensure_initialized()
         async with self._database_lock:
             return await asyncio.to_thread(operation)
+
+    @staticmethod
+    def _local_owner_scope(settings: TauSDKSettings) -> str:
+        """Derive a non-secret stable namespace from the validated local user JWT.
+
+        The claim is not used to authenticate an HTTP request. Startup still validates the
+        credential against Main Sequence. It only prevents one authenticated local user from
+        discovering another user's transcript when they reuse the same OS workspace state.
+        """
+
+        access_token = (
+            settings.access_token.get_secret_value().strip() if settings.access_token else ""
+        )
+        identity: dict[str, str] = {}
+        try:
+            parts = access_token.split(".")
+            if len(parts) == 3:
+                payload = parts[1] + "=" * (-len(parts[1]) % 4)
+                claims = json.loads(base64.urlsafe_b64decode(payload.encode("ascii")))
+                if isinstance(claims, dict):
+                    subject = next(
+                        (
+                            str(claims[key]).strip()
+                            for key in ("user_id", "user_uid", "sub", "uid")
+                            if claims.get(key) is not None and str(claims[key]).strip()
+                        ),
+                        "",
+                    )
+                    if subject:
+                        identity = {
+                            "issuer": str(claims.get("iss") or "mainsequence"),
+                            "subject": subject,
+                        }
+        except (ValueError, TypeError, binascii.Error, json.JSONDecodeError):
+            identity = {}
+        if not identity:
+            refresh_token = (
+                settings.refresh_token.get_secret_value().strip() if settings.refresh_token else ""
+            )
+            identity = {
+                "credential_fingerprint": hashlib.sha256(
+                    (refresh_token or access_token).encode("utf-8")
+                ).hexdigest()
+            }
+        canonical = json.dumps(identity, separators=(",", ":"), sort_keys=True)
+        return f"mainsequence-user:{hashlib.sha256(canonical.encode()).hexdigest()}"
 
     def _selection(self) -> tuple[str, str, str | None]:
         provider = self.settings.local_provider
@@ -560,6 +637,360 @@ class LocalDevelopmentBackend(MainSequenceClient):
         if value is None or value == "":
             return default
         return cast(_T, json.loads(str(value)))
+
+    @staticmethod
+    def _conversation_text(message: Mapping[str, Any], *, limit: int) -> str:
+        parts = message.get("parts", [])
+        values: list[str] = []
+        if isinstance(parts, list):
+            for part in parts:
+                if not isinstance(part, Mapping):
+                    continue
+                text = part.get("text")
+                if isinstance(text, str) and text.strip():
+                    values.append(text.strip())
+                    continue
+                if "data" in part:
+                    values.append(
+                        json.dumps(part["data"], ensure_ascii=False, separators=(",", ":"))
+                    )
+        normalized = " ".join(" ".join(values).split())
+        if not normalized:
+            return ""
+        return normalized if len(normalized) <= limit else normalized[: limit - 1].rstrip() + "…"
+
+    @classmethod
+    def _conversation_title(cls, message: Mapping[str, Any]) -> str:
+        return cls._conversation_text(message, limit=80) or "Local A2A conversation"
+
+    @staticmethod
+    def _encode_conversation_cursor(updated_at: str, context_id: str) -> str:
+        payload = json.dumps([updated_at, context_id], separators=(",", ":")).encode("utf-8")
+        return base64.urlsafe_b64encode(payload).decode("ascii").rstrip("=")
+
+    @staticmethod
+    def _decode_conversation_cursor(cursor: str) -> tuple[str, str]:
+        try:
+            padded = cursor + "=" * (-len(cursor) % 4)
+            payload = json.loads(base64.urlsafe_b64decode(padded.encode("ascii")))
+            if (
+                not isinstance(payload, list)
+                or len(payload) != 2
+                or not all(isinstance(value, str) and value for value in payload)
+            ):
+                raise ValueError
+            _from_iso(payload[0])
+            return payload[0], payload[1]
+        except (
+            ValueError,
+            TypeError,
+            binascii.Error,
+            json.JSONDecodeError,
+            UnicodeDecodeError,
+        ) as error:
+            raise ValueError("Invalid conversation cursor") from error
+
+    def _conversation_summary_from_row(
+        self,
+        row: sqlite3.Row,
+    ) -> LocalConversationSummary:
+        latest: dict[str, Any] = self._json_load(row["latest_message_json"], {})
+        preview = self._conversation_text(latest, limit=240) if latest else ""
+        return LocalConversationSummary(
+            context_id=str(row["context_id"]),
+            title=str(row["title"]),
+            message_count=int(row["message_count"]),
+            latest_message_preview=preview or None,
+            created_at=_from_iso(str(row["created_at"])),
+            updated_at=_from_iso(str(row["updated_at"])),
+        )
+
+    @staticmethod
+    def _conversation_summary_query() -> str:
+        return """
+            SELECT c.context_id, c.title, c.created_at, c.updated_at,
+                   COUNT(m.sequence) AS message_count,
+                   (
+                       SELECT latest.message_json
+                       FROM a2a_conversation_messages AS latest
+                       WHERE latest.context_id = c.context_id
+                       ORDER BY latest.sequence DESC LIMIT 1
+                   ) AS latest_message_json
+            FROM a2a_conversations AS c
+            LEFT JOIN a2a_conversation_messages AS m ON m.context_id = c.context_id
+        """
+
+    async def begin_local_conversation_message(
+        self,
+        message: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        """Persist a requester Message before execution and replay its answer if complete."""
+
+        stored = dict(message)
+        context_id = self.settings.local_session_uid(str(stored.get("contextId") or ""))
+        message_id = str(stored.get("messageId") or "").strip()
+        if not message_id or not str(stored.get("contextId") or "").strip():
+            raise BackendConflictError("A local conversation Message needs contextId and messageId")
+        if str(stored.get("role") or "") != "ROLE_USER":
+            raise BackendConflictError("A direct local requester Message must use ROLE_USER")
+        stored["contextId"] = context_id
+        canonical = self._json_dump(stored)
+
+        def operation() -> dict[str, Any] | None:
+            now = _iso(_utcnow())
+            with closing(self._connect()) as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                conversation = connection.execute(
+                    "SELECT owner_scope FROM a2a_conversations WHERE context_id = ?",
+                    (context_id,),
+                ).fetchone()
+                if (
+                    conversation is not None
+                    and str(conversation["owner_scope"]) != self._owner_scope
+                ):
+                    raise SessionNotFoundError("Local conversation not found")
+                if conversation is None:
+                    connection.execute(
+                        """
+                        INSERT INTO a2a_conversations(
+                            context_id, owner_scope, title, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?)
+                        """,
+                        (
+                            context_id,
+                            self._owner_scope,
+                            self._conversation_title(stored),
+                            now,
+                            now,
+                        ),
+                    )
+                existing = connection.execute(
+                    """
+                    SELECT message_json FROM a2a_conversation_messages
+                    WHERE context_id = ? AND message_id = ?
+                    """,
+                    (context_id, message_id),
+                ).fetchone()
+                if existing is not None:
+                    if str(existing["message_json"]) != canonical:
+                        raise BackendConflictError(
+                            "Local conversation messageId was reused with different content"
+                        )
+                    response = connection.execute(
+                        """
+                        SELECT message_json FROM a2a_conversation_messages
+                        WHERE context_id = ? AND reply_to_message_id = ?
+                        """,
+                        (context_id, message_id),
+                    ).fetchone()
+                    return (
+                        self._json_load(response["message_json"], {})
+                        if response is not None
+                        else None
+                    )
+                sequence = int(
+                    connection.execute(
+                        """
+                        SELECT COALESCE(MAX(sequence), 0) + 1
+                        FROM a2a_conversation_messages WHERE context_id = ?
+                        """,
+                        (context_id,),
+                    ).fetchone()[0]
+                )
+                connection.execute(
+                    """
+                    INSERT INTO a2a_conversation_messages(
+                        context_id, sequence, message_id, role, reply_to_message_id,
+                        message_json, created_at
+                    ) VALUES (?, ?, ?, 'ROLE_USER', NULL, ?, ?)
+                    """,
+                    (context_id, sequence, message_id, canonical, now),
+                )
+                connection.execute(
+                    "UPDATE a2a_conversations SET updated_at = ? WHERE context_id = ?",
+                    (now, context_id),
+                )
+                return None
+
+        return await self._run(operation)
+
+    async def complete_local_conversation_message(
+        self,
+        context_id: str,
+        request_message_id: str,
+        message: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Persist and return exactly one responder Message for a requester Message."""
+
+        canonical_context = self.settings.local_session_uid(context_id)
+        stored = dict(message)
+        stored["contextId"] = canonical_context
+        message_id = str(stored.get("messageId") or "").strip()
+        if not message_id or str(stored.get("role") or "") != "ROLE_AGENT":
+            raise BackendConflictError("A direct local responder Message must use ROLE_AGENT")
+        canonical = self._json_dump(stored)
+
+        def operation() -> dict[str, Any]:
+            now = _iso(_utcnow())
+            with closing(self._connect()) as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                conversation = connection.execute(
+                    "SELECT owner_scope FROM a2a_conversations WHERE context_id = ?",
+                    (canonical_context,),
+                ).fetchone()
+                if conversation is None or str(conversation["owner_scope"]) != self._owner_scope:
+                    raise SessionNotFoundError("Local conversation not found")
+                requester = connection.execute(
+                    """
+                    SELECT 1 FROM a2a_conversation_messages
+                    WHERE context_id = ? AND message_id = ? AND role = 'ROLE_USER'
+                    """,
+                    (canonical_context, request_message_id),
+                ).fetchone()
+                if requester is None:
+                    raise BackendConflictError("Local requester Message was not persisted")
+                existing = connection.execute(
+                    """
+                    SELECT message_json FROM a2a_conversation_messages
+                    WHERE context_id = ? AND reply_to_message_id = ?
+                    """,
+                    (canonical_context, request_message_id),
+                ).fetchone()
+                if existing is not None:
+                    return self._json_load(existing["message_json"], {})
+                identifier_collision = connection.execute(
+                    """
+                    SELECT 1 FROM a2a_conversation_messages
+                    WHERE context_id = ? AND message_id = ?
+                    """,
+                    (canonical_context, message_id),
+                ).fetchone()
+                if identifier_collision is not None:
+                    raise BackendConflictError("Local responder messageId is already in use")
+                sequence = int(
+                    connection.execute(
+                        """
+                        SELECT COALESCE(MAX(sequence), 0) + 1
+                        FROM a2a_conversation_messages WHERE context_id = ?
+                        """,
+                        (canonical_context,),
+                    ).fetchone()[0]
+                )
+                connection.execute(
+                    """
+                    INSERT INTO a2a_conversation_messages(
+                        context_id, sequence, message_id, role, reply_to_message_id,
+                        message_json, created_at
+                    ) VALUES (?, ?, ?, 'ROLE_AGENT', ?, ?, ?)
+                    """,
+                    (
+                        canonical_context,
+                        sequence,
+                        message_id,
+                        request_message_id,
+                        canonical,
+                        now,
+                    ),
+                )
+                connection.execute(
+                    "UPDATE a2a_conversations SET updated_at = ? WHERE context_id = ?",
+                    (now, canonical_context),
+                )
+                return stored
+
+        return await self._run(operation)
+
+    async def list_local_conversations(
+        self,
+        *,
+        limit: int,
+        cursor: str | None,
+    ) -> LocalConversationPage:
+        boundary = self._decode_conversation_cursor(cursor) if cursor else None
+
+        def operation() -> LocalConversationPage:
+            where = "WHERE c.owner_scope = ?"
+            parameters: list[object] = [self._owner_scope]
+            if boundary is not None:
+                where += " AND (c.updated_at < ? OR (c.updated_at = ? AND c.context_id < ?))"
+                parameters.extend((boundary[0], boundary[0], boundary[1]))
+            parameters.append(limit + 1)
+            with closing(self._connect()) as connection:
+                rows = connection.execute(
+                    self._conversation_summary_query()
+                    + where
+                    + " GROUP BY c.context_id"
+                    + " ORDER BY c.updated_at DESC, c.context_id DESC LIMIT ?",
+                    tuple(parameters),
+                ).fetchall()
+            has_more = len(rows) > limit
+            selected = rows[:limit]
+            conversations = [self._conversation_summary_from_row(row) for row in selected]
+            next_cursor = None
+            if has_more and selected:
+                last = selected[-1]
+                next_cursor = self._encode_conversation_cursor(
+                    str(last["updated_at"]), str(last["context_id"])
+                )
+            return LocalConversationPage(
+                conversations=conversations,
+                next_cursor=next_cursor,
+            )
+
+        return await self._run(operation)
+
+    async def get_local_conversation_messages(
+        self,
+        context_id: str,
+        *,
+        limit: int,
+        before_sequence: int | None,
+    ) -> LocalConversationMessagePage:
+        canonical_context = self.settings.local_session_uid(context_id)
+
+        def operation() -> LocalConversationMessagePage:
+            with closing(self._connect()) as connection:
+                summary_row = connection.execute(
+                    self._conversation_summary_query()
+                    + " WHERE c.context_id = ? AND c.owner_scope = ? GROUP BY c.context_id",
+                    (canonical_context, self._owner_scope),
+                ).fetchone()
+                if summary_row is None:
+                    raise SessionNotFoundError("Local conversation not found")
+                where = "context_id = ?"
+                parameters: list[object] = [canonical_context]
+                if before_sequence is not None:
+                    where += " AND sequence < ?"
+                    parameters.append(before_sequence)
+                parameters.append(limit + 1)
+                rows = connection.execute(
+                    """
+                    SELECT sequence, message_json, created_at
+                    FROM a2a_conversation_messages
+                    WHERE """
+                    + where
+                    + " ORDER BY sequence DESC LIMIT ?",
+                    tuple(parameters),
+                ).fetchall()
+            has_more = len(rows) > limit
+            selected = rows[:limit]
+            messages = [
+                LocalConversationMessage(
+                    sequence=int(row["sequence"]),
+                    message=self._json_load(row["message_json"], {}),
+                    created_at=_from_iso(str(row["created_at"])),
+                )
+                for row in reversed(selected)
+            ]
+            return LocalConversationMessagePage(
+                conversation=self._conversation_summary_from_row(summary_row),
+                messages=messages,
+                next_before_sequence=(
+                    min(item.sequence for item in messages) if has_more and messages else None
+                ),
+            )
+
+        return await self._run(operation)
 
     @staticmethod
     def _task_row(connection: sqlite3.Connection, task_uid: str) -> sqlite3.Row:

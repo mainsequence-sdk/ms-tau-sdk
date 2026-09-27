@@ -81,6 +81,14 @@ a platform AgentSession. Local mode supports:
   rescheduling safe unclaimed work and terminalizing stale uncertain work rather than replaying
   possible side effects.
 
+For the default direct Message flow, do not read `runtime.sqlite3` or keep a browser-only source of
+truth. Discover conversations with `GET /api/local/v1/conversations?limit=<n>&cursor=<opaque>` and
+hydrate the latest bounded Message tail with
+`GET /api/local/v1/conversations/{contextId}/messages?limit=<n>&beforeSequence=<n>`. Reuse the
+listed canonical `contextId` in `message:send`. These are Main Sequence local SDK extensions, not
+A2A v1 methods. They contain only persisted public `ROLE_USER`/`ROLE_AGENT` Messages and are
+separate from `Task.history`, Tau entries, tools, reasoning, events, and logs.
+
 To request a Task from `message:send`, send the response-kind extension header
 `A2A-Extensions: https://mainsequence.ai/a2a/extensions/response-kind/v1` together with
 `configuration.responseKind: "task"`. Omit that selection for the default completed Message
@@ -189,6 +197,10 @@ Check the process in this order:
   credential in local mode.
 - Provider/model rejection: verify the exact configured names against the authenticated live
   catalog; do not silently select a different model.
+- OpenAI-compatible transport failure: open the Task's failure incident in Tau Board. Use its
+  concrete HTTPX type, transport phase, attempt count, provider duration, failure UID, and bounded
+  traceback frames; expand raw JSON only for additional correlation fields. Do not infer a timeout
+  when the dependency explicitly reports that its cause was unavailable.
 - MCP failure: distinguish catalog/connectivity failure from server-side authorization. A tool
   genuinely requiring caller AgentSession proof must fail explicitly without causing registration.
 - Session conflict: keep one provider/model/thinking selection for an existing local session or

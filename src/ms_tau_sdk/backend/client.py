@@ -15,7 +15,12 @@ import structlog
 from pydantic import BaseModel, TypeAdapter, ValidationError
 from tau_coding.oauth import account_id_from_access_token
 
-from ms_tau_sdk.errors import BackendConflictError, BackendError, SessionNotFoundError
+from ms_tau_sdk.errors import (
+    BackendConflictError,
+    BackendError,
+    LocalModeUnsupportedError,
+    SessionNotFoundError,
+)
 from ms_tau_sdk.settings import TauSDKSettings
 
 from .auth import BackendAuth
@@ -28,6 +33,8 @@ from .models import (
     AgentTaskEventPage,
     AgentTaskExecutionAttempt,
     AgentTaskSnapshot,
+    LocalConversationMessagePage,
+    LocalConversationPage,
     ProviderControl,
     ProviderCredential,
     ProviderExecutionEvidence,
@@ -138,6 +145,45 @@ class MainSequenceClient:
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
+
+    async def begin_local_conversation_message(
+        self,
+        message: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
+        """Reserve a direct local A2A requester Message or return its completed replay."""
+
+        del message
+        raise LocalModeUnsupportedError("Local conversation persistence requires TAU local mode")
+
+    async def complete_local_conversation_message(
+        self,
+        context_id: str,
+        request_message_id: str,
+        message: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Persist one direct local A2A responder Message exactly once."""
+
+        del context_id, request_message_id, message
+        raise LocalModeUnsupportedError("Local conversation persistence requires TAU local mode")
+
+    async def list_local_conversations(
+        self,
+        *,
+        limit: int,
+        cursor: str | None,
+    ) -> LocalConversationPage:
+        del limit, cursor
+        raise LocalModeUnsupportedError("Local conversation discovery requires TAU local mode")
+
+    async def get_local_conversation_messages(
+        self,
+        context_id: str,
+        *,
+        limit: int,
+        before_sequence: int | None,
+    ) -> LocalConversationMessagePage:
+        del context_id, limit, before_sequence
+        raise LocalModeUnsupportedError("Local conversation history requires TAU local mode")
 
     async def _request(
         self,

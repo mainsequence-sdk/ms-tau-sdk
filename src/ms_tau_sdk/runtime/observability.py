@@ -119,6 +119,22 @@ class TauTurnObserver:
                 failure_data["error_type"] = failure.error_type
                 if failure.status_code is not None:
                     failure_data["status_code"] = failure.status_code
+                if failure.provider_error_type is not None:
+                    failure_data["provider_error_type"] = failure.provider_error_type
+                if failure.transport_phase is not None:
+                    failure_data["transport_phase"] = failure.transport_phase
+                if failure.attempts is not None:
+                    failure_data["provider_attempts"] = failure.attempts
+                if failure.retry_exhausted is not None:
+                    failure_data["retry_exhausted"] = failure.retry_exhausted
+                if failure.provider_duration_ms is not None:
+                    failure_data["provider_duration_ms"] = failure.provider_duration_ms
+                if failure.diagnostic_source is not None:
+                    failure_data["diagnostic_source"] = failure.diagnostic_source
+                if failure.failure_uid is not None:
+                    failure_data["failure_uid"] = failure.failure_uid
+                if failure.safe_summary is not None:
+                    failure_data["provider_failure_summary"] = failure.safe_summary
                 self._fail_model(failure_data, event_type="message_error")
         elif event_type in {
             "message_error",
@@ -210,13 +226,38 @@ class TauTurnObserver:
             time.monotonic(),
             self._next_model_attempt,
         )
-        error_type = _bounded(_first(data, "error_type", "errorType")) or "ModelError"
+        error_type = (
+            _bounded(_first(data, "provider_error_type", "error_type", "errorType")) or "ModelError"
+        )
         raw_status_code = _first(data, "status_code", "status", "http_status")
         status_code = raw_status_code if isinstance(raw_status_code, int) else None
         rate_limited = (
             status_code == 429 or "rate_limit" in event_type or "ratelimit" in error_type.lower()
         )
-        retryable = rate_limited or status_code in {408, 409, 425, 500, 502, 503, 504}
+        retry_exhausted = data.get("retry_exhausted")
+        retryable = (
+            rate_limited
+            or status_code in {408, 409, 425, 500, 502, 503, 504}
+            or error_type
+            in {
+                "ConnectError",
+                "ConnectTimeout",
+                "PoolTimeout",
+                "ReadError",
+                "ReadTimeout",
+                "RemoteProtocolError",
+                "WriteError",
+                "WriteTimeout",
+            }
+        )
+        explicit_duration = _first(data, "provider_duration_ms")
+        model_duration_ms = (
+            round(float(explicit_duration), 3)
+            if isinstance(explicit_duration, int | float)
+            and not isinstance(explicit_duration, bool)
+            and explicit_duration >= 0
+            else round((time.monotonic() - started) * 1000, 3)
+        )
         safe_log(
             self.logger,
             "warning" if retryable else "error",
@@ -227,12 +268,18 @@ class TauTurnObserver:
             model_name=self.model,
             model_operation="response",
             model_attempt=attempt,
-            model_duration_ms=round((time.monotonic() - started) * 1000, 3),
+            model_duration_ms=model_duration_ms,
             model_error_type=error_type,
             status_code=status_code,
             provider_request_id=_bounded(_first(data, "provider_request_id", "response_id")),
             rate_limited=rate_limited,
             retryable=retryable,
+            retry_exhausted=(retry_exhausted if isinstance(retry_exhausted, bool) else None),
+            provider_attempts=_first(data, "provider_attempts", "attempts"),
+            transport_phase=_bounded(data.get("transport_phase")),
+            diagnostic_source=_bounded(data.get("diagnostic_source")),
+            failure_uid=_bounded(data.get("failure_uid")),
+            provider_failure_summary=_bounded(data.get("provider_failure_summary"), limit=256),
             outcome="rate_limited" if rate_limited else "failed",
         )
         self._model = None
@@ -414,7 +461,7 @@ class TauTurnObserver:
         )
 
     def terminal_fields(self) -> dict[str, object]:
-        return {
+        fields: dict[str, object] = {
             "execution_duration_ms": round(
                 (time.monotonic() - self.started_at) * 1000,
                 3,
@@ -425,6 +472,21 @@ class TauTurnObserver:
             "handoffs": self.handoffs,
             **self.usage,
         }
+        if self.terminal_failure is not None:
+            failure = self.terminal_failure
+            fields.update(
+                {
+                    "provider_error_type": failure.provider_error_type,
+                    "transport_phase": failure.transport_phase,
+                    "provider_attempts": failure.attempts,
+                    "retry_exhausted": failure.retry_exhausted,
+                    "provider_duration_ms": failure.provider_duration_ms,
+                    "diagnostic_source": failure.diagnostic_source,
+                    "failure_uid": failure.failure_uid,
+                    "provider_failure_summary": failure.safe_summary,
+                }
+            )
+        return fields
 
 
 __all__ = ["TauTurnObserver"]

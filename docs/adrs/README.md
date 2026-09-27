@@ -18,6 +18,8 @@ These records are the normative decisions for Main Sequence TAU SDK:
 - [ADR 0013: Guaranteed A2A Task terminalization and failure observability](./0013-guaranteed-a2a-task-terminalization-and-failure-observability.md)
 - [ADR 0014: Human-readable A2A Task history and execution narratives](./0014-human-readable-a2a-task-history-and-execution-narratives.md)
 - [ADR 0015: Job-hosted batch execution](./0015-job-hosted-batch-execution.md)
+- [ADR 0016: Version-locked Tau provider error compatibility](./0016-version-locked-tau-provider-error-compatibility.md)
+- [ADR 0017: Local direct A2A conversation discovery](./0017-local-direct-a2a-conversation-discovery.md)
 
 [ADR 56](./adr-56-main-sequence-tau-sdk-workspace-bound-library-deployment.md) is the accepted
 transition record and implementation ledger. Earlier decisions are preserved only in the

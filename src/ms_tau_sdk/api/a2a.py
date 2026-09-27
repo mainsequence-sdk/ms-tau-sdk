@@ -1557,7 +1557,6 @@ async def _execute_message(
         text=text,
         strict_json=output_contract.enabled,
     )
-    manager.mark_response_delivered(context_id)
     return message
 
 
@@ -2324,6 +2323,11 @@ async def message_send(
             )
         task = await _task_with_history(client, task, history_length=history_length)
         return {"task": _task_payload(task, history_length=history_length)}
+    request_message_id = str(message["messageId"])
+    if config.local_mode:
+        replay = await client.begin_local_conversation_message(message_to_protocol(message))
+        if replay is not None:
+            return {"message": replay}
     result = await _execute_message(
         manager,
         context_id=str(message["contextId"]),
@@ -2332,6 +2336,13 @@ async def message_send(
         max_output_bytes=config.max_turn_output_bytes,
         provenance=provenance,
     )
+    if config.local_mode:
+        result = await client.complete_local_conversation_message(
+            str(message["contextId"]),
+            request_message_id,
+            result,
+        )
+    manager.mark_response_delivered(str(message["contextId"]))
     return {"message": result}
 
 

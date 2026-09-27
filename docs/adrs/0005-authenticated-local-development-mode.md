@@ -19,6 +19,11 @@ Amended: 2026-09-25 by
 [ADR 0013](./0013-guaranteed-a2a-task-terminalization-and-failure-observability.md) — persisted
 local A2A Task rows require SDK-owned reconciliation; persistence alone is not restart recovery.
 
+Amended: 2026-09-27 by
+[ADR 0017](./0017-local-direct-a2a-conversation-discovery.md) — direct local A2A Message turns
+also have an SDK-owned, user-scoped public transcript projection and bounded discovery API; it is
+separate from Tau entries and A2A Task history.
+
 Amends, when accepted:
 
 - [ADR 0002: Runtime and protocol contracts](./0002-runtime-and-protocol-contracts.md); and
@@ -234,6 +239,8 @@ In local mode the following state is local-only:
 - idempotency and sequence metadata;
 - A2A Tasks, attempts, requester/responder messages, artifacts, events, interruption state, and
   cancellation;
+- direct A2A conversation metadata and requester/responder Messages used for public discovery and
+  hydration;
 - local lease/ownership coordination when more than one process opens the same session.
 
 The SDK must not call the AgentSession bootstrap, history, append, lease, runtime-state, snapshot,

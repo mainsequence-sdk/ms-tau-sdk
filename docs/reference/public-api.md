@@ -61,3 +61,22 @@ The public A2A v1 projection uses `ROLE_USER` and `ROLE_AGENT`. The SDK translat
 its persistence binding at ingress and back at egress without changing Message identity, Parts,
 metadata, extension URI order, or Task references. Status settlement accepts only a complete
 responder Message or no Message; the pre-cutover `{code, message}` status object is not supported.
+
+## Local direct A2A conversation history
+
+Local mode exposes an SDK-owned extension for direct `message:send` conversations:
+
+```text
+GET /api/local/v1/conversations?limit=50&cursor=<opaque>
+GET /api/local/v1/conversations/{contextId}/messages?limit=100&beforeSequence=<n>
+```
+
+The first route lists the authenticated local process user's workspace conversations with stable
+canonical context IDs, deterministic titles, message counts, latest-text previews, activity times,
+and bounded cursor pagination. The second returns persisted public requester/responder Messages
+oldest-to-newest within the selected tail. Reuse the listed `contextId` in
+`POST /api/a2a/v1/message:send` to continue after a UI or Tau restart.
+
+This extension is not an A2A v1 method and is unavailable in managed mode. Its Messages are not
+derived from Tau entries and never include system instructions, reasoning, tool activity, events,
+or logs. A2A Task conversations remain under `Task.history`.

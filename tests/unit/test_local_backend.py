@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from pydantic import SecretStr
 
 from ms_tau_sdk.api.a2a import _reconcile_local_tasks_once
 from ms_tau_sdk.backend.client import MainSequenceClient
@@ -19,7 +20,11 @@ from ms_tau_sdk.backend.models import (
     TauRuntimeBootstrapRequest,
     TauTurnLifecycle,
 )
-from ms_tau_sdk.errors import BackendConflictError, LocalModeUnsupportedError
+from ms_tau_sdk.errors import (
+    BackendConflictError,
+    LocalModeUnsupportedError,
+    SessionNotFoundError,
+)
 from ms_tau_sdk.protocols.a2a_failure import TASK_FAILURE_EXTENSION_URI
 from ms_tau_sdk.settings import TauSDKSettings
 
@@ -177,6 +182,109 @@ async def test_local_backend_rejects_platform_orchestration_routes(tmp_path):
         await backend._request("POST", "/api/v1/agent-tasks/")
 
     await backend.aclose()
+
+
+@pytest.mark.asyncio
+async def test_local_direct_conversations_are_restart_safe_paginated_and_user_scoped(tmp_path):
+    settings = _settings(tmp_path)
+    backend = LocalDevelopmentBackend(settings, _services(_evidence()))
+    context_id = settings.local_session_uid("crm-conversation")
+    first_request = {
+        "messageId": "request-1",
+        "contextId": context_id,
+        "role": "ROLE_USER",
+        "parts": [{"text": "Inspect the quarterly risk report"}],
+    }
+    first_response = {
+        "messageId": "response-1",
+        "contextId": context_id,
+        "role": "ROLE_AGENT",
+        "parts": [{"text": "The report has two material risks."}],
+    }
+
+    assert await backend.begin_local_conversation_message(first_request) is None
+    assert (
+        await backend.complete_local_conversation_message(context_id, "request-1", first_response)
+        == first_response
+    )
+    assert await backend.begin_local_conversation_message(first_request) == first_response
+
+    second_request = {
+        "messageId": "request-2",
+        "contextId": context_id,
+        "role": "ROLE_USER",
+        "parts": [{"text": "Explain the first one"}],
+    }
+    second_response = {
+        "messageId": "response-2",
+        "contextId": context_id,
+        "role": "ROLE_AGENT",
+        "parts": [{"text": "The first risk is customer concentration."}],
+    }
+    await backend.begin_local_conversation_message(second_request)
+    await backend.complete_local_conversation_message(context_id, "request-2", second_response)
+    await backend.begin_local_conversation_message(
+        {
+            "messageId": "other-request",
+            "contextId": settings.local_session_uid("other"),
+            "role": "ROLE_USER",
+            "parts": [{"text": "A second conversation"}],
+        }
+    )
+
+    first_page = await backend.list_local_conversations(limit=1, cursor=None)
+    assert len(first_page.conversations) == 1
+    assert first_page.next_cursor is not None
+    second_page = await backend.list_local_conversations(limit=1, cursor=first_page.next_cursor)
+    assert len(second_page.conversations) == 1
+    assert {
+        first_page.conversations[0].context_id,
+        second_page.conversations[0].context_id,
+    } == {context_id, settings.local_session_uid("other")}
+
+    recent = await backend.get_local_conversation_messages(
+        context_id, limit=2, before_sequence=None
+    )
+    assert [item.sequence for item in recent.messages] == [3, 4]
+    assert [item.message["messageId"] for item in recent.messages] == [
+        "request-2",
+        "response-2",
+    ]
+    assert recent.next_before_sequence == 3
+    older = await backend.get_local_conversation_messages(
+        context_id,
+        limit=2,
+        before_sequence=recent.next_before_sequence,
+    )
+    assert [item.message["messageId"] for item in older.messages] == [
+        "request-1",
+        "response-1",
+    ]
+    assert older.next_before_sequence is None
+
+    restarted = LocalDevelopmentBackend(settings, _services(_evidence()))
+    recovered = await restarted.get_local_conversation_messages(
+        context_id, limit=10, before_sequence=None
+    )
+    assert recovered.conversation.title == "Inspect the quarterly risk report"
+    assert recovered.conversation.message_count == 4
+    assert recovered.conversation.latest_message_preview == (
+        "The first risk is customer concentration."
+    )
+
+    other_settings = _settings(tmp_path)
+    other_settings.access_token = SecretStr("different-access-token")
+    other_settings.refresh_token = SecretStr("different-refresh-token")
+    other_user = LocalDevelopmentBackend(other_settings, _services(_evidence()))
+    assert (await other_user.list_local_conversations(limit=10, cursor=None)).conversations == []
+    with pytest.raises(SessionNotFoundError, match="Local conversation not found"):
+        await other_user.get_local_conversation_messages(context_id, limit=10, before_sequence=None)
+    with pytest.raises(SessionNotFoundError, match="Local conversation not found"):
+        await other_user.begin_local_conversation_message(first_request)
+
+    await backend.aclose()
+    await restarted.aclose()
+    await other_user.aclose()
 
 
 @pytest.mark.asyncio
@@ -371,7 +479,7 @@ async def test_local_backend_persists_complete_a2a_task_lifecycle(tmp_path):
         task_columns = {
             row[1] for row in connection.execute("PRAGMA table_info(a2a_tasks)").fetchall()
         }
-    assert schema_version == "4"
+    assert schema_version == "5"
     assert {"failure_code", "recovery_owner", "terminal_at"} <= task_columns
 
     await backend.aclose()

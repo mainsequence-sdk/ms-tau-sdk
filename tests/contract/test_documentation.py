@@ -54,4 +54,6 @@ def test_active_adr_index_lists_the_complete_sdk_decision_set() -> None:
         "0013-guaranteed-a2a-task-terminalization-and-failure-observability.md",
         "0014-human-readable-a2a-task-history-and-execution-narratives.md",
         "0015-job-hosted-batch-execution.md",
+        "0016-version-locked-tau-provider-error-compatibility.md",
+        "0017-local-direct-a2a-conversation-discovery.md",
     }

@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- Added authenticated-process-scoped discovery and bounded hydration for direct local A2A Message
+  conversations. The SDK now persists exact public requester/responder Messages independently from
+  Tau execution entries, returns stable context and Message identities across restart, supports
+  cursor pagination and exact completed-request replay, and exposes
+  `GET /api/local/v1/conversations` plus its bounded Message-history route. Existing internal
+  sessions are not heuristically reconstructed. Fixes #45.
+
+## 1.2.11 — 2026-09-27
+
+- Added a version-locked `tau-ai==0.4.2` compatibility patch for OpenAI-compatible transport
+  failures that exhausted retries with an empty terminal message. The SDK now preserves the
+  concrete HTTPX error type, transport phase, retry evidence, total provider duration, one failure
+  UID, and privacy-filtered traceback locations without changing the imported Tau package. Tau
+  Board groups the propagated lifecycle records and renders a human-readable failure incident
+  before the raw event JSON. The patch is tracked upstream in
+  [huggingface/tau discussion 745](https://github.com/huggingface/tau/discussions/745) and must be
+  removed, not retargeted, when Tau publishes a conforming fix.
+
 ## 1.2.10 — 2026-09-26
 
 - Restored the managed A2A Task creation and continuation adapter removed before the 1.2.9

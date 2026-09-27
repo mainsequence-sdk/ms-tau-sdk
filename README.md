@@ -136,8 +136,18 @@ Use `configuration.historyLength` on Message send/stream and `historyLength` on 
 omission selects the SDK's bounded 100-Message tail, zero omits history without reading it, and a
 positive value returns that latest tail oldest-to-newest. Public A2A roles are `ROLE_USER` and
 `ROLE_AGENT`; Main Sequence requester/responder direction values remain internal to persistence.
-Tau Board renders the conversation, final Artifacts, exact attempt/turn execution, and raw technical
-events as distinct sections.
+Tau Board renders the conversation, final Artifacts, exact attempt/turn execution, and technical
+events as distinct sections. Correlated provider failures appear first as one human-readable
+incident with cause, phase, retries, duration, and bounded traceback frames; raw JSON is an
+expandable secondary view.
+
+Direct local A2A Message conversations are also reload-safe without becoming Tasks. List them with
+`GET /api/local/v1/conversations`, then hydrate one with
+`GET /api/local/v1/conversations/{contextId}/messages`; both reads are bounded and scoped to the
+authenticated local process user and workspace. Reuse the returned canonical `contextId` in
+`POST /api/a2a/v1/message:send` to continue it. This local extension returns only durable public
+`ROLE_USER`/`ROLE_AGENT` Messages—never Tau entries, system instructions, reasoning, tool traffic,
+events, or logs. Existing pre-contract Tau sessions are not heuristically reconstructed.
 
 Local mode also appends privacy-filtered, structured JSON Lines to
 `~/.tau/mainsequence/<workspace-hash>/logs/tau.jsonl`, with bounded rotation. Both the database

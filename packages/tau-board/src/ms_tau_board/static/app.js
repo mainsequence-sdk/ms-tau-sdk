@@ -1,6 +1,6 @@
 const $ = (id) => document.getElementById(id);
 const views = ["connect", "agent", "chat", "a2a", "tasks", "state", "logs", "settings"];
-const tables = ["sessions", "entries", "a2a_tasks", "a2a_task_messages", "a2a_task_outputs", "a2a_task_attempts", "a2a_task_events", "snapshots"];
+const tables = ["sessions", "entries", "a2a_conversations", "a2a_conversation_messages", "a2a_tasks", "a2a_task_messages", "a2a_task_outputs", "a2a_task_attempts", "a2a_task_events", "snapshots"];
 let config = { profiles: [], selectedProfile: "" };
 let activeView = "connect";
 let chatAbort = null;
@@ -729,13 +729,56 @@ async function refreshTaskExplorer() {
   if (selectedTaskId) await inspectTask(selectedTaskId);
 }
 
+function isFailureLog(record) {
+  return Boolean(record.failure_uid || record.provider_error_type || record.exception_frames || record.outcome === "failed" || record.terminal_status === "failed" || record.level === "error");
+}
+
+function groupedFailureLogs(records) {
+  const rows = [], failures = new Map();
+  for (const record of records) {
+    if (!record.failure_uid) { rows.push(record); continue; }
+    const current = failures.get(record.failure_uid);
+    if (!current) {
+      const incident = { ...record, propagated_events: [record.event || record.message || "failure"] };
+      failures.set(record.failure_uid, incident); rows.push(incident); continue;
+    }
+    current.propagated_events.push(record.event || record.message || "failure");
+    if (String(record.timestamp || "") < String(current.timestamp || "")) current.timestamp = record.timestamp;
+    for (const [key, value] of Object.entries(record)) if (current[key] == null || current[key] === "") current[key] = value;
+  }
+  return rows;
+}
+
+function failureDetail(record) {
+  const panel = node("section", "", "failure-incident");
+  const cause = record.provider_failure_summary || record.provider_error_type || record.model_error_type || record.error_type || "Execution failed";
+  panel.append(node("h4", cause, "failure-title"));
+  const facts = node("div", "", "failure-facts");
+  const duration = record.provider_duration_ms ?? record.model_duration_ms ?? record.duration_ms;
+  for (const [label, value] of [["Provider", record.provider || record.model_provider], ["Model", record.model || record.model_name], ["Phase", record.transport_phase], ["Attempts", record.provider_attempts], ["Duration", duration == null ? null : `${duration} ms`], ["HTTP status", record.status_code], ["Retry exhausted", record.retry_exhausted], ["Failure ID", record.failure_uid]]) if (value != null && value !== "") detailLine(facts, label, value);
+  panel.append(facts);
+  if (record.exception_frames?.length) {
+    panel.append(node("h5", "Traceback", "failure-subtitle"), node("pre", record.exception_frames.map((frame) => `${frame.filename}:${frame.lineno} in ${frame.func_name}`).join("\n"), "failure-trace"));
+  }
+  if (record.propagated_events?.length > 1) panel.append(node("p", `Propagated through: ${[...new Set(record.propagated_events)].join(" → ")}`, "help"));
+  return panel;
+}
+
+function eventDetail(detail) {
+  const box = node("div", "", "event-detail");
+  if (isFailureLog(detail)) box.append(failureDetail(detail));
+  const raw = node("details", "", "raw-event");
+  raw.append(node("summary", "Raw event JSON"), node("pre", JSON.stringify(detail, null, 2)));
+  box.append(raw); return box;
+}
+
 function taskEventItem(label, when, title, detail, status = "") {
   const item = node("details", "", "log-item");
   const summary = node("summary");
   summary.append(node("span", when || "", "mono"), node("span", label, "tag is-light"));
   if (status) summary.append(node("span", status, "tag is-info is-light"));
   summary.append(node("span", title || "event", "event"));
-  item.append(summary, node("pre", JSON.stringify(detail, null, 2)));
+  item.append(summary, eventDetail(detail));
   return item;
 }
 
@@ -750,7 +793,7 @@ function renderTaskTimeline() {
   for (const attempt of selectedTaskData.attempts || []) {
     rows.push({ when: attempt.created_at, label: "Attempt", title: `Attempt ${attempt.attempt_number} · ${attempt.state}`, detail: attempt });
   }
-  for (const record of taskLogRecords) {
+  for (const record of groupedFailureLogs(taskLogRecords)) {
     const taskFields = [record.a2a_task_id, record.task_id, record.task_uid];
     const label = taskFields.includes(task.task_id) || taskFields.includes(task.uid) ? "Task log" : "Session log";
     rows.push({ when: record.timestamp, label, title: record.event || record.message, detail: record, status: record.outcome || record.level });
@@ -906,13 +949,13 @@ async function refreshLogs(reset = true) {
   logOffset += (result.records || []).length;
   logHasMore = Boolean(result.hasMore);
   const list = $("log-list"); clear(list);
-  for (const record of logRecords) {
+  for (const record of groupedFailureLogs(logRecords)) {
     const item = node("details", "", "log-item");
     const summary = node("summary");
     summary.append(node("span", record.timestamp || "", "mono"), node("span", record.level || "", `tag is-light ${record.level === "error" ? "is-danger" : ""}`), node("span", record.event || record.message || "event", "event"));
     if (record.outcome) summary.append(node("span", record.outcome, "tag is-info is-light"));
     if (record.duration_ms != null) summary.append(node("span", `${record.duration_ms} ms`, "mono"));
-    item.append(summary, node("pre", JSON.stringify(record, null, 2))); list.append(item);
+    item.append(summary, eventDetail(record)); list.append(item);
   }
   if (!logRecords.length) list.append(node("p", "No matching events for this session.", "help"));
   $("logs-older").classList.toggle("is-hidden", !logHasMore);
