@@ -15,8 +15,12 @@
 │   ├── cli.py
 │   ├── skills.py
 │   └── settings.py
+├── packages/tau-board/
+│   ├── src/ms_tau_board/ # Tau Board modules and static assets
+│   └── tests/
 ├── tests/
 │   ├── contract/
+│   ├── e2e/
 │   ├── fixtures/sdk-consumer-project/
 │   └── unit/
 ├── docs/
@@ -27,6 +31,7 @@
 ```
 
 The repository has no container, Compose, Kubernetes, image-build, overlay, or runtime-wheelhouse
-tree. The wheel contains only the `ms_tau_sdk` package, metadata, required Tau resources, and the
-version-matched development skill bundle. The consumer fixture is a separate locked Python project
-and is not part of the wheel. Skills are copied only by an explicit `ms-tau skills sync` request.
+tree. The wheel contains only the `ms_tau_sdk` and `ms_tau_board` import packages, metadata,
+required Tau resources, the version-matched development skill bundle, Tau Board's static assets, and
+the `ms-tau` and `tau-board` commands. The consumer fixture is a separate locked Python project and
+is not part of the wheel. Skills are copied only by an explicit `ms-tau skills sync` request.
