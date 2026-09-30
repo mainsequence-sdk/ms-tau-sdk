@@ -74,18 +74,26 @@ Use local mode when changing project code or `.tau` behavior and you do not want
 conversations to create or modify platform AgentSession state:
 
 ```bash
+mainsequence login   # once; the session is kept by the CLI, not in .env
+
 export MAINSEQUENCE_AUTH_MODE=jwt
-export MAINSEQUENCE_ACCESS_TOKEN="<exported-user-access-token>"
-export MAINSEQUENCE_REFRESH_TOKEN="<exported-user-refresh-token>"
 export TAU_LOCAL_MODE=true
 export TAU_LOCAL_PROVIDER=openai
 export TAU_LOCAL_MODEL=gpt-5.4
 uv run ms-tau
 ```
 
-The Main Sequence login or project launcher is responsible for exporting the refreshable JWT
-pair. The runtime package itself has no dependency on the `mainsequence` Python distribution and
-does not read the CLI's private credential store.
+Log in once with a Main Sequence CLI that provides `mainsequence auth token`. Local mode asks
+that CLI for a short-lived access token at startup and again when the token is about to expire.
+No token is exported and none is written to the project `.env`. The SDK looks for the CLI in
+`MAINSEQUENCE_CLI`, then beside the Python interpreter, then on `PATH`. The runtime package itself
+has no dependency on the `mainsequence` Python distribution and does not read the CLI's private
+credential store.
+
+Launchers and CI can export `MAINSEQUENCE_ACCESS_TOKEN` and `MAINSEQUENCE_REFRESH_TOKEN` instead.
+With both set, the SDK uses that pair and the public refresh endpoint and never runs the CLI. A
+pair kept in the project `.env` still works, but it is deprecated and startup logs a warning.
+Running `mainsequence refresh-token` in that directory removes the token lines.
 
 Local mode creates its workspace-scoped SQLite state lazily on the first chat or public A2A
 request. Chat may omit `sessionUid`; the response's `X-Agent-Session-Uid` header contains the

@@ -10,11 +10,35 @@ directory. Files, missing paths, and inaccessible directories are rejected befor
 In managed mode, verify both runtime credential variables are present and
 `MAINSEQUENCE_AUTH_MODE=runtime_credential`. Do not substitute a user token.
 
-In local mode, verify `MAINSEQUENCE_AUTH_MODE=jwt`, the access/refresh JWT variables, and the
-explicit `TAU_LOCAL_PROVIDER`/`TAU_LOCAL_MODEL` selection. The Main Sequence login or launcher must
-export the JWT pair before `ms-tau` starts. The TAU SDK deliberately does not import the
-`mainsequence` package or read its private auth store. Backend URL, response status, and safe error
-detail may be logged; credential values are always redacted.
+In local mode, verify `MAINSEQUENCE_AUTH_MODE=jwt` and the explicit
+`TAU_LOCAL_PROVIDER`/`TAU_LOCAL_MODEL` selection. `mainsequence_auth_source` in `/health` names
+where the access token comes from: `cli`, `environment`, or `env_file`.
+
+With no token variable set, local mode asks the Main Sequence CLI for the token. Each failure has
+its own message:
+
+- No CLI was found. Install a Main Sequence CLI that has `mainsequence auth token`, or set
+  `MAINSEQUENCE_CLI` to its path, or provide the token pair.
+- The CLI has no usable session. Run `mainsequence login` for the backend in
+  `MAINSEQUENCE_ENDPOINT`. A running process uses the new session on its next request. A process
+  that failed at startup must be started again.
+- The CLI does not know `auth token`. It is too old. Upgrade it.
+- The machine has no credential store. Provide the token pair in the environment.
+- The CLI answered for another backend. `MAINSEQUENCE_ENDPOINT` and the CLI session must name the
+  same backend.
+- The CLI did not answer in 15 seconds, or its output was not the expected JSON. Run
+  `mainsequence auth token --json > /dev/null; echo $?` with the same `MAINSEQUENCE_ENDPOINT` to
+  see its message and exit code without printing the token.
+
+With `MAINSEQUENCE_ACCESS_TOKEN` and `MAINSEQUENCE_REFRESH_TOKEN` both set, local mode uses that
+pair and never runs the CLI. The launcher must export both before `ms-tau` starts. One without the
+other is a startup error. When the backend rejects the pair, export a fresh one. When startup warns
+that tokens were read from the project `.env`, run `mainsequence refresh-token` in that directory
+to remove them.
+
+The TAU SDK deliberately does not import the `mainsequence` package or read its private auth
+store. Backend URL, response status, and safe error detail may be logged; credential values are
+always redacted.
 
 ## Local provider hydration is rejected
 

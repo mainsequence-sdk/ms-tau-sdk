@@ -4,13 +4,28 @@ import gzip
 import json
 import sqlite3
 from pathlib import Path
+from typing import Any
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
 from ms_tau_board.app import create_app
 from ms_tau_board.config import BoardSettings, Profile, local_url
 from ms_tau_board.logs import read_logs
-from ms_tau_board.state import TABLES
+from ms_tau_board.state import SCHEMA_VERSION, TABLES
+
+from ms_tau_sdk.backend.client import MainSequenceClient
+from ms_tau_sdk.backend.local import LocalDevelopmentBackend
+from ms_tau_sdk.backend.models import (
+    ProviderControl,
+    ProviderCredential,
+    ProviderExecutionEvidence,
+    SessionEntryBatchAppendRequest,
+    SessionEntryBatchItem,
+    TauRuntimeBootstrapRequest,
+    TauTurnLifecycle,
+)
+from ms_tau_sdk.settings import TauSDKSettings
 
 
 def _store(root: Path, digest: str = "a1b2c3d4e5f6") -> Path:
@@ -18,7 +33,9 @@ def _store(root: Path, digest: str = "a1b2c3d4e5f6") -> Path:
     directory.mkdir()
     with sqlite3.connect(directory / "runtime.sqlite3") as connection:
         connection.execute("CREATE TABLE schema_metadata(key TEXT PRIMARY KEY, value TEXT)")
-        connection.execute("INSERT INTO schema_metadata VALUES('schema_version', '5')")
+        connection.execute(
+            "INSERT INTO schema_metadata VALUES('schema_version', ?)", (SCHEMA_VERSION,)
+        )
         for table in TABLES:
             if table == "sessions":
                 connection.execute(
@@ -130,6 +147,128 @@ def _store(root: Path, digest: str = "a1b2c3d4e5f6") -> Path:
     return directory
 
 
+async def _sdk_store(root: Path) -> tuple[Path, str]:
+    """Write one completed Task through the SDK's local backend instead of hand-written DDL."""
+    settings = TauSDKSettings(
+        _env_file=None,
+        workspace=root,
+        local_state_root=root / "state",
+        backend_url="http://backend.test",
+        auth_mode="jwt",
+        local_mode=True,
+        access_token="mainsequence-access-token",
+        refresh_token="mainsequence-refresh-token",
+        local_provider="openai",
+        local_model="gpt-5.4",
+        local_thinking="high",
+    )
+    services = Mock(spec=MainSequenceClient)
+    services.auth = Mock()
+    services.aclose = AsyncMock()
+    services.hydrate_local_provider_credential = AsyncMock(
+        return_value=ProviderExecutionEvidence(
+            credential=ProviderCredential(
+                provider="openai", credential_kind="api_key", api_key="provider-secret"
+            ),
+            provider_control=ProviderControl(
+                schema_version=1,
+                catalog_digest=f"sha256:{'0' * 64}",
+                provider="openai",
+                model={
+                    "model": "gpt-5.4",
+                    "api": "openai-responses",
+                    "input": ["text", "image"],
+                    "reasoning": True,
+                    "thinking_levels": ["high"],
+                },
+            ),
+        )
+    )
+    backend = LocalDevelopmentBackend(settings, services)
+    session_uid = settings.local_session_uid(None)
+    bootstrap = await backend.bootstrap_tau_runtime(
+        session_uid,
+        TauRuntimeBootstrapRequest(
+            holder_id="holder-1",
+            ttl_seconds=90,
+            bootstrap_request_uid="bootstrap-holder-1",
+            supported_snapshot_schema_versions=[2],
+            supported_provider_control_schema_versions=[1],
+            tau_runtime_version="test",
+        ),
+    )
+    owner = {"holder_id": "holder-1", "lease_token": bootstrap.lease.lease_token}
+    created = await backend.create_task(
+        {
+            "task_id": "task-1",
+            "context_id": session_uid,
+            "agent_uid": settings.local_agent_uid,
+            "agent_session_uid": session_uid,
+            "initial_message": {
+                "messageId": "message-1",
+                "role": "ROLE_REQUESTER",
+                "parts": [{"text": "Run the Task."}],
+            },
+            "metadata": {"transport": "a2a"},
+        }
+    )
+    task_uid = created.task.uid
+    dispatch = (await backend.list_task_dispatches(task_uid))[0]
+    attempt = await backend.claim_task_dispatch(task_uid, dispatch_uid=dispatch.uid, **owner)
+    await backend.start_task_attempt(task_uid, attempt_uid=attempt.uid, turn_uid="turn-1", **owner)
+    output = await backend.create_task_output(
+        task_uid,
+        attempt_uid=attempt.uid,
+        artifact_id="artifact-1",
+        parts=[{"text": "Hello "}],
+        name="Answer",
+        **owner,
+    )
+    await backend.append_task_output(
+        task_uid,
+        attempt_uid=attempt.uid,
+        output_uid=output["uid"],
+        parts=[{"text": "world"}],
+        expected_revision=1,
+        last_chunk=True,
+        **owner,
+    )
+    await backend.append_entries(
+        session_uid,
+        SessionEntryBatchAppendRequest(
+            expected_sequence=0,
+            entries=[
+                SessionEntryBatchItem(
+                    idempotency_key="entry-1",
+                    entry={
+                        "id": "entry-1",
+                        "parent_id": None,
+                        "type": "message",
+                        "message": {
+                            "role": "assistant",
+                            "content": [
+                                {
+                                    "type": "toolCall",
+                                    "id": "call-1",
+                                    "name": "lookup",
+                                    "arguments": {"api_key": "tool-secret", "symbol": "MSFT"},
+                                }
+                            ],
+                        },
+                    },
+                )
+            ],
+            turn=TauTurnLifecycle(turn_uid="turn-1", phase="committed", activity_sequence=1),
+            **owner,
+        ),
+    )
+    await backend.settle_task_attempt(
+        task_uid, attempt_uid=attempt.uid, status="completed", **owner
+    )
+    await backend.aclose()
+    return settings.local_state_path.parent, session_uid
+
+
 @pytest.mark.asyncio
 async def test_board_connects_proxies_and_inspects_state_without_writes(tmp_path: Path) -> None:
     digest = "a1b2c3d4e5f6"
@@ -141,7 +280,13 @@ async def test_board_connects_proxies_and_inspects_state_without_writes(tmp_path
         seen.append(request)
         if request.url.path == "/health":
             return httpx.Response(
-                200, json={"runtime": "tau", "mode": "local", "workspace_digest": digest}
+                200,
+                json={
+                    "runtime": "tau",
+                    "mode": "local",
+                    "workspace_digest": digest,
+                    "mainsequence_auth_source": "cli",
+                },
             )
         if request.url.path == "/ready":
             return httpx.Response(200, json={"ok": True})
@@ -250,6 +395,8 @@ async def test_board_connects_proxies_and_inspects_state_without_writes(tmp_path
             connected = await board.get("/api/board/connection")
             assert connected.json()["stateDir"] == str(directory)
             assert connected.json()["ready"] is True
+            # Connect shows where the Tau process takes its credentials from, as a name.
+            assert connected.json()["health"]["mainsequence_auth_source"] == "cli"
 
             stream = await board.post(
                 "/tau/api/chat",
@@ -570,6 +717,88 @@ async def test_task_tab_data_includes_task_and_related_session_events(tmp_path: 
     }
 
 
+@pytest.mark.asyncio
+async def test_board_reads_the_store_the_sdk_local_backend_writes(tmp_path: Path) -> None:
+    # The SDK and the board each name the local schema version. This store comes from the SDK's
+    # own initialization, so a schema change the board has not followed fails here.
+    directory, session_uid = await _sdk_store(tmp_path)
+    app = create_app(
+        BoardSettings(
+            profiles=(Profile("Local Tau", "http://127.0.0.1:8010"),),
+            state_root=directory.parent,
+            state_dir=directory,
+        )
+    )
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8788"
+        ) as board:
+
+            async def read(route: str, **params: str) -> dict[str, Any]:
+                response = await board.get(route, params=params)
+                assert response.status_code == 200, (route, response.text)
+                return response.json()
+
+            tables = (await read("/api/board/state"))["tables"]
+            assert set(tables) == set(TABLES)
+            assert tables["a2a_tasks"] == 1
+            sessions = (await read("/api/board/sessions"))["sessions"]
+            assert [(row["uid"], row["provider"], row["model"]) for row in sessions] == [
+                (session_uid, "openai", "gpt-5.4")
+            ]
+            tasks = (await read("/api/board/tasks", sessionUid=session_uid))["tasks"]
+            assert [(task["task_id"], task["status"]) for task in tasks] == [
+                ("task-1", "completed")
+            ]
+            detail = await read("/api/board/tasks/task-1")
+            assert detail["task"]["runtime"] == {
+                "provider": "openai",
+                "model": "gpt-5.4",
+                "thinking": "high",
+            }
+            assert detail["messages"][0]["message"]["parts"] == [{"text": "Run the Task."}]
+            assert detail["events"][-1]["status"] == "completed"
+            assert detail["attempts"][0]["turn_uid"] == "turn-1"
+            assert detail["attempts"][0]["turn_resolution"] == "committed"
+            assert detail["outputs"][0]["text"] == "Hello world"
+            tool_call = detail["executionEntries"][0]["entry"]["message"]["content"][0]
+            assert tool_call["arguments"] == {"api_key": "[REDACTED]", "symbol": "MSFT"}
+            for table in TABLES:
+                for row in (await read(f"/api/board/state/{table}"))["rows"]:
+                    payloads = {key: value for key, value in row.items() if key.endswith("_json")}
+                    assert set(payloads.values()) <= {"[open row to view]", None}, (table, payloads)
+                    await read(f"/api/board/state/{table}/{row['board_rowid']}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "stored", [None, str(int(SCHEMA_VERSION) - 1), str(int(SCHEMA_VERSION) + 1)]
+)
+async def test_board_refuses_a_store_with_any_other_schema_version(
+    tmp_path: Path, stored: str | None
+) -> None:
+    directory = _store(tmp_path)
+    with sqlite3.connect(directory / "runtime.sqlite3") as connection:
+        connection.execute("DELETE FROM schema_metadata")
+        if stored is not None:
+            connection.execute("INSERT INTO schema_metadata VALUES('schema_version', ?)", (stored,))
+    app = create_app(
+        BoardSettings(
+            profiles=(Profile("Local Tau", "http://127.0.0.1:8010"),),
+            state_root=tmp_path,
+            state_dir=directory,
+        )
+    )
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8788"
+        ) as board:
+            for route in ("/api/board/state", "/api/board/sessions", "/api/board/tasks/task-1"):
+                refused = await board.get(route)
+                assert refused.status_code == 400, (route, refused.text)
+                assert refused.json() == {"error": "Unknown Tau local SQLite schema version"}
+
+
 def test_loopback_validation_and_asset_budget() -> None:
     assert local_url("http://127.0.0.1:8010/") == "http://127.0.0.1:8010"
     with pytest.raises(ValueError):
@@ -586,6 +815,8 @@ def test_loopback_validation_and_asset_budget() -> None:
     assert '<link href="http' not in html
     assert "bulma.min.css" in html
     assert "Completed / status time" in html
+    script = (assets / "app.js").read_text()
+    assert 'detailLine(box, "Credential source", result.health.mainsequence_auth_source)' in script
 
 
 @pytest.mark.asyncio

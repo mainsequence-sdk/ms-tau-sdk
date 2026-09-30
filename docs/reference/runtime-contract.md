@@ -184,6 +184,11 @@ readiness, MCP catalog counts, snapshot counts, project-extension counts and err
 tool-catalog digest, Task recovery policy, and local pending/working/recovery counters. It never
 reports credential values or prompt content.
 
+In local mode `mainsequence_auth_source` names where the process takes its Main Sequence
+credentials from: `cli` for the Main Sequence CLI session, `environment` for a token pair handed
+to the process, or `env_file` for a pair read from the project `.env`. It is a name, never a
+value, and it is `null` in managed mode.
+
 ## Failures
 
 SDK errors use a stable JSON envelope with `ok=false`, an error code, message, and safe detail.

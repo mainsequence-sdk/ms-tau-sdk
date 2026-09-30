@@ -251,6 +251,8 @@ class SessionRuntimeManager:
         self._startup_ready = False
         self._local_state_ready = False
         self._auth_ready = False
+        # The name of the local credential source for health. It is never a credential value.
+        self._auth_source = settings.local_auth_source() if settings.local_mode else None
         self._provider_control_ready = False
         self._snapshot_restore_count = 0
         self._snapshot_fallback_count = 0
@@ -313,6 +315,7 @@ class SessionRuntimeManager:
             "startup_ready": self._startup_ready,
             "local_store_ready": (self._local_state_ready if self.settings.local_mode else None),
             "mainsequence_auth_ready": self._auth_ready,
+            "mainsequence_auth_source": self._auth_source,
             "provider_control_ready": (
                 self._provider_control_ready if self.settings.local_mode else None
             ),

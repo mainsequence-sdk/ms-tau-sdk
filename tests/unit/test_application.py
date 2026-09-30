@@ -1,7 +1,7 @@
 from unittest.mock import AsyncMock, Mock
 
 from ms_tau_sdk.application import ApplicationServices
-from ms_tau_sdk.backend.auth import JWTAuth
+from ms_tau_sdk.backend.auth import CLITokenAuth, JWTAuth
 from ms_tau_sdk.backend.local import LocalDevelopmentBackend
 from ms_tau_sdk.cli import run
 from ms_tau_sdk.settings import TauSDKSettings
@@ -78,6 +78,28 @@ def test_application_builds_local_state_and_remote_service_composite(tmp_path):
     assert isinstance(services.auth, JWTAuth)
     assert isinstance(services.backend, LocalDevelopmentBackend)
     assert services.backend.auth is services.auth
+    assert services.runtime.snapshot()["mainsequence_auth_source"] == "environment"
+
+
+def test_application_asks_the_cli_when_local_mode_has_no_token(tmp_path, monkeypatch):
+    for name in ("MAINSEQUENCE_ACCESS_TOKEN", "MAINSEQUENCE_REFRESH_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    settings = TauSDKSettings(
+        _env_file=None,
+        workspace=tmp_path,
+        local_state_root=tmp_path / "state",
+        auth_mode="jwt",
+        local_mode=True,
+        local_provider="openai",
+        local_model="gpt-5.4",
+    )
+
+    services = ApplicationServices.create(settings)
+
+    assert isinstance(services.auth, CLITokenAuth)
+    assert isinstance(services.backend, LocalDevelopmentBackend)
+    assert services.backend.auth is services.auth
+    assert services.runtime.snapshot()["mainsequence_auth_source"] == "cli"
 
 
 def test_application_passes_the_provider_timeout_to_the_factory(tmp_path):

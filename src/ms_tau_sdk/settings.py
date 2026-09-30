@@ -3,15 +3,24 @@
 from __future__ import annotations
 
 import os
+import shutil
+import sys
 from functools import lru_cache
 from hashlib import sha256
 from pathlib import Path
 from typing import Literal
 
 from pydantic import Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, DotEnvSettingsSource, SettingsConfigDict
 
 from .errors import ConfigurationError
+
+ENV_FILE = ".env"
+ACCESS_TOKEN_ENV = "MAINSEQUENCE_ACCESS_TOKEN"
+REFRESH_TOKEN_ENV = "MAINSEQUENCE_REFRESH_TOKEN"
+MAINSEQUENCE_CLI_ENV = "MAINSEQUENCE_CLI"
+MAINSEQUENCE_CLI_NAME = "mainsequence"
+LocalAuthSource = Literal["environment", "env_file", "cli"]
 
 
 def _default_state_root() -> Path:
@@ -21,9 +30,32 @@ def _default_state_root() -> Path:
     return base / "ms-tau-sdk"
 
 
+def find_mainsequence_cli(explicit: Path | None = None) -> Path | None:
+    """Find the Main Sequence CLI that local mode asks for an access token.
+
+    The order is the explicit ``MAINSEQUENCE_CLI`` path, a ``mainsequence`` executable in the
+    directory of the running interpreter, then ``mainsequence`` on ``PATH``. The first that
+    exists is returned. An explicit path that is not a file is an error, not a fallback.
+    """
+    if explicit is not None:
+        candidate = explicit.expanduser().absolute()
+        if not candidate.is_file():
+            raise ConfigurationError(
+                f"{MAINSEQUENCE_CLI_ENV} is set to {candidate}, which is not an existing file"
+            )
+        return candidate
+    beside_interpreter = (
+        shutil.which(MAINSEQUENCE_CLI_NAME, path=str(Path(sys.executable).parent))
+        if sys.executable
+        else None
+    )
+    found = beside_interpreter or shutil.which(MAINSEQUENCE_CLI_NAME)
+    return Path(found) if found else None
+
+
 class TauSDKSettings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        env_file=ENV_FILE,
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
@@ -48,11 +80,15 @@ class TauSDKSettings(BaseSettings):
     )
     access_token: SecretStr | None = Field(
         default=None,
-        validation_alias="MAINSEQUENCE_ACCESS_TOKEN",
+        validation_alias=ACCESS_TOKEN_ENV,
     )
     refresh_token: SecretStr | None = Field(
         default=None,
-        validation_alias="MAINSEQUENCE_REFRESH_TOKEN",
+        validation_alias=REFRESH_TOKEN_ENV,
+    )
+    mainsequence_cli: Path | None = Field(
+        default=None,
+        validation_alias=MAINSEQUENCE_CLI_ENV,
     )
     local_mode: bool = Field(default=False, validation_alias="TAU_LOCAL_MODE")
     exclude_base_tools: bool = Field(default=False, validation_alias="TAU_EXCLUDE_BASE_TOOLS")
@@ -289,6 +325,13 @@ class TauSDKSettings(BaseSettings):
         normalized = str(value or "").strip()
         return normalized or None
 
+    @field_validator("mainsequence_cli", mode="before")
+    @classmethod
+    def ignore_blank_mainsequence_cli(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @field_validator("local_state_root", "state_root")
     @classmethod
     def normalize_state_roots(cls, value: Path) -> Path:
@@ -314,19 +357,84 @@ class TauSDKSettings(BaseSettings):
             )
         return self
 
+    def _local_tokens(self) -> dict[str, str]:
+        """Return the configured local user tokens by environment variable name."""
+        configured: dict[str, str] = {}
+        for name, secret in (
+            (ACCESS_TOKEN_ENV, self.access_token),
+            (REFRESH_TOKEN_ENV, self.refresh_token),
+        ):
+            value = secret.get_secret_value() if secret is not None else ""
+            if value.strip():
+                configured[name] = value
+        return configured
+
+    def env_file_token_names(self) -> tuple[str, ...]:
+        """Name the configured local tokens that were read from the project ``.env`` file.
+
+        A token is attributed to the file when the process environment does not define its
+        variable and the file holds the configured value. Only names are returned.
+        """
+        from_settings = {
+            name: value for name, value in self._local_tokens().items() if name not in os.environ
+        }
+        if not from_settings:
+            return ()
+        try:
+            file_values = DotEnvSettingsSource(type(self))()
+        except (OSError, ValueError):
+            return ()
+        return tuple(
+            name for name, value in from_settings.items() if file_values.get(name) == value
+        )
+
+    def uses_cli_session(self) -> bool:
+        """Whether local mode, with no token configured, asks a Main Sequence CLI for one."""
+        return not self._local_tokens()
+
+    def local_auth_source(self) -> LocalAuthSource:
+        """Name where local mode takes its Main Sequence credentials from, never a value.
+
+        ``cli`` means no token is configured and a Main Sequence CLI supplies the access
+        token. ``env_file`` means a configured token was read from the project ``.env`` file.
+        ``environment`` means the token pair was handed to the process.
+        """
+        if self.uses_cli_session():
+            return "cli"
+        return "env_file" if self.env_file_token_names() else "environment"
+
+    def mainsequence_cli_path(self) -> Path:
+        """Return the Main Sequence CLI local mode asks for a token, or say how to get one."""
+        cli = find_mainsequence_cli(self.mainsequence_cli)
+        if cli is None:
+            raise ConfigurationError(
+                "Local mode has no Main Sequence credentials. "
+                f"{ACCESS_TOKEN_ENV} and {REFRESH_TOKEN_ENV} are not set, and no Main Sequence "
+                "CLI was found beside the Python interpreter or on PATH. Use one of three "
+                "ways: install a Main Sequence CLI that has `mainsequence auth token` and run "
+                f"`mainsequence login`; set {MAINSEQUENCE_CLI_ENV} to the path of such a CLI; "
+                f"or provide {ACCESS_TOKEN_ENV} and {REFRESH_TOKEN_ENV} in the environment."
+            )
+        return cli
+
     def validate_runtime_auth(self) -> None:
         if self.local_mode:
-            missing = []
-            if self.access_token is None or not self.access_token.get_secret_value().strip():
-                missing.append("MAINSEQUENCE_ACCESS_TOKEN")
-            if self.refresh_token is None or not self.refresh_token.get_secret_value().strip():
-                missing.append("MAINSEQUENCE_REFRESH_TOKEN")
+            tokens = self._local_tokens()
+            # One token without the other is an incomplete pair. No token at all selects the
+            # Main Sequence CLI, which must then be present.
+            missing = (
+                [name for name in (ACCESS_TOKEN_ENV, REFRESH_TOKEN_ENV) if name not in tokens]
+                if tokens
+                else []
+            )
             if not self.local_provider:
                 missing.append("TAU_LOCAL_PROVIDER")
             if not self.local_model:
                 missing.append("TAU_LOCAL_MODEL")
             if missing:
                 raise ConfigurationError("Missing local mode settings: " + ", ".join(missing))
+            if not tokens:
+                self.mainsequence_cli_path()
             return
         missing = []
         if not self.runtime_credential_id:

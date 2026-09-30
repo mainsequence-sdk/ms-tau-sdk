@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import json
 import sqlite3
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -1225,3 +1227,83 @@ async def test_managed_client_has_no_local_chat_sessions(tmp_path):
         await client.get_local_chat_transcript("session")
 
     await client.aclose()
+
+
+def _user_token(user_id: int, *, serial: str) -> str:
+    """A dummy unsigned token that carries a user claim, as a renewed token would."""
+    claims = json.dumps({"user_id": user_id, "jti": serial}).encode()
+    return f"header.{base64.urlsafe_b64encode(claims).decode().rstrip('=')}.signature"
+
+
+def _cli_session_backend(tmp_path, token: str) -> LocalDevelopmentBackend:
+    """A backend whose settings hold no token because a Main Sequence CLI supplies it."""
+    settings = _settings(tmp_path)
+    settings.access_token = None
+    settings.refresh_token = None
+    services = _services(_evidence())
+    services.auth.headers = AsyncMock(return_value={"Authorization": f"Bearer {token}"})
+    return LocalDevelopmentBackend(settings, services)
+
+
+@pytest.mark.asyncio
+async def test_cli_token_source_keeps_the_owner_scope_of_the_same_user(tmp_path):
+    exported = _settings(tmp_path)
+    exported.access_token = SecretStr(_user_token(7, serial="exported"))
+    with_exported_pair = LocalDevelopmentBackend(exported, _services(_evidence()))
+    chat_uid = exported.local_session_uid(None)
+    conversation_uid = exported.local_session_uid("conversation")
+    await with_exported_pair.begin_local_chat_turn(chat_uid, "Started with the exported pair")
+    await with_exported_pair.begin_local_conversation_message(
+        {
+            "messageId": "request-1",
+            "contextId": conversation_uid,
+            "role": "ROLE_USER",
+            "parts": [{"text": "Started with the exported pair"}],
+        }
+    )
+
+    # The same user now uses the CLI session: another token string, the same subject.
+    same_user = _cli_session_backend(tmp_path, _user_token(7, serial="renewed-by-the-cli"))
+    chats = await same_user.list_local_chat_sessions(limit=10, cursor=None)
+    conversations = await same_user.list_local_conversations(limit=10, cursor=None)
+    await same_user.begin_local_chat_turn(chat_uid, "Continued with the CLI session")
+
+    assert [item.session_uid for item in chats.sessions] == [chat_uid]
+    assert [item.context_id for item in conversations.conversations] == [conversation_uid]
+    # The token is asked for once; the owner scope does not change while the process runs.
+    same_user.auth.headers.assert_awaited_once_with()
+
+    another_user = _cli_session_backend(tmp_path, _user_token(8, serial="another-user"))
+    assert (await another_user.list_local_chat_sessions(limit=10, cursor=None)).sessions == []
+    with pytest.raises(SessionNotFoundError, match="Local chat session not found"):
+        await another_user.begin_local_chat_turn(chat_uid, "Let me in")
+    with pytest.raises(SessionNotFoundError, match="Local conversation not found"):
+        await another_user.get_local_conversation_messages(
+            conversation_uid, limit=10, before_sequence=None
+        )
+
+    await with_exported_pair.aclose()
+    await same_user.aclose()
+    await another_user.aclose()
+
+
+@pytest.mark.asyncio
+async def test_cli_token_source_resolves_the_owner_scope_only_where_it_is_used(tmp_path):
+    backend = _cli_session_backend(tmp_path, "opaque-cli-token-one")
+    session_uid = backend.settings.local_session_uid("plain")
+
+    # Sessions, leases and entries are not owner scoped, so they need no token.
+    await backend.bootstrap_tau_runtime(session_uid, _bootstrap("holder-1"))
+    backend.auth.headers.assert_not_awaited()
+
+    await backend.begin_local_chat_turn(session_uid, "First prompt")
+    backend.auth.headers.assert_awaited_once_with()
+
+    # A token with no readable subject is replaced at every renewal. The scope must not follow
+    # the token value, or each renewal would hide the user's own sessions.
+    renewed = _cli_session_backend(tmp_path, "opaque-cli-token-two")
+    listed = await renewed.list_local_chat_sessions(limit=10, cursor=None)
+    assert [item.session_uid for item in listed.sessions] == [session_uid]
+
+    await backend.aclose()
+    await renewed.aclose()

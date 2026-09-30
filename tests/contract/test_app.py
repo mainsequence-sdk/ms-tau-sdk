@@ -25,6 +25,8 @@ async def test_health_reports_tau_runtime(sdk_client: AsyncClient):
     assert response.status_code == 200
     assert response.json()["runtime"] == "tau"
     assert response.json()["loaded_sessions"] == 0
+    # The credential source is a local-mode fact. Managed mode reports none.
+    assert response.json()["mainsequence_auth_source"] is None
 
 
 async def test_readiness_and_version_report_tau_runtime(sdk_client: AsyncClient):

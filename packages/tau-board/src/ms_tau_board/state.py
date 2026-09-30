@@ -9,7 +9,9 @@ from contextlib import closing
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = "5"
+# The version `ms_tau_sdk.backend.local` stamps on the store. The board never imports the SDK,
+# so this follows it by hand.
+SCHEMA_VERSION = "6"
 TABLES = (
     "sessions",
     "entries",

@@ -117,7 +117,12 @@ class LocalDevelopmentBackend(MainSequenceClient):
         self.auth = services.auth
         self._services = services
         self._path = settings.local_state_path
-        self._owner_scope = self._local_owner_scope(settings)
+        # The owner scope comes from the local user's access token. A configured token pair is
+        # known now. A token supplied by the Main Sequence CLI is known only after the first
+        # command run, so that scope is resolved when owner-scoped state is first used.
+        self._resolved_owner_scope: str | None = (
+            None if settings.uses_cli_session() else self._local_owner_scope(settings)
+        )
         self._database_lock = asyncio.Lock()
         self._initialized = False
         self._recovery_metrics: dict[str, int | float] = {
@@ -421,17 +426,37 @@ class LocalDevelopmentBackend(MainSequenceClient):
         async with self._database_lock:
             return await asyncio.to_thread(operation)
 
+    @property
+    def _owner_scope(self) -> str:
+        if self._resolved_owner_scope is None:
+            raise RuntimeError("The local owner scope was read before it was resolved")
+        return self._resolved_owner_scope
+
+    async def _run_owner_scoped(self, operation: Callable[[], _T]) -> _T:
+        """Run an operation on owner-scoped state once the owner scope is known."""
+
+        if self._resolved_owner_scope is None:
+            headers = await self.auth.headers()
+            session_token = str(headers.get("Authorization") or "").partition(" ")[2].strip()
+            self._resolved_owner_scope = self._local_owner_scope(self.settings, session_token)
+        return await self._run(operation)
+
     @staticmethod
-    def _local_owner_scope(settings: TauSDKSettings) -> str:
+    def _local_owner_scope(settings: TauSDKSettings, session_token: str | None = None) -> str:
         """Derive a non-secret stable namespace from the validated local user JWT.
 
         The claim is not used to authenticate an HTTP request. Startup still validates the
         credential against Main Sequence. It only prevents one authenticated local user from
         discovering another user's transcript when they reuse the same OS workspace state.
+
+        ``session_token`` is the access token of a Main Sequence CLI session. It is given when
+        the settings hold no token, so the same user has one scope with either source.
         """
 
         access_token = (
-            settings.access_token.get_secret_value().strip() if settings.access_token else ""
+            (settings.access_token.get_secret_value().strip() if settings.access_token else "")
+            if session_token is None
+            else session_token
         )
         identity: dict[str, str] = {}
         try:
@@ -455,6 +480,10 @@ class LocalDevelopmentBackend(MainSequenceClient):
                         }
         except (ValueError, TypeError, binascii.Error, json.JSONDecodeError):
             identity = {}
+        if not identity and session_token is not None:
+            # A CLI session has no stable credential to fingerprint: its access token is
+            # replaced at every renewal. The scope is then the CLI session of this backend.
+            identity = {"credential_source": "cli", "endpoint": settings.backend_url}
         if not identity:
             refresh_token = (
                 settings.refresh_token.get_secret_value().strip() if settings.refresh_token else ""
@@ -835,7 +864,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
                 )
                 return None
 
-        return await self._run(operation)
+        return await self._run_owner_scoped(operation)
 
     async def complete_local_conversation_message(
         self,
@@ -921,7 +950,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
                 )
                 return stored
 
-        return await self._run(operation)
+        return await self._run_owner_scoped(operation)
 
     async def list_local_conversations(
         self,
@@ -960,7 +989,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
                 next_cursor=next_cursor,
             )
 
-        return await self._run(operation)
+        return await self._run_owner_scoped(operation)
 
     async def get_local_conversation_messages(
         self,
@@ -1013,7 +1042,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
                 ),
             )
 
-        return await self._run(operation)
+        return await self._run_owner_scoped(operation)
 
     @staticmethod
     def _chat_title(prompt: str) -> str:
@@ -1137,7 +1166,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     (canonical, self._owner_scope, title, now, now),
                 )
 
-        await self._run(operation)
+        await self._run_owner_scoped(operation)
 
     async def list_local_chat_sessions(
         self,
@@ -1177,7 +1206,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
                 next_cursor=next_cursor,
             )
 
-        return await self._run(operation)
+        return await self._run_owner_scoped(operation)
 
     async def get_local_chat_transcript(
         self,
@@ -1228,7 +1257,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
                 turn_committed=committed,
             )
 
-        return await self._run(operation)
+        return await self._run_owner_scoped(operation)
 
     @staticmethod
     def _task_row(connection: sqlite3.Connection, task_uid: str) -> sqlite3.Row:
