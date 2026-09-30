@@ -11,14 +11,15 @@ an offline, mock-provider, or mock-MCP mode.
 
 ## Start the process
 
-Obtain the user's access and refresh JWTs through the supported Main Sequence login or
-project-launcher flow. The SDK consumes that environment handoff directly; it does not install,
-import, or invoke the `mainsequence` Python package and does not read its private credential store.
+The user logs in once with a Main Sequence CLI that provides `mainsequence auth token`. Local mode
+then asks that CLI for a short-lived access token, at startup and again when the token is about to
+expire. No token is exported and none is written to the project `.env`. The SDK does not install or
+import the `mainsequence` Python package and does not read the CLI's private credential store.
 
 ```bash
+mainsequence login   # once; the session is kept by the CLI, not in .env
+
 export MAINSEQUENCE_AUTH_MODE=jwt
-export MAINSEQUENCE_ACCESS_TOKEN="<user-access-token>"
-export MAINSEQUENCE_REFRESH_TOKEN="<user-refresh-token>"
 export TAU_LOCAL_MODE=true
 export TAU_LOCAL_PROVIDER="<provider>"
 export TAU_LOCAL_MODEL="<model>"
@@ -28,12 +29,20 @@ export TAU_LOCAL_THINKING="<thinking-level>"
 uv run ms-tau
 ```
 
-Set `MAINSEQUENCE_ENDPOINT` only for a non-default platform endpoint. Local mode binds to
-`127.0.0.1:8787` by default. Treat an explicit public bind as privileged exposure: each accepted
-request can use the authenticated user's live Main Sequence permissions.
+The SDK looks for the CLI in `MAINSEQUENCE_CLI`, then beside the Python interpreter that runs
+`ms-tau`, then on `PATH`. Launchers and CI can export `MAINSEQUENCE_ACCESS_TOKEN` and
+`MAINSEQUENCE_REFRESH_TOKEN` instead. With both set, the SDK uses that pair and never runs the
+CLI. Do not add token lines to `.env`. A pair found there still works, but it is deprecated and
+startup logs a warning. `mainsequence refresh-token` run in that directory removes the lines.
+
+Set `MAINSEQUENCE_ENDPOINT` only for a non-default platform endpoint. The CLI session must be for
+the same endpoint. Local mode binds to `127.0.0.1:8787` by default. Treat an explicit public bind
+as privileged exposure: each accepted request can use the authenticated user's live Main Sequence
+permissions.
 
 Never place JWTs or provider credentials in source control, `.tau`, copied skills, command output,
-or debugging artifacts. The user JWT is sent only to Main Sequence. Main Sequence validates the
+or debugging artifacts. Do not run `mainsequence auth token` to read its output: it prints the
+access token. The user JWT is sent only to Main Sequence. Main Sequence validates the
 explicit `TAU_LOCAL_PROVIDER` and `TAU_LOCAL_MODEL`, returns provider-control evidence, and hydrates
 the provider credential used for inference. Provider secrets are neither environment settings nor
 local state.
@@ -45,7 +54,7 @@ local state.
 | Agent or AgentSession registration | Never created or updated |
 | Chat history, snapshots, leases, activity, and cancellation | Workspace SQLite |
 | Public A2A Message and Task state | Workspace SQLite |
-| Main Sequence authentication and token refresh | Remote, using the exported JWT pair |
+| Main Sequence authentication and token refresh | Remote. The token comes from the Main Sequence CLI session, or from an exported JWT pair |
 | Provider authorization, hydration, and inference | Remote and real |
 | Main Sequence MCP catalog and tool calls | Remote and real; platform mutations remain possible |
 | Project instructions, skills, hooks, and extensions | Normal repository `.tau` composition |
@@ -189,7 +198,8 @@ platform resources under the authenticated user's permissions.
 
 Check the process in this order:
 
-1. `GET /health` reports `mode: local` and safe composition diagnostics.
+1. `GET /health` reports `mode: local`, safe composition diagnostics, and
+   `mainsequence_auth_source`: `cli`, `environment`, or `env_file`.
 2. `GET /ready` confirms user authentication, provider control, local storage, and MCP readiness.
 3. `GET /version` reports the expected installed SDK release.
 4. A chat request without `sessionUid` returns an effective identifier in
@@ -203,8 +213,10 @@ Check the process in this order:
 ## Classify failures
 
 - Startup setting failure: inspect the exact missing or conflicting environment variable.
-- Authentication failure: refresh or re-export the JWT pair; do not substitute a runtime
-  credential in local mode.
+- Authentication failure: read the error, which names its remedy. The user runs
+  `mainsequence login`, upgrades a Main Sequence CLI that is too old for `auth token`, sets
+  `MAINSEQUENCE_CLI`, or provides the JWT pair. With an exported pair, export a fresh one. Do not
+  substitute a runtime credential in local mode.
 - Provider/model rejection: verify the exact configured names against the authenticated live
   catalog; do not silently select a different model.
 - OpenAI-compatible transport failure: open the Task's failure incident in Tau Board. Use its

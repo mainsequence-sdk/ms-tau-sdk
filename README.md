@@ -98,9 +98,9 @@ project selects a provider and model explicitly, while Main Sequence still autho
 the provider credential and supplies the live MCP catalog:
 
 ```bash
+mainsequence login   # once; the session is kept by the CLI, not in .env
+
 export MAINSEQUENCE_AUTH_MODE=jwt
-export MAINSEQUENCE_ACCESS_TOKEN="<exported-user-access-token>"
-export MAINSEQUENCE_REFRESH_TOKEN="<exported-user-refresh-token>"
 export TAU_LOCAL_MODE=true
 export TAU_LOCAL_PROVIDER=openai
 export TAU_LOCAL_MODEL=gpt-5.4
@@ -108,10 +108,21 @@ export TAU_LOCAL_MODEL=gpt-5.4
 uv run ms-tau
 ```
 
-The normal Main Sequence login or project launcher may provision those JWT variables, but
-`ms-tau-sdk` does not install, import, or invoke the `mainsequence` Python package. It consumes the
-environment handoff and public refresh API directly. Provider secrets are never environment
-settings and are never persisted locally.
+Log in once with the Main Sequence CLI. Local mode then asks that CLI for a short-lived access
+token with `mainsequence auth token --json`, and again when the token is about to expire. No token
+is exported and none is written to the project `.env`. The SDK looks for the CLI in
+`MAINSEQUENCE_CLI`, then beside the Python interpreter, then on `PATH`. `ms-tau-sdk` does not
+install or import the `mainsequence` Python package and does not read the CLI's credential store.
+
+Launchers and CI can hand the process a token pair instead. With both variables set, the SDK
+uses them and the public refresh API and never runs the CLI:
+
+```bash
+export MAINSEQUENCE_ACCESS_TOKEN="<user-access-token>"
+export MAINSEQUENCE_REFRESH_TOKEN="<user-refresh-token>"
+```
+
+Provider secrets are never environment settings and are never persisted locally.
 
 Local conversations and public A2A Tasks are stored at
 `~/.tau/mainsequence/<workspace-hash>/runtime.sqlite3`; an omitted chat `sessionUid` uses the
@@ -212,7 +223,8 @@ are not bundled into the SDK. Main Sequence transport and protocol behavior rema
 ## Included capabilities
 
 - FastAPI application construction and lifecycle management
-- runtime-credential exchange, local user-JWT refresh, and authenticated Main Sequence access
+- runtime-credential exchange, local sign-in through the Main Sequence CLI session or a user-JWT
+  environment pair, and authenticated Main Sequence access
 - provider validation and credential hydration
 - durable Tau sessions, leases, restore, persistence, cancellation, eviction, and shutdown
 - local Tau execution without backend AgentSession pre-creation

@@ -141,7 +141,13 @@ async def test_board_connects_proxies_and_inspects_state_without_writes(tmp_path
         seen.append(request)
         if request.url.path == "/health":
             return httpx.Response(
-                200, json={"runtime": "tau", "mode": "local", "workspace_digest": digest}
+                200,
+                json={
+                    "runtime": "tau",
+                    "mode": "local",
+                    "workspace_digest": digest,
+                    "mainsequence_auth_source": "cli",
+                },
             )
         if request.url.path == "/ready":
             return httpx.Response(200, json={"ok": True})
@@ -250,6 +256,8 @@ async def test_board_connects_proxies_and_inspects_state_without_writes(tmp_path
             connected = await board.get("/api/board/connection")
             assert connected.json()["stateDir"] == str(directory)
             assert connected.json()["ready"] is True
+            # Connect shows where the Tau process takes its credentials from, as a name.
+            assert connected.json()["health"]["mainsequence_auth_source"] == "cli"
 
             stream = await board.post(
                 "/tau/api/chat",
@@ -586,6 +594,8 @@ def test_loopback_validation_and_asset_budget() -> None:
     assert '<link href="http' not in html
     assert "bulma.min.css" in html
     assert "Completed / status time" in html
+    script = (assets / "app.js").read_text()
+    assert 'detailLine(box, "Credential source", result.health.mainsequence_auth_source)' in script
 
 
 @pytest.mark.asyncio

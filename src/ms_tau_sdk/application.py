@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ms_tau_sdk.backend.auth import BackendAuth, JWTAuth, RuntimeCredentialAuth
+from ms_tau_sdk.backend.auth import BackendAuth, RuntimeCredentialAuth, local_mode_auth
 from ms_tau_sdk.backend.client import MainSequenceClient
 from ms_tau_sdk.backend.local import LocalDevelopmentBackend
 from ms_tau_sdk.providers.factory import ProviderFactory
@@ -28,7 +28,7 @@ class ApplicationServices:
         auth: BackendAuth
         backend: MainSequenceClient
         if settings.local_mode:
-            auth = JWTAuth(settings)
+            auth = local_mode_auth(settings)
             services_client = MainSequenceClient(settings, auth)
             backend = LocalDevelopmentBackend(settings, services_client)
         else:

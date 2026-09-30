@@ -1,9 +1,12 @@
+import sys
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
 from ms_tau_sdk.errors import ConfigurationError
 from ms_tau_sdk.resources.loader import resource_root
-from ms_tau_sdk.settings import TauSDKSettings
+from ms_tau_sdk.settings import TauSDKSettings, find_mainsequence_cli
 
 
 def test_settings_normalize_backend_and_origins(tmp_path):
@@ -238,3 +241,174 @@ def test_provider_timeout_defaults_to_sixty_seconds_and_reads_the_environment(
     monkeypatch.setenv("MAINSEQUENCE_TAU_PROVIDER_TIMEOUT_SECONDS", "0")
     with pytest.raises(ValidationError):
         TauSDKSettings(_env_file=None, workspace=tmp_path)
+
+
+def _executable(path: Path) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+@pytest.fixture
+def machine_without_credentials(monkeypatch, tmp_path) -> Path:
+    """Hide the Main Sequence CLI, tokens and project `.env` of the machine running the tests.
+
+    Returns the directory that stands for the running interpreter's directory.
+    """
+    interpreter_directory = tmp_path / "interpreter"
+    interpreter_directory.mkdir()
+    (tmp_path / "path").mkdir()
+    monkeypatch.setattr(sys, "executable", str(interpreter_directory / "python"))
+    monkeypatch.setenv("PATH", str(tmp_path / "path"))
+    for name in ("MAINSEQUENCE_CLI", "MAINSEQUENCE_ACCESS_TOKEN", "MAINSEQUENCE_REFRESH_TOKEN"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.chdir(tmp_path)
+    return interpreter_directory
+
+
+def _local_settings(tmp_path: Path, **overrides: object) -> TauSDKSettings:
+    values: dict[str, object] = {
+        "workspace": tmp_path,
+        "auth_mode": "jwt",
+        "local_mode": True,
+        "local_provider": "openai",
+        "local_model": "gpt-5.4",
+    }
+    values.update(overrides)
+    return TauSDKSettings(_env_file=None, **values)
+
+
+def test_mainsequence_cli_is_found_in_the_documented_order(
+    machine_without_credentials, monkeypatch, tmp_path
+):
+    assert find_mainsequence_cli() is None
+
+    on_path = _executable(tmp_path / "path" / "mainsequence")
+    assert find_mainsequence_cli() == on_path
+
+    # A file that cannot be executed is not a CLI, so the search goes on to PATH.
+    beside_interpreter = machine_without_credentials / "mainsequence"
+    beside_interpreter.write_text("not executable", encoding="utf-8")
+    assert find_mainsequence_cli() == on_path
+
+    _executable(beside_interpreter)
+    assert find_mainsequence_cli() == beside_interpreter
+
+    explicit = _executable(tmp_path / "chosen" / "ms-cli")
+    assert find_mainsequence_cli(explicit) == explicit
+
+    # An explicit path is a decision. A wrong one is reported, not replaced by another CLI.
+    with pytest.raises(ConfigurationError, match=r"MAINSEQUENCE_CLI is set to .*missing-cli"):
+        find_mainsequence_cli(tmp_path / "missing-cli")
+    with pytest.raises(ConfigurationError, match="which is not an existing file"):
+        find_mainsequence_cli(tmp_path / "chosen")
+
+
+def test_mainsequence_cli_setting_reads_the_environment(
+    machine_without_credentials, monkeypatch, tmp_path
+):
+    assert _local_settings(tmp_path).mainsequence_cli is None
+
+    monkeypatch.setenv("MAINSEQUENCE_CLI", "   ")
+    assert _local_settings(tmp_path).mainsequence_cli is None
+
+    explicit = _executable(tmp_path / "chosen" / "ms-cli")
+    monkeypatch.setenv("MAINSEQUENCE_CLI", str(explicit))
+    settings = _local_settings(tmp_path)
+    assert settings.mainsequence_cli == explicit
+    assert settings.mainsequence_cli_path() == explicit
+
+
+def test_local_mode_with_both_tokens_needs_no_cli(machine_without_credentials, tmp_path):
+    settings = _local_settings(
+        tmp_path, access_token="dummy-access-token", refresh_token="dummy-refresh-token"
+    )
+
+    settings.validate_runtime_auth()
+
+    assert settings.uses_cli_session() is False
+    assert settings.local_auth_source() == "environment"
+
+
+def test_local_mode_with_no_token_needs_a_cli(machine_without_credentials, tmp_path):
+    settings = _local_settings(tmp_path)
+    assert settings.uses_cli_session() is True
+    assert settings.local_auth_source() == "cli"
+
+    with pytest.raises(ConfigurationError) as missing:
+        settings.validate_runtime_auth()
+
+    message = str(missing.value)
+    assert "MAINSEQUENCE_ACCESS_TOKEN and MAINSEQUENCE_REFRESH_TOKEN are not set" in message
+    assert "no Main Sequence CLI was found" in message
+    # The three ways out: log in with a CLI, name a CLI, or provide the token pair.
+    assert "`mainsequence auth token`" in message
+    assert "`mainsequence login`" in message
+    assert "set MAINSEQUENCE_CLI to the path of such a CLI" in message
+    assert "provide MAINSEQUENCE_ACCESS_TOKEN and MAINSEQUENCE_REFRESH_TOKEN" in message
+    assert "Missing local mode settings" not in message
+
+    _executable(machine_without_credentials / "mainsequence")
+    settings.validate_runtime_auth()
+
+    # Blank values are not a token pair either.
+    blank = _local_settings(tmp_path, access_token="  ", refresh_token="")
+    assert blank.local_auth_source() == "cli"
+    blank.validate_runtime_auth()
+
+
+def test_local_mode_with_no_token_reports_a_wrong_explicit_cli(
+    machine_without_credentials, tmp_path
+):
+    _executable(machine_without_credentials / "mainsequence")
+    settings = _local_settings(tmp_path, mainsequence_cli=tmp_path / "missing-cli")
+
+    with pytest.raises(ConfigurationError, match=r"MAINSEQUENCE_CLI is set to .*missing-cli"):
+        settings.validate_runtime_auth()
+
+
+@pytest.mark.parametrize(
+    ("configured", "missing"),
+    [
+        ({"access_token": "dummy-access-token"}, "MAINSEQUENCE_REFRESH_TOKEN"),
+        ({"refresh_token": "dummy-refresh-token"}, "MAINSEQUENCE_ACCESS_TOKEN"),
+    ],
+)
+def test_local_mode_with_one_token_reports_the_missing_one(
+    machine_without_credentials, tmp_path, configured, missing
+):
+    # A CLI on the machine does not complete half a pair.
+    _executable(machine_without_credentials / "mainsequence")
+    settings = _local_settings(tmp_path, **configured)
+
+    with pytest.raises(ConfigurationError) as incomplete:
+        settings.validate_runtime_auth()
+
+    assert str(incomplete.value) == f"Missing local mode settings: {missing}"
+    assert settings.uses_cli_session() is False
+
+
+def test_local_mode_reports_a_missing_selection_before_the_cli(
+    machine_without_credentials, tmp_path
+):
+    settings = _local_settings(tmp_path, local_provider=None, local_model=None)
+
+    with pytest.raises(ConfigurationError) as missing:
+        settings.validate_runtime_auth()
+
+    assert str(missing.value) == "Missing local mode settings: TAU_LOCAL_PROVIDER, TAU_LOCAL_MODEL"
+
+
+def test_managed_mode_ignores_the_cli_and_the_local_token_pair(
+    machine_without_credentials, tmp_path
+):
+    settings = TauSDKSettings(
+        _env_file=None,
+        workspace=tmp_path,
+        runtime_credential_id="credential-id",
+        runtime_credential_secret="credential-secret",
+        mainsequence_cli=tmp_path / "missing-cli",
+    )
+
+    settings.validate_runtime_auth()

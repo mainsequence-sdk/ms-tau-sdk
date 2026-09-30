@@ -7,11 +7,17 @@ semantic versioning for these supported surfaces:
 - the `ms-tau` command and its workspace-bound startup behavior;
 - documented `MAINSEQUENCE_TAU_*`, `MAINSEQUENCE_ENDPOINT`, `MAINSEQUENCE_AUTH_MODE`, and
   `MAINSEQUENCE_RUNTIME_CREDENTIAL_*`, `MAINSEQUENCE_ACCESS_TOKEN`,
-  `MAINSEQUENCE_REFRESH_TOKEN`, `TAU_LOCAL_*`, `TAU_EXCLUDE_BASE_TOOLS`, and
+  `MAINSEQUENCE_REFRESH_TOKEN`, `MAINSEQUENCE_CLI`, `TAU_LOCAL_*`, `TAU_EXCLUDE_BASE_TOOLS`, and
   `TAU_EXCLUDE_MAINSEQUENCE_MCP` settings;
 - documented health, readiness, chat, response, session, and A2A HTTP/wire behavior;
 - packaged Tau defaults and Tau-native project `.tau` precedence; and
 - the documented absence of SDK-owned container/deployment artifacts and optional tool baggage.
+
+The documented local-mode workflow is one `mainsequence login` and no token in the project `.env`:
+local mode asks the Main Sequence CLI for its access token. The `MAINSEQUENCE_ACCESS_TOKEN` and
+`MAINSEQUENCE_REFRESH_TOKEN` pair stays supported in the process environment, as the alternative
+for launchers and CI. Reading that pair from the project `.env` file is deprecated. It still works
+and startup logs a warning.
 
 A major release is required to remove or incompatibly change one of those surfaces. Minor releases
 may add backward-compatible settings, APIs, routes, or behavior. Patch releases contain compatible

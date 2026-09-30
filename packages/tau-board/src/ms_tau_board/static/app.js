@@ -210,6 +210,7 @@ async function checkConnection() {
   detailLine(box, "Mode", result.health.mode);
   detailLine(box, "Version", result.health.version);
   detailLine(box, "Ready", result.ready ? "Yes" : "No");
+  detailLine(box, "Credential source", result.health.mainsequence_auth_source);
   detailLine(box, "Workspace digest", result.health.workspace_digest);
   detailLine(box, "State directory", result.stateDir);
   detailLine(box, "MCP tools", result.health.mcp_tool_count);

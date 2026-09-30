@@ -28,6 +28,11 @@ Amended: 2026-09-27 by [ADR 0018](./0018-reload-safe-local-chat-sessions.md) —
 sessions are listable and readable in the platform's history shape, and a local chat turn runs to
 its durable end when its client disconnects; only explicit cancellation stops it.
 
+Amended: 2026-09-30 — local mode may obtain its access token from the documented token command of
+a Main Sequence CLI found on the machine. The package still does not depend on or import
+`mainsequence` and does not read the CLI's credential store. The environment JWT pair stays
+supported.
+
 Amends, when accepted:
 
 - [ADR 0002: Runtime and protocol contracts](./0002-runtime-and-protocol-contracts.md); and
@@ -102,9 +107,10 @@ execution retains its current behavior.
 `TAU_LOCAL_MODE` is the only mode selector. Local execution additionally requires one explicit
 provider and model; thinking level is optional. These values select execution but contain no
 credentials. The developer must already be authenticated through the normal Main Sequence login
-flow, just as other local Main Sequence project operations require authentication. The
-resulting JWTs are handed to this process through environment variables; the Main Sequence Python
-package is not a runtime dependency of `ms-tau-sdk`.
+flow, just as other local Main Sequence project operations require authentication. This process
+obtains the resulting access token from the token command of a Main Sequence CLI on the machine,
+or receives the JWT pair through environment variables. The Main Sequence Python package is not a
+runtime dependency of `ms-tau-sdk`.
 
 The SDK fails startup when local mode is enabled and either `TAU_LOCAL_PROVIDER` or
 `TAU_LOCAL_MODEL` is absent or blank. It does not guess a model, consult an Agent Card, or fall back
@@ -122,17 +128,38 @@ MAINSEQUENCE_RUNTIME_CREDENTIAL_ID=...
 MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET=...
 ```
 
-Local mode consumes the established package-independent Main Sequence JWT environment contract:
+Local mode sets `MAINSEQUENCE_AUTH_MODE=jwt` and takes the user's access token from one of two
+package-independent sources.
+
+The first source is the token command of a Main Sequence CLI. With no token in the environment,
+`ms-tau-sdk` runs this documented command of a CLI found on the machine:
+
+```bash
+mainsequence auth token --json
+```
+
+The command prints one JSON object with `endpoint`, `access_token`, `token_type`, and
+`expires_at`. The CLI owns the login session and renews it when the token is about to expire.
+`ms-tau-sdk` looks for the CLI in `MAINSEQUENCE_CLI`, then beside the running Python interpreter,
+then on `PATH`. It runs the command as a separate process from an argument list, never through a
+shell. It passes its own `MAINSEQUENCE_ENDPOINT` and removes the JWT pair from the command's
+environment. It keeps only the access token, in memory, reuses it until 60 seconds before
+`expires_at`, and runs the command again after a rejected request. It refuses an answer for
+another backend. The command's exit codes separate a missing or expired session, a CLI too old
+to know the command, and a machine without a credential store. Each is its own error. The
+developer logs in once with `mainsequence login`, and no token is written to the project `.env`.
+
+The second source is the established Main Sequence JWT environment contract, for launchers and
+CI:
 
 ```env
-MAINSEQUENCE_AUTH_MODE=jwt
 MAINSEQUENCE_ACCESS_TOKEN=...
 MAINSEQUENCE_REFRESH_TOKEN=...
 ```
 
-These values may be populated by the normal Main Sequence authentication/export workflow, project
-provisioning, or the host process. `ms-tau-sdk` reads them directly and owns a small asynchronous
-JWT header provider that:
+These values may be populated by project provisioning or the host process. With both set,
+`ms-tau-sdk` reads them directly, never runs the CLI, and owns a small asynchronous JWT header
+provider that:
 
 - sends the access token as a bearer credential;
 - refreshes an expiring or rejected access token through the documented Main Sequence JWT refresh
@@ -140,25 +167,31 @@ JWT header provider that:
 - updates only its in-process credential state; and
 - supplies the same authenticated headers to provider hydration and Main Sequence MCP.
 
-`ms-tau-sdk` must not depend on the Main Sequence SDK distribution (`mainsequence`), import or
-dynamically import its `mainsequence` Python package, or call its CLI. It must not read the Main
-Sequence CLI's private auth store. The environment variables and public HTTP refresh contract are
-the integration boundary, keeping this package independently installable.
+Reading the pair from the project `.env` file still works and is deprecated. Startup then logs
+one warning that names the file and the two variables, never a value.
 
-The user does not configure a second token specifically for Tau. The same normal Main Sequence
-JWTs already exported for local project operations are reused. Tokens remain secret and are never
-written to local runtime state, `.tau`, logs, or diagnostics.
+`ms-tau-sdk` must not depend on the Main Sequence SDK distribution (`mainsequence`) or import or
+dynamically import its `mainsequence` Python package. It must not read the Main Sequence CLI's
+private auth store. It may call that CLI only through the documented token command above. The
+output of that command, the environment variables, and the public HTTP refresh contract are the
+integration boundary, keeping this package independently installable.
+
+The user does not configure a second token specifically for Tau. The same Main Sequence login
+session, or the same JWTs already exported for local project operations, are reused. Tokens
+remain secret and are never written to local runtime state, `.tau`, logs, or diagnostics.
 
 Auth selection is fail-closed and unambiguous:
 
 | Mode | Main Sequence authentication |
 | --- | --- |
 | Managed | Runtime credential ID and secret |
-| Local | Access/refresh JWT environment and HTTP refresh contract |
+| Local | Access token from the Main Sequence CLI token command, or the access/refresh JWT environment pair and HTTP refresh contract |
 
 Settings validation is mode-aware. `MAINSEQUENCE_AUTH_MODE=jwt` is accepted only with
 `TAU_LOCAL_MODE=true`; managed mode continues to accept only `runtime_credential`. Local mode
-requires the access/refresh JWT pair and does not require or fall back to runtime credentials.
+requires the complete access/refresh JWT pair or, with neither token set, a Main Sequence CLI
+that provides the token command. One token without the other is an error. Local mode does not
+require or fall back to runtime credentials.
 
 Local mode does not silently fall back to a runtime credential when user authentication is absent,
 and managed mode does not silently consume a developer's user JWT. This prevents a local process
@@ -184,7 +217,7 @@ authorize it.
 The authentication and execution credentials have different purposes:
 
 ```text
-Main Sequence user JWT from the established environment contract
+Main Sequence user JWT from the CLI token command or the environment contract
   + TAU_LOCAL_PROVIDER and TAU_LOCAL_MODEL
   -> authenticate an exact provider-control and hydration request
   -> receive authorized provider-control evidence and a short-lived provider credential
@@ -383,8 +416,8 @@ composition is split along the actual ownership boundary:
 
 The required abstractions are:
 
-- an authentication/header provider usable by both runtime credentials and the standalone JWT
-  environment contract;
+- an authentication/header provider usable by runtime credentials, the standalone JWT
+  environment contract, and the Main Sequence CLI token command;
 - a provider-execution source for selection, provider-control evidence, hydration, and refresh;
 - a runtime-state store for sessions, history, leases, snapshots, cancellation, and tasks; and
 - the existing MCP transport parameterized by the authentication/header provider.
@@ -414,7 +447,8 @@ Health and readiness report at least:
 - `mode: local`;
 - the workspace identity/digest without exposing an unsafe path when logs are exported;
 - local store readiness;
-- Main Sequence user-auth readiness;
+- Main Sequence user-auth readiness and the name of the credential source (`cli`, `environment`,
+  or `env_file`), never a credential value;
 - provider-control readiness;
 - MCP connection state and catalog counts; and
 - loaded local session counts.
@@ -459,7 +493,7 @@ semantics.
 | Local A2A Agent Card | Process-local capability description; not platform discovery |
 | Backend dispatch/caller-delivery webhooks | Unsupported; require registered platform routing |
 | A2A push notifications and `resume_caller` | Unsupported; polling remains supported |
-| Main Sequence authentication | Remote JWT environment/HTTP contract; no SDK import |
+| Main Sequence authentication | Remote; token from the CLI token command or the JWT environment/HTTP contract; no SDK import |
 | Provider/model selection | Explicit local non-secret settings |
 | Provider authorization/control evidence | Remote, Main Sequence-owned |
 | Provider credential hydration/refresh | Remote, Main Sequence-owned |
@@ -506,6 +540,11 @@ Rejected. The normal login workflow already exposes a stable environment and HTT
 Python package dependency would couple the TAU runtime to the SDK's unrelated ORM, CLI, scaffold,
 and data tooling, enlarge the runtime dependency graph, and make authentication dependent on
 private SDK implementation. Optional/dynamic importing would retain the same hidden coupling.
+
+Running the documented token command of a Main Sequence CLI as a separate process is not this
+alternative, and the 2026-09-30 amendment allows it. It adds no Python dependency and no import.
+It uses only the command's documented output and exit codes, and it does not read the CLI's
+credential store.
 
 ### Keep backend persistence but mark sessions as development sessions
 
@@ -643,8 +682,10 @@ The implementation is not complete until automated tests prove:
 
 1. Local startup does not require an Agent UID, AgentSession UID, runtime credential ID, or runtime
    credential secret.
-2. Local startup requires valid Main Sequence access/refresh JWT environment values and refreshes
-   them without importing the `mainsequence` package.
+2. Local startup requires a Main Sequence access token from the token command of a Main Sequence
+   CLI found on the machine, or valid access/refresh JWT environment values that it refreshes
+   itself. Neither source imports the `mainsequence` package or reads the CLI's credential store,
+   and the CLI is never run when the environment pair is set.
 3. No Agent, AgentSession, entry, lease, activity, snapshot, cancellation, or platform
    task-persistence endpoint is called in local mode; equivalent local state remains in SQLite.
 4. The exact configured provider/model pair is sent for Main Sequence authorization, evidence,
@@ -676,8 +717,9 @@ The implementation is not complete until automated tests prove:
 The user workflow is:
 
 ```bash
-# MAINSEQUENCE_ACCESS_TOKEN and MAINSEQUENCE_REFRESH_TOKEN are already
-# exported/provisioned by the project's normal Main Sequence login workflow.
+# Log in once with `mainsequence login`. No token is exported or written to `.env`.
+# Launchers and CI may export MAINSEQUENCE_ACCESS_TOKEN and MAINSEQUENCE_REFRESH_TOKEN instead.
+export MAINSEQUENCE_AUTH_MODE=jwt
 export TAU_LOCAL_MODE=true
 export TAU_LOCAL_PROVIDER=openai
 export TAU_LOCAL_MODEL=gpt-5.4

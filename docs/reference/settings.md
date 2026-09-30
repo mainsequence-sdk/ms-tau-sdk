@@ -20,8 +20,9 @@ Managed mode uses `MAINSEQUENCE_AUTH_MODE=runtime_credential` and remains the de
 | --- | --- |
 | `TAU_LOCAL_MODE` | Set to `true` to keep Tau runtime state local. |
 | `MAINSEQUENCE_AUTH_MODE` | Must be `jwt` in local mode. |
-| `MAINSEQUENCE_ACCESS_TOKEN` | User access JWT exported by the normal Main Sequence login flow. |
-| `MAINSEQUENCE_REFRESH_TOKEN` | User refresh JWT used through the public refresh endpoint. |
+| `MAINSEQUENCE_CLI` | Optional path to the Main Sequence CLI that local mode asks for an access token. |
+| `MAINSEQUENCE_ACCESS_TOKEN` | User access JWT handed to the process by a launcher or CI. Alternative to the CLI session. |
+| `MAINSEQUENCE_REFRESH_TOKEN` | User refresh JWT of that pair, used through the public refresh endpoint. |
 | `TAU_LOCAL_PROVIDER` | Required exact provider selection; contains no secret. |
 | `TAU_LOCAL_MODEL` | Required exact model selection; contains no secret. |
 | `TAU_LOCAL_THINKING` | Optional Tau thinking level. |
@@ -31,14 +32,53 @@ Managed mode uses `MAINSEQUENCE_AUTH_MODE=runtime_credential` and remains the de
 | `TAU_LOCAL_A2A_TASK_PENDING_TIMEOUT_SECONDS` | Maximum age for a Task that cannot be started; default `300`. |
 | `TAU_LOCAL_A2A_TASK_MAX_RECOVERY_ATTEMPTS` | Deferred local start attempts before terminal failure; default `3`. |
 
-The SDK consumes the JWT environment handoff directly. It does not depend on, import, dynamically
-load, or call the `mainsequence` Python package/CLI. The JWT authenticates Main Sequence provider
-hydration and MCP; it is never sent to the selected model provider. Provider credentials are
-hydrated remotely and kept out of the environment and local database.
+The user's JWT authenticates Main Sequence provider hydration and MCP. It is never sent to the
+selected model provider. Provider credentials are hydrated remotely and kept out of the
+environment and local database. The SDK does not depend on, import, or dynamically load the
+`mainsequence` Python package, and it does not read the Main Sequence CLI's credential store.
 
-Local mode and managed authentication are mutually exclusive. Local startup fails if any JWT,
-provider, or model setting is absent; managed startup fails if either runtime credential setting is
-absent.
+### Local credential source
+
+Local mode takes the user's access token from one of two sources. The token variables decide
+which one.
+
+| Token variables | Source | `mainsequence_auth_source` in `/health` |
+| --- | --- | --- |
+| Neither is set | The Main Sequence CLI session | `cli` |
+| Both are set in the process environment | The token pair | `environment` |
+| Both are set and read from the project `.env` | The token pair; deprecated | `env_file` |
+| Exactly one is set | None. Startup fails and names the missing variable. | |
+
+**Main Sequence CLI session.** Log in once with `mainsequence login`. No token is exported and
+none is written to `.env`. The SDK runs `mainsequence auth token --json` as a separate process and
+keeps the returned access token in memory. It reuses the token until 60 seconds before it expires
+and runs the command again after a rejected request. The command has 15 seconds to answer. The CLI
+is the first of these that exists:
+
+1. the file named by `MAINSEQUENCE_CLI`. A path that is not an existing file is a startup error;
+2. `mainsequence` in the directory of the Python interpreter that runs `ms-tau`;
+3. `mainsequence` on `PATH`.
+
+The SDK passes its own `MAINSEQUENCE_ENDPOINT` to the command, so the CLI answers for the backend
+that Tau uses, and it refuses an answer for another backend.
+
+| The CLI reports | Meaning and remedy |
+| --- | --- |
+| Exit code 1 | No usable session for that backend. Run `mainsequence login`. |
+| Exit code 2 | The CLI is too old to know `auth token`. Upgrade it, or provide the token pair. |
+| Exit code 3 | The machine has no credential store. Provide the token pair in the environment. |
+| No answer in 15 seconds | The command is stopped and the request fails. |
+| Output that is not the JSON answer | The CLI and the SDK do not match. Upgrade the CLI. |
+
+**Token pair.** Launchers and CI export `MAINSEQUENCE_ACCESS_TOKEN` and
+`MAINSEQUENCE_REFRESH_TOKEN`. With both set, the SDK sends the access token, refreshes it through
+the public refresh endpoint, and never runs the CLI. A pair read from the project `.env` file
+still works and is deprecated: startup logs one warning that names the file and the two variables.
+Run `mainsequence refresh-token` in that directory to remove the token lines.
+
+Local mode and managed authentication are mutually exclusive. Local startup fails if the provider
+or the model setting is absent, if only one token is set, or if no token is set and no Main
+Sequence CLI is found. Managed startup fails if either runtime credential setting is absent.
 
 ## Process and workspace
 

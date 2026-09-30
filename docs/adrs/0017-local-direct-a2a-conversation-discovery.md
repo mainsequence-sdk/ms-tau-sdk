@@ -8,6 +8,10 @@ Amended: 2026-09-27 by [ADR 0018](./0018-reload-safe-local-chat-sessions.md) —
 sessions have their own projection under the same owner scope, and a direct Message cannot
 continue another user's chat session.
 
+Amended: 2026-09-30 by [ADR 0005](./0005-authenticated-local-development-mode.md) — the local
+process principal may be established by the Main Sequence CLI token command. The owner scope is
+derived from that token's subject claim, so a user keeps one scope with either credential source.
+
 Amends:
 
 - [ADR 0005: Authenticated local development mode](./0005-authenticated-local-development-mode.md)
@@ -91,10 +95,16 @@ managed mode; managed AgentSession discovery remains platform-owned.
 ### 3. Scope reads to the authenticated local process principal
 
 Local HTTP callers do not receive or resend the Main Sequence JWT. The Tau process owns one
-authenticated Main Sequence principal, established by the JWT environment contract and validated
-during startup by real platform/provider operations. Conversation records store only a one-way
-owner-scope digest derived from a stable JWT subject claim. A credential fingerprint is used only
-as a fallback for opaque test or legacy credentials. Access and refresh tokens are never persisted.
+authenticated Main Sequence principal, established by the Main Sequence CLI token command or the
+JWT environment contract (ADR 0005) and validated during startup by real platform/provider
+operations. Conversation records store only a one-way owner-scope digest derived from a stable
+JWT subject claim, so the same user has the same scope with either credential source. With the
+CLI token command the token is known only after the first command run, so the scope is resolved
+when owner-scoped state is first used and then stays fixed for the process. A credential
+fingerprint is used only as a fallback for opaque test or legacy credentials. A CLI session whose
+token has no readable subject has no stable credential to fingerprint, because its access token
+is replaced at every renewal. Its scope is then the CLI session of that backend. Access and
+refresh tokens are never persisted.
 
 Every discovery, history, append, and replay query includes that owner scope. A different
 authenticated principal using the same OS workspace receives an empty list and a generic not-found

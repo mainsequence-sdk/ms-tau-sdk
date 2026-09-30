@@ -63,6 +63,10 @@ their presence is shown. Saved `.env` changes require restarting Tau or Tau Boar
 processes. The selected Tau URL and local state directory can be overridden immediately for the
 current board session.
 
+A Tau process that signs in through the Main Sequence CLI session has no token variable, so the
+Settings tab reports both tokens as missing. That is expected. The **Connect** view shows the
+connected Tau's credential source as a name: `cli`, `environment`, or `env_file`.
+
 ## Launch from VS Code
 
 From the repository checkout, install the SDK with Board dependencies once with

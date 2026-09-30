@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+- Local mode no longer needs a token in the environment or in the project `.env`. With neither
+  `MAINSEQUENCE_ACCESS_TOKEN` nor `MAINSEQUENCE_REFRESH_TOKEN` set, it asks a Main Sequence CLI
+  for the access token with `mainsequence auth token --json`: log in once with
+  `mainsequence login`. The SDK looks for the CLI in the new `MAINSEQUENCE_CLI` setting, then
+  beside the Python interpreter, then on `PATH`. It keeps the token in memory, reuses it until 60
+  seconds before it expires, and asks again after a rejected request. It refuses an answer for
+  another backend. A missing CLI, a CLI too old for the command, a missing or expired session, a
+  machine without a credential store, a time-out, and malformed output each have their own error.
+  The SDK still does not depend on or import the `mainsequence` package and does not read the
+  CLI's credential store. The token pair stays supported in the process environment, for
+  launchers and CI, and with both tokens set the CLI is never run. A pair read from the project
+  `.env` file still works but is deprecated: startup logs one warning that names the file and the
+  two variables, and `mainsequence refresh-token` run in that directory removes them. `/health`
+  and `/ready` report the source in `mainsequence_auth_source` (`cli`, `environment`, or
+  `env_file`; `null` in managed mode), and Tau Board shows it in Connect. The owner scope of local
+  chat sessions and direct A2A conversations is derived from the subject of the CLI token, so a
+  user keeps the same local sessions with either source. See the 2026-09-30 amendments of ADR 0005
+  and ADR 0017.
+
 ## 1.2.12 — 2026-09-27
 
 - Local `/api/chat` sessions now survive a UI reload and a Tau restart. Local mode records each chat
