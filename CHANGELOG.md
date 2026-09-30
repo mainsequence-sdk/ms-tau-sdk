@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.2.13 — 2026-09-30
 
 - Local mode no longer needs a token in the environment or in the project `.env`. With neither
   `MAINSEQUENCE_ACCESS_TOKEN` nor `MAINSEQUENCE_REFRESH_TOKEN` set, it asks a Main Sequence CLI
