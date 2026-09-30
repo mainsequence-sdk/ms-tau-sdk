@@ -49,3 +49,7 @@ the reserved turn UID, boundaries are exclusive, abandonment rejects late append
 Task-owned unresolved turn blocks replacement/release without changing ordinary-turn lease
 behavior. Board tests must reconstruct streamed Artifact text without separators, keep revision
 events in Technical, show exact attempt entries, and redact/bound the execution projection.
+
+A local schema version change must raise the version Tau Board accepts in the same change. Board
+tests must read a store written by the SDK's local backend, so that a schema change the board has
+not followed fails the Board suite, and must prove that any other schema version is refused.

@@ -20,6 +20,14 @@
   chat sessions and direct A2A conversations is derived from the subject of the CLI token, so a
   user keeps the same local sessions with either source. See the 2026-09-30 amendments of ADR 0005
   and ADR 0017.
+- Tau Board again reads the local state the SDK writes. 1.2.12 raised the local SQLite schema
+  version to 6 without raising the version Tau Board accepts, so the board refused every store
+  that 1.2.12 had created or opened: the State, session, Task, and Task-log views returned
+  "Unknown Tau local SQLite schema version". Schema 6 only adds the `local_chat_sessions` table,
+  and the board's queries are unchanged. The board still accepts exactly one schema version, so a
+  store last opened by 1.2.11 or earlier is refused until Tau starts once and migrates it. A Board
+  test now reads a store written by the SDK's local backend, so a schema change the board has not
+  followed fails the Board suite.
 
 ## 1.2.12 — 2026-09-27
 
