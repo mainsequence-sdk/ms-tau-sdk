@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.2.14 — 2026-10-01
+
+- The repository structure reference now shows Tau Board: the tree lists `packages/tau-board/` and
+  `tests/e2e/`, and the wheel is described as containing both the `ms_tau_sdk` and `ms_tau_board`
+  import packages, Tau Board's static assets, and the `ms-tau` and `tau-board` commands.
+  Documentation only; the package is unchanged from 1.2.13.
+
 ## 1.2.13 — 2026-09-30
 
 - Local mode no longer needs a token in the environment or in the project `.env`. With neither
