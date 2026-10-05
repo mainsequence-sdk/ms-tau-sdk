@@ -107,6 +107,79 @@ def test_runtime_auth_requires_both_credential_parts():
         settings.validate_runtime_auth()
 
 
+def test_runtime_identity_token_file_reads_the_environment(monkeypatch, tmp_path):
+    projected = "/var/run/secrets/mainsequence.io/runtime-identity/token"
+    monkeypatch.delenv("MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE", raising=False)
+    assert TauSDKSettings(_env_file=None, workspace=tmp_path).runtime_identity_token_file is None
+
+    monkeypatch.setenv("MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE", projected)
+    settings = TauSDKSettings(_env_file=None, workspace=tmp_path)
+    assert settings.runtime_identity_token_file == Path(projected)
+
+    # An empty value is the same as no value.
+    monkeypatch.setenv("MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE", "  ")
+    assert TauSDKSettings(_env_file=None, workspace=tmp_path).runtime_identity_token_file is None
+
+
+def test_runtime_auth_accepts_the_token_file_in_place_of_the_secret(tmp_path):
+    # The check does not read the file. Each exchange reads it, because the token is rotated.
+    settings = TauSDKSettings(
+        _env_file=None,
+        workspace=tmp_path,
+        runtime_credential_id="credential-id",
+        runtime_identity_token_file=tmp_path / "not-projected-yet",
+    )
+    settings.validate_runtime_auth()
+
+    without_id = TauSDKSettings(
+        _env_file=None,
+        workspace=tmp_path,
+        runtime_identity_token_file=tmp_path / "token",
+    )
+    with pytest.raises(ConfigurationError) as missing:
+        without_id.validate_runtime_auth()
+    assert str(missing.value) == (
+        "Missing runtime credential settings: MAINSEQUENCE_RUNTIME_CREDENTIAL_ID"
+    )
+
+
+def test_runtime_auth_without_a_proof_names_the_secret_and_the_token_file(tmp_path):
+    settings = TauSDKSettings(
+        _env_file=None,
+        workspace=tmp_path,
+        runtime_credential_id="credential-id",
+    )
+
+    with pytest.raises(ConfigurationError) as missing:
+        settings.validate_runtime_auth()
+
+    assert str(missing.value) == (
+        "Missing runtime credential settings: "
+        "MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET or MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE"
+    )
+
+
+def test_settings_keep_the_token_file_path_and_never_the_token(monkeypatch, tmp_path):
+    token = "dummy-projected-workload-identity-token"
+    token_file = tmp_path / "token"
+    token_file.write_text(token, encoding="utf-8")
+    monkeypatch.setenv("MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE", str(token_file))
+
+    settings = TauSDKSettings(
+        _env_file=None, workspace=tmp_path, runtime_credential_id="credential-id"
+    )
+    settings.validate_runtime_auth()
+
+    assert settings.runtime_identity_token_file == token_file
+    for shown in (
+        repr(settings),
+        str(settings),
+        repr(settings.model_dump()),
+        settings.model_dump_json(),
+    ):
+        assert token not in shown
+
+
 def test_settings_reject_invalid_lease_and_logging_contracts():
     with pytest.raises(
         ValueError,

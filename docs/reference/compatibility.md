@@ -6,9 +6,9 @@ semantic versioning for these supported surfaces:
 - `ms_tau_sdk.create_app`, `ms_tau_sdk.TauSDKSettings`, and `ms_tau_sdk.__version__`;
 - the `ms-tau` command and its workspace-bound startup behavior;
 - documented `MAINSEQUENCE_TAU_*`, `MAINSEQUENCE_ENDPOINT`, `MAINSEQUENCE_AUTH_MODE`, and
-  `MAINSEQUENCE_RUNTIME_CREDENTIAL_*`, `MAINSEQUENCE_ACCESS_TOKEN`,
-  `MAINSEQUENCE_REFRESH_TOKEN`, `MAINSEQUENCE_CLI`, `TAU_LOCAL_*`, `TAU_EXCLUDE_BASE_TOOLS`, and
-  `TAU_EXCLUDE_MAINSEQUENCE_MCP` settings;
+  `MAINSEQUENCE_RUNTIME_CREDENTIAL_*`, `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE`,
+  `MAINSEQUENCE_ACCESS_TOKEN`, `MAINSEQUENCE_REFRESH_TOKEN`, `MAINSEQUENCE_CLI`, `TAU_LOCAL_*`,
+  `TAU_EXCLUDE_BASE_TOOLS`, and `TAU_EXCLUDE_MAINSEQUENCE_MCP` settings;
 - documented health, readiness, chat, response, session, and A2A HTTP/wire behavior;
 - packaged Tau defaults and Tau-native project `.tau` precedence; and
 - the documented absence of SDK-owned container/deployment artifacts and optional tool baggage.
