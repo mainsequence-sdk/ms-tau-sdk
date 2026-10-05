@@ -44,6 +44,20 @@ Both paths construct the same application. The project owns the dependency lock,
 deployable artifact, system packages, and any surrounding ASGI composition. There is no separate
 TAU image, overlay, or SDK-owned deployment.
 
+`create_app()` installs the runtime's request identity. When Main Sequence hosts the runtime, the
+application admits only requests that carry the platform's signed assertion, lets only a session's
+owner or an Organization admin address that session, and declares all this in
+`app.state.mainsequence_request_identity`. The platform launcher serves an application only with
+that declaration, read from the object it serves. Therefore:
+
+- export the object `create_app()` returns as the module's `app`. An application that mounts it
+  inside another one declares nothing, and the launcher refuses it;
+- do not add middleware or routes that take the caller from `X-User-UID` or other gateway headers,
+  and do not install a second request-identity integration; and
+- do not set `APP_NAME`, `FASTAPI_PUBLIC_BASE_URL`, or the `MAINSEQUENCE_CALLER_*` variables in the
+  repository. The platform sets them when it hosts the runtime, and local mode refuses to start
+  with them.
+
 ## Job-hosted batch execution
 
 ADR 0015 accepts a Python batch entry point, but it is **not implemented in this SDK version**.
@@ -106,7 +120,11 @@ When an ASGI shim exists, also import it without starting a second application i
 
 ```bash
 uv run python -c "from api.tau.main import app; print(type(app).__name__)"
+uv run python -c "from api.tau.main import app; print(app.state.mainsequence_request_identity)"
 ```
+
+The second command prints `{'installed': True, 'mode': 'local', 'public_ingress': ()}` outside
+hosting.
 
 Do not require the `mainsequence` Python distribution in the TAU dependency graph. Authentication
 and Main Sequence transport are implemented directly by `ms-tau-sdk`.

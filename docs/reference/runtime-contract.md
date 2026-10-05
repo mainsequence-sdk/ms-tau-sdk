@@ -45,6 +45,50 @@ The executable operation contract covers:
 The exact methods and paths are frozen in `tests/contract/test_http_surface.py`. Wire examples and
 schema behavior are tested rather than duplicated manually here.
 
+### Request identity
+
+`create_app()` declares request identity for the platform launcher in
+`app.state.mainsequence_request_identity`: `{"installed": True, "mode": "assertion",
+"public_ingress": ()}` when the runtime is hosted, and the same with `"mode": "local"` otherwise.
+The launcher serves an application only with this declaration, read from the application object it
+serves. The runtime is hosted when `MAINSEQUENCE_CALLER_AUTH_MODE=assertion` or when any of
+`APP_NAME`, `FASTAPI_PUBLIC_BASE_URL`, `MAINSEQUENCE_CALLER_ASSERTION_ISSUER` or
+`MAINSEQUENCE_CALLER_ASSERTION_JWKS_URL` is set; see
+[Settings and credentials](./settings.md#hosted-caller-authentication).
+
+In hosted mode every request carries one platform-signed assertion in
+`X-MainSequence-Caller-Assertion` (ADR 0019):
+
+| Route | Accepted assertion |
+| --- | --- |
+| `/internal/*` (internal dispatch and caller delivery) | Platform assertion, `typ` `mainsequence-platform-assertion+jwt`, with no caller |
+| Every other route, including `/health`, `/ready`, and `/version` | Caller assertion, `typ` `mainsequence-caller-assertion+jwt`, naming the caller in `sub` |
+
+- A missing, invalid, expired, duplicated, or wrong-kind assertion gets 401. A key set that cannot
+  be fetched gets 503. Both answers carry `{"detail": ...}` and `Cache-Control: no-store`.
+- The runtime never falls back to `X-User-UID` or any other header.
+- `OPTIONS` passes without an assertion. The launcher answers `/ms-health-deployment` and
+  `/__mainsequence/healthz` itself.
+- Handlers read the verified caller from `request.state.user` (`uid`, `team_uids`,
+  `is_organization_admin`) and `request.state.user_uid`. On a platform assertion both are `None`.
+- A user turn is stamped with the verified `sub`. An Agent turn keeps its provenance from the
+  gateway's `X-Caller-*` headers, and `X-Caller-Kind` stays required on chat and A2A messages.
+
+Outside hosted mode nothing is verified and every route behaves as before.
+
+### Session ownership
+
+In hosted mode, a request that addresses an existing session must come from the session's owner,
+the User the platform recorded as `created_by_user_uid`, or from an Organization admin
+(`is_organization_admin` in the caller assertion). Anyone else gets 403 before the runtime acts,
+on REST and JSON-RPC alike. The check covers chat, the session model read, session cancellation,
+A2A Message send and stream (the `contextId` session, and the session of a continued or existing
+Task), Task get, cancel, subscribe, and list by `contextId`, and the extended Agent Card. A Task
+list without `contextId` returns only Tasks of sessions the caller may address.
+
+The runtime never creates a session in managed mode: the platform creates it and records its
+owner. The platform's own `/internal/*` calls carry no caller and are not subject to the check.
+
 ### Chat turns and client disconnects
 
 A managed `/api/chat` turn is bound to the request that streams it: a client disconnect before the
@@ -90,7 +134,9 @@ Applications may register that optional, side-effect-free predicate once with
 `register_deployment_readiness_hook(app, hook)`. Hook failures and timeouts are
 reported only as sanitized not-ready responses. The existing `/ready` route is
 a compatibility alias over the same Tau predicate; the reserved platform route
-remains outside the SDK's public FastAPI operation surface.
+remains outside the SDK's public FastAPI operation surface. In hosted mode
+`/ready` is an application route like any other and needs a caller assertion;
+platform probes use the launcher's endpoint.
 
 ### Local-mode route boundary
 

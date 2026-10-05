@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 
 from ms_tau_sdk import __version__
 from ms_tau_sdk.api import a2a, chat, conversations, health, inspection, local_chat, sessions
+from ms_tau_sdk.api.request_identity import install_request_identity
 from ms_tau_sdk.application import ApplicationServices
 from ms_tau_sdk.errors import TauSDKError
 from ms_tau_sdk.logging import RequestContextMiddleware, configure_logging
@@ -109,6 +110,9 @@ def create_app(
     )
     app.state.settings = resolved
     install_tau_deployment_readiness_adapter(app)
+    # Added first, so it is the innermost middleware: request logging and CORS still wrap what it
+    # rejects. In hosted mode it admits a request only with the platform's signed assertion.
+    install_request_identity(app, resolved)
     if resolved.trusted_origins:
         app.add_middleware(
             CORSMiddleware,

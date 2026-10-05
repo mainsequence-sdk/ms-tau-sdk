@@ -12,6 +12,7 @@ from ms_tau_sdk.settings import TauSDKSettings
 
 from .dependencies import backend, runtime_manager, settings
 from .models import CancelRequest, SessionModelSelection
+from .request_identity import require_session_access
 
 router = APIRouter(prefix="/api/chat")
 BackendDep = Annotated[MainSequenceClient, Depends(backend)]
@@ -27,7 +28,9 @@ async def session_model(
 ) -> dict[str, object]:
     if config.local_mode:
         session_uid = config.local_session_uid(session_uid)
-    session = await client.get_session(session_uid)
+    session = await require_session_access(client, session_uid)
+    if session is None:
+        session = await client.get_session(session_uid)
     return {
         "sessionUid": session_uid,
         "model": {
@@ -81,6 +84,7 @@ async def cancel_session(
     session_uid = (
         config.local_session_uid(body.session_uid) if config.local_mode else body.session_uid
     )
+    await require_session_access(client, session_uid)
     state = await client.request_runtime_cancel(
         session_uid,
         message=body.message or "",

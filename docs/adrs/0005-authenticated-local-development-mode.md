@@ -33,6 +33,13 @@ a Main Sequence CLI found on the machine. The package still does not depend on o
 `mainsequence` and does not read the CLI's credential store. The environment JWT pair stays
 supported.
 
+Amended: 2026-10-05 by
+[ADR 0019](./0019-verified-request-identity-and-session-ownership.md) — local mode refuses to start
+when the platform's hosting settings make the runtime hosted (`MAINSEQUENCE_CALLER_AUTH_MODE=assertion`,
+`APP_NAME`, `FASTAPI_PUBLIC_BASE_URL`, `MAINSEQUENCE_CALLER_ASSERTION_ISSUER` or
+`MAINSEQUENCE_CALLER_ASSERTION_JWKS_URL`), and declares `local` request identity otherwise. Its
+request handling is unchanged.
+
 Amends, when accepted:
 
 - [ADR 0002: Runtime and protocol contracts](./0002-runtime-and-protocol-contracts.md); and

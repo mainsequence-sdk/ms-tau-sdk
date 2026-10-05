@@ -45,6 +45,35 @@ longer than 60 seconds ends the exchange with an error instead of a wait. HTTP 4
 platform did not accept the proof: the exchange fails at once, without a retry and without trying
 another proof.
 
+## Hosted caller authentication
+
+The platform sets these variables when it hosts the runtime. Their names are the platform's.
+
+| Environment variable | Meaning |
+| --- | --- |
+| `MAINSEQUENCE_CALLER_AUTH_MODE` | `assertion` makes the runtime hosted. `local` or an empty value leaves the decision to the variables below. Any other value is a settings error. |
+| `APP_NAME` | The release UID, a canonical lowercase UUID. Setting it makes the runtime hosted. |
+| `FASTAPI_PUBLIC_BASE_URL` | The release's public URL. Setting it makes the runtime hosted. |
+| `MAINSEQUENCE_CALLER_ASSERTION_ISSUER` | The issuer every assertion names in `iss`. Setting it makes the runtime hosted. |
+| `MAINSEQUENCE_CALLER_ASSERTION_JWKS_URL` | The HTTPS URL of the platform's public key set. Setting it makes the runtime hosted. |
+| `MAINSEQUENCE_ORGANIZATION_ENVIRONMENT_UID` | The Organization Environment UID, a canonical lowercase UUID. |
+
+This is the platform launcher's own rule: the runtime is hosted when
+`MAINSEQUENCE_CALLER_AUTH_MODE=assertion` or when any of `APP_NAME`, `FASTAPI_PUBLIC_BASE_URL`,
+`MAINSEQUENCE_CALLER_ASSERTION_ISSUER` or `MAINSEQUENCE_CALLER_ASSERTION_JWKS_URL` is set.
+`TauSDKSettings.request_identity_mode` reports `assertion` for a hosted runtime and `local`
+otherwise. A hosted runtime verifies the platform's signed assertion on every request; see the
+[runtime contract](./runtime-contract.md#request-identity).
+
+A hosted runtime needs the issuer, an HTTPS key-set URL, and both UIDs. `create_app()` fails with
+a configuration error that names each one that is missing or invalid. The key set is fetched from
+the platform with the `MAINSEQUENCE_TAU_BACKEND_*_TIMEOUT_SECONDS` timeouts and the
+`MAINSEQUENCE_TAU_BACKEND_MAX_RESPONSE_BYTES` limit. Like every setting, these variables are also
+read from the project `.env`; the platform's values in the environment take precedence.
+
+Do not set them for local development. Local mode refuses to start when they make the runtime
+hosted.
+
 ## Authenticated local development
 
 | Environment variable | Meaning |

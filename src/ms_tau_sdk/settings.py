@@ -23,7 +23,21 @@ RUNTIME_CREDENTIAL_SECRET_ENV = "MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET"
 RUNTIME_IDENTITY_TOKEN_FILE_ENV = "MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE"
 MAINSEQUENCE_CLI_ENV = "MAINSEQUENCE_CLI"
 MAINSEQUENCE_CLI_NAME = "mainsequence"
+# The variables the platform sets when it hosts the runtime. Their names are the platform's.
+CALLER_AUTH_MODE_ENV = "MAINSEQUENCE_CALLER_AUTH_MODE"
+CALLER_ASSERTION_ISSUER_ENV = "MAINSEQUENCE_CALLER_ASSERTION_ISSUER"
+CALLER_ASSERTION_JWKS_URL_ENV = "MAINSEQUENCE_CALLER_ASSERTION_JWKS_URL"
+RESOURCE_RELEASE_UID_ENV = "APP_NAME"
+FASTAPI_PUBLIC_BASE_URL_ENV = "FASTAPI_PUBLIC_BASE_URL"
+ORGANIZATION_ENVIRONMENT_UID_ENV = "MAINSEQUENCE_ORGANIZATION_ENVIRONMENT_UID"
+HOSTED_SIGNAL_ENVS = (
+    RESOURCE_RELEASE_UID_ENV,
+    FASTAPI_PUBLIC_BASE_URL_ENV,
+    CALLER_ASSERTION_ISSUER_ENV,
+    CALLER_ASSERTION_JWKS_URL_ENV,
+)
 LocalAuthSource = Literal["environment", "env_file", "cli"]
+RequestIdentityMode = Literal["assertion", "local"]
 
 
 def _default_state_root() -> Path:
@@ -105,6 +119,32 @@ class TauSDKSettings(BaseSettings):
     mainsequence_cli: Path | None = Field(
         default=None,
         validation_alias=MAINSEQUENCE_CLI_ENV,
+    )
+    # Caller authentication of a hosted runtime. The platform sets these when it hosts the runtime;
+    # `request_identity_mode` applies its rule. An empty value is the same as unset.
+    caller_auth_mode: RequestIdentityMode | None = Field(
+        default=None,
+        validation_alias=CALLER_AUTH_MODE_ENV,
+    )
+    caller_assertion_issuer: str | None = Field(
+        default=None,
+        validation_alias=CALLER_ASSERTION_ISSUER_ENV,
+    )
+    caller_assertion_jwks_url: str | None = Field(
+        default=None,
+        validation_alias=CALLER_ASSERTION_JWKS_URL_ENV,
+    )
+    resource_release_uid: str | None = Field(
+        default=None,
+        validation_alias=RESOURCE_RELEASE_UID_ENV,
+    )
+    fastapi_public_base_url: str | None = Field(
+        default=None,
+        validation_alias=FASTAPI_PUBLIC_BASE_URL_ENV,
+    )
+    organization_environment_uid: str | None = Field(
+        default=None,
+        validation_alias=ORGANIZATION_ENVIRONMENT_UID_ENV,
     )
     local_mode: bool = Field(default=False, validation_alias="TAU_LOCAL_MODE")
     exclude_base_tools: bool = Field(default=False, validation_alias="TAU_EXCLUDE_BASE_TOOLS")
@@ -348,6 +388,13 @@ class TauSDKSettings(BaseSettings):
             return None
         return value
 
+    @field_validator("caller_auth_mode", mode="before")
+    @classmethod
+    def ignore_empty_caller_auth_mode(cls, value: object) -> object:
+        # Only an empty value counts as unset, as for the platform launcher. Any other value must
+        # name a mode exactly.
+        return None if value == "" else value
+
     @field_validator("local_state_root", "state_root")
     @classmethod
     def normalize_state_roots(cls, value: Path) -> Path:
@@ -365,6 +412,12 @@ class TauSDKSettings(BaseSettings):
         if self.local_mode:
             if self.auth_mode != "jwt":
                 raise ValueError("TAU_LOCAL_MODE requires MAINSEQUENCE_AUTH_MODE=jwt")
+            if self.request_identity_mode == "assertion":
+                raise ValueError(
+                    "TAU_LOCAL_MODE cannot run with hosted caller authentication. Unset "
+                    f"{CALLER_AUTH_MODE_ENV}=assertion and {', '.join(HOSTED_SIGNAL_ENVS)}: "
+                    "the platform sets them only when it hosts the runtime"
+                )
             if self.host == "0.0.0.0" and "host" not in self.model_fields_set:
                 self.host = "127.0.0.1"
         elif self.auth_mode != "runtime_credential":
@@ -462,6 +515,27 @@ class TauSDKSettings(BaseSettings):
             missing.append(f"{RUNTIME_CREDENTIAL_SECRET_ENV} or {RUNTIME_IDENTITY_TOKEN_FILE_ENV}")
         if missing:
             raise ConfigurationError("Missing runtime credential settings: " + ", ".join(missing))
+
+    @property
+    def request_identity_mode(self) -> RequestIdentityMode:
+        """Name how requests are authenticated: ``assertion`` when hosted, ``local`` otherwise.
+
+        This is the platform launcher's rule. The runtime is hosted when
+        ``MAINSEQUENCE_CALLER_AUTH_MODE=assertion`` or when any of ``APP_NAME``,
+        ``FASTAPI_PUBLIC_BASE_URL``, ``MAINSEQUENCE_CALLER_ASSERTION_ISSUER`` or
+        ``MAINSEQUENCE_CALLER_ASSERTION_JWKS_URL`` is set. A hosted runtime verifies the
+        platform's signed assertion on every request; ``local`` keeps the request handling of a
+        runtime that is not hosted.
+        """
+        hosted = self.caller_auth_mode == "assertion" or any(
+            (
+                self.resource_release_uid,
+                self.fastapi_public_base_url,
+                self.caller_assertion_issuer,
+                self.caller_assertion_jwks_url,
+            )
+        )
+        return "assertion" if hosted else "local"
 
     @property
     def workspace_digest(self) -> str:

@@ -73,6 +73,12 @@ uv run uvicorn api.tau.main:app --host 0.0.0.0 --port 8787
 Both entry paths use the same settings, routers, authentication client, Tau lifecycle, persistence,
 streaming, and shutdown behavior.
 
+`create_app()` also installs request identity. When Main Sequence hosts the runtime, it admits only
+requests that carry the platform's signed assertion, and the platform launcher serves the
+application only because `create_app()` declares that in `app.state.mainsequence_request_identity`.
+Expose the application object `create_app()` returns, as above, rather than mounting it inside
+another application. See [request identity](../reference/runtime-contract.md#request-identity).
+
 ## Run in local development mode
 
 Use local mode when changing project code or `.tau` behavior and you do not want development

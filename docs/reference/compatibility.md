@@ -8,10 +8,19 @@ semantic versioning for these supported surfaces:
 - documented `MAINSEQUENCE_TAU_*`, `MAINSEQUENCE_ENDPOINT`, `MAINSEQUENCE_AUTH_MODE`, and
   `MAINSEQUENCE_RUNTIME_CREDENTIAL_*`, `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE`,
   `MAINSEQUENCE_ACCESS_TOKEN`, `MAINSEQUENCE_REFRESH_TOKEN`, `MAINSEQUENCE_CLI`, `TAU_LOCAL_*`,
-  `TAU_EXCLUDE_BASE_TOOLS`, and `TAU_EXCLUDE_MAINSEQUENCE_MCP` settings;
+  `TAU_EXCLUDE_BASE_TOOLS`, and `TAU_EXCLUDE_MAINSEQUENCE_MCP` settings, and the platform's
+  hosting settings `MAINSEQUENCE_CALLER_AUTH_MODE`, `MAINSEQUENCE_CALLER_ASSERTION_ISSUER`,
+  `MAINSEQUENCE_CALLER_ASSERTION_JWKS_URL`, `MAINSEQUENCE_ORGANIZATION_ENVIRONMENT_UID`,
+  `APP_NAME`, and `FASTAPI_PUBLIC_BASE_URL`;
+- the request-identity declaration `create_app` sets for the platform launcher;
 - documented health, readiness, chat, response, session, and A2A HTTP/wire behavior;
 - packaged Tau defaults and Tau-native project `.tau` precedence; and
 - the documented absence of SDK-owned container/deployment artifacts and optional tool baggage.
+
+A runtime the platform hosts admits a request only with the platform's signed assertion, and lets
+only a session's owner or an Organization admin address that session (ADR 0019). Callers of a
+hosted runtime go through the platform, which forwards the assertion; platform probes use the
+launcher's own endpoints. A runtime that is not hosted handles requests as before.
 
 The documented local-mode workflow is one `mainsequence login` and no token in the project `.env`:
 local mode asks the Main Sequence CLI for its access token. The `MAINSEQUENCE_ACCESS_TOKEN` and

@@ -55,6 +55,34 @@ The TAU SDK deliberately does not import the `mainsequence` package or read its 
 store. Backend URL, response status, and safe error detail may be logged; credential values are
 always redacted.
 
+## A hosted runtime refuses requests or does not start
+
+A runtime is hosted when `MAINSEQUENCE_CALLER_AUTH_MODE=assertion` or any of `APP_NAME`,
+`FASTAPI_PUBLIC_BASE_URL`, `MAINSEQUENCE_CALLER_ASSERTION_ISSUER` or
+`MAINSEQUENCE_CALLER_ASSERTION_JWKS_URL` is set. It then admits a request only with the platform's
+signed assertion in `X-MainSequence-Caller-Assertion`. The `request_identity.rejected` log event
+names the assertion the route required (`caller` or `platform`) and the reason, never the token.
+
+- **401 `A valid caller assertion is required.`** The request did not come through the platform, or
+  its assertion is missing, expired, duplicated, for another release or Environment, or a platform
+  assertion. `X-User-UID` and the other gateway headers are not accepted in its place. This includes
+  `/health`, `/ready`, and `/version`; platform probes use the launcher's `/ms-health-deployment`.
+- **401 `A valid platform assertion is required.`** A request to `/internal/*` did not carry the
+  platform's own assertion. Only the platform calls these routes.
+- **503 `Caller authentication is unavailable.`** The runtime could not fetch the platform's key set
+  from `MAINSEQUENCE_CALLER_ASSERTION_JWKS_URL`. It retries on the next request that needs the keys.
+- **403 `Only the session's owner or an Organization admin can address this session.`** The caller
+  is authenticated, but the session, or the session of the Task, was created by another User and
+  the caller is not an Organization admin.
+- **The application does not start.** `create_app()` names each hosting setting that is missing or
+  invalid: the issuer, an HTTPS key-set URL, and `APP_NAME` and
+  `MAINSEQUENCE_ORGANIZATION_ENVIRONMENT_UID` as canonical lowercase UUIDs. Local mode refuses to
+  start while any of these settings makes the runtime hosted; unset them for local development.
+- **The platform launcher refuses the application.** The launcher reads
+  `app.state.mainsequence_request_identity` from the application object it serves. Serve the
+  application `create_app()` returns; an application that mounts it inside another one declares
+  nothing.
+
 ## Local provider hydration is rejected
 
 Local mode requires the Main Sequence backend's authenticated-user hydration contract. The
