@@ -36,6 +36,11 @@ export MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET="<runtime-credential-secret>"
 The SDK exchanges this pair for short-lived access credentials. Do not put either value in source
 control or `.tau` files.
 
+A runtime deployed with a projected workload identity token gets
+`MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` instead of the secret. The SDK reads the token from that
+file for every exchange and needs no secret; see
+[Settings and credentials](../reference/settings.md#managed-authenticated-startup).
+
 Set `MAINSEQUENCE_ENDPOINT` only when the project must use a non-default Main Sequence API URL.
 
 ## Run

@@ -59,6 +59,11 @@ export MAINSEQUENCE_RUNTIME_CREDENTIAL_ID="<runtime-credential-id>"
 export MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET="<runtime-credential-secret>"
 ```
 
+A runtime that Main Sequence deploys with a projected workload identity token gets
+`MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` instead of the secret. The SDK then reads the token from
+that file for every exchange and never uses a secret. See
+[Settings and credentials](docs/reference/settings.md#managed-authenticated-startup).
+
 Start the service from the project workspace:
 
 ```bash

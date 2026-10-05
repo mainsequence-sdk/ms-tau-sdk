@@ -18,6 +18,9 @@ from .errors import ConfigurationError
 ENV_FILE = ".env"
 ACCESS_TOKEN_ENV = "MAINSEQUENCE_ACCESS_TOKEN"
 REFRESH_TOKEN_ENV = "MAINSEQUENCE_REFRESH_TOKEN"
+RUNTIME_CREDENTIAL_ID_ENV = "MAINSEQUENCE_RUNTIME_CREDENTIAL_ID"
+RUNTIME_CREDENTIAL_SECRET_ENV = "MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET"
+RUNTIME_IDENTITY_TOKEN_FILE_ENV = "MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE"
 MAINSEQUENCE_CLI_ENV = "MAINSEQUENCE_CLI"
 MAINSEQUENCE_CLI_NAME = "mainsequence"
 LocalAuthSource = Literal["environment", "env_file", "cli"]
@@ -60,6 +63,9 @@ class TauSDKSettings(BaseSettings):
         case_sensitive=True,
         extra="ignore",
         populate_by_name=True,
+        # The input holds credentials, so a validation error names the setting and the problem
+        # but never echoes the configured values.
+        hide_input_in_errors=True,
     )
 
     backend_url: str = Field(
@@ -72,11 +78,21 @@ class TauSDKSettings(BaseSettings):
     )
     runtime_credential_id: str | None = Field(
         default=None,
-        validation_alias="MAINSEQUENCE_RUNTIME_CREDENTIAL_ID",
+        validation_alias=RUNTIME_CREDENTIAL_ID_ENV,
     )
+    # A plain string, read by the exchange that sends it. It never appears in repr() or str(), so
+    # printing or logging the settings does not show it.
     runtime_credential_secret: str | None = Field(
         default=None,
-        validation_alias="MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET",
+        validation_alias=RUNTIME_CREDENTIAL_SECRET_ENV,
+        repr=False,
+    )
+    # The file that holds the runtime's projected workload identity token. When it is set, the
+    # runtime credential exchange proves the credential with that token instead of the secret.
+    # Only the path is a setting: the token is read by each exchange and never kept here.
+    runtime_identity_token_file: Path | None = Field(
+        default=None,
+        validation_alias=RUNTIME_IDENTITY_TOKEN_FILE_ENV,
     )
     access_token: SecretStr | None = Field(
         default=None,
@@ -325,9 +341,9 @@ class TauSDKSettings(BaseSettings):
         normalized = str(value or "").strip()
         return normalized or None
 
-    @field_validator("mainsequence_cli", mode="before")
+    @field_validator("mainsequence_cli", "runtime_identity_token_file", mode="before")
     @classmethod
-    def ignore_blank_mainsequence_cli(cls, value: object) -> object:
+    def ignore_blank_paths(cls, value: object) -> object:
         if isinstance(value, str) and not value.strip():
             return None
         return value
@@ -438,9 +454,12 @@ class TauSDKSettings(BaseSettings):
             return
         missing = []
         if not self.runtime_credential_id:
-            missing.append("MAINSEQUENCE_RUNTIME_CREDENTIAL_ID")
-        if not self.runtime_credential_secret:
-            missing.append("MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET")
+            missing.append(RUNTIME_CREDENTIAL_ID_ENV)
+        # The credential is proven with the projected workload identity token or with the
+        # secret. With a token file the secret is not needed. The file itself is read, and a
+        # missing or empty file reported, by each exchange, because the token is rotated.
+        if self.runtime_identity_token_file is None and not self.runtime_credential_secret:
+            missing.append(f"{RUNTIME_CREDENTIAL_SECRET_ENV} or {RUNTIME_IDENTITY_TOKEN_FILE_ENV}")
         if missing:
             raise ConfigurationError("Missing runtime credential settings: " + ", ".join(missing))
 

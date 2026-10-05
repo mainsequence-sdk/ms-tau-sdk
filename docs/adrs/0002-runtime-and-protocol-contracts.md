@@ -10,6 +10,11 @@ agent-targeted, sessionless model responses are no longer an SDK contract.
 Amended 2026-09-24 by [ADR 0011](./0011-independent-base-tool-and-main-sequence-mcp-exclusion.md):
 Main Sequence MCP projection is optional through a process setting.
 
+Amended 2026-10-05: the runtime credential can be proven with the projected workload identity token
+read from `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` instead of the secret, and the exchange retries
+throttled or temporarily unavailable answers a bounded number of times
+([issue #56](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/56)).
+
 ## Context
 
 The project identity changed, but its useful transport and execution behavior remains necessary.
@@ -19,9 +24,20 @@ Those contracts must be adopted explicitly without importing the former deployme
 
 The SDK adopts the following contracts:
 
-1. Runtime authentication requires `MAINSEQUENCE_RUNTIME_CREDENTIAL_ID` and
-   `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET`. The client exchanges them for short-lived access
-   credentials and never places secrets in project configuration, prompts, logs, or diagnostics.
+1. Runtime authentication requires `MAINSEQUENCE_RUNTIME_CREDENTIAL_ID` and one proof of that
+   credential. The client exchanges them for short-lived access credentials and never places
+   secrets or tokens in project configuration, prompts, logs, error messages, diagnostics, or the
+   environment.
+   - With `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` set, the proof is the projected workload
+     identity token in that file. The client reads the file for every exchange, because the token
+     is rotated, and sends it as `workload_identity_token`. It never reads or sends the secret,
+     and configuration checks do not require it. A missing, unreadable, or empty file is an error;
+     the client never falls back to the secret.
+   - Without it, the proof is `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET`, sent as
+     `credential_secret`.
+   - An exchange answered with 429 or 503 is retried up to three times, waiting as long as
+     `Retry-After` asks, up to 60 seconds, or with exponential backoff without it. A 401 fails at
+     once, without a retry and without another proof.
 2. Durable execution attaches to an existing backend session, acquires and renews one lease,
    validates provider-control evidence, restores snapshot/history state, and runs a Tau
    `CodingSession` in the project workspace.
