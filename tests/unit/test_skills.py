@@ -85,6 +85,7 @@ def test_sync_replaces_only_sdk_namespace_and_removes_retired_skills(tmp_path: P
     customization = (destination / "tau_project_customization" / "SKILL.md").read_text()
     assert "TAU_EXCLUDE_BASE_TOOLS" in customization
     assert "TAU_EXCLUDE_MAINSEQUENCE_MCP" in customization
+    assert "skill-scoped `read`" in customization
     assert "harness_agent.spec.env_vars" in customization
     assert "task_request_input" in customization
 

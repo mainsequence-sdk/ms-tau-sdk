@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.3.0 — 2026-10-05
+
+- Project skills stay available with `TAU_EXCLUDE_BASE_TOOLS=true`. Tau lists skills in the system
+  prompt only when a tool named `read` exists, so excluding the four coding tools also removed
+  every skill in `.tau/skills/`. The SDK now registers a `read` tool in their place that opens only
+  the files of the skills Tau discovered for the session: a skill's `SKILL.md` and the files in its
+  directory, such as `references/*.md`. It rejects every other path, including other workspace
+  files, system paths, `..` escapes, and symlinks that resolve outside the skill, so the process
+  environment and its credentials stay out of reach. It keeps Tau's `offset`, `limit`, and output
+  limits. With both exclusions set, the catalog is project tools, this `read`, and the two Task
+  controls. In this mode a project extension that registers `read` fails on session load and on
+  reload. With base tools included nothing changes. See the 2026-10-05 amendment of ADR 0011
+  ([#54](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/54)).
+
 ## 1.2.14 — 2026-10-01
 
 - The repository structure reference now shows Tau Board: the tree lists `packages/tau-board/` and

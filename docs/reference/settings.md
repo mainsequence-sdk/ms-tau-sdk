@@ -89,7 +89,7 @@ Sequence CLI is found. Managed startup fails if either runtime credential settin
 | `MAINSEQUENCE_TAU_PORT` | `8787` |
 | `MAINSEQUENCE_TAU_TRUSTED_ORIGINS` | Empty; comma-separated CORS origins, which can also read the `X-Agent-Session-Uid` and `x-vercel-ai-ui-message-stream` chat headers |
 | `MAINSEQUENCE_TAU_STARTUP_DEPENDENCIES_ENABLED` | `true` |
-| `TAU_EXCLUDE_BASE_TOOLS` | `false`; omit `read`, `write`, `edit`, and `bash` when `true` |
+| `TAU_EXCLUDE_BASE_TOOLS` | `false`; when `true`, replace `read`, `write`, `edit`, and `bash` with a `read` that serves only skill files |
 | `TAU_EXCLUDE_MAINSEQUENCE_MCP` | `false`; skip Main Sequence MCP connection, tools, resources, and resource prompt when `true` |
 | `MAINSEQUENCE_TAU_STATE_ROOT` | `$XDG_STATE_HOME/ms-tau-sdk`, else `~/.local/state/ms-tau-sdk` |
 

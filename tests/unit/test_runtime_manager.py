@@ -7,6 +7,7 @@ import pytest
 from tau_agent.session import SessionInfoEntry
 from tau_agent.tools import AgentTool
 from tau_coding.resources import ResourceDiagnostic
+from tau_coding.skills import Skill
 
 from ms_tau_sdk.backend.models import (
     AgentSession,
@@ -525,9 +526,18 @@ async def test_runtime_tool_sources_are_independent(
 
     config = load_coding_session.await_args.args[0]
     names = {tool.name for tool in runtime.coding_session.tools}
-    expected = {"project_tool", "task_request_input", "task_request_authorization"}
+    expected = {"read", "project_tool", "task_request_input", "task_request_authorization"}
     if not exclude_base_tools:
-        expected.update({"read", "write", "edit", "bash"})
+        expected.update({"write", "edit", "bash"})
+    else:
+        skill_file = tmp_path / "skills/demo/SKILL.md"
+        skill_file.parent.mkdir(parents=True)
+        skill_file.write_text("demo skill", encoding="utf-8")
+        loaded_session.skills = (Skill(name="demo", path=skill_file, content="demo skill"),)
+        read = next(tool for tool in runtime.coding_session.tools if tool.name == "read")
+        assert read.description.startswith("Read a file of one of the available skills")
+        result = await read.execute("call-1", {"path": str(skill_file)})
+        assert "demo skill" in result.content[0].text
     if not exclude_mainsequence_mcp:
         expected.add("mainsequence_test")
         connect.assert_awaited_once()
@@ -591,6 +601,27 @@ async def test_project_cannot_override_task_control_on_load_or_after_reload(tmp_
             "next turn", durability_task=lambda: asyncio.create_task(asyncio.sleep(0))
         ):
             pass
+
+
+@pytest.mark.asyncio
+async def test_project_cannot_replace_skill_read_when_base_tools_are_excluded(tmp_path):
+    manager, backend, _providers = _manager_dependencies(tmp_path, [_bootstrap("session-1")])
+    manager.settings = manager.settings.model_copy(update={"exclude_base_tools": True})
+    loaded_session = _coding_session(
+        extension_names=("project_extension",),
+        extension_tool_sources={"read": "project_extension"},
+    )
+    with (
+        patch("ms_tau_sdk.runtime.manager.MainSequenceMCPClient.connect"),
+        patch(
+            "ms_tau_sdk.runtime.manager.CodingSession.load",
+            AsyncMock(side_effect=lambda config: _load_coding_session(loaded_session, config)),
+        ),
+    ):
+        with pytest.raises(ConfigurationError, match="cannot replace reserved SDK tools: read"):
+            await manager.get("session-1")
+    loaded_session.aclose.assert_awaited_once()
+    backend.release_runtime_lease.assert_awaited_once()
 
 
 @pytest.mark.asyncio

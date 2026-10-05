@@ -77,6 +77,7 @@ from ms_tau_sdk.tools.mainsequence_mcp import (
     create_mainsequence_mcp_tools,
     mainsequence_mcp_resource_prompt,
 )
+from ms_tau_sdk.tools.skill_read import create_skill_read_tool
 from ms_tau_sdk.tools.task_control import create_task_control_tools
 
 from .session import ActiveSessionRuntime, PlatformEvent
@@ -1123,7 +1124,11 @@ class SessionRuntimeManager:
                     "lease_token": lease.lease_token,
                 }
             tools = []
-            if not self.settings.exclude_base_tools:
+            if self.settings.exclude_base_tools:
+                # Tau lists skills only when a tool named `read` exists. The tool runs only in
+                # this session's turns, after `coding_session` is bound below.
+                tools.append(create_skill_read_tool(cwd=cwd, skills=lambda: coding_session.skills))
+            else:
                 tools.extend(create_coding_tools(cwd=cwd))
             if mcp_client is not None:
                 tools.extend(
@@ -1140,12 +1145,16 @@ class SessionRuntimeManager:
             require_complete_project_catalog = (
                 self.settings.exclude_base_tools and self.settings.exclude_mainsequence_mcp
             )
+            reserved_sdk_tool_names = (
+                frozenset({"read"}) if self.settings.exclude_base_tools else frozenset()
+            )
 
             def check_catalog(session: CodingSession) -> None:
                 validate_tool_catalog(
                     session,
                     sdk_tool_names=sdk_tool_names,
                     require_complete_project_catalog=require_complete_project_catalog,
+                    reserved_sdk_tool_names=reserved_sdk_tool_names,
                 )
 
             coding_session = await CodingSession.load(

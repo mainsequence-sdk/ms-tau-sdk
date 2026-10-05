@@ -52,7 +52,7 @@ Two independent process settings select the host-provided tools. Both default to
 
 | Setting | Effect when `true` |
 | --- | --- |
-| `TAU_EXCLUDE_BASE_TOOLS` | Omit Tau's `read`, `write`, `edit`, and `bash`. |
+| `TAU_EXCLUDE_BASE_TOOLS` | Replace Tau's `read`, `write`, `edit`, and `bash` with a skill-scoped `read`. |
 | `TAU_EXCLUDE_MAINSEQUENCE_MCP` | Skip Main Sequence MCP connection, tools, resources, and resource prompt. |
 
 Set them in `harness_agent.spec.env_vars` in a managed repository workflow, in the process
@@ -67,15 +67,18 @@ Task controls requires an actual Task context and is specified by ADR 0015.
 | Exclude base tools | Exclude Main Sequence MCP | Model-facing sources |
 | --- | --- | --- |
 | `false` | `false` | Coding tools, Main Sequence MCP, project extension tools, A2A Task controls. |
-| `true` | `false` | Main Sequence MCP, project extension tools, A2A Task controls. |
+| `true` | `false` | Skill-scoped `read`, Main Sequence MCP, project extension tools, A2A Task controls. |
 | `false` | `true` | Coding tools, project extension tools, A2A Task controls. |
-| `true` | `true` | Project extension tools and A2A Task controls. |
+| `true` | `true` | Skill-scoped `read`, project extension tools, and A2A Task controls. |
 
 The A2A Task controls are `task_request_input` and `task_request_authorization`. They remain
 available in every mode for the agent's own Task; extensions must not register those names.
 Register project tools under `.tau/extensions/` and verify the effective catalog after loading.
-With `read` excluded, Tau 0.4.2 does not insert discovered skills into the system prompt. Put
-needed guidance in the effective `.tau/SYSTEM.md` or expose it through a declared retrieval tool.
+With base tools excluded, the skill-scoped `read` keeps `.tau/skills/` available: it opens a
+discovered skill's `SKILL.md` and the files in its directory, such as `references/*.md`, and
+rejects every other path, including symlinks that resolve outside the skill. Tau lists the skills
+in the system prompt because a tool named `read` exists. Extensions must not register `read` in
+this mode.
 Excluding coding tools does not sandbox extension Python code.
 
 ## Invariants extensions must not replace
