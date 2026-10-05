@@ -9,7 +9,7 @@ import math
 import os
 import subprocess
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
@@ -60,7 +60,7 @@ class BackendAuth(Protocol):
 
 @dataclass(slots=True)
 class AccessToken:
-    value: str
+    value: str = field(repr=False)  # the bearer token itself never appears in repr() or str()
     token_type: str
     expires_at: float | None
 

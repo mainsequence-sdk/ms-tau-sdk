@@ -63,6 +63,9 @@ class TauSDKSettings(BaseSettings):
         case_sensitive=True,
         extra="ignore",
         populate_by_name=True,
+        # The input holds credentials, so a validation error names the setting and the problem
+        # but never echoes the configured values.
+        hide_input_in_errors=True,
     )
 
     backend_url: str = Field(
@@ -77,9 +80,12 @@ class TauSDKSettings(BaseSettings):
         default=None,
         validation_alias=RUNTIME_CREDENTIAL_ID_ENV,
     )
+    # A plain string, read by the exchange that sends it. It never appears in repr() or str(), so
+    # printing or logging the settings does not show it.
     runtime_credential_secret: str | None = Field(
         default=None,
         validation_alias=RUNTIME_CREDENTIAL_SECRET_ENV,
+        repr=False,
     )
     # The file that holds the runtime's projected workload identity token. When it is set, the
     # runtime credential exchange proves the credential with that token instead of the secret.

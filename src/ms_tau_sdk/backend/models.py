@@ -355,7 +355,9 @@ class TauRuntimeBootstrap(BackendModel):
     runtime_state: RuntimeState
     history: SessionEntryList
     resume_snapshot: TauResumeSnapshot | None = None
-    provider_credentials: dict[str, Any]
+    # The hydrated provider credentials hold their keys in plain text, so they never appear in
+    # repr() or str().
+    provider_credentials: dict[str, Any] = Field(repr=False)
     provider_control: ProviderControl
     runtime_capabilities: dict[str, str]
     bootstrap_replayed: bool = False
@@ -394,7 +396,9 @@ class ProviderCredential(BackendModel):
     expires_at: datetime | None = None
     account_id: str | None = None
     base_url: str | None = None
-    headers: dict[str, str] = Field(default_factory=dict)
+    # An organization_custom credential carries its key in a header, so the headers never appear
+    # in repr() or str().
+    headers: dict[str, str] = Field(default_factory=dict, repr=False)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     def secret(self) -> str:

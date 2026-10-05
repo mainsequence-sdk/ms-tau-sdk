@@ -33,6 +33,11 @@ The token stays inside the exchange. The settings hold only the path of its file
 copy the token into the environment, a file, a log, an error message, or anything it hands to
 project code.
 
+The settings never show a credential. `repr()` and `str()` of `TauSDKSettings`, and every log
+event that carries it, leave out `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET` and mask the local
+token pair. A settings validation error names the variable and the problem, and never repeats a
+configured value.
+
 The exchange is sent again, up to three times, when the platform answers HTTP 429 (throttled) or
 503 (verification temporarily unavailable). The SDK waits as long as `Retry-After` asks, up to 60
 seconds, and 1, 2, then 4 seconds when the answer has no usable `Retry-After`. A `Retry-After`

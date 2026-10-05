@@ -17,6 +17,19 @@
   `runtime.auth.exchange.completed` log event names the proof in `proof` and now also reports
   failed exchanges. See the 2026-10-05 amendment of ADR 0002
   ([#56](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/56)).
+- Printing or logging the settings no longer shows the runtime credential secret. `repr()` and
+  `str()` of `TauSDKSettings` showed `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET` in plain text, and so
+  did every log event that carried the settings object. Three other objects showed a credential
+  the same way, and now leave it out of `repr()` and `str()`:
+  - `AccessToken`: the Main Sequence access token;
+  - `ProviderCredential`: the key that an `organization_custom` credential carries in `headers`;
+  - `TauRuntimeBootstrap`: the hydrated provider credentials in `provider_credentials`.
+
+  A settings validation error no longer repeats the configured values. When the secret or a
+  local token was the last value configured, the error printed its last characters. The error
+  still names the variable and the problem. The SDK reads and sends every value as before, and
+  `runtime_credential_secret` is still a `str`
+  ([#57](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/57)).
 
 ## 1.3.0 — 2026-10-05
 
