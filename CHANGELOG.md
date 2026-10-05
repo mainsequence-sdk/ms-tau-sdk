@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.0 — 2026-10-05
 
 - `create_app()` installs request identity, so a hosted Agent starts on a platform launcher that
   requires it. The application declares it in `app.state.mainsequence_request_identity`:
