@@ -37,7 +37,7 @@ async def session_model(
             "provider": session.active_provider,
             "model": session.active_model,
             "thinkingLevel": session.active_thinking,
-            "customId": session.custom_id,
+            **({"customId": session.custom_id} if session.custom_id is not None else {}),
         },
     }
 
@@ -78,7 +78,7 @@ async def select_session_model(
             "provider": session.active_provider,
             "model": session.active_model,
             "thinkingLevel": session.active_thinking,
-            "customId": session.custom_id,
+            **({"customId": session.custom_id} if session.custom_id is not None else {}),
         },
     }
 
