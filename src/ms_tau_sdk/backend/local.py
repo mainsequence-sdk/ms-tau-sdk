@@ -1658,7 +1658,9 @@ class LocalDevelopmentBackend(MainSequenceClient):
         session_uid: str,
         request: TauRuntimeBootstrapRequest,
     ) -> TauRuntimeBootstrap:
-        def stored_selection():
+        def stored_selection() -> tuple[
+            tuple[str, str, str | None], str | None, str | None, str | None
+        ]:
             with closing(self._connect()) as connection:
                 row = connection.execute(
                     "SELECT * FROM sessions WHERE uid = ?", (session_uid,)

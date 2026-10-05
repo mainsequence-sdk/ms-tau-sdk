@@ -360,7 +360,7 @@ class MainSequenceClient:
         self, *, organization_environment_uid: str | None = None
     ) -> dict[str, Any]:
         """Read the authenticated user's safe provider catalog from Main Sequence."""
-        options = (
+        options: dict[str, Any] = (
             {"params": {"organization_environment_uid": organization_environment_uid}}
             if organization_environment_uid
             else {}
