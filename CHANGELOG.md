@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.3.0 — 2026-10-05
 
 - Project skills stay available with `TAU_EXCLUDE_BASE_TOOLS=true`. Tau lists skills in the system
   prompt only when a tool named `read` exists, so excluding the four coding tools also removed
