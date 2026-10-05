@@ -1,6 +1,8 @@
 # Changelog
 
-## 2.0.0 — 2026-10-05
+## 2.0.1 — 2026-10-05
+
+Published as 2.0.1: the number 2.0.0 belongs to a release that was yanked on 2026-09-19, and PyPI never reuses a version.
 
 - `create_app()` installs request identity, so a hosted Agent starts on a platform launcher that
   requires it. The application declares it in `app.state.mainsequence_request_identity`:
