@@ -152,6 +152,10 @@ class TauSDKSettings(BaseSettings):
         default=False,
         validation_alias="TAU_EXCLUDE_MAINSEQUENCE_MCP",
     )
+    local_custom_id: str | None = Field(default=None, validation_alias="TAU_LOCAL_CUSTOM_ID")
+    local_organization_environment_uid: str | None = Field(
+        default=None, validation_alias="TAU_LOCAL_ORGANIZATION_ENVIRONMENT_UID"
+    )
     local_provider: str | None = Field(default=None, validation_alias="TAU_LOCAL_PROVIDER")
     local_model: str | None = Field(default=None, validation_alias="TAU_LOCAL_MODEL")
     local_thinking: (

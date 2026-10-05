@@ -85,3 +85,34 @@ the exact loaded tool without starting a model turn or adding conversation or Ta
 The workbench is not a sandbox or dry-run layer. The tool executes with the Tau process's real
 filesystem, network, environment, and credential access. Coding tools, Main Sequence MCP tools,
 and A2A Task-control tools are visible but cannot be executed from this project-tool workbench.
+
+
+## Named providers and sharing
+
+The existing `MainSequenceClient.update_session_config`,
+`hydrate_provider_credential`, and `hydrate_local_provider_credential` methods
+accept `custom_id=None`. Omission keeps existing request bodies. To select a
+configured record, pass its name, for example `custom_id="openai-work"`.
+The provider integration key remains unchanged. Explicit names must match the
+backend response; a missing or substituted selection fails.
+
+Local setup accepts `TAU_LOCAL_CUSTOM_ID` and
+`TAU_LOCAL_ORGANIZATION_ENVIRONMENT_UID`. Both are optional. Local sessions
+persist the resolved credential UID and Environment alongside their model
+selection. Resume and refresh retain that binding; changing an idle session's
+selection uses the existing session-model operation. Local SQLite upgrades add
+nullable columns without changing existing session identifiers or schema versions.
+
+`AgentSession.custom_id`, `model_provider_credential_uid` and
+`organization_environment_uid` expose the safe selected identity. Hydrated
+`ProviderCredential` also carries `owner_user_uid`. Old server responses may
+omit these fields. Custom endpoints retain their existing identifier and
+configuration envelope and do not require `custom_id`.
+
+Sharing a configured provider lets recipients receive and copy its credentials
+in their own runtime, including local Tau. Only share with people and workload
+operators you trust. Their usage counts against the provider quota or billing
+associated with those credentials. Removing access stops future credential
+retrieval; credentials already received may work until they expire or are revoked
+at the provider. Never include keys or tokens in model-visible messages, logs,
+or ordinary metadata responses.

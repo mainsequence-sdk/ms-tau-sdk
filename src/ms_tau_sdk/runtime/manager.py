@@ -2080,6 +2080,7 @@ class SessionRuntimeManager:
         provider: str,
         model: str,
         thinking_level: str | None,
+        custom_id: str | None = None,
     ) -> None:
         """Switch an idle session and reload it with backend-authorized evidence."""
         if not self.settings.local_mode:
@@ -2105,6 +2106,7 @@ class SessionRuntimeManager:
                         provider=provider,
                         model=model,
                         thinking_level=thinking_level,
+                        **({"custom_id": custom_id} if custom_id is not None else {}),
                     )
                 except BaseException:
                     runtime.evicting = False
@@ -2119,6 +2121,11 @@ class SessionRuntimeManager:
                         provider=previous.active_provider,
                         model=previous.active_model,
                         thinking_level=previous.active_thinking,
+                        **(
+                            {"custom_id": previous.custom_id}
+                            if previous.custom_id is not None
+                            else {}
+                        ),
                     )
                     await self._load(session_uid)
                 except Exception:

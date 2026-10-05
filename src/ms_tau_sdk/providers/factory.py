@@ -291,6 +291,11 @@ class ProviderFactory:
         credential = evidence.credential
         if credential.provider != provider_name:
             raise ConfigurationError("Backend credential does not match the selected provider")
+        if (
+            session.model_provider_credential_uid is not None
+            and credential.model_provider_credential_uid != session.model_provider_credential_uid
+        ):
+            raise ConfigurationError("Backend credential does not match the session binding")
         thinking_level = self.validate_execution(
             evidence.provider_control,
             provider_name=provider_name,
@@ -323,6 +328,15 @@ class ProviderFactory:
                         raise ConfigurationError(
                             "Provider-control execution capability changed during "
                             "credential refresh"
+                        )
+                    if cached_credential.model_provider_credential_uid is not None and (
+                        refreshed.credential.model_provider_credential_uid
+                        != cached_credential.model_provider_credential_uid
+                        or refreshed.credential.organization_environment_uid
+                        != cached_credential.organization_environment_uid
+                    ):
+                        raise ConfigurationError(
+                            "Credential refresh changed the configured provider"
                         )
                     cached_credential = refreshed.credential
                 return cached_credential
