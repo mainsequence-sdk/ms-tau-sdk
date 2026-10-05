@@ -70,6 +70,12 @@ from ms_tau_sdk.runtime.task_context import (
 from ms_tau_sdk.settings import TauSDKSettings
 
 from .dependencies import backend, runtime_manager, settings
+from .request_identity import (
+    SessionAccessDeniedError,
+    require_session_access,
+    sessions_the_caller_may_address,
+    verified_user_uid,
+)
 
 router = APIRouter()
 BackendDep = Annotated[MainSequenceClient, Depends(backend)]
@@ -471,7 +477,31 @@ def _a2a_turn_provenance(
             "actorKind": "agent",
             "actorUid": f"local-a2a-client-{config.workspace_digest}",
         }
-    return turn_provenance_from_request("a2a", request.headers)
+    return turn_provenance_from_request(
+        "a2a",
+        request.headers,
+        verified_user_uid=verified_user_uid(config),
+    )
+
+
+def _requested_context_id(body: dict[str, Any]) -> str:
+    """Return the session a Message request names, before any of its parts is prepared."""
+
+    message = body.get("message")
+    return str(message.get("contextId") or "").strip() if isinstance(message, dict) else ""
+
+
+async def _require_task_session_access(
+    client: MainSequenceClient,
+    task: AgentTask,
+    *,
+    checked: str = "",
+) -> None:
+    """Admit the request to the session of ``task`` unless that session was already checked."""
+
+    session_uid = task.agent_session_uid or task.context_id
+    if not session_uid or session_uid != checked:
+        await require_session_access(client, session_uid)
 
 
 def _output_contract(body: dict[str, Any]) -> StrictJsonContract:
@@ -2204,6 +2234,9 @@ async def message_send(
         provenance = _a2a_turn_provenance(config, request)
     except CallerIdentityError as error:
         return _caller_identity_rejection(request, error)  # type: ignore[return-value]
+    requested_context_id = _requested_context_id(body)
+    if requested_context_id:
+        await require_session_access(client, requested_context_id)
     message, prompt = _request_parts(body, config)
     history_length = _body_history_length(body)
     _bind_a2a_context(
@@ -2233,6 +2266,7 @@ async def message_send(
                 detail="A Task continuation requires configuration.responseKind 'task'",
             )
         existing_task = await client.get_task_by_protocol_id(continuation_task_id)
+        await _require_task_session_access(client, existing_task, checked=requested_context_id)
         continued_message = _task_message_for_backend(
             message,
             context_id=existing_task.context_id,
@@ -2300,6 +2334,8 @@ async def message_send(
             )
             task = await _task_with_history(client, task, history_length=history_length)
             return {"task": _task_payload(task, history_length=history_length)}
+        # An existing Task with this ID is answered only to a caller who may address its session.
+        await _require_task_session_access(client, task, checked=requested_context_id)
         if config.local_mode and task.status == "submitted":
             recovered_prompt, recovered_contract, recovered_provenance = (
                 _recovery_execution_contract(task, config)
@@ -2367,6 +2403,9 @@ async def message_stream(
         a2a_extensions=a2a_extensions,
         streaming=True,
     )
+    requested_context_id = _requested_context_id(body)
+    if requested_context_id:
+        await require_session_access(client, requested_context_id)
     message, prompt = _request_parts(body, config)
     history_length = _body_history_length(body)
     _bind_a2a_context(
@@ -2389,6 +2428,7 @@ async def message_stream(
     )
     task = creation.task
     if not creation.created:
+        await _require_task_session_access(client, task, checked=requested_context_id)
         if config.local_mode and task.status == "submitted":
             recovered_prompt, recovered_contract, recovered_provenance = (
                 _recovery_execution_contract(task, config)
@@ -2428,10 +2468,22 @@ async def list_tasks(
     historyLength: int | None = Query(default=None, ge=0),
 ) -> dict[str, Any]:
     history_length = _history_length(historyLength)
+    if contextId:
+        await require_session_access(client, contextId)
     tasks = await client.list_tasks(
         context_id=contextId or "",
         history_length=history_length,
     )
+    if not contextId:
+        # A list across sessions keeps only the Tasks of sessions the caller may address.
+        visible = await sessions_the_caller_may_address(
+            client,
+            (task.agent_session_uid or task.context_id for task in tasks),
+        )
+        if visible is not None:
+            tasks = [
+                task for task in tasks if (task.agent_session_uid or task.context_id) in visible
+            ]
     return {"tasks": [_task_payload(task, history_length=history_length) for task in tasks]}
 
 
@@ -2442,6 +2494,7 @@ async def cancel_task(
     manager: RuntimeManagerDep,
 ) -> dict[str, Any]:
     task = await client.get_task_by_protocol_id(task_id)
+    await _require_task_session_access(client, task)
     await manager.cancel(task.context_id)
     return {"task": _task_payload(await client.cancel_task(task.uid))}
 
@@ -2454,6 +2507,7 @@ async def subscribe_task(
     after_sequence: int | None = Query(default=None, alias="afterSequence", ge=0),
 ) -> StreamingResponse | JSONResponse:
     snapshot = await client.get_task_snapshot_by_protocol_id(task_id)
+    await _require_task_session_access(client, snapshot.task)
     if snapshot.task.status in TERMINAL:
         return _unsupported_operation_rest_error(
             "SubscribeToTask is unavailable for a terminal Task; use GetTask."
@@ -2474,6 +2528,7 @@ async def get_task(
 ) -> dict[str, Any]:
     history_length = _history_length(historyLength)
     task = await client.get_task_by_protocol_id(task_id, history_length=history_length)
+    await _require_task_session_access(client, task)
     return {"task": _task_payload(task, history_length=history_length)}
 
 
@@ -2513,6 +2568,7 @@ async def extended_agent_card(
     resolved_uid = agent_session_uid or session_uid or context_id
     if not resolved_uid:
         raise HTTPException(status_code=400, detail="agent_session_uid is required")
+    await require_session_access(client, resolved_uid)
     envelope = await client.get_agent_card(resolved_uid)
     payload = envelope.model_dump(mode="json")
     payload["agent_card"] = _effective_agent_card(envelope.agent_card)
@@ -2590,6 +2646,9 @@ async def json_rpc(
                 a2a_extensions=a2a_extensions,
                 streaming=True,
             )
+            requested_context_id = _requested_context_id(params)
+            if requested_context_id:
+                await require_session_access(client, requested_context_id)
             message, prompt = _request_parts(params, config)
             history_length = _body_history_length(params)
             _bind_a2a_context(
@@ -2613,6 +2672,7 @@ async def json_rpc(
             )
             task = creation.task
             if not creation.created:
+                await _require_task_session_access(client, task, checked=requested_context_id)
                 if config.local_mode and task.status == "submitted":
                     recovered_prompt, recovered_contract, recovered_provenance = (
                         _recovery_execution_contract(task, config)
@@ -2669,6 +2729,7 @@ async def json_rpc(
             )
         elif method in {"SubscribeToTask", "tasks/subscribe"}:
             snapshot = await client.get_task_snapshot_by_protocol_id(task_id())
+            await _require_task_session_access(client, snapshot.task)
             if snapshot.task.status in TERMINAL:
                 return _unsupported_operation_json_rpc_error(
                     request_id,
@@ -2698,6 +2759,9 @@ async def json_rpc(
                 "error": {"code": -32601, "message": "Method not found"},
             }
         return {"jsonrpc": "2.0", "id": request_id, "result": result}
+    except SessionAccessDeniedError:
+        # Refused access to a session is answered as HTTP 403 on every transport.
+        raise
     except HTTPException as error:
         return {
             "jsonrpc": "2.0",

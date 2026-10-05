@@ -90,6 +90,14 @@ from ms_tau_sdk import create_app
 app = create_app()
 ```
 
+When Main Sequence hosts the runtime, `create_app()` admits a request only with the platform's
+signed assertion in `X-MainSequence-Caller-Assertion`, never on gateway identity headers, and lets
+only a session's owner or an Organization admin address that session. It declares this request
+identity to the platform launcher in `app.state.mainsequence_request_identity`; the launcher serves
+only an application that declares it, so serve the application `create_app()` returns. Outside
+hosting, requests are handled as before. See
+[request identity](docs/reference/runtime-contract.md#request-identity).
+
 Job-hosted batch execution is an [accepted design](docs/adrs/0015-job-hosted-batch-execution.md)
 with implementation pending. It will run this SDK's configured Tau composition for one assignment
 inside a project Job, close it, and exit without starting Uvicorn. The Job continues to own its

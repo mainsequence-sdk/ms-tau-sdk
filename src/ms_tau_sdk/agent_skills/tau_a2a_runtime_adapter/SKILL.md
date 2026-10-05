@@ -25,6 +25,9 @@ The SDK owns:
 - preserving each tool's canonical name and metadata through host normalization;
 - privately attaching active caller-session proof when a tool advertises
   `mainsequence.ai/requires-caller-session-proof/v1: true`;
+- verifying the platform's signed caller or platform assertion on every inbound request of a
+  hosted runtime, and admitting a request to a session or its Tasks only for the session's owner
+  or an Organization admin;
 - translating inbound A2A requests into the shared TAU runtime; and
 - translating runtime events and results into validated A2A responses.
 

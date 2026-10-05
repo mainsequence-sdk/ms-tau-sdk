@@ -15,6 +15,14 @@ read from `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` instead of the secret, and 
 throttled or temporarily unavailable answers a bounded number of times
 ([issue #56](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/56)).
 
+Amended 2026-10-05 by
+[ADR 0019](./0019-verified-request-identity-and-session-ownership.md): a hosted runtime admits a
+request only with the platform's signed caller or platform assertion, `create_app()` declares
+request identity for the platform launcher, and only a session's owner or an Organization admin
+can address that session
+([issues #59](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/59) and
+[#60](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/60)).
+
 ## Context
 
 The project identity changed, but its useful transport and execution behavior remains necessary.
@@ -58,6 +66,9 @@ The SDK adopts the following contracts:
    composition counts and digests.
 9. Application startup and shutdown have one owner. Shutdown stops new work, drains or cancels
    bounded work, closes Tau sessions and MCP, releases leases, and closes the shared HTTP client.
+10. A hosted runtime authenticates every inbound request with the platform's signed assertion and
+    lets only a session's owner or an Organization admin address that session. ADR 0019 holds the
+    contract.
 
 External HTTP field names that are part of an existing service contract remain wire details; they
 do not define local SDK runtime roles or deployment modes.

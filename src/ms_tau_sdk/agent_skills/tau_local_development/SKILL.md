@@ -35,6 +35,10 @@ The SDK looks for the CLI in `MAINSEQUENCE_CLI`, then beside the Python interpre
 CLI. Do not add token lines to `.env`. A pair found there still works, but it is deprecated and
 startup logs a warning. `mainsequence refresh-token` run in that directory removes the lines.
 
+Do not set `APP_NAME`, `FASTAPI_PUBLIC_BASE_URL`, `MAINSEQUENCE_CALLER_AUTH_MODE=assertion`, or the
+`MAINSEQUENCE_CALLER_ASSERTION_*` variables. The platform sets them when it hosts a runtime, and
+local mode refuses to start with them.
+
 Set `MAINSEQUENCE_ENDPOINT` only for a non-default platform endpoint. The CLI session must be for
 the same endpoint. Local mode binds to `127.0.0.1:8787` by default. Treat an explicit public bind
 as privileged exposure: each accepted request can use the authenticated user's live Main Sequence

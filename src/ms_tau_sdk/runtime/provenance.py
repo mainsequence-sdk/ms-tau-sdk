@@ -4,10 +4,13 @@ Every bounded ``user`` turn on a protected message route is stamped with a
 tau-native custom entry so backend history can tell a human turn from an agent
 turn, and which one, without a new chat role.
 
-Identity comes from the request headers the coding-agent gateway sets from
-Django's validation verdict (tdag-django ADR-0043). ``X-Caller-Kind`` is
-mandatory: a protected route rejects the request before any session work when
-it is absent or invalid. Nothing in a request body is trusted for identity.
+Identity comes from the request headers the platform's gateway sets after it
+validated the request. ``X-Caller-Kind`` is mandatory: a protected route
+rejects the request before any session work when it is absent or invalid.
+Nothing in a request body is trusted for identity. In hosted mode a ``user``
+caller is the User that the verified caller assertion names, never the
+``X-User-UID`` header; Agent-caller provenance still comes from the
+``X-Caller-*`` headers.
 """
 
 from __future__ import annotations
@@ -91,14 +94,20 @@ def _is_canonical_uuid(value: str) -> bool:
         return False
 
 
-def validate_caller_identity(headers: Mapping[str, str]) -> CallerIdentity:
+def validate_caller_identity(
+    headers: Mapping[str, str],
+    *,
+    verified_user_uid: str | None = None,
+) -> CallerIdentity:
     """Return the caller identity carried by gateway headers, or raise.
 
     Rules (ADR-28 amendment 2):
 
     - ``X-Caller-Kind`` must be present and exactly ``user`` or ``agent``.
-    - ``user``: ``X-User-UID`` must be a canonical lowercase UUID and the
-      Agent-specific caller headers must be absent or empty.
+    - ``user``: the caller is ``verified_user_uid`` when a verified caller
+      assertion named it, and ``X-User-UID`` is then not read. Otherwise
+      ``X-User-UID`` must be a canonical lowercase UUID. The Agent-specific
+      caller headers must be absent or empty.
     - ``agent``: ``X-Caller-Agent-UID`` and ``X-Caller-Coding-Agent-Service-UID``
       must be canonical lowercase UUIDs; ``X-Caller-Agent-Session-UID`` must be
       canonical when present.
@@ -120,7 +129,9 @@ def validate_caller_identity(headers: Mapping[str, str]) -> CallerIdentity:
     session_uid = _header(headers, CALLER_AGENT_SESSION_UID_HEADER)
 
     if kind == "user":
-        if not _is_canonical_uuid(user_uid):
+        if verified_user_uid is not None:
+            user_uid = verified_user_uid
+        elif not _is_canonical_uuid(user_uid):
             failing.append(USER_UID_HEADER)
         for name, value in zip(
             _AGENT_ONLY_HEADERS, (agent_uid, service_uid, session_uid), strict=True
@@ -166,17 +177,21 @@ def build_turn_provenance(channel: TurnChannel) -> TurnProvenance:
 def turn_provenance_from_request(
     channel: TurnChannel,
     headers: Mapping[str, str],
+    *,
+    verified_user_uid: str | None = None,
 ) -> TurnProvenance:
     """Build the stamp for a protected route from gateway-verified headers.
 
     ``origin`` follows ``X-Caller-Kind`` only; the route never decides it.
-    Raises :class:`CallerIdentityError` when the identity is missing or invalid,
-    so callers reject the request before any session work.
+    ``verified_user_uid`` is the User a verified caller assertion named; see
+    :func:`validate_caller_identity`. Raises :class:`CallerIdentityError` when
+    the identity is missing or invalid, so callers reject the request before any
+    session work.
     """
 
     if channel not in _ORIGIN_BY_CHANNEL:
         raise ValueError(f"Unknown turn channel: {channel!r}")
-    identity = validate_caller_identity(headers)
+    identity = validate_caller_identity(headers, verified_user_uid=verified_user_uid)
     stamp: TurnProvenance = {
         "channel": channel,
         "origin": identity.kind,

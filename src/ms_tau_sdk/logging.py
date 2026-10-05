@@ -23,6 +23,7 @@ from structlog.contextvars import (
     bind_contextvars,
     clear_contextvars,
     get_contextvars,
+    unbind_contextvars,
 )
 from structlog.typing import EventDict, Processor, WrappedLogger
 
@@ -541,6 +542,32 @@ def bind_request_log_fields(scope: Scope, **fields: object) -> None:
     bind_contextvars(**clean)
 
 
+def bind_request_identity_log_fields(
+    scope: Scope,
+    *,
+    user_uid: str | None,
+    auth_outcome: str,
+) -> None:
+    """Replace the request's identity log fields with what request identity established.
+
+    The access log first describes the caller from gateway headers. A runtime that verifies
+    the platform's signed assertion states the verified user, or none, instead.
+    """
+
+    state = scope.setdefault("state", {})
+    request_fields = state.get("request_log_fields")
+    if isinstance(request_fields, dict) and user_uid is None:
+        request_fields.pop("user_uid", None)
+    if user_uid is None:
+        unbind_contextvars("user_uid")
+    bind_request_log_fields(
+        scope,
+        principal_type="user" if user_uid else "anonymous",
+        auth_outcome=auth_outcome,
+        user_uid=user_uid,
+    )
+
+
 def _content_length(scope: Scope) -> int | None:
     value = _request_field(scope, b"content-length")
     try:
@@ -818,6 +845,7 @@ class RequestContextMiddleware:
 
 __all__ = [
     "RequestContextMiddleware",
+    "bind_request_identity_log_fields",
     "bind_request_log_fields",
     "configure_logging",
     "conversation_log_fields",

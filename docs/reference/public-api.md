@@ -19,6 +19,16 @@ The application lifespan owns startup and shutdown of authentication, the backen
 construction, MCP, durable sessions, leases, background tasks, and the local A2A Task reconciler.
 Consumers should run the ASGI lifespan rather than manually starting private services.
 
+`create_app` also installs request identity. It declares it to the platform launcher in
+`app.state.mainsequence_request_identity` as `{"installed": True, "mode": ..., "public_ingress": ()}`,
+with `mode` `assertion` when the platform hosts the runtime and `local` otherwise. In hosted mode
+it admits a request only with the platform's signed assertion, and handlers read the verified
+caller from `request.state.user` (`uid`, `team_uids`, `is_organization_admin`) and
+`request.state.user_uid`. The launcher reads the declaration from the application object it serves:
+serve the application `create_app` returns rather than mounting it inside another one, and do not
+install a second request-identity integration on it. See the
+[runtime contract](./runtime-contract.md#request-identity).
+
 ## `TauSDKSettings`
 
 A Pydantic settings model for process, workspace, transport, persistence, and logging controls. A

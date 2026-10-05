@@ -22,6 +22,7 @@ from ms_tau_sdk.runtime.provenance import (
 
 from .dependencies import runtime_manager
 from .models import ChatRequest
+from .request_identity import require_session_access, verified_user_uid
 
 router = APIRouter(prefix="/api")
 RuntimeManagerDep = Annotated[SessionRuntimeManager, Depends(runtime_manager)]
@@ -61,7 +62,11 @@ async def chat(
         }
     else:
         try:
-            provenance = turn_provenance_from_request("chat", request.headers)
+            provenance = turn_provenance_from_request(
+                "chat",
+                request.headers,
+                verified_user_uid=verified_user_uid(manager.settings),
+            )
         except CallerIdentityError as error:
             logger.warning(
                 "turn.caller_identity_rejected",
@@ -77,6 +82,8 @@ async def chat(
         session_uid = manager.settings.local_session_uid(body.session_uid)
     elif body.session_uid:
         session_uid = body.session_uid
+        if manager.settings.request_identity_mode == "assertion":
+            await require_session_access(manager.backend, session_uid)
     else:
         raise HTTPException(status_code=422, detail="sessionUid is required")
     try:

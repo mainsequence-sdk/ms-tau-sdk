@@ -1,5 +1,39 @@
 # Changelog
 
+## 2.0.0 — 2026-10-05
+
+- `create_app()` installs request identity, so a hosted Agent starts on a platform launcher that
+  requires it. The application declares it in `app.state.mainsequence_request_identity`:
+  `{"installed": True, "mode": "assertion", "public_ingress": ()}` when Main Sequence hosts the
+  runtime and `"mode": "local"` otherwise. Hosted means `MAINSEQUENCE_CALLER_AUTH_MODE=assertion`
+  or any of `APP_NAME`, `FASTAPI_PUBLIC_BASE_URL`, `MAINSEQUENCE_CALLER_ASSERTION_ISSUER` or
+  `MAINSEQUENCE_CALLER_ASSERTION_JWKS_URL` set, the launcher's own rule. A hosted runtime admits a
+  request only with the platform's signed assertion in `X-MainSequence-Caller-Assertion`: a
+  platform assertion on `/internal/*`, a caller assertion on every other route, `/health`,
+  `/ready` and `/version` included. It verifies the Ed25519 signature against the key set at
+  `MAINSEQUENCE_CALLER_ASSERTION_JWKS_URL`, refreshed once for an unknown `kid`, plus the exact
+  type, the exact claim set, the issuer, the release in `APP_NAME`, the Environment in
+  `MAINSEQUENCE_ORGANIZATION_ENVIRONMENT_UID`, and a lifetime of at most 300 seconds. A missing,
+  invalid, duplicated or wrong-kind assertion gets 401, and a key set that cannot be fetched gets
+  503. The runtime no longer takes a caller from `X-User-UID` in hosted mode: a user turn is
+  stamped with the verified `sub`, while Agent-caller provenance still comes from the gateway's
+  `X-Caller-*` headers. Handlers read the verified caller from `request.state.user`. A hosted
+  configuration that lacks a setting fails at `create_app()` and names it, and local mode refuses
+  to start with the hosting settings. Outside hosting nothing changes. The SDK now depends directly
+  on PyJWT (`crypto`) and `cryptography`, and still not on `mainsequence`. Upgrade note: callers of
+  a hosted runtime must go through the platform, which forwards the assertion, and platform probes
+  use the launcher's own endpoints. See ADR 0019
+  ([#59](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/59)).
+- A hosted runtime lets only a session's owner or an Organization admin address that session. The
+  owner is the User the platform recorded as the session's `created_by_user_uid`, compared with the
+  verified caller; an Organization admin is a caller whose assertion says `is_organization_admin`.
+  Anyone else gets 403 before the runtime acts, on chat, the session model, session cancellation,
+  A2A Message send and stream, Task get, cancel, subscribe and list, and the extended Agent Card,
+  over REST and JSON-RPC alike. A Task list without `contextId` returns only Tasks of sessions the
+  caller may address. The platform's own `/internal/*` calls are not subject to the check, and
+  local mode keeps its own owner scope. See ADR 0019
+  ([#60](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/60)).
+
 ## 1.4.0 — 2026-10-05
 
 - A managed runtime can prove its runtime credential with a projected workload identity token
