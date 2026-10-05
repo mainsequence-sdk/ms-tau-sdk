@@ -57,18 +57,22 @@ The host process sets two independent booleans, both `false` by default:
 
 | Environment variable | When `true` |
 | --- | --- |
-| `TAU_EXCLUDE_BASE_TOOLS` | Omit Tau's `read`, `write`, `edit`, and `bash`. |
+| `TAU_EXCLUDE_BASE_TOOLS` | Replace Tau's `read`, `write`, `edit`, and `bash` with a `read` that serves only skill files. |
 | `TAU_EXCLUDE_MAINSEQUENCE_MCP` | Do not connect to Main Sequence MCP or inject its tools, resources, or resource prompt. |
 
 Project extension tools remain in either mode. `task_request_input` and
 `task_request_authorization` always remain for the agent's own A2A Task and cannot be replaced by
 a project tool. Set these variables in `harness_agent.spec.env_vars` for managed deployments, or in
 the process environment for local `ms-tau`; Python applications can set the matching
-`TauSDKSettings` fields. With both exclusions enabled, the catalog consists of project tools plus
-the two Task controls. If only one is enabled, the other built-in source remains. A project prompt
-or Agent Card skill description does not remove tools. Without `read`, Tau 0.4.2 does not insert
-discovered skills into the system prompt, so supply needed guidance in `.tau/SYSTEM.md` or through
-a declared retrieval tool.
+`TauSDKSettings` fields. With both exclusions enabled, the catalog consists of project tools, the
+skill-scoped `read`, and the two Task controls. If only one is enabled, the other built-in source
+remains. A project prompt or Agent Card skill description does not remove tools.
+
+With base tools excluded, project skills in `.tau/skills/` stay available. The skill-scoped `read`
+opens a discovered skill's `SKILL.md` and the files in its directory, such as `references/*.md`,
+and rejects every other path, including symlinks that resolve outside the skill. Because a tool
+named `read` exists, Tau still lists the skills in the system prompt. A project extension cannot
+register `read` in this mode.
 
 ## Inspect and test project tools locally
 

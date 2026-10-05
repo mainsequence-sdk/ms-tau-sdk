@@ -18,6 +18,7 @@ def validate_tool_catalog(
     *,
     sdk_tool_names: frozenset[str],
     require_complete_project_catalog: bool,
+    reserved_sdk_tool_names: frozenset[str] = frozenset(),
 ) -> None:
     """Reject extension overrides and catalog drift before a model can use tools."""
     sources = session.extension_tool_sources
@@ -25,6 +26,11 @@ def validate_tool_catalog(
     if reserved:
         raise ConfigurationError(
             "Project extensions cannot replace A2A Task controls: " + ", ".join(sorted(reserved))
+        )
+    replaced = reserved_sdk_tool_names & sources.keys()
+    if replaced:
+        raise ConfigurationError(
+            "Project extensions cannot replace reserved SDK tools: " + ", ".join(sorted(replaced))
         )
     names = [tool.name for tool in session.tools]
     expected = sdk_tool_names | sources.keys()
