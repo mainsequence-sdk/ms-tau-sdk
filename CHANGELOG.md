@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.4.0 — 2026-10-05
 
 - A managed runtime can prove its runtime credential with a projected workload identity token
   instead of the bootstrap secret. With the new `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` setting,
