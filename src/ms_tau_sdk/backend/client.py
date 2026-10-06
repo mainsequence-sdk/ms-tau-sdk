@@ -890,13 +890,26 @@ class MainSequenceClient:
             }
         )
 
-    async def create_task(self, payload: Mapping[str, Any]) -> AgentTaskCreateResult:
+    async def create_task(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        caller_assertion: str | None = None,
+    ) -> AgentTaskCreateResult:
+        """Create an A2A Task, or answer the existing one with the same ID.
+
+        ``caller_assertion`` is the verified caller assertion of the request that asks for the
+        Task. Presented beside the runtime's credential, it lets the platform record that person
+        as the Task's requester, which the answer names in ``requester_user_uid``.
+        """
+
         data, status_code = await self._request(
             "POST",
             AGENT_TASKS,
             json=payload,
             idempotent=True,
             include_status=True,
+            headers={ASSERTION_HEADER: caller_assertion} if caller_assertion else None,
         )
         return AgentTaskCreateResult(
             task=AgentTask.model_validate(data),
@@ -1175,12 +1188,21 @@ class MainSequenceClient:
         self,
         task_uid: str,
         message: Mapping[str, Any],
+        *,
+        caller_assertion: str | None = None,
     ) -> AgentTask:
+        """Continue an interrupted A2A Task.
+
+        ``caller_assertion`` is the verified caller assertion of the request that continues it,
+        so that the platform can record that person as the continuation's requester.
+        """
+
         data = await self._request(
             "POST",
             agent_task_operation(task_uid, "continue"),
             json=message,
             idempotent=True,
+            headers={ASSERTION_HEADER: caller_assertion} if caller_assertion else None,
         )
         return AgentTask.model_validate(data)
 

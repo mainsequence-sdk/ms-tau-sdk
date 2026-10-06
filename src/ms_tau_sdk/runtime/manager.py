@@ -1719,9 +1719,10 @@ class SessionRuntimeManager:
     ) -> Requester | None:
         """Name the verified person a turn serves, or None.
 
-        A Task turn serves the person the platform's dispatch names. A chat or A2A Message turn
-        serves its verified caller only when the platform recorded that same person as the turn's
-        requester, which it does for a person who owns the session and never for an Agent caller.
+        A Task turn serves the person its execution context names, as the platform recorded the
+        Task's requester. A chat or A2A Message turn serves its verified caller only when the
+        platform recorded that same person as the turn's requester, which it does for a person who
+        owns the session and never for an Agent caller.
         """
 
         if not self._requester_identity_verified():

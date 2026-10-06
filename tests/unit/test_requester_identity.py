@@ -29,8 +29,15 @@ from tau_agent.provider_events import AssistantDoneEvent
 from tau_ai.fake import FakeProvider
 
 from ms_tau_sdk import create_app, current_requester, requester_client
-from ms_tau_sdk.api.a2a import RESPONSE_KIND_EXTENSION_URI, REST_BASE
+from ms_tau_sdk.api.a2a import (
+    RESPONSE_KIND_EXTENSION_URI,
+    REST_BASE,
+    _create_backend_task,
+    _requester_named_by_task,
+    _task_caller_assertion,
+)
 from ms_tau_sdk.api.dependencies import backend, runtime_manager, settings
+from ms_tau_sdk.api.request_identity import _CALLER_ASSERTION_SCOPE_KEY
 from ms_tau_sdk.application import ApplicationServices
 from ms_tau_sdk.backend.assertions import ASSERTION_HEADER, CallerAssertion, VerifiedCaller
 from ms_tau_sdk.backend.client import LeaseProof, MainSequenceClient
@@ -692,7 +699,8 @@ async def test_task_attempt_turns_never_receive_the_request_assertion(
 
     assert response.status_code == 200, response.text
     assert [turn["task_attempt"] for turn in manager.turns] == [True]
-    # The request's caller is not a Task's requester: the platform's dispatch names that person.
+    # The Task answer of this fake names no requester, so the attempt has none; the turn start of
+    # a Task attempt never presents the assertion.
     assert manager.turns[0]["assertion"] is None
     assert manager.turns[0]["task_requester"] is None
 
@@ -1545,3 +1553,137 @@ async def test_a_caller_delivery_turn_is_the_platforms_and_has_no_requester(
             "task_requester": None,
         }
     ]
+
+
+# --- A Task the request creates or continues -------------------------------------------------
+
+TASK_REQUESTER_ANSWERS = [
+    pytest.param(OWNER_UID, "human", THE_REQUESTER, id="recorded"),
+    pytest.param(None, None, None, id="nobody_recorded"),
+    pytest.param(OTHER_UID, "human", None, id="someone_else_recorded"),
+    pytest.param(OWNER_UID, "workload", None, id="not_a_person"),
+]
+
+
+def _answered_task(uid: str | None, identity_type: str | None, status: str = "submitted"):
+    return _task(status).model_copy(
+        update={"requester_user_uid": uid, "requester_identity_type": identity_type}
+    )
+
+
+@pytest.mark.parametrize("route", sorted(TASK_TURN_REQUESTS))
+@pytest.mark.parametrize(("uid", "identity_type", "expected"), TASK_REQUESTER_ANSWERS)
+async def test_a_task_the_request_creates_presents_its_assertion_and_serves_its_requester(
+    served_platform_keys,
+    tmp_path,
+    asgi_client,
+    route,
+    uid,
+    identity_type,
+    expected,
+):
+    path, body = TASK_TURN_REQUESTS[route]
+    app, manager = _hosted_routes(served_platform_keys, tmp_path)
+    manager.backend.create_task.return_value = AgentTaskCreateResult(
+        task=_answered_task(uid, identity_type),
+        created=True,
+    )
+    raw = served_platform_keys.caller_assertion(team_uids=[TEAM_UID])
+    headers = {
+        **USER_CALLER_HEADERS,
+        ASSERTION_HEADER: raw,
+        "A2A-Extensions": RESPONSE_KIND_EXTENSION_URI,
+    }
+
+    async with asgi_client(app) as http:
+        response = await http.post(path, json=body, headers=headers)
+    await manager.run_background()
+
+    assert response.status_code == 200, response.text
+    create = manager.backend.create_task.await_args
+    assert create.kwargs == {"caller_assertion": raw}
+    # The assertion goes only in the header, never into the Task the platform persists.
+    assert raw not in json.dumps(create.args[0])
+    assert [turn["task_attempt"] for turn in manager.turns] == [True]
+    assert manager.turns[0]["task_requester"] == expected
+    # A Task attempt never presents the assertion when it starts its turn.
+    assert manager.turns[0]["assertion"] is None
+    assert raw not in response.text
+
+
+@pytest.mark.parametrize(("uid", "identity_type", "expected"), TASK_REQUESTER_ANSWERS)
+async def test_a_task_the_request_continues_presents_its_assertion_and_serves_its_requester(
+    served_platform_keys,
+    tmp_path,
+    asgi_client,
+    uid,
+    identity_type,
+    expected,
+):
+    app, manager = _hosted_routes(served_platform_keys, tmp_path)
+    manager.backend.get_task_by_protocol_id.return_value = _task("input_required")
+    manager.backend.continue_task.return_value = _answered_task(uid, identity_type, "working")
+    raw = served_platform_keys.caller_assertion(team_uids=[TEAM_UID])
+    body = _message(configuration={"responseKind": "task", "returnImmediately": True})
+    body["message"]["taskId"] = "task-1"
+
+    async with asgi_client(app) as http:
+        response = await http.post(
+            f"{REST_BASE}/message:send",
+            json=body,
+            headers={
+                **USER_CALLER_HEADERS,
+                ASSERTION_HEADER: raw,
+                "A2A-Extensions": RESPONSE_KIND_EXTENSION_URI,
+            },
+        )
+    await manager.run_background()
+
+    assert response.status_code == 200, response.text
+    proceed = manager.backend.continue_task.await_args
+    assert proceed.args[0] == "backend-task-1"
+    assert proceed.kwargs == {"caller_assertion": raw}
+    assert raw not in json.dumps(proceed.args[1])
+    assert [turn["task_requester"] for turn in manager.turns] == [expected]
+    assert manager.turns[0]["assertion"] is None
+
+
+async def test_an_expired_assertion_is_not_presented_for_a_task(tmp_path):
+    client = _platform_client(_managed_settings(tmp_path))
+    client.create_task.return_value = AgentTaskCreateResult(
+        task=_answered_task(OWNER_UID, "human"),
+        created=True,
+    )
+    expired = _assertion(lifetime_seconds=-1)
+
+    creation = await _create_backend_task(
+        client,
+        message=_message()["message"],
+        task_id="task-1",
+        local_mode=False,
+        caller_assertion=expired,
+    )
+
+    assert client.create_task.await_args.kwargs == {}
+    assert _requester_named_by_task(creation.task, None) is None
+
+
+@pytest.mark.parametrize("mode", ["hosted", "local", "expired", "platform_call"])
+def test_only_a_valid_assertion_of_a_hosted_request_is_presented_for_a_task(
+    platform_keys,
+    tmp_path,
+    mode,
+):
+    hosted = platform_keys.hosted_settings(tmp_path)
+    config = hosted.model_copy(update={"local_mode": True}) if mode == "local" else hosted
+    assertion = _assertion(lifetime_seconds=-1 if mode == "expired" else 300)
+    scope = {} if mode == "platform_call" else {_CALLER_ASSERTION_SCOPE_KEY: assertion}
+    request = SimpleNamespace(scope=scope)
+
+    presented = _task_caller_assertion(request, config)  # type: ignore[arg-type]
+
+    assert presented is (assertion if mode == "hosted" else None)
+    task = _answered_task(OWNER_UID, "human")
+    assert _requester_named_by_task(task, presented) == (
+        THE_REQUESTER if mode == "hosted" else None
+    )

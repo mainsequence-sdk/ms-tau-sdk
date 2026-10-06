@@ -15,13 +15,17 @@
   Organization admin enabled the Agent for it. When a hosted runtime starts a chat or A2A Message
   turn, it sends the verified caller assertion of the request in `X-MainSequence-Caller-Assertion`
   with the `PATCH /api/v1/agent-sessions/<uid>/tau-runtime-activity/` transition that marks the
-  turn active, and nowhere else. The platform answers with `requester_user_uid`, the person it
-  recorded as the turn's requester, or null. An A2A Task attempt started by the platform's
-  dispatch takes its requester from the dispatch's `requester_user_uid` when
-  `requester_identity_type` is `human`. Two new public functions:
+  turn active. The platform answers with `requester_user_uid`, the person it recorded as the turn's
+  requester, or null. A hosted request that creates a Task (`POST /api/v1/agent-tasks/`) or
+  continues one (`POST /api/v1/agent-tasks/<uid>/continue/`) sends the same header with that call,
+  so that the platform records the Task's requester. A Task attempt that the request runs itself
+  serves the request's verified caller when the platform's Task answer names that User as
+  `requester_user_uid` with `requester_identity_type` `human`; a Task attempt started by the
+  platform's dispatch takes its requester from the dispatch's same two facts. Two new public
+  functions:
   - `current_requester()` returns that person inside the turn (`uid`, `team_uids`), or `None` for
-    Agent callers, the platform's own calls, local mode, a runtime that is not hosted, a Task
-    attempt that no dispatch started, and code outside a turn;
+    Agent callers, the platform's own calls, local mode, a runtime that is not hosted, and code
+    outside a turn;
   - `requester_client()` returns a client bound to the turn. `request(method, path, ...)` calls a
     platform API path with the runtime's credential and `X-MainSequence-Acting-For-Session`,
     `X-MainSequence-Lease-Holder` and `X-MainSequence-Lease-Token`, sent only to the platform base
@@ -31,13 +35,14 @@
     `runtime_lease_` raises a `PermissionError` with that code, and without a requester
     `requester_client()` raises one at once.
 
-  The assertion stays in its request's scope and goes only to the turn it starts. It is not sent
-  once expired, never by a Task attempt, and never in local mode. The assertion, the lease proof,
-  the runtime credential and application tokens never reach a log line, a persisted entry, model
-  context, a tool result, the UI stream or history, and the binding ends with the turn. The
+  The assertion stays in its request's scope and goes only to the turn start, Task creation or Task
+  continuation of that request. It is not sent once expired, never by the turn start of a Task
+  attempt, never on the platform's own calls, and never in local mode. The assertion, the lease
+  proof, the runtime credential and application tokens never reach a log line, a persisted entry,
+  model context, a tool result, the UI stream or history, and the binding ends with the turn. The
   `tau-project-customization` skill teaches tools to use both functions, to return only business
   results, and states what people are told about this access. Upgrade note: nothing changes for
-  an Agent that does not use them. Requester-bound calls need a platform that records turn
+  an Agent that does not use them. Requester-bound calls need a platform that records turn and Task
   requesters; until it does, `current_requester()` returns `None`. See the 2026-10-06 amendment of
   ADR 0019 ([issue #66](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/66)).
 

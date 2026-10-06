@@ -8,7 +8,9 @@ and the platform finds the person in its own records:
 - a chat or A2A Message turn of a hosted runtime presents the verified caller assertion of the
   request that started it when it marks the turn active, and the platform answers with the person
   it recorded as the turn's requester, or nobody;
-- an A2A Task turn takes the requester the platform's dispatch names for the Task.
+- a hosted request that creates or continues an A2A Task presents the assertion with that call, and
+  a Task attempt takes the requester the platform recorded for the Task: from its answer to that
+  request, or from its dispatch.
 
 ``current_requester()`` returns that person inside the turn. ``requester_client()`` makes
 requester-bound calls for extension tools: each one names the session and carries the runtime's
@@ -383,7 +385,8 @@ def current_requester() -> Requester | None:
 
     - A chat or A2A Message turn of a hosted runtime: the verified caller of the request that
       started it, when the platform recorded that person as the turn's requester.
-    - An A2A Task turn: the person the platform's dispatch names as the Task's requester.
+    - An A2A Task attempt: the person the platform recorded as the Task's requester, named in its
+      answer to the request that created or continued the Task, or in its dispatch.
     - Otherwise None: an Agent caller, the platform's own calls, local mode, or outside a turn.
     """
 

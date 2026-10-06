@@ -2445,7 +2445,14 @@ class LocalDevelopmentBackend(MainSequenceClient):
 
         return await self._run(operation)
 
-    async def create_task(self, payload: Mapping[str, Any]) -> AgentTaskCreateResult:
+    async def create_task(
+        self,
+        payload: Mapping[str, Any],
+        *,
+        caller_assertion: str | None = None,
+    ) -> AgentTaskCreateResult:
+        # Local mode has no caller assertion and records no requester.
+        del caller_assertion
         task_id = str(payload.get("task_id") or "").strip()
         requested_context = str(payload.get("context_id") or "").strip()
         if not task_id or not requested_context:
@@ -3476,7 +3483,12 @@ class LocalDevelopmentBackend(MainSequenceClient):
         self,
         task_uid: str,
         message: Mapping[str, Any],
+        *,
+        caller_assertion: str | None = None,
     ) -> AgentTask:
+        # Local mode has no caller assertion and records no requester.
+        del caller_assertion
+
         def operation() -> AgentTask:
             with closing(self._connect()) as connection, connection:
                 connection.execute("BEGIN IMMEDIATE")

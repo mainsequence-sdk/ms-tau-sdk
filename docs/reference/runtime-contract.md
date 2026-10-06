@@ -102,6 +102,12 @@ it is working on, and the platform finds the person in its own records (ADR 0019
   carries it, only while it is valid, and never for a Task attempt, in local mode, or outside
   hosting. The answer is the usual runtime state plus `requester_user_uid`: the person the
   platform recorded as the turn's requester, or `null`.
+- **Task creation and continuation.** When a hosted request creates a Task
+  (`POST /api/v1/agent-tasks/`) or continues one (`POST /api/v1/agent-tasks/<uid>/continue/`), the
+  runtime sends the request's verified caller assertion in the same header, under the same rules.
+  The answer names the Task's recorded requester in `requester_user_uid` and
+  `requester_identity_type`. A Task attempt that the request runs itself serves the request's
+  verified caller when the answer names that User with `requester_identity_type` `human`.
 - **Task dispatch.** `POST /internal/a2a/task-dispatch` carries `requester_user_uid` and
   `requester_identity_type`. A hosted runtime takes the Task attempt's requester from them when
   `requester_identity_type` is `human`.

@@ -64,13 +64,14 @@ them), or `None`:
 | --- | --- |
 | Chat (`POST /api/chat`) or A2A Message turn (`message:send` and JSON-RPC `SendMessage` answered with a Message) of a hosted runtime | The verified caller of the request, when the platform recorded that person as the turn's requester. The platform records a person who owns the session; it records nobody for an Agent caller. |
 | A2A Task attempt started by the platform's dispatch | The person the dispatch names as the Task's requester. `team_uids` is empty. |
-| A2A Task attempt started by the request that created or continued the Task (`message:send` answered with a Task, `message:stream`) | `None` |
+| A2A Task attempt run by the request that created or continued the Task (`message:send` answered with a Task, `message:stream`) of a hosted runtime | The verified caller of the request, when the platform's answer to that creation or continuation names that person as the Task's requester (`requester_identity_type` `human`). |
 | Agent callers, the platform's own calls (caller delivery), local mode, a runtime that is not hosted, and code outside a turn, such as Tau Board's tool workbench | `None` |
 
 When a hosted chat or A2A Message turn starts, the runtime presents its request's verified caller
-assertion with the transition that marks the turn active, so that the platform can record who
-asked; a Task attempt never presents one. The assertion is not available to tools, and it is never
-logged, persisted, or placed in model context, tool results, the UI stream or history.
+assertion with the transition that marks the turn active. When a hosted request creates or
+continues a Task, it presents the assertion with that call. Either way the platform records who
+asked. The assertion is not available to tools, and it is never logged, persisted, or placed in
+model context, tool results, the UI stream or history.
 
 `current_requester()` is valid only while the turn runs. When the turn ends it returns `None`,
 also in a task that the tool started and left running.

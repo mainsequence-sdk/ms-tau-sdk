@@ -25,7 +25,8 @@ class TaskExecutionContext:
     lease_token: str
     interruption_status: TaskInterruptionStatus | None = None
     interruption_message: dict[str, Any] | None = None
-    # The person the platform's dispatch names as the Task's requester, or None.
+    # The person the platform recorded as the Task's requester, as its dispatch or its answer to the
+    # request that runs this attempt names them, or None.
     requester: Requester | None = None
 
     def request_interruption(

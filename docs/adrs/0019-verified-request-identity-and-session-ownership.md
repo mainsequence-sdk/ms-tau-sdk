@@ -8,10 +8,10 @@ Issues: [#59](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/59) and
 [#60](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/60)
 
 Amended 2026-10-06: a hosted chat or A2A Message turn presents the verified caller assertion of
-the request that started it when it marks the turn active, so that the platform can record who
-asked. A Task attempt takes its requester from the platform's dispatch instead. Extension tools
-read the turn's verified requester with `current_requester()` and read with that person's access
-through `requester_client()` (section 9,
+the request that started it when it marks the turn active, and a hosted request that creates or
+continues a Task presents it with that call, so that the platform can record who asked. Extension
+tools read the verified requester of a turn or Task attempt with `current_requester()` and read
+with that person's access through `requester_client()` (section 9,
 [issue #66](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/66)).
 
 Amends:
@@ -197,10 +197,19 @@ the session, or when no assertion is sent.
 - The turn presents it only with the transition that marks it active, and only while the assertion
   is valid; an expired assertion is not sent. A turn start repeated after a stale lease presents it
   again.
-- A Task attempt never presents one, even when the request that created the Task started the
-  attempt. Local mode and a runtime that is not hosted never present one.
+- A Task attempt never presents one when it starts its turn: the Task's creation or continuation
+  already did. Local mode and a runtime that is not hosted never present one.
 - It is never logged, persisted, or placed in model context, a tool result, the UI stream or
   history, and it is dropped with its request.
+
+**Recording who asked for a Task.** When a hosted request creates a Task
+(`POST /api/v1/agent-tasks/`, from `message:send` answered with a Task, `message:stream` and
+JSON-RPC `SendStreamingMessage`) or continues one (`POST /api/v1/agent-tasks/<uid>/continue/`),
+the runtime sends the request's verified caller assertion in the same header beside its own
+credential, under the same rules: only while it is valid, never in local mode or outside hosting,
+never on the platform's own calls, and never in the Task's body. The platform records the person
+as the Task's requester and names them in the answer's `requester_user_uid` and
+`requester_identity_type`, and its later dispatches of the Task name the same facts.
 
 **The turn's requester.** `current_requester()` returns, inside a turn, an immutable object with
 `uid` and `team_uids`, or None:
@@ -208,13 +217,16 @@ the session, or when no assertion is sent.
 - a chat or A2A Message turn: the verified caller, only when the platform answered with a
   non-null `requester_user_uid` equal to that caller's UID. `team_uids` come from the assertion.
   The Organization-admin flag is never part of it, because requester-bound access is member-level;
+- a Task attempt that the request creating or continuing the Task runs itself (`message:send`
+  answered with a Task, `message:stream`, a continuation): the request's verified caller, only when
+  the platform's answer to that creation or continuation names the same User as
+  `requester_user_uid` with `requester_identity_type` `human`;
 - a Task attempt started by the platform's dispatch (`POST /internal/a2a/task-dispatch`): the
   dispatch's `requester_user_uid` when its `requester_identity_type` is `human`, with no Team
   UIDs. Only a hosted runtime reads these facts, because only it verifies the platform assertion
   on its internal routes;
-- otherwise None: Agent callers, the platform's own calls such as caller delivery, a Task attempt
-  started by the request that created or continued the Task, local mode, a runtime that is not
-  hosted, and code outside a turn.
+- otherwise None: Agent callers, the platform's own calls such as caller delivery, local mode, a
+  runtime that is not hosted, and code outside a turn.
 
 The turn binds its requester for its own duration and ends the binding when it ends. Detached SDK
 work never inherits it, and a task a tool leaves running sees no requester after the turn.
@@ -267,10 +279,9 @@ read, which is why only administrators decide which Agents may work this way.
   time.
 - Every token with an unknown `kid` costs one fetch of the key set. There is no limit on how often
   that happens.
-- A turn start carries one more header. A platform that does not record turn requesters answers
-  without `requester_user_uid`, and the turn then has no requester.
-- A Task attempt started by the request that created or continued the Task (`message:send`
-  answered with a Task, `message:stream`) has no requester, because no dispatch names one.
+- A turn start, a Task creation and a Task continuation carry one more header. A platform that
+  does not record requesters answers without `requester_user_uid`, and the turn or Task attempt
+  then has no requester.
 - While it serves a requester, an enabled Agent's code can read what that person can read.
 
 ## Verification
@@ -290,10 +301,12 @@ and the filtered Task list.
 `tests/unit/test_requester_identity.py` covers section 9: the assertion on the turn-start
 transition of hosted chat, A2A Message, JSON-RPC and strict JSON repair turns, for person and
 Agent callers; none on Task attempts, after expiry, in local mode or outside hosting; the requester
-the platform recorded, nobody, or someone else; the dispatched Task requester and its rejected
-variants; the binding ending with the turn; the three headers only to the platform origin; the
+the platform recorded, nobody, or someone else; the assertion on Task creation and continuation
+and the requester of an attempt the request runs, for each answer the platform can give; the
+dispatched Task requester and its rejected variants; the binding ending with the turn; the three headers only to the platform origin; the
 release access flow, its cache, its renewal near expiry and after a 401; the refusal codes; and a
 hosted turn end to end, with a project tool on a real Tau session, whose logs, persisted entries,
 stream, tool result and model context contain no assertion, lease token, runtime credential or
 application token. `tests/contract/test_session_persistence_client.py` freezes the header and the
-`requester_user_uid` answer of the transition.
+`requester_user_uid` answer of the transition, and `tests/contract/test_backend_client.py` the
+header and the requester answer of Task creation and continuation.

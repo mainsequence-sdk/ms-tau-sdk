@@ -138,9 +138,9 @@ def _client(config: TauSDKSettings) -> AsyncMock:
     async def list_tasks(*, context_id: str, **_kwargs: object) -> list[AgentTask]:
         return [task for task in tasks.values() if context_id in {"", task.context_id}]
 
-    async def create_task(payload: dict[str, Any]) -> AgentTaskCreateResult:
+    async def create_task(payload: dict[str, Any], **_options: Any) -> AgentTaskCreateResult:
         # Every create replays a finished Task: the existing one with that ID, or a new one in
-        # the session the request named.
+        # the session the request named. A hosted request also presents its caller assertion.
         existing = tasks.get(payload["task_id"])
         replayed = existing or _task(payload["task_id"], payload["agent_session_uid"])
         return AgentTaskCreateResult(

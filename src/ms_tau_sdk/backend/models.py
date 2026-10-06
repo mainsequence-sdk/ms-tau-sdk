@@ -465,6 +465,10 @@ class AgentTask(BackendModel):
     correlation_id: str = ""
     recovery_owner: str = ""
     recovery_count: int = 0
+    # The verified User who asked for the Task's creation or latest continuation, and that User's
+    # identity type (`human` for a person). Both are None when the platform recorded nobody.
+    requester_user_uid: str | None = None
+    requester_identity_type: str | None = None
 
 
 class AgentTaskCreateResult(BackendModel):
