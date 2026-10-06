@@ -77,8 +77,8 @@ The SDK adopts the following contracts:
 9. Application startup and shutdown have one owner. Shutdown stops new work, drains or cancels
    bounded work, closes Tau sessions and MCP, releases leases, and closes the shared HTTP client.
 10. A hosted runtime authenticates every inbound request with the platform's signed assertion and
-    lets only a session's owner or an Organization admin address that session. ADR 0019 holds the
-    contract.
+    lets only a session's owner, an Organization admin, or the Agent that delegated to it address
+    that session. ADR 0019 holds the contract.
 
 External HTTP field names that are part of an existing service contract remain wire details; they
 do not define local SDK runtime roles or deployment modes.

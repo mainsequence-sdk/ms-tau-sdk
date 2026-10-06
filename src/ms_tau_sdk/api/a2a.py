@@ -930,7 +930,7 @@ def _requester_named_by_task(
     answer must name the same User, as a person, as ``requester_user_uid``.
     """
 
-    if caller_assertion is None:
+    if caller_assertion is None or caller_assertion.caller_is_workload:
         return None
     caller = caller_assertion.caller
     if task.requester_identity_type != "human" or task.requester_user_uid != caller.uid:

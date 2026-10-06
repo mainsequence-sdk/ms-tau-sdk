@@ -14,6 +14,13 @@ tools read the verified requester of a turn or Task attempt with `current_reques
 with that person's access through `requester_client()` (section 9,
 [issue #66](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/66)).
 
+Amended 2026-10-06: the Agent that delegated to a child session may address it. When Agent A
+delegates to Agent B, the platform creates B's child session for the person who owns A's session,
+and A addresses it with its own credential, so the caller assertion names A's workload User. The
+runtime admits that caller when the session names A as its parent session's Agent and the
+platform's directory shows the caller to be A's workload User. Such a caller is never a requester
+(section 6, [issue #67](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/67)).
+
 Amends:
 
 - [ADR 0002: Runtime and protocol contracts](./0002-runtime-and-protocol-contracts.md) by
@@ -134,14 +141,33 @@ Turn provenance takes a `user` caller from the verified `sub` and never reads `X
 Agent-caller provenance still comes from the gateway's `X-Caller-*` headers, and `X-Caller-Kind`
 stays required on the chat and A2A message routes.
 
-### 6. Only the owner or an Organization admin addresses a session
+### 6. Only the owner, an Organization admin, or the delegating Agent addresses a session
 
-In hosted mode, a request that addresses an existing session must come from the session's owner or
-from an Organization admin. The owner is the session's `created_by_user_uid`, compared with the
-verified `sub`. An Organization admin is a caller whose assertion says `is_organization_admin`; the
-runtime does not read the session for an admin. Anyone else gets 403 with
+In hosted mode, a request that addresses an existing session must come from the session's owner,
+from an Organization admin, or, for a delegated child session, from the workload User of the Agent
+that delegated to it. The owner is the session's `created_by_user_uid`, compared with the verified
+`sub`. An Organization admin is a caller whose assertion says `is_organization_admin`; the runtime
+does not read the session for an admin. Anyone else gets 403 with
 `{"detail": "Only the session's owner or an Organization admin can address this session."}`
 before the runtime acts. A JSON-RPC call gets the same HTTP 403.
+
+Amended 2026-10-06. When Agent A delegates to Agent B, the platform creates B's child session for
+the person who owns A's session, and A sends the request with its own credential, so the verified
+`sub` is A's workload User, neither the owner nor an admin. The runtime admits that caller only
+when all of these hold:
+
+- the session names its parent session's Agent in `parent_session_agent_uid`, which the runtime
+  reads on its own session with its runtime credential;
+- the platform's directory, `GET /api/v1/users/<sub>/` read with the runtime credential, shows the
+  `sub` as a workload User (`identity_type` `workload`); and
+- that workload's `agent_uid`, the Agent its release serves, equals `parent_session_agent_uid`.
+
+The `X-Caller-*` headers never take part: they describe a caller and never admit one. A session
+without a parent, the workload of another Agent, and a person who is not the owner still get 403.
+A lookup that fails refuses the request. One request looks a User up at most once; nothing is kept
+after the request. The admitted Agent is never a requester (section 9): its assertion names a
+workload, not a person, so its turns and the Tasks it creates have none, whatever the platform
+answers.
 
 The check covers:
 
@@ -226,7 +252,9 @@ as the Task's requester and names them in the answer's `requester_user_uid` and
   UIDs. Only a hosted runtime reads these facts, because only it verifies the platform assertion
   on its internal routes;
 - otherwise None: Agent callers, the platform's own calls such as caller delivery, local mode, a
-  runtime that is not hosted, and code outside a turn.
+  runtime that is not hosted, and code outside a turn. A caller that section 6 admitted as the
+  Agent that delegated to the session is a workload User, so it is never the requester, whatever
+  the platform answers.
 
 The turn binds its requester for its own duration and ends the binding when it ends. Detached SDK
 work never inherits it, and a task a tool leaves running sees no requester after the turn.
@@ -279,6 +307,8 @@ read, which is why only administrators decide which Agents may work this way.
   time.
 - Every token with an unknown `kid` costs one fetch of the key set. There is no limit on how often
   that happens.
+- A caller that is neither the owner nor an admin of a delegated child session costs one directory
+  lookup per request.
 - A turn start, a Task creation and a Task continuation carry one more header. A platform that
   does not record requesters answers without `requester_user_uid`, and the turn or Task attempt
   then has no requester.
@@ -296,7 +326,11 @@ unavailable, invalid or oversized key set; and the configuration errors.
 and local mode; internal against other routes and the wrong kind on each; `OPTIONS`; WebSocket;
 the request log; the verified caller in handlers and in turn provenance; and session ownership for
 the owner, an Organization admin and another user on every route in section 6, including JSON-RPC
-and the filtered Task list.
+and the filtered Task list. With the platform's real delegation combination, a person-owned child
+session whose parent is Agent A's and a caller assertion naming A's workload User, it covers A's
+admission to Message send and stream, JSON-RPC, and Task continuation, read, list and cancel; the
+refusal of another Agent's workload, a person who is not the owner, a session without a parent and
+a failed lookup; and one lookup per request.
 
 `tests/unit/test_requester_identity.py` covers section 9: the assertion on the turn-start
 transition of hosted chat, A2A Message, JSON-RPC and strict JSON repair turns, for person and

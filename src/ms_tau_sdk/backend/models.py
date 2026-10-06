@@ -74,6 +74,9 @@ class AgentSession(BackendModel):
     )
     status: str | None = None
     created_by_user_uid: str | None = None
+    # The Agent of the parent session, or None for a session without a parent. The Agent that
+    # delegated to a child session addresses it with its own workload User.
+    parent_session_agent_uid: str | None = None
     runtime_capabilities: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -85,6 +88,18 @@ class AgentSession(BackendModel):
         if self.harness_protocol != expected:
             raise ValueError(f"Harness {self.harness!r} requires protocol {expected!r}")
         return self
+
+
+class DirectoryUser(BackendModel):
+    """A User of the Organization as the platform's directory shows it to the runtime.
+
+    A workload User's row carries ``identity_type`` ``workload`` and, for the workload of an
+    Agent's release, ``agent_uid``.
+    """
+
+    uid: str
+    identity_type: str | None = None
+    agent_uid: str | None = None
 
 
 class AgentCardEnvelope(BackendModel):

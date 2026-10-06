@@ -113,6 +113,9 @@ class CallerAssertion:
     caller: VerifiedCaller
     expires_at: int
     token: str = field(repr=False)
+    # True when the platform's directory showed the caller to be a workload User. A workload is
+    # never a turn's or a Task's requester.
+    caller_is_workload: bool = False
 
     def unexpired_token(self, *, now: float | None = None) -> str | None:
         """Return the raw assertion while it is valid, and None once it has expired."""

@@ -79,9 +79,14 @@ Outside hosted mode nothing is verified and every route behaves as before.
 ### Session ownership
 
 In hosted mode, a request that addresses an existing session must come from the session's owner,
-the User the platform recorded as `created_by_user_uid`, or from an Organization admin
-(`is_organization_admin` in the caller assertion). Anyone else gets 403 before the runtime acts,
-on REST and JSON-RPC alike. The check covers chat, the session model read, session cancellation,
+the User the platform recorded as `created_by_user_uid`, from an Organization admin
+(`is_organization_admin` in the caller assertion), or, for a delegated child session, from the
+workload User of the Agent that delegated to it. That last caller is admitted only when the
+session's `parent_session_agent_uid` names an Agent, and the platform's directory
+(`GET /api/v1/users/<sub>/`) shows the caller as a workload User whose `agent_uid` is that Agent.
+The `X-Caller-*` headers never admit a caller, a failed lookup refuses the request, and the
+admitted Agent is never a requester. Anyone else gets 403 before the runtime acts, on REST and
+JSON-RPC alike. The check covers chat, the session model read, session cancellation,
 A2A Message send and stream (the `contextId` session, and the session of a continued or existing
 Task), Task get, cancel, subscribe, and list by `contextId`, and the extended Agent Card. A Task
 list without `contextId` returns only Tasks of sessions the caller may address.

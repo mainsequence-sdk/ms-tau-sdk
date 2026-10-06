@@ -12,6 +12,7 @@ MODEL_PROVIDER_CREDENTIALS = f"{API_V1_PREFIX}/model-provider-credentials/"
 MODEL_PROVIDERS = f"{API_V1_PREFIX}/model-providers/"
 AGENT_TASKS = f"{API_V1_PREFIX}/agent-tasks/"
 RESOURCE_RELEASES = f"{API_V1_PREFIX}/resource-releases/"
+USERS = f"{API_V1_PREFIX}/users/"
 
 type RuntimeLeaseOperation = Literal["acquire", "renew", "release"]
 type ModelProviderCredentialOperation = Literal["hydrate", "status", "flush", "revoke"]
@@ -92,3 +93,7 @@ def agent_task_operation(task_uid: str, operation: AgentTaskOperation) -> str:
 
 def resource_release_runtime_access(release_uid: str) -> str:
     return f"{RESOURCE_RELEASES}{release_uid}/resolve-runtime-access/"
+
+
+def user(user_uid: str) -> str:
+    return f"{USERS}{user_uid}/"

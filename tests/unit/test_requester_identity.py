@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import dataclasses
 import json
 import time
 from collections.abc import AsyncIterator, Callable
@@ -48,6 +49,7 @@ from ms_tau_sdk.backend.models import (
     AgentTaskCreateResult,
     AgentTaskDispatch,
     AgentTaskExecutionAttempt,
+    DirectoryUser,
     ProviderControl,
     ProviderCredential,
     RuntimeState,
@@ -137,6 +139,10 @@ class _ToolTurnSession:
 
     def __init__(self, tool: Callable[[], Any]) -> None:
         self.tool = tool
+        self.custom_entries: list[tuple[str, dict[str, Any]]] = []
+
+    async def append_custom_entry(self, namespace: str, data: dict[str, Any]) -> None:
+        self.custom_entries.append((namespace, data))
 
     async def prompt(self, _content: str) -> AsyncIterator[dict[str, Any]]:
         await self.tool()
@@ -1687,3 +1693,143 @@ def test_only_a_valid_assertion_of_a_hosted_request_is_presented_for_a_task(
     assert _requester_named_by_task(task, presented) == (
         THE_REQUESTER if mode == "hosted" else None
     )
+
+
+# --- The Agent that delegated to a child session is never a requester --------------------------
+
+AGENT_A_UID = AGENT_CALLER_HEADERS["X-Caller-Agent-UID"]
+CHILD_SESSION = "55555555-eeee-4fff-8aaa-666666666666"
+
+
+def _delegated_child_client(config: TauSDKSettings) -> AsyncMock:
+    """The platform's real combination: a person-owned child session whose parent is Agent A's."""
+
+    client = _platform_client(config)
+    client.get_session.side_effect = lambda uid: _session(uid, OWNER_UID).model_copy(
+        update={"parent_session_agent_uid": AGENT_A_UID}
+    )
+    client.get_user.return_value = DirectoryUser(
+        uid=AGENT_USER_UID,
+        identity_type="workload",
+        agent_uid=AGENT_A_UID,
+    )
+    return client
+
+
+@pytest.mark.parametrize("route", ["chat", "message_send"])
+async def test_the_delegating_agents_turn_has_no_requester(
+    served_platform_keys,
+    tmp_path,
+    asgi_client,
+    route,
+):
+    config = served_platform_keys.hosted_settings(tmp_path)
+    client = _delegated_child_client(config)
+    seen: list[Requester | None] = []
+    refused: list[str] = []
+
+    async def tool() -> None:
+        seen.append(current_requester())
+        try:
+            requester_client()
+        except PermissionError as error:
+            refused.append(getattr(error, "code", ""))
+
+    manager = SessionRuntimeManager(settings=config, backend=client, providers=Mock())
+    storage = _storage(answered_requester=None)
+
+    async def begin_turn(**request: Any) -> RuntimeState:
+        # Even a platform that recorded whoever presented an assertion cannot make a workload the
+        # requester: the runtime looked the caller up and knows it is A's workload User.
+        return RuntimeState(
+            harness="tau",
+            harness_protocol="tau-session-v1",
+            harness_version="0.4.2",
+            runtime_activity="working",
+            active_turn_uid=request["turn_uid"],
+            activity_sequence=request["activity_sequence"],
+            requester_user_uid=AGENT_USER_UID if "caller_assertion" in request else None,
+        )
+
+    storage.begin_turn = AsyncMock(side_effect=begin_turn)
+    manager._runtimes[CHILD_SESSION] = ActiveSessionRuntime(
+        session_uid=CHILD_SESSION,
+        holder_id=manager.holder_id,
+        coding_session=_ToolTurnSession(tool),  # type: ignore[arg-type]
+        storage=storage,  # type: ignore[arg-type]
+        provider=object(),
+        provider_name="openai",
+        model="gpt-5.4",
+    )
+    app = create_app(config)
+    app.dependency_overrides[backend] = lambda: client
+    app.dependency_overrides[runtime_manager] = lambda: manager
+    app.dependency_overrides[settings] = lambda: config
+    raw = served_platform_keys.caller_assertion(user_uid=AGENT_USER_UID)
+    headers = {**AGENT_CALLER_HEADERS, ASSERTION_HEADER: raw}
+    path, body = {
+        "chat": ("/api/chat", {"sessionUid": CHILD_SESSION, "message": "Delegated work."}),
+        "message_send": (
+            f"{REST_BASE}/message:send",
+            {
+                "message": {
+                    "messageId": "message-1",
+                    "role": "ROLE_USER",
+                    "contextId": CHILD_SESSION,
+                    "parts": [{"text": "Delegated work."}],
+                }
+            },
+        ),
+    }[route]
+
+    async with asgi_client(app) as http:
+        response = await http.post(path, json=body, headers=headers)
+
+    assert response.status_code == 200, response.text
+    client.get_user.assert_awaited_once_with(AGENT_USER_UID)
+    # The turn still presents A's assertion, so the platform can see that nobody asked for it.
+    assert storage.begin_turn.await_args.kwargs["caller_assertion"] == raw
+    assert seen == [None]
+    assert refused == ["requester_binding_invalid"]
+    await _close(manager)
+
+
+async def test_a_task_the_delegating_agent_creates_has_no_requester(
+    served_platform_keys,
+    tmp_path,
+    asgi_client,
+):
+    config = served_platform_keys.hosted_settings(tmp_path)
+    app = create_app(config)
+    client = _delegated_child_client(config)
+    manager = _RecordingManager(config, client)
+    app.dependency_overrides[backend] = lambda: client
+    app.dependency_overrides[runtime_manager] = lambda: manager
+    app.dependency_overrides[settings] = lambda: config
+    # Even an answer that named A's workload as a person would not make it the requester.
+    client.create_task.return_value = AgentTaskCreateResult(
+        task=_answered_task(AGENT_USER_UID, "human").model_copy(
+            update={"context_id": CHILD_SESSION, "agent_session_uid": CHILD_SESSION}
+        ),
+        created=True,
+    )
+    raw = served_platform_keys.caller_assertion(user_uid=AGENT_USER_UID)
+    body = _message(taskId="task-1")
+    body["message"]["contextId"] = CHILD_SESSION
+
+    async with asgi_client(app) as http:
+        response = await http.post(
+            f"{REST_BASE}/message:stream",
+            json=body,
+            headers={**AGENT_CALLER_HEADERS, ASSERTION_HEADER: raw},
+        )
+
+    assert response.status_code == 200, response.text
+    assert client.create_task.await_args.kwargs == {"caller_assertion": raw}
+    assert [turn["task_requester"] for turn in manager.turns] == [None]
+
+
+def test_a_workload_caller_is_never_named_the_requester_of_a_task():
+    workload = dataclasses.replace(_assertion(uid=AGENT_USER_UID), caller_is_workload=True)
+
+    assert _requester_named_by_task(_answered_task(AGENT_USER_UID, "human"), workload) is None

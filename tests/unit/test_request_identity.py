@@ -32,9 +32,10 @@ from ms_tau_sdk.backend.models import (
     AgentTask,
     AgentTaskCreateResult,
     AgentTaskSnapshot,
+    DirectoryUser,
     RuntimeState,
 )
-from ms_tau_sdk.errors import ConfigurationError
+from ms_tau_sdk.errors import BackendError, ConfigurationError, SessionNotFoundError
 from ms_tau_sdk.runtime.events import TauRuntimeEvent
 from ms_tau_sdk.settings import TauSDKSettings
 
@@ -193,6 +194,88 @@ def _hosted_app(
     app.dependency_overrides[runtime_manager] = lambda: manager
     app.dependency_overrides[settings] = lambda: config
     return app, client, manager
+
+
+# The combination the platform produces when Agent A delegates to Agent B: B's child session belongs
+# to the person who owns A's session and names A as its parent session's Agent, and A's request
+# carries a caller assertion that names A's workload User.
+AGENT_A_UID = AGENT_CALLER_HEADERS["X-Caller-Agent-UID"]
+AGENT_B_UID = "b2c3d4e5-f6a7-4b8c-9d0e-1f2a3b4c5d6e"
+WORKLOAD_A_UID = "7c6b5a49-3829-4716-8f5e-4d3c2b1a0f9e"
+WORKLOAD_B_UID = "8d7c6b5a-4938-4827-9f6e-5d4c3b2a1f0e"
+CHILD_SESSION = "55555555-eeee-4fff-8aaa-666666666666"
+SECOND_CHILD_SESSION = "77777777-bbbb-4ccc-8ddd-888888888888"
+
+
+def _delegation_app(
+    platform_keys,
+    tmp_path,
+    *,
+    lookup_fails: bool = False,
+) -> tuple[FastAPI, AsyncMock, _Manager]:
+    app, client, manager = _hosted_app(platform_keys, tmp_path)
+    child_tasks = {
+        "task-child": _task("task-child", CHILD_SESSION),
+        "task-child-2": _task("task-child-2", SECOND_CHILD_SESSION),
+    }
+    directory = {
+        WORKLOAD_A_UID: DirectoryUser(
+            uid=WORKLOAD_A_UID,
+            identity_type="workload",
+            agent_uid=AGENT_A_UID,
+        ),
+        WORKLOAD_B_UID: DirectoryUser(
+            uid=WORKLOAD_B_UID,
+            identity_type="workload",
+            agent_uid=AGENT_B_UID,
+        ),
+        # A person's directory row names no identity type.
+        OTHER_UID: DirectoryUser(uid=OTHER_UID),
+    }
+    read_session = client.get_session.side_effect
+    read_task = client.get_task_by_protocol_id.side_effect
+    list_tasks = client.list_tasks.side_effect
+
+    async def get_session(session_uid: str) -> AgentSession:
+        if session_uid in {CHILD_SESSION, SECOND_CHILD_SESSION}:
+            return _session(session_uid, OWNER_UID).model_copy(
+                update={"parent_session_agent_uid": AGENT_A_UID}
+            )
+        return await read_session(session_uid)
+
+    async def get_task_by_protocol_id(task_id: str, **kwargs: object) -> AgentTask:
+        if task_id in child_tasks:
+            return child_tasks[task_id]
+        return await read_task(task_id, **kwargs)
+
+    async def list_all_tasks(*, context_id: str, **kwargs: object) -> list[AgentTask]:
+        children = [task for task in child_tasks.values() if context_id in {"", task.context_id}]
+        return [*await list_tasks(context_id=context_id, **kwargs), *children]
+
+    async def get_user(user_uid: str) -> DirectoryUser:
+        if lookup_fails:
+            raise BackendError("Backend transport failed: connection refused")
+        if user_uid not in directory:
+            raise SessionNotFoundError(f"Backend resource not found: /api/v1/users/{user_uid}/")
+        return directory[user_uid]
+
+    client.get_session.side_effect = get_session
+    client.get_task_by_protocol_id.side_effect = get_task_by_protocol_id
+    client.list_tasks.side_effect = list_all_tasks
+    client.get_user.side_effect = get_user
+    client.continue_task.return_value = child_tasks["task-child"].model_copy(
+        update={"status": "working"}
+    )
+    client.list_task_dispatches.return_value = []
+    return app, client, manager
+
+
+def _agent_headers(platform_keys, workload_uid: str) -> dict[str, str]:
+    # The X-Caller-* headers always claim Agent A: they describe, and never admit, a caller.
+    return {
+        **AGENT_CALLER_HEADERS,
+        ASSERTION_HEADER: platform_keys.caller_assertion(user_uid=workload_uid),
+    }
 
 
 def _user_headers(platform_keys, user_uid: str, *, admin: bool = False) -> dict[str, str]:
@@ -531,18 +614,15 @@ async def test_an_agent_turn_keeps_its_provenance_from_the_gateway_headers(
     tmp_path,
     asgi_client,
 ):
-    # The calling Agent's runtime principal created the session, so it owns it.
-    app, _backend, manager = _hosted_app(served_platform_keys, tmp_path)
-    headers = {
-        **AGENT_CALLER_HEADERS,
-        ASSERTION_HEADER: served_platform_keys.caller_assertion(user_uid=OWNER_UID),
-    }
+    # Agent A delegated to this child session, which belongs to the person who owns A's own
+    # session. A addresses it with its own credential, so the assertion names A's workload User.
+    app, _backend, manager = _delegation_app(served_platform_keys, tmp_path)
 
     async with asgi_client(app) as http:
         response = await http.post(
             f"{REST_BASE}/message:send",
-            json=_message(OWNED_SESSION),
-            headers=headers,
+            json=_message(CHILD_SESSION),
+            headers=_agent_headers(served_platform_keys, WORKLOAD_A_UID),
         )
 
     assert response.status_code == 200
@@ -946,3 +1026,151 @@ def test_an_incomplete_hosted_configuration_fails_app_construction(platform_keys
 
     with pytest.raises(ConfigurationError, match="MAINSEQUENCE_ORGANIZATION_ENVIRONMENT_UID"):
         create_app(config)
+
+
+def _continuation(session_uid: str, task_id: str) -> dict[str, Any]:
+    body = _message(session_uid, configuration={"responseKind": "task", "returnImmediately": True})
+    body["message"]["taskId"] = task_id
+    return body
+
+
+DELEGATED_ROUTES = {
+    "message_send": ("POST", f"{REST_BASE}/message:send", {"json": _message(CHILD_SESSION)}),
+    "message_stream": (
+        "POST",
+        f"{REST_BASE}/message:stream",
+        {"json": _message(CHILD_SESSION, taskId="task-new")},
+    ),
+    "rpc_message_send": (
+        "POST",
+        "/api/a2a/rpc",
+        {"json": _rpc("message/send", _message(CHILD_SESSION))},
+    ),
+    "rpc_message_stream": (
+        "POST",
+        "/api/a2a/rpc",
+        {"json": _rpc("message/stream", _message(CHILD_SESSION, taskId="task-new"))},
+    ),
+    "task_continue": (
+        "POST",
+        f"{REST_BASE}/message:send",
+        {
+            "json": _continuation(CHILD_SESSION, "task-child"),
+            "headers": {"A2A-Extensions": RESPONSE_KIND_EXTENSION_URI},
+        },
+    ),
+    "task_get": ("GET", f"{REST_BASE}/tasks/task-child", {}),
+    "task_cancel": ("POST", f"{REST_BASE}/tasks/task-child:cancel", {}),
+    "task_list": ("GET", f"{REST_BASE}/tasks", {"params": {"contextId": CHILD_SESSION}}),
+    "rpc_task_get": ("POST", "/api/a2a/rpc", {"json": _rpc("tasks/get", {"id": "task-child"})}),
+    "rpc_task_cancel": (
+        "POST",
+        "/api/a2a/rpc",
+        {"json": _rpc("tasks/cancel", {"id": "task-child"})},
+    ),
+}
+
+
+def _send(http, platform_keys, route: str, workload_uid: str):
+    method, path, options = DELEGATED_ROUTES[route]
+    options = dict(options)
+    headers = {**_agent_headers(platform_keys, workload_uid), **options.pop("headers", {})}
+    return http.request(method, path, headers=headers, **options)
+
+
+@pytest.mark.parametrize("route", sorted(DELEGATED_ROUTES))
+async def test_the_agent_that_delegated_to_a_child_session_addresses_it(
+    served_platform_keys,
+    tmp_path,
+    asgi_client,
+    route,
+):
+    app, client, manager = _delegation_app(served_platform_keys, tmp_path)
+
+    async with asgi_client(app) as http:
+        response = await _send(http, served_platform_keys, route, WORKLOAD_A_UID)
+
+    assert response.status_code == 200, response.text
+    if response.headers["content-type"].startswith("text/event-stream"):
+        assert response.text.startswith("data: "), response.text
+    elif DELEGATED_ROUTES[route][1] == "/api/a2a/rpc":
+        assert "result" in response.json(), response.text
+    client.get_user.assert_awaited_with(WORKLOAD_A_UID)
+    if route in {"message_send", "rpc_message_send"}:
+        assert manager.prompted == [CHILD_SESSION]
+    if route == "task_continue":
+        client.continue_task.assert_awaited_once()
+    if route in {"task_cancel", "rpc_task_cancel"}:
+        assert manager.cancelled == [CHILD_SESSION]
+
+
+@pytest.mark.parametrize("route", ["message_send", "rpc_message_send", "task_get", "task_cancel"])
+@pytest.mark.parametrize(
+    "caller",
+    [
+        "workload_of_another_agent",
+        "person_who_is_not_the_owner",
+        "session_without_a_parent",
+        "lookup_fails",
+    ],
+)
+async def test_no_one_else_addresses_a_child_session(
+    served_platform_keys,
+    tmp_path,
+    asgi_client,
+    route,
+    caller,
+):
+    app, client, manager = _delegation_app(
+        served_platform_keys,
+        tmp_path,
+        lookup_fails=caller == "lookup_fails",
+    )
+    method, path, options = DELEGATED_ROUTES[route]
+    options = dict(options)
+    workload_uid = {
+        "workload_of_another_agent": WORKLOAD_B_UID,
+        "person_who_is_not_the_owner": OTHER_UID,
+        "session_without_a_parent": WORKLOAD_A_UID,
+        "lookup_fails": WORKLOAD_A_UID,
+    }[caller]
+    if caller == "session_without_a_parent":
+        # A's workload addresses a session that has no parent: OWNED_SESSION, the person's own.
+        rewritten = json.dumps(options).replace(CHILD_SESSION, OWNED_SESSION)
+        options = json.loads(rewritten.replace("task-child", "task-owned"))
+        path = path.replace("task-child", "task-owned")
+
+    async with asgi_client(app) as http:
+        response = await http.request(
+            method,
+            path,
+            headers=_agent_headers(served_platform_keys, workload_uid),
+            **options,
+        )
+
+    assert response.status_code == 403, response.text
+    assert response.json() == {"detail": SESSION_ACCESS_DENIED_DETAIL}
+    assert manager.prompted == []
+    assert manager.cancelled == []
+    if caller == "session_without_a_parent":
+        client.get_user.assert_not_awaited()
+
+
+async def test_the_workload_lookup_is_kept_for_its_request_only(
+    served_platform_keys,
+    tmp_path,
+    asgi_client,
+):
+    app, client, _manager = _delegation_app(served_platform_keys, tmp_path)
+    headers = _agent_headers(served_platform_keys, WORKLOAD_A_UID)
+
+    async with asgi_client(app) as http:
+        first = await http.get(f"{REST_BASE}/tasks", headers=headers)
+        second = await http.get(f"{REST_BASE}/tasks", headers=headers)
+
+    # Across sessions, A's workload sees the Tasks of the two child sessions A delegated to.
+    for response in (first, second):
+        assert response.status_code == 200, response.text
+        assert [task["id"] for task in response.json()["tasks"]] == ["task-child", "task-child-2"]
+    # One lookup per request, although each request checked two child sessions.
+    assert client.get_user.await_count == 2

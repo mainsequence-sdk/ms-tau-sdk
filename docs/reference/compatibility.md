@@ -18,7 +18,8 @@ semantic versioning for these supported surfaces:
 - the documented absence of SDK-owned container/deployment artifacts and optional tool baggage.
 
 A runtime the platform hosts admits a request only with the platform's signed assertion, and lets
-only a session's owner or an Organization admin address that session (ADR 0019). Callers of a
+only a session's owner, an Organization admin, or the Agent that delegated to it address that
+session (ADR 0019). Callers of a
 hosted runtime go through the platform, which forwards the assertion; platform probes use the
 launcher's own endpoints. A runtime that is not hosted handles requests as before.
 

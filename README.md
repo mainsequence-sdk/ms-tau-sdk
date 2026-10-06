@@ -93,7 +93,8 @@ app = create_app()
 
 When Main Sequence hosts the runtime, `create_app()` admits a request only with the platform's
 signed assertion in `X-MainSequence-Caller-Assertion`, never on gateway identity headers, and lets
-only a session's owner or an Organization admin address that session. It declares this request
+only a session's owner, an Organization admin, or the Agent that delegated to it address that
+session. It declares this request
 identity to the platform launcher in `app.state.mainsequence_request_identity`; the launcher serves
 only an application that declares it, so serve the application `create_app()` returns. Outside
 hosting, requests are handled as before. See

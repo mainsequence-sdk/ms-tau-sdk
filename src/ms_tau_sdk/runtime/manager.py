@@ -1729,7 +1729,7 @@ class SessionRuntimeManager:
             return None
         if task_context is not None:
             return task_context.requester
-        if caller_assertion is None:
+        if caller_assertion is None or caller_assertion.caller_is_workload:
             return None
         caller = caller_assertion.caller
         if runtime.requester_user_uid != caller.uid:

@@ -35,6 +35,7 @@ from .models import (
     AgentTaskEventPage,
     AgentTaskExecutionAttempt,
     AgentTaskSnapshot,
+    DirectoryUser,
     LocalChatSessionPage,
     LocalChatTranscript,
     LocalConversationMessagePage,
@@ -77,6 +78,7 @@ from .routes import (
     agent_task_operation,
     model_provider_credentials,
     resource_release_runtime_access,
+    user,
 )
 
 T = TypeVar("T")
@@ -403,6 +405,12 @@ class MainSequenceClient:
                 f"contract: {', '.join(invalid_fields)}",
                 detail=error.errors(include_input=False),
             ) from error
+
+    async def get_user(self, user_uid: str) -> DirectoryUser:
+        """Look a User of the Organization up, as the platform's directory shows it."""
+
+        data = await self._request("GET", user(user_uid), idempotent=True)
+        return DirectoryUser.model_validate(data)
 
     async def list_model_providers(
         self, *, organization_environment_uid: str | None = None

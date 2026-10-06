@@ -51,6 +51,19 @@
   `GET /api/chat/model-providers`. The Environment is now sent as the `organization_environment_uid`
   query parameter, as the other list calls send theirs; the call without an Environment is
   unchanged ([issue #68](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/68)).
+- A hosted runtime admits the Agent that delegated to a child session. When Agent A delegates to
+  Agent B through `a2a.send_message`, the platform creates B's child session for the person who
+  owns A's session, and A addresses it with its own credential, so the caller assertion names A's
+  workload User. B's runtime refused every such request with 403. It now also admits that caller
+  when the session's `parent_session_agent_uid` names an Agent and the platform's directory
+  (`GET /api/v1/users/<uid>/`, read with the runtime credential) shows the caller as a workload
+  User whose `agent_uid` is that Agent: Message send and stream, JSON-RPC, and Task continuation,
+  reads, list and cancel. The `X-Caller-*` headers never admit a caller. A session without a
+  parent, another Agent's workload, and a person who is not the owner still get 403, and a lookup
+  that fails refuses the request. One request looks a User up at most once, and nothing is kept
+  after it. The admitted Agent is never a requester: `current_requester()` stays `None` in its
+  turns and in the Task attempts its requests run. See the 2026-10-06 amendment of ADR 0019
+  ([issue #67](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/67)).
 
 ## 2.0.2 — 2026-10-06
 

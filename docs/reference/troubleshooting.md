@@ -74,7 +74,9 @@ names the assertion the route required (`caller` or `platform`) and the reason, 
   from `MAINSEQUENCE_CALLER_ASSERTION_JWKS_URL`. It retries on the next request that needs the keys.
 - **403 `Only the session's owner or an Organization admin can address this session.`** The caller
   is authenticated, but the session, or the session of the Task, was created by another User and
-  the caller is not an Organization admin.
+  the caller is not an Organization admin. The workload User of the Agent that delegated to a child
+  session is also admitted to it; this answer then means the session names no parent Agent, the
+  caller is not that Agent's workload, or the platform's directory could not be read.
 - **The application does not start.** `create_app()` names each hosting setting that is missing or
   invalid: the issuer, an HTTPS key-set URL, and `APP_NAME` and
   `MAINSEQUENCE_ORGANIZATION_ENVIRONMENT_UID` as canonical lowercase UUIDs. Local mode refuses to
