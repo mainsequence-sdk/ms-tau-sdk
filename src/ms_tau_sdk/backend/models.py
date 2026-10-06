@@ -279,6 +279,9 @@ class RuntimeState(BackendModel):
     cancel_state: Literal["not_running", "requested"] | None = None
     cancel_requested: bool = False
     cancellation_id: str | None = None
+    # The person the platform recorded as the active turn's requester, from the caller assertion
+    # the runtime presented when it marked the turn active. None when it recorded nobody.
+    requester_user_uid: str | None = None
 
     @model_validator(mode="after")
     def validate_harness_protocol(self) -> RuntimeState:
@@ -421,6 +424,24 @@ class ProviderExecutionEvidence(BaseModel):
 
     credential: ProviderCredential
     provider_control: ProviderControl
+
+
+class ReleaseAccessGrant(BackendModel):
+    """How to call a platform application: in token mode, a bearer token and its RPC base URL."""
+
+    mode: str
+    # The bearer token never appears in repr() or str().
+    token: SecretStr | None = Field(default=None, repr=False)
+    rpc_url: str | None = None
+    expires_at: datetime | None = None
+
+
+class ReleaseRuntimeAccess(BackendModel):
+    """The platform's answer to a request for access to one application release."""
+
+    resource_release_uid: str
+    access: ReleaseAccessGrant | None = None
+    runtime_access: dict[str, Any] = Field(default_factory=dict)
 
 
 class AgentTask(BackendModel):

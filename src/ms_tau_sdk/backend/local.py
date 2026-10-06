@@ -33,7 +33,7 @@ from ms_tau_sdk.protocols.chat_history import (
 )
 from ms_tau_sdk.settings import TauSDKSettings
 
-from .client import MainSequenceClient
+from .client import LeaseProof, MainSequenceClient
 from .models import (
     AgentCardEnvelope,
     AgentRuntimeActivity,
@@ -56,6 +56,7 @@ from .models import (
     LocalConversationSummary,
     ProviderCredential,
     ProviderExecutionEvidence,
+    ReleaseRuntimeAccess,
     RuntimeActivityPatch,
     RuntimeLease,
     RuntimeLeaseReleaseRequest,
@@ -2188,6 +2189,35 @@ class LocalDevelopmentBackend(MainSequenceClient):
 
         await self._run(operation)
 
+    async def resolve_release_runtime_access(
+        self,
+        release_uid: str,
+        *,
+        proof: LeaseProof,
+    ) -> ReleaseRuntimeAccess:
+        """Local turns have no requester, so they make no requester-bound call."""
+
+        del release_uid, proof
+        raise LocalModeUnsupportedError("Requester-bound calls are unavailable in local mode")
+
+    async def requester_bound_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        proof: LeaseProof,
+        params: Any = None,
+        json: Any = None,
+        content: bytes | str | None = None,
+        data: Any = None,
+        files: Any = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> Never:
+        """Local turns have no requester, so they make no requester-bound call."""
+
+        del method, path, proof, params, json, content, data, files, headers
+        raise LocalModeUnsupportedError("Requester-bound calls are unavailable in local mode")
+
     async def get_runtime_state(self, session_uid: str) -> RuntimeState:
         def operation() -> RuntimeState:
             with closing(self._connect()) as connection, connection:
@@ -2222,7 +2252,12 @@ class LocalDevelopmentBackend(MainSequenceClient):
         self,
         session_uid: str,
         request: RuntimeActivityPatch,
+        *,
+        caller_assertion: str | None = None,
     ) -> RuntimeState:
+        # Local mode has no caller assertion and records no requester.
+        del caller_assertion
+
         def operation() -> RuntimeState:
             now = _utcnow()
             with closing(self._connect()) as connection, connection:

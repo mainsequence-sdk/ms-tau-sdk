@@ -87,13 +87,84 @@ Extensions may change effective agent capabilities, but they must not replace or
 
 - Main Sequence runtime or user authentication;
 - provider-control evidence and credential hydration;
-- caller identity and active-session proof;
+- caller identity, the turn's requester, and active-session proof;
 - persistence ordering, leases, cancellation, or task settlement;
 - secret redaction and payload limits; or
 - HTTP, SSE, Responses, and A2A wire validation.
 
 When Main Sequence MCP is enabled, use its canonical operations for live platform state. Project
 tools do not grant new platform permissions merely because they run inside TAU.
+
+## Acting for the person a turn serves
+
+An Agent that an Organization admin enabled for it can read platform data, and ask other platform
+applications, with the access of the person whose request a turn is serving: the requester. The
+platform keeps that authority and finds the person in its own records; the runtime only proves
+which of its sessions it is working on. Extension tools use two SDK functions and nothing else:
+
+```python
+import json
+
+from tau_agent.messages import TextContent
+from tau_agent.tools import AgentToolResult
+
+from ms_tau_sdk import current_requester, requester_client
+
+ANALYST_DATA_RELEASE_UID = "..."  # the release of the application to ask
+
+
+async def revenue_by_region(tool_call_id, arguments, signal=None, on_update=None):
+    if current_requester() is None:
+        return AgentToolResult(content=[TextContent(text="Ask me from your own conversation.")])
+    try:
+        answer = await requester_client().call_release(
+            ANALYST_DATA_RELEASE_UID,
+            "POST",
+            "/query",
+            json={"question": "revenue by region"},
+        )
+    except PermissionError:
+        return AgentToolResult(content=[TextContent(text="Your access for this request ended.")])
+    return AgentToolResult(content=[TextContent(text=json.dumps(answer.json()["rows"]))])
+```
+
+- `current_requester()` returns the turn's verified requester, with `uid` and `team_uids`, or
+  `None`. It is `None` for Agent callers, the platform's own calls, local mode, a Task attempt that
+  the platform's dispatch did not start, and code outside a turn. Only it names the requester:
+  never take a person's UID from tool arguments, the prompt, history, or a header.
+- `requester_client()` returns a client bound to the turn. `await client.request("GET",
+  "/api/v1/...")` reads a platform API path for the requester. `await client.call_release(
+  release_uid, method, path, ...)` asks another platform application, which answers as the
+  requester. Both return an `httpx.Response`.
+- Without a requester, `requester_client()` raises a `PermissionError`. So does a call that the
+  platform refuses because the requester's access ended (`code` `requester_binding_invalid` or
+  `runtime_lease_*`): the turn is over, the access was removed, more than 24 hours passed, or the
+  Agent is not enabled. Catch it, say in plain words that the request cannot be served, and never
+  fall back to the Agent's own access.
+
+Rules for tools that act for the requester:
+
+- Never handle proofs or tokens. The SDK attaches the session, the lease proof, and the
+  credentials itself. A tool never reads, logs, stores, or forwards them, passes a path rather than
+  a URL, and never sets `Authorization` or an `X-MainSequence-*` header.
+- Requester-bound calls are read-only. The platform refuses writes, sharing, and Secret values;
+  do not build tools that try them.
+- Return to the model only business results, such as rows, numbers, and names. Never return the
+  response object, its headers, a token, a proof, or a raw error body.
+- Keep nothing for another turn or another person. The binding ends with the turn, and a task the
+  tool leaves running has no access afterwards.
+- What a tool reads for a person belongs to that person's conversation. Do not write it to shared
+  stores, other Agents, or external systems.
+
+People who use such an Agent are told:
+
+> **This Agent works with your identity, securely.** It reads only what you can already read, only
+> to answer your own requests, and for at most 24 hours after you ask. It cannot act as anyone else,
+> cannot change, share or delete anything, never sees your secret values, and stops the moment your
+> access ends. Your Organization's administrator approved it to work this way.
+
+The limit is plain: while it works on your request, the Agent's code can read what you can read,
+which is why only administrators decide which Agents may work this way.
 
 ## Validation
 

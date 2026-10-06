@@ -7,6 +7,7 @@ import json
 import re
 import time
 from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import Any, TypeVar
 from urllib.parse import urlencode
 
@@ -23,6 +24,7 @@ from ms_tau_sdk.errors import (
 )
 from ms_tau_sdk.settings import TauSDKSettings
 
+from .assertions import ASSERTION_HEADER
 from .auth import BackendAuth
 from .models import (
     AgentCardEnvelope,
@@ -40,6 +42,7 @@ from .models import (
     ProviderControl,
     ProviderCredential,
     ProviderExecutionEvidence,
+    ReleaseRuntimeAccess,
     RuntimeActivityPatch,
     RuntimeLease,
     RuntimeLeaseReleaseRequest,
@@ -73,6 +76,7 @@ from .routes import (
     agent_session_tau_runtime_bootstrap,
     agent_task_operation,
     model_provider_credentials,
+    resource_release_runtime_access,
 )
 
 T = TypeVar("T")
@@ -82,6 +86,12 @@ PATH_IDENTIFIER_PATTERN = re.compile(
     r"(?<=/)(?:[0-9a-f]{8}-[0-9a-f-]{27,}|[0-9]+)(?=/|$)",
     re.IGNORECASE,
 )
+# A requester-bound call names the session the runtime is serving and proves the runtime's lease on
+# it, beside the runtime's own credential. The platform finds the person in its own record of that
+# session's active turn or Task attempt: the call never names a person.
+ACTING_FOR_SESSION_HEADER = "X-MainSequence-Acting-For-Session"
+LEASE_HOLDER_HEADER = "X-MainSequence-Lease-Holder"
+LEASE_TOKEN_HEADER = "X-MainSequence-Lease-Token"
 
 
 def _dependency_operation(method: str, path: str) -> str:
@@ -103,6 +113,43 @@ def _field_error_paths(value: object, *, prefix: str = "") -> list[str]:
             paths.extend(_field_error_paths(child, prefix=child_prefix))
         return paths
     return [prefix] if prefix else []
+
+
+@dataclass(frozen=True, slots=True)
+class LeaseProof:
+    """The session a requester-bound call serves, and the runtime's lease on that session."""
+
+    session_uid: str
+    holder_id: str
+    # The lease token never appears in repr() or str().
+    lease_token: str = field(repr=False)
+
+    def headers(self) -> dict[str, str]:
+        return {
+            ACTING_FOR_SESSION_HEADER: self.session_uid,
+            LEASE_HOLDER_HEADER: self.holder_id,
+            LEASE_TOKEN_HEADER: self.lease_token,
+        }
+
+
+def answer_without_request_credentials(response: httpx.Response) -> httpx.Response:
+    """Copy an answer onto a request that carries no headers, so no credential travels with it.
+
+    The body is already decoded, so the encoding and length headers of the original answer are
+    left out.
+    """
+
+    headers = [
+        (name, value)
+        for name, value in response.headers.multi_items()
+        if name.lower() not in {"content-encoding", "content-length", "transfer-encoding"}
+    ]
+    return httpx.Response(
+        response.status_code,
+        headers=headers,
+        content=response.content,
+        request=httpx.Request(response.request.method, response.request.url),
+    )
 
 
 def _backend_rejection_log_fields(detail: object) -> dict[str, object]:
@@ -220,6 +267,7 @@ class MainSequenceClient:
         idempotent: bool = False,
         include_status: bool = False,
         dependency_fields: Mapping[str, Any] | None = None,
+        headers: Mapping[str, str] | None = None,
     ) -> Any:
         attempts = 3 if idempotent else 1
         force_auth = False
@@ -234,7 +282,7 @@ class MainSequenceClient:
                 response = await self._client.request(
                     method,
                     path,
-                    headers=await self.auth.headers(force=force_auth),
+                    headers={**(headers or {}), **await self.auth.headers(force=force_auth)},
                     json=json,
                 )
                 response_detail = self._safe_body(response) if not response.is_success else None
@@ -520,14 +568,132 @@ class MainSequenceClient:
         self,
         session_uid: str,
         request: RuntimeActivityPatch,
+        *,
+        caller_assertion: str | None = None,
     ) -> RuntimeState:
+        """Publish runtime activity.
+
+        ``caller_assertion`` is the verified caller assertion of the request that starts a turn.
+        It is sent only with the transition that marks that turn active, so that the platform
+        can record who asked for it; the answer then names that person in
+        ``requester_user_uid``, or None.
+        """
+
         data = await self._request(
             "PATCH",
             agent_session_tau_runtime_activity(session_uid),
             json=self._dump(request),
             idempotent=True,
+            headers={ASSERTION_HEADER: caller_assertion} if caller_assertion else None,
         )
         return RuntimeState.model_validate(data)
+
+    async def resolve_release_runtime_access(
+        self,
+        release_uid: str,
+        *,
+        proof: LeaseProof,
+    ) -> ReleaseRuntimeAccess:
+        """Obtain access to an application release as a requester-bound call."""
+
+        data = await self._request(
+            "POST",
+            resource_release_runtime_access(release_uid),
+            headers=proof.headers(),
+        )
+        try:
+            return ReleaseRuntimeAccess.model_validate(data)
+        except ValidationError:
+            pass
+        # Raised outside the handler: a validation error repeats its input, which holds the token.
+        raise BackendError("Backend release access response is invalid")
+
+    async def requester_bound_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        proof: LeaseProof,
+        params: Any = None,
+        json: Any = None,
+        content: bytes | str | None = None,
+        data: Any = None,
+        files: Any = None,
+        headers: Mapping[str, str] | None = None,
+    ) -> httpx.Response:
+        """Send one requester-bound call to a platform path, with the runtime's own credential.
+
+        ``path`` is relative to the configured platform base URL, and the call never leaves that
+        origin or follows a redirect. The answer is returned on a copy of the request that carries
+        no header, so neither the credential nor the lease proof travels with it.
+        """
+
+        base = httpx.URL(self.settings.backend_url)
+        url = httpx.URL(f"{self.settings.backend_url}{path}")
+        if not path.startswith("/") or (url.scheme, url.host, url.port) != (
+            base.scheme,
+            base.host,
+            base.port,
+        ):
+            raise ValueError("A requester-bound call takes a path on the platform's base URL")
+        force_auth = False
+        operation = _dependency_operation(method, path)
+        while True:
+            started_at = time.monotonic()
+            failure = ""
+            try:
+                response = await self._client.request(
+                    method,
+                    url,
+                    params=params,
+                    json=json,
+                    content=content,
+                    data=data,
+                    files=files,
+                    headers={
+                        **dict(headers or {}),
+                        **proof.headers(),
+                        **await self.auth.headers(force=force_auth),
+                    },
+                    follow_redirects=False,
+                )
+            except httpx.HTTPError as error:
+                failure = type(error).__name__
+            if failure:
+                logger.warning(
+                    "dependency.call.failed",
+                    message="Requester-bound backend call failed",
+                    dependency_operation=operation,
+                    target_system="mainsequence_backend",
+                    requester_bound=True,
+                    duration_ms=round((time.monotonic() - started_at) * 1000, 3),
+                    error_type=failure,
+                    outcome="failed",
+                )
+                # Raised outside the handler: the error holds the request and its credentials.
+                raise BackendError(f"Requester-bound backend call failed: {failure}")
+            logger.info(
+                "dependency.call.completed",
+                message="Requester-bound backend call completed",
+                dependency_operation=operation,
+                target_system="mainsequence_backend",
+                requester_bound=True,
+                status_code=response.status_code,
+                duration_ms=round((time.monotonic() - started_at) * 1000, 3),
+                outcome=(
+                    "success"
+                    if response.is_success
+                    else "rejected"
+                    if response.status_code < 500
+                    else "failed"
+                ),
+            )
+            if response.status_code == 401 and not force_auth:
+                force_auth = True
+                continue
+            if len(response.content) > self.settings.backend_max_response_bytes:
+                raise BackendError("Backend response exceeded configured size limit")
+            return answer_without_request_credentials(response)
 
     async def acquire_runtime_lease(
         self,

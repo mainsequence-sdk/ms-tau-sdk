@@ -28,6 +28,10 @@ The SDK owns:
 - verifying the platform's signed caller or platform assertion on every inbound request of a
   hosted runtime, and admitting a request to a session or its Tasks only for the session's owner
   or an Organization admin;
+- presenting the verified caller assertion of the request that starts a chat or A2A Message turn
+  only when it marks that turn active, so that the platform can record the turn's requester, and
+  giving extension tools that requester and requester-bound calls through `current_requester()`
+  and `requester_client()` without exposing the assertion, the lease proof, or any token;
 - translating inbound A2A requests into the shared TAU runtime; and
 - translating runtime events and results into validated A2A responses.
 

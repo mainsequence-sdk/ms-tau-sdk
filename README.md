@@ -99,6 +99,11 @@ only an application that declares it, so serve the application `create_app()` re
 hosting, requests are handled as before. See
 [request identity](docs/reference/runtime-contract.md#request-identity).
 
+An Agent that an Organization admin enabled for it can read with the access of the person whose
+request a turn is serving. Project tools read that person with `current_requester()` and call the
+platform or another platform application for them with `requester_client()`; neither exposes a
+proof or a token. See the [public API](docs/reference/public-api.md#current_requester-and-requester_client).
+
 Job-hosted batch execution is an [accepted design](docs/adrs/0015-job-hosted-batch-execution.md)
 with implementation pending. It will run this SDK's configured Tau composition for one assignment
 inside a project Job, close it, and exit without starting Uvicorn. The Job continues to own its

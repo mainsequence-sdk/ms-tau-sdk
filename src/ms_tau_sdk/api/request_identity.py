@@ -11,6 +11,9 @@ other route. Handlers read the verified caller with ``current_caller()``, or fro
 A request that addresses an existing session must also come from the session's owner or from an
 Organization admin; see ``require_session_access()``. Outside hosted mode nothing here changes how
 requests are handled.
+
+The raw caller assertion stays private to the request: ``request_caller_assertion()`` hands it
+only to the turn that request starts, which presents it when it marks the turn active.
 """
 
 from __future__ import annotations
@@ -19,7 +22,7 @@ from collections.abc import Iterable
 from contextvars import ContextVar
 
 import structlog
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 from starlette.websockets import WebSocketClose
@@ -29,6 +32,7 @@ from ms_tau_sdk.backend.assertions import (
     AssertionKeysUnavailableError,
     AssertionKind,
     AssertionVerifier,
+    CallerAssertion,
     InvalidAssertionError,
     VerifiedCaller,
 )
@@ -59,6 +63,9 @@ _current_caller: ContextVar[VerifiedCaller | None] = ContextVar(
     "ms_tau_sdk_verified_caller",
     default=None,
 )
+# The verified raw caller assertion is kept in the request's own scope, not in request.state and
+# not in a context variable, so that only the code that starts the request's turn reads it.
+_CALLER_ASSERTION_SCOPE_KEY = "ms_tau_sdk.caller_assertion"
 
 
 class SessionAccessDeniedError(HTTPException):
@@ -75,6 +82,18 @@ def current_caller() -> VerifiedCaller | None:
     """
 
     return _current_caller.get()
+
+
+def request_caller_assertion(request: Request) -> CallerAssertion | None:
+    """Return the verified caller assertion of ``request`` for the turn it starts.
+
+    It is None outside hosted mode and on the platform's own calls. Only the chat and A2A Message
+    routes read it, to present it when they mark their turn active; it is never logged, persisted,
+    or passed to the model, a tool, a stream, or history.
+    """
+
+    value = request.scope.get(_CALLER_ASSERTION_SCOPE_KEY)
+    return value if isinstance(value, CallerAssertion) else None
 
 
 def verified_user_uid(settings: TauSDKSettings) -> str | None:
@@ -196,7 +215,8 @@ class RequestIdentityMiddleware:
             return
         kind = required_assertion(scope)
         try:
-            verified = await self.verifier.verify(_assertion(scope), kind=kind)
+            token = _assertion(scope)
+            verified = await self.verifier.verify(token, kind=kind)
         except AssertionKeysUnavailableError as error:
             await self._deny(scope, receive, send, kind=kind, status_code=503, reason=str(error))
             return
@@ -213,11 +233,18 @@ class RequestIdentityMiddleware:
             organization_environment_uid=self.verifier.organization_environment_uid,
         )
         bind_request_identity_log_fields(scope, user_uid=user_uid, auth_outcome="authenticated")
-        token = _current_caller.set(caller)
+        if caller is not None:
+            scope[_CALLER_ASSERTION_SCOPE_KEY] = CallerAssertion(
+                caller=caller,
+                expires_at=verified.expires_at,
+                token=token,
+            )
+        caller_token = _current_caller.set(caller)
         try:
             await self.app(scope, receive, send)
         finally:
-            _current_caller.reset(token)
+            _current_caller.reset(caller_token)
+            scope.pop(_CALLER_ASSERTION_SCOPE_KEY, None)
 
     async def _deny(
         self,
@@ -277,6 +304,7 @@ __all__ = [
     "SessionAccessDeniedError",
     "current_caller",
     "install_request_identity",
+    "request_caller_assertion",
     "require_session_access",
     "required_assertion",
     "sessions_the_caller_may_address",

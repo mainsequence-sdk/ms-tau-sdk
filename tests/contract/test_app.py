@@ -14,7 +14,9 @@ def test_public_sdk_construction_surface():
         "TauSDKSettings",
         "__version__",
         "create_app",
+        "current_requester",
         "register_deployment_readiness_hook",
+        "requester_client",
     }
     assert __version__ == version("ms-tau-sdk")
 

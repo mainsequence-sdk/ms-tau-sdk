@@ -45,6 +45,8 @@ class ActiveSessionRuntime:
     activity_revision: int = 0
     activity_sequence: int = 0
     active_turn_uid: str | None = None
+    # The person the platform recorded as the active turn's requester when the turn started.
+    requester_user_uid: str | None = None
     runtime_config_sha256: str = ""
     provider_control_schema: int = 0
     catalog_digest: str = ""
