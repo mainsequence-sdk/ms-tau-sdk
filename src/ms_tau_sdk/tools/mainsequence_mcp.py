@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from copy import deepcopy
 from typing import Literal, cast
+from uuid import NAMESPACE_URL, uuid5
 
 from mcp import types
 from tau_agent.messages import ImageContent, TextContent
@@ -23,6 +24,7 @@ from ms_tau_sdk.backend.mcp import (
     ENVIRONMENT_UID_ARGUMENT,
     MainSequenceMCPClient,
 )
+from ms_tau_sdk.tools.secret_entry import secret_entry_result
 
 _INVALID_TOOL_NAME = re.compile(r"[^A-Za-z0-9_-]")
 _RESOURCE_TOOL_NAME = "mainsequence__read_resource"
@@ -55,6 +57,8 @@ def _tool_result(
     canonical_name: str,
     result: types.CallToolResult,
 ) -> AgentToolResult:
+    if canonical_name in {"secret_entry.start", "secret_entry.status", "secret_entry.cancel"}:
+        return secret_entry_result(canonical_name, result)
     content: list[TextContent | ImageContent] = []
     for block in result.content:
         if isinstance(block, types.TextContent):
@@ -91,6 +95,11 @@ def _tau_tool_input_schema(
     local_user_semantics: bool = False,
 ) -> Mapping[str, JSONValue]:
     schema = deepcopy(tool.inputSchema)
+    if tool.name == "secret_entry.start":
+        schema.get("properties", {}).pop("idempotency_key", None)
+        schema["required"] = [
+            name for name in schema.get("required", []) if name != "idempotency_key"
+        ]
     if tool.name == A2A_SEND_TOOL:
         properties = schema.setdefault("properties", {})
         if isinstance(properties, dict):
@@ -164,6 +173,8 @@ def _create_mcp_tool(
     tau_name: str,
     private_meta: Mapping[str, JSONValue] | None = None,
     local_user_semantics: bool = False,
+    session_uid: str | None = None,
+    on_secret_entry: Callable[[dict[str, JSONValue]], Awaitable[None]] | None = None,
 ) -> AgentTool:
     canonical_name = tool.name
     annotations = tool.annotations
@@ -181,7 +192,36 @@ def _create_mcp_tool(
         signal: ToolCancellationToken | None = None,
         on_update: ToolUpdateCallback | None = None,
     ) -> AgentToolResult:
-        del tool_call_id, on_update
+        del on_update
+        if canonical_name in {"secret_entry.start", "secret_entry.status", "secret_entry.cancel"}:
+            allowed = {"organization_environment_uid", "request_uid"}
+            if canonical_name == "secret_entry.start":
+                allowed = {
+                    "organization_environment_uid",
+                    "name",
+                    "secret_uid",
+                    "purpose",
+                    "consumer_user_uid",
+                }
+            if set(arguments) - allowed:
+                return AgentToolResult(
+                    content=[
+                        TextContent(
+                            text=(
+                                "Secret-entry tools accept only metadata and references. "
+                                "Enter values on the private page."
+                            )
+                        )
+                    ],
+                    details={"mcp_tool": canonical_name, "is_error": True},
+                )
+            if canonical_name == "secret_entry.start":
+                arguments = {
+                    **arguments,
+                    "idempotency_key": str(
+                        uuid5(NAMESPACE_URL, f"ms-tau-secret-entry:{session_uid}:{tool_call_id}")
+                    ),
+                }
         if signal is not None and signal.is_cancelled():
             return AgentToolResult(
                 content=[TextContent(text="Main Sequence MCP tool call was cancelled.")],
@@ -203,15 +243,35 @@ def _create_mcp_tool(
                 raise ValueError("Local A2A Task communication requires completion_policy 'poll'")
             if response_kind == "message" and completion_policy is not None:
                 raise ValueError("completion_policy is not valid for Message response_kind")
-        if private_meta is None:
-            result = await client.call_tool(canonical_name, dict(arguments))
-        else:
-            result = await client.call_tool(
-                canonical_name,
-                dict(arguments),
-                meta=dict(private_meta),
+        try:
+            if private_meta is None:
+                result = await client.call_tool(canonical_name, dict(arguments))
+            else:
+                result = await client.call_tool(
+                    canonical_name,
+                    dict(arguments),
+                    meta=dict(private_meta),
+                )
+        except Exception:
+            if canonical_name not in {
+                "secret_entry.start",
+                "secret_entry.status",
+                "secret_entry.cancel",
+            }:
+                raise
+            return secret_entry_result(
+                canonical_name, types.CallToolResult(content=[], isError=True)
             )
-        return _tool_result(canonical_name=canonical_name, result=result)
+        projected = _tool_result(canonical_name=canonical_name, result=result)
+        if (
+            canonical_name.startswith("secret_entry.")
+            and on_secret_entry is not None
+            and isinstance(projected.details, dict)
+        ):
+            payload = projected.details.get("structured_content")
+            if not projected.details.get("is_error") and isinstance(payload, dict):
+                await on_secret_entry(payload)
+        return projected
 
     return AgentTool(
         name=tau_name,
@@ -289,6 +349,8 @@ def create_mainsequence_mcp_tools(
     *,
     caller_session_proof: Mapping[str, JSONValue] | None = None,
     allow_missing_session_proof: bool = False,
+    session_uid: str | None = None,
+    on_secret_entry: Callable[[dict[str, JSONValue]], Awaitable[None]] | None = None,
 ) -> list[AgentTool]:
     tools: list[AgentTool] = []
     names: set[str] = set()
@@ -310,6 +372,8 @@ def create_mainsequence_mcp_tools(
                     allow_missing_proof=allow_missing_session_proof,
                 ),
                 local_user_semantics=allow_missing_session_proof,
+                session_uid=session_uid,
+                on_secret_entry=on_secret_entry,
             )
         )
     if client.resources:

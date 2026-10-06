@@ -16,6 +16,7 @@ from ms_tau_sdk.backend.models import TauTurnCommit
 from ms_tau_sdk.runtime.events import TauRuntimeEvent, translate_tau_event
 from ms_tau_sdk.runtime.extensions import ProjectExtensionState
 from ms_tau_sdk.runtime.provenance import PROVENANCE_NAMESPACE, TurnProvenance
+from ms_tau_sdk.runtime.secret_entry import refresh_secret_entries
 from ms_tau_sdk.sessions.storage import BackendSessionStorage
 
 type PlatformEvent = tuple[str, dict[str, JSONValue]]
@@ -31,6 +32,7 @@ class ActiveSessionRuntime:
     provider_name: str = ""
     model: str = ""
     mcp_client: MainSequenceMCPClient | None = None
+    secret_entry_proof: dict[str, JSONValue] | None = field(default=None, repr=False)
     lease_renew_task: asyncio.Task[None] | None = None
     persistence_task: asyncio.Task[object] | None = None
     pending_snapshot_commit: TauTurnCommit | None = None
@@ -91,6 +93,19 @@ class ActiveSessionRuntime:
             if platform_event is not None:
                 namespace, payload = platform_event
                 await self.coding_session.append_custom_entry(namespace, dict(payload))
+            if self.mcp_client is not None:
+
+                async def record_secret_entry(payload: dict[str, JSONValue]) -> None:
+                    await self.coding_session.append_custom_entry(
+                        "mainsequence.secret_entry", payload
+                    )
+
+                content += await refresh_secret_entries(
+                    entries=await self.storage.read_all(),
+                    client=self.mcp_client,
+                    private_proof=self.secret_entry_proof,
+                    record=record_secret_entry,
+                )
             async for event in self.coding_session.prompt(content):
                 translated = translate_tau_event(event)
                 if settled_event is not None and translated.type != "agent_settled":

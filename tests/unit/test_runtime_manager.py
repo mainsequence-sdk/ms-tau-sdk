@@ -1,7 +1,7 @@
 import asyncio
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import ANY, AsyncMock, Mock, patch
 
 import pytest
 from tau_agent.session import SessionInfoEntry
@@ -398,6 +398,8 @@ async def test_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
         (
             (mcp_client,),
             {
+                "session_uid": session_uid,
+                "on_secret_entry": ANY,
                 "caller_session_proof": {
                     "caller_agent_session_uid": session_uid,
                     "lease_holder_id": "holder",
