@@ -889,7 +889,6 @@ def test_hosted_mode_follows_the_launcher_rule(monkeypatch, tmp_path, environmen
     config = TauSDKSettings(
         _env_file=None,
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
         workspace=tmp_path,
     )
 
@@ -910,7 +909,6 @@ def test_the_platform_environment_configures_a_hosted_app(monkeypatch, platform_
         TauSDKSettings(
             _env_file=None,
             runtime_credential_id="credential-id",
-            runtime_credential_secret="credential-secret",
             workspace=tmp_path,
         )
     )
@@ -925,7 +923,6 @@ def test_an_unknown_caller_auth_mode_is_refused(monkeypatch, tmp_path):
         TauSDKSettings(
             _env_file=None,
             runtime_credential_id="credential-id",
-            runtime_credential_secret="credential-secret",
             workspace=tmp_path,
         )
 

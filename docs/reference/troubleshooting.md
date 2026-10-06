@@ -8,18 +8,19 @@ directory. Files, missing paths, and inaccessible directories are rejected befor
 ## Runtime authentication fails
 
 In managed mode, verify `MAINSEQUENCE_AUTH_MODE=runtime_credential`,
-`MAINSEQUENCE_RUNTIME_CREDENTIAL_ID`, and one proof of that credential:
-`MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` or `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET`. With the
-token file set, the secret is not used. Do not substitute a user token. The
-`runtime.auth.exchange.completed` log event names the proof that was sent in `proof`
-(`workload_identity_token` or `credential_secret`), never its value. Each failure has its own
-message:
+`MAINSEQUENCE_RUNTIME_CREDENTIAL_ID`, and `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE`, the file of
+the projected workload identity token that proves the credential. Do not substitute a user token.
+The SDK no longer reads `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET`, so that variable cannot replace
+the token file. The `runtime.auth.exchange.completed` log event names the proof that was sent in
+`proof` (`workload_identity_token`), never its value. Each failure has its own message:
 
+- `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` is not set. Startup fails with "Missing runtime
+  credential settings" and names the variable.
 - The token file is missing, unreadable, or empty. The message names the file and the reason.
   Check that the deployment mounts the projected token at the path in
-  `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE`. The SDK does not fall back to the secret.
-- The exchange was rejected with HTTP 401. The platform did not accept the token or the secret, and
-  it answers every failed verification with the same generic 401. The SDK does not retry it.
+  `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE`.
+- The exchange was rejected with HTTP 401. The platform did not accept the token, and it answers
+  every failed verification with the same generic 401. The SDK does not retry it.
 - The exchange failed with HTTP 429 or 503 after four attempts, or the platform asked to retry after
   more than 60 seconds. The platform throttled the exchange or could not verify the credential for
   the moment. A process that failed at startup must be started again; a running process exchanges

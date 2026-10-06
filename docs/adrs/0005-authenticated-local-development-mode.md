@@ -40,6 +40,12 @@ when the platform's hosting settings make the runtime hosted (`MAINSEQUENCE_CALL
 `MAINSEQUENCE_CALLER_ASSERTION_JWKS_URL`), and declares `local` request identity otherwise. Its
 request handling is unchanged.
 
+Amended: 2026-10-06 by the amendment of that date to
+[ADR 0002](./0002-runtime-and-protocol-contracts.md) — managed execution proves its runtime
+credential only with the projected workload identity token in
+`MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE`; the runtime credential secret is removed. Local mode is
+unchanged.
+
 Amends, when accepted:
 
 - [ADR 0002: Runtime and protocol contracts](./0002-runtime-and-protocol-contracts.md); and
@@ -132,7 +138,7 @@ Managed execution continues to authenticate with:
 
 ```env
 MAINSEQUENCE_RUNTIME_CREDENTIAL_ID=...
-MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET=...
+MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE=...
 ```
 
 Local mode sets `MAINSEQUENCE_AUTH_MODE=jwt` and takes the user's access token from one of two
@@ -191,7 +197,7 @@ Auth selection is fail-closed and unambiguous:
 
 | Mode | Main Sequence authentication |
 | --- | --- |
-| Managed | Runtime credential ID and secret |
+| Managed | Runtime credential ID, proven with the projected workload identity token |
 | Local | Access token from the Main Sequence CLI token command, or the access/refresh JWT environment pair and HTTP refresh contract |
 
 Settings validation is mode-aware. `MAINSEQUENCE_AUTH_MODE=jwt` is accepted only with
@@ -688,7 +694,7 @@ items above are release evidence, not authorization for this repository to chang
 The implementation is not complete until automated tests prove:
 
 1. Local startup does not require an Agent UID, AgentSession UID, runtime credential ID, or runtime
-   credential secret.
+   identity token file.
 2. Local startup requires a Main Sequence access token from the token command of a Main Sequence
    CLI found on the machine, or valid access/refresh JWT environment values that it refreshes
    itself. Neither source imports the `mainsequence` package or reads the CLI's credential store,

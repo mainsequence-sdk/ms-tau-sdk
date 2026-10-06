@@ -9,41 +9,37 @@ Established Main Sequence connection and credential names remain unprefixed by t
 | Environment variable | Meaning |
 | --- | --- |
 | `MAINSEQUENCE_RUNTIME_CREDENTIAL_ID` | Runtime credential identifier. |
-| `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` | Path of the file that holds the runtime's projected workload identity token. When set, the token proves the credential and the secret is not used. An empty value is the same as unset. |
-| `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET` | One process's runtime credential secret. Not needed when the token file is set. |
+| `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` | Required. Path of the file that holds the runtime's projected workload identity token, the only proof of the runtime credential. An empty value is the same as unset. |
 
 Managed mode uses `MAINSEQUENCE_AUTH_MODE=runtime_credential` and remains the default.
 `MAINSEQUENCE_ENDPOINT` defaults to `https://api.main-sequence.app`.
 
 The SDK exchanges the runtime credential for short-lived access tokens at
-`POST /api/v1/runtime-credentials/token/`. Every exchange sends `credential_id` and exactly one
-proof:
+`POST /api/v1/runtime-credentials/token/`. Every exchange sends exactly two fields:
+`credential_id`, and `workload_identity_token` with the content of the file that
+`MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` names. The exchange reads the file again every time,
+because the token in it is rotated. Startup fails when the setting is absent, and a missing,
+unreadable, or empty file is a configuration error that names the file. There is no other proof and
+no fallback. Main Sequence deploys a runtime with
+`MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE=/var/run/secrets/mainsequence.io/runtime-identity/token`.
 
-- **Workload identity token.** With `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` set, every exchange
-  reads the file again, because the token in it is rotated, and sends its content as
-  `workload_identity_token`. The SDK never reads or sends the secret in this mode, and startup does
-  not require it. A missing, unreadable, or empty file is a configuration error that names the file.
-  The exchange never falls back to the secret. Main Sequence deploys a runtime in this mode with
-  `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE=/var/run/secrets/mainsequence.io/runtime-identity/token`
-  and no `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET`.
-- **Bootstrap secret.** Without the token file, every exchange sends
-  `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET` as `credential_secret`.
+The SDK no longer reads `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET`, the bootstrap secret that earlier
+versions could send as `credential_secret` instead of the token. A runtime configured with that
+variable and no token file fails at startup.
 
 The token stays inside the exchange. The settings hold only the path of its file. The SDK does not
 copy the token into the environment, a file, a log, an error message, or anything it hands to
 project code.
 
 The settings never show a credential. `repr()` and `str()` of `TauSDKSettings`, and every log
-event that carries it, leave out `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET` and mask the local
-token pair. A settings validation error names the variable and the problem, and never repeats a
-configured value.
+event that carries it, mask the local token pair. A settings validation error names the variable
+and the problem, and never repeats a configured value.
 
 The exchange is sent again, up to three times, when the platform answers HTTP 429 (throttled) or
 503 (verification temporarily unavailable). The SDK waits as long as `Retry-After` asks, up to 60
 seconds, and 1, 2, then 4 seconds when the answer has no usable `Retry-After`. A `Retry-After`
 longer than 60 seconds ends the exchange with an error instead of a wait. HTTP 401 means the
-platform did not accept the proof: the exchange fails at once, without a retry and without trying
-another proof.
+platform did not accept the token: the exchange fails at once, without a retry.
 
 ## Hosted caller authentication
 
@@ -138,9 +134,8 @@ Run `mainsequence refresh-token` in that directory to remove the token lines.
 
 Local mode and managed authentication are mutually exclusive. Local startup fails if the provider
 or the model setting is absent, if only one token is set, or if no token is set and no Main
-Sequence CLI is found. Managed startup fails if `MAINSEQUENCE_RUNTIME_CREDENTIAL_ID` is absent, or
-if neither `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` nor `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET`
-is set.
+Sequence CLI is found. Managed startup fails if `MAINSEQUENCE_RUNTIME_CREDENTIAL_ID` or
+`MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` is absent.
 
 ## Process and workspace
 

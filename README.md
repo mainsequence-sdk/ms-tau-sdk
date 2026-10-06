@@ -51,17 +51,18 @@ uv add --prerelease=allow ms-tau-sdk   # or pin one exactly: uv add "ms-tau-sdk=
 See the [release process](docs/reference/releasing.md#registry-publication) for what each workflow
 publishes.
 
-Provide the runtime credential that Main Sequence assigned to the deployment:
+Provide the runtime credential that Main Sequence assigned to the deployment, and the file that
+holds the runtime's projected workload identity token:
 
 ```bash
 export MAINSEQUENCE_ENDPOINT="https://api.main-sequence.app"
 export MAINSEQUENCE_RUNTIME_CREDENTIAL_ID="<runtime-credential-id>"
-export MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET="<runtime-credential-secret>"
+export MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE="/var/run/secrets/mainsequence.io/runtime-identity/token"
 ```
 
-A runtime that Main Sequence deploys with a projected workload identity token gets
-`MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` instead of the secret. The SDK then reads the token from
-that file for every exchange and never uses a secret. See
+Runtime credentials require that token file: the token is the only proof of the credential, and
+the SDK reads it from the file for every exchange because it is rotated. Main Sequence sets the path
+and projects the token when it deploys the runtime. See
 [Settings and credentials](docs/reference/settings.md#managed-authenticated-startup).
 
 Start the service from the project workspace:

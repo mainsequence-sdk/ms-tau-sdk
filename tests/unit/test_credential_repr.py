@@ -1,9 +1,10 @@
 """Credential values never appear in repr(), str(), a settings error, or a log rendering.
 
-Each object here holds a credential that the SDK reads or sends: the runtime credential secret,
-a Main Sequence access token, or a model provider key. The code that uses a value still reads it
-unchanged, but printing the object, logging it, or a settings validation error never shows it
-(#57). Every exchange is answered by a stand-in transport, and the values are stand-ins.
+Each object here holds a credential that the SDK reads or sends: a Main Sequence access token or
+a model provider key. The code that uses a value still reads it unchanged, but printing the object,
+logging it, or a settings validation error never shows it (#57). No object holds the workload
+identity token that the runtime credential exchange reads and sends, and none shows it. Every
+exchange is answered by a stand-in transport, and the values are stand-ins.
 """
 
 from __future__ import annotations
@@ -31,12 +32,12 @@ from ms_tau_sdk.providers.factory import ProviderRuntime
 from ms_tau_sdk.settings import TauSDKSettings
 
 # Random bodies, so that any run of eight characters identifies the value it came from.
-SECRET = "rcs-q7Lm2Xc9RfB4nZ8kW1pD"
+IDENTITY_TOKEN = "wit-bxhxztT5vF86G3cSuo92"
 ACCESS_TOKEN = "at-Vb4Nz8Kw1PhD6tY3jS5gQ"
 REFRESH_TOKEN = "rt-Hd6Ty3Js5GmW2pE7uA4xC"
 PROVIDER_KEY = "pk-Wp2Qe7Ua4MkC8fR1yO6tZ"
 HEADER_KEY = "hk-Zc8Fr1Yo6TnB3vL9sX5qJ"
-CREDENTIALS = (SECRET, ACCESS_TOKEN, REFRESH_TOKEN, PROVIDER_KEY, HEADER_KEY)
+CREDENTIALS = (IDENTITY_TOKEN, ACCESS_TOKEN, REFRESH_TOKEN, PROVIDER_KEY, HEADER_KEY)
 
 
 def shows(text: str, value: str) -> bool:
@@ -54,11 +55,15 @@ def assert_shows_no_credential(text: str) -> None:
 
 
 def managed_settings(tmp_path: Any) -> TauSDKSettings:
+    """Managed settings whose token file holds the stand-in workload identity token."""
+    token_file = tmp_path / "runtime-identity" / "token"
+    token_file.parent.mkdir(exist_ok=True)
+    token_file.write_text(IDENTITY_TOKEN, encoding="utf-8")
     return TauSDKSettings(
         _env_file=None,
         backend_url="https://backend.test",
         runtime_credential_id="credential-id",
-        runtime_credential_secret=SECRET,
+        runtime_identity_token_file=token_file,
         workspace=tmp_path,
     )
 
@@ -137,31 +142,9 @@ def runtime_bootstrap() -> TauRuntimeBootstrap:
     )
 
 
-def test_settings_read_the_runtime_credential_secret_but_never_show_it(monkeypatch, tmp_path):
-    monkeypatch.setenv("MAINSEQUENCE_RUNTIME_CREDENTIAL_ID", "credential-id")
-    monkeypatch.setenv("MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET", SECRET)
-
-    settings = TauSDKSettings(_env_file=None, workspace=tmp_path)
-
-    # The value is still a plain string for the code that reads it.
-    assert settings.runtime_credential_secret == SECRET
-    for shown in renderings(settings):
-        assert_shows_no_credential(shown)
-        assert "runtime_credential_id='credential-id'" in shown
-
-
 @pytest.mark.parametrize(
     ("environment", "problem"),
     [
-        pytest.param(
-            {
-                "MAINSEQUENCE_AUTH_MODE": "jwt",
-                "MAINSEQUENCE_RUNTIME_CREDENTIAL_ID": "credential-id",
-                "MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET": SECRET,
-            },
-            "MAINSEQUENCE_AUTH_MODE=jwt is supported only when TAU_LOCAL_MODE=true",
-            id="runtime-credential-secret",
-        ),
         pytest.param(
             {
                 "MAINSEQUENCE_AUTH_MODE": "jwt",
@@ -191,7 +174,9 @@ def test_a_settings_error_names_the_problem_without_echoing_configured_values(
         assert_shows_no_credential(shown)
 
 
-async def test_the_exchange_sends_the_secret_and_the_access_token_is_never_shown(tmp_path):
+async def test_the_exchange_sends_the_identity_token_and_the_access_token_is_never_shown(
+    tmp_path,
+):
     settings = managed_settings(tmp_path)
     sent: list[dict[str, Any]] = []
 
@@ -205,8 +190,8 @@ async def test_the_exchange_sends_the_secret_and_the_access_token_is_never_shown
         auth = RuntimeCredentialAuth(settings, exchange_client=client)
         headers = await auth.headers()
 
-    # The secret is read and sent, and the access token is used, exactly as before.
-    assert sent == [{"credential_id": "credential-id", "credential_secret": SECRET}]
+    # The token is read from its file and sent, and the access token is used, exactly as before.
+    assert sent == [{"credential_id": "credential-id", "workload_identity_token": IDENTITY_TOKEN}]
     assert headers == {"Authorization": f"Bearer {ACCESS_TOKEN}"}
     token = AccessToken(value=ACCESS_TOKEN, token_type="Bearer", expires_at=None)
     assert token.value == ACCESS_TOKEN

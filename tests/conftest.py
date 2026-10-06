@@ -76,12 +76,20 @@ def isolated_tau_state_root(monkeypatch, tmp_path_factory) -> None:
 
 
 @pytest.fixture
-def test_settings(tmp_path) -> TauSDKSettings:
+def runtime_identity_token_file(tmp_path_factory) -> Path:
+    """A stand-in for the projected workload identity token file, outside every workspace."""
+    token_file = tmp_path_factory.mktemp("runtime-identity") / "token"
+    token_file.write_text("dummy-projected-workload-identity-token", encoding="utf-8")
+    return token_file
+
+
+@pytest.fixture
+def test_settings(tmp_path, runtime_identity_token_file: Path) -> TauSDKSettings:
     return TauSDKSettings(
         _env_file=None,
         backend_url="http://backend:8000",
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
+        runtime_identity_token_file=runtime_identity_token_file,
         workspace=tmp_path,
         startup_dependencies_enabled=False,
     )
@@ -241,7 +249,6 @@ class PlatformKeys:
         values: dict[str, Any] = {
             "backend_url": "http://backend:8000",
             "runtime_credential_id": "credential-id",
-            "runtime_credential_secret": "credential-secret",
             "workspace": workspace,
             "startup_dependencies_enabled": False,
             "caller_assertion_issuer": self.issuer,

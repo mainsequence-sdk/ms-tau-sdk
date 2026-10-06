@@ -5,7 +5,7 @@ from ms_tau_sdk.backend.client import MainSequenceClient
 from ms_tau_sdk.settings import TauSDKSettings
 
 
-async def test_task_creation_preserves_backend_replay_signal():
+async def test_task_creation_preserves_backend_replay_signal(runtime_identity_token_file):
     task = {
         "uid": "task-uid-1",
         "task_id": "task-1",
@@ -25,7 +25,7 @@ async def test_task_creation_preserves_backend_replay_signal():
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
+        runtime_identity_token_file=runtime_identity_token_file,
     )
     async with httpx.AsyncClient(
         base_url=config.backend_url,

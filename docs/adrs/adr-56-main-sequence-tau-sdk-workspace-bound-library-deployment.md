@@ -12,6 +12,11 @@ Amended 2026-09-21: a merge to `main` is the release. The release-owner operatio
 release pull request from `development` into `main`; the release workflow then publishes to PyPI
 and creates the `v<version>` tag itself. See [the release process](../reference/releasing.md).
 
+Amended 2026-10-06 by the amendment of that date to
+[ADR 0002](./0002-runtime-and-protocol-contracts.md): the runtime credential is proven only with the
+projected workload identity token in `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE`.
+`MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET` in section 6 no longer defines SDK behavior.
+
 Implementation Status: Complete — C0 through C7, A0 through A4, T0 through T5, and D0 through D5
 are implemented and verified in this repository. Version `1.0.0` artifacts passed the stable gates.
 Creating/pushing the release tag and publishing to PyPI remain explicit release-owner operations,

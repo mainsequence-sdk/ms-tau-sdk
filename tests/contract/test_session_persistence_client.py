@@ -12,7 +12,7 @@ from ms_tau_sdk.backend.models import (
 from ms_tau_sdk.settings import TauSDKSettings
 
 
-async def test_batch_append_and_tau_activity_match_django_contract():
+async def test_batch_append_and_tau_activity_match_django_contract(runtime_identity_token_file):
     session_uid = "session-1"
     calls = []
 
@@ -61,7 +61,7 @@ async def test_batch_append_and_tau_activity_match_django_contract():
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
+        runtime_identity_token_file=runtime_identity_token_file,
     )
     http = httpx.AsyncClient(
         base_url=settings.backend_url,

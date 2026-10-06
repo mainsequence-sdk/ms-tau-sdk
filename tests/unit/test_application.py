@@ -7,12 +7,12 @@ from ms_tau_sdk.cli import run
 from ms_tau_sdk.settings import TauSDKSettings
 
 
-async def test_application_services_own_startup_and_shutdown(tmp_path):
+async def test_application_services_own_startup_and_shutdown(tmp_path, runtime_identity_token_file):
     settings = TauSDKSettings(
         _env_file=None,
         workspace=tmp_path,
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
+        runtime_identity_token_file=runtime_identity_token_file,
     )
     backend = Mock()
     backend.aclose = AsyncMock()
@@ -40,7 +40,6 @@ def test_cli_runs_constructed_application(monkeypatch, tmp_path):
         _env_file=None,
         workspace=tmp_path,
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
         host="127.0.0.1",
         port=9876,
     )
@@ -107,7 +106,6 @@ def test_application_passes_the_provider_timeout_to_the_factory(tmp_path):
         _env_file=None,
         workspace=tmp_path,
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
         provider_timeout_seconds=300,
     )
 

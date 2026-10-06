@@ -1,4 +1,4 @@
-"""Managed runtime credential exchange with the bootstrap secret or the workload identity token.
+"""Managed runtime credential exchange with the projected workload identity token.
 
 Every exchange is answered by a stand-in transport. No test reaches a backend, reads a real token,
 or uses the configuration of the machine that runs it.
@@ -31,6 +31,7 @@ from ms_tau_sdk.settings import TauSDKSettings
 BACKEND = "https://backend.test"
 EXCHANGE_PATH = "/api/v1/runtime-credentials/token/"
 CREDENTIAL_ID = "resource_release_11111111_revision_22222222"
+# The variable of the retired secret proof, set only to show that nothing reads it.
 SECRET = "dummy-bootstrap-secret"
 SECRET_ENV = "MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET"
 TOKEN_FILE_ENV = "MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE"
@@ -86,7 +87,6 @@ def isolated_runtime_credentials(monkeypatch: pytest.MonkeyPatch, tmp_path: Path
         "MAINSEQUENCE_AUTH_MODE",
         "MAINSEQUENCE_ENDPOINT",
         "MAINSEQUENCE_RUNTIME_CREDENTIAL_ID",
-        SECRET_ENV,
         TOKEN_FILE_ENV,
         "TAU_LOCAL_MODE",
     ):
@@ -170,33 +170,71 @@ def exception_chain(error: BaseException) -> list[BaseException]:
     return links
 
 
-async def test_without_a_token_file_the_exchange_sends_the_secret(tmp_path, connect):
-    exchange = StandInExchange(GRANTED)
-    auth = connect(managed_settings(tmp_path, runtime_credential_secret=SECRET), exchange)
-
-    assert await auth.headers() == {"Authorization": "Bearer dummy-access-1"}
-    assert exchange.bodies == [{"credential_id": CREDENTIAL_ID, "credential_secret": SECRET}]
-
-
-async def test_with_a_token_file_the_exchange_sends_the_token_and_never_the_secret(
-    tmp_path, connect
-):
+async def test_the_exchange_sends_exactly_the_credential_id_and_the_token(tmp_path, connect):
     token_file = tmp_path / "token"
     token_file.write_text(projected_token(1) + "\n", encoding="utf-8")
     exchange = StandInExchange(GRANTED)
-    # A secret is configured as well. The token file decides, and the secret is never sent.
-    settings = managed_settings(
-        tmp_path, runtime_identity_token_file=token_file, runtime_credential_secret=SECRET
-    )
-    auth = connect(settings, exchange)
+    auth = connect(managed_settings(tmp_path, runtime_identity_token_file=token_file), exchange)
 
     assert await auth.headers() == {"Authorization": "Bearer dummy-access-1"}
+    assert [set(body) for body in exchange.bodies] == [{"credential_id", "workload_identity_token"}]
     assert exchange.bodies == [
         {"credential_id": CREDENTIAL_ID, "workload_identity_token": projected_token(1)}
     ]
 
 
-async def test_the_deployed_environment_needs_no_secret(tmp_path, monkeypatch, connect):
+async def test_without_the_token_file_setting_the_exchange_fails_before_anything_is_sent(
+    tmp_path, connect
+):
+    exchange = StandInExchange(GRANTED)
+    auth = connect(managed_settings(tmp_path), exchange)
+
+    with pytest.raises(ConfigurationError) as failure:
+        await auth.headers()
+
+    assert str(failure.value) == f"Missing runtime credential settings: {TOKEN_FILE_ENV}"
+    assert exchange.bodies == []
+
+
+async def test_the_retired_secret_variable_has_no_effect(tmp_path, monkeypatch, connect):
+    monkeypatch.setenv("MAINSEQUENCE_RUNTIME_CREDENTIAL_ID", CREDENTIAL_ID)
+    monkeypatch.setenv(SECRET_ENV, SECRET)
+    exchange = StandInExchange(GRANTED)
+
+    # The variable does not take the place of the token file.
+    without_token_file = TauSDKSettings(_env_file=None, workspace=tmp_path, backend_url=BACKEND)
+    with pytest.raises(ConfigurationError) as missing:
+        await connect(without_token_file, exchange).headers()
+    assert str(missing.value) == f"Missing runtime credential settings: {TOKEN_FILE_ENV}"
+    assert exchange.bodies == []
+
+    # Nor does its value travel with the token or stay in the settings.
+    token_file = project(tmp_path / "runtime-identity", projected_token(1))
+    monkeypatch.setenv(TOKEN_FILE_ENV, str(token_file))
+    settings = TauSDKSettings(_env_file=None, workspace=tmp_path, backend_url=BACKEND)
+    await connect(settings, exchange).headers()
+    assert exchange.bodies == [
+        {"credential_id": CREDENTIAL_ID, "workload_identity_token": projected_token(1)}
+    ]
+    for shown in (repr(settings), repr(settings.model_dump())):
+        assert SECRET not in shown
+
+
+def test_no_code_path_reads_the_retired_secret_variable():
+    # No module of the SDK or of Tau Board names the variable, so no code path can read it.
+    repository = Path(__file__).resolve().parents[2]
+    modules = [
+        module
+        for source in (repository / "src", repository / "packages" / "tau-board" / "src")
+        for module in source.rglob("*.py")
+    ]
+    # The two modules that read it before are among those searched.
+    assert repository / "src" / "ms_tau_sdk" / "settings.py" in modules
+    assert repository / "packages" / "tau-board" / "src" / "ms_tau_board" / "config.py" in modules
+    assert [module for module in modules if SECRET_ENV in module.read_text(encoding="utf-8")] == []
+
+
+async def test_the_deployed_environment_configures_the_exchange(tmp_path, monkeypatch, connect):
     token_file = project(tmp_path / "runtime-identity", projected_token(1))
     monkeypatch.setenv("MAINSEQUENCE_AUTH_MODE", "runtime_credential")
     monkeypatch.setenv("MAINSEQUENCE_RUNTIME_CREDENTIAL_ID", CREDENTIAL_ID)
@@ -207,7 +245,6 @@ async def test_the_deployed_environment_needs_no_secret(tmp_path, monkeypatch, c
     settings.validate_runtime_auth()
     await connect(settings, exchange).prefetch()
 
-    assert settings.runtime_credential_secret is None
     assert settings.runtime_identity_token_file == token_file
     assert exchange.bodies == [
         {"credential_id": CREDENTIAL_ID, "workload_identity_token": projected_token(1)}
@@ -257,29 +294,22 @@ async def test_the_token_file_is_read_for_every_exchange_and_not_at_start_up(tmp
     ],
     ids=["missing", "directory", "empty", "blank", "too-large", "not-text"],
 )
-async def test_an_unusable_token_file_fails_without_falling_back_to_the_secret(
+async def test_an_unusable_token_file_fails_before_anything_is_sent(
     tmp_path, connect, prepare, reason
 ):
     token_file = tmp_path / "token"
     prepare(token_file)
     exchange = StandInExchange(GRANTED)
-    settings = managed_settings(
-        tmp_path, runtime_identity_token_file=token_file, runtime_credential_secret=SECRET
-    )
-    auth = connect(settings, exchange)
+    auth = connect(managed_settings(tmp_path, runtime_identity_token_file=token_file), exchange)
 
     with pytest.raises(ConfigurationError) as failure:
         await auth.headers()
 
-    assert str(failure.value) == (
-        f"{TOKEN_FILE_ENV} names {token_file}, which {reason}. The runtime credential exchange "
-        f"does not fall back to {SECRET_ENV}."
-    )
-    # Nothing was sent: neither the secret nor anything read from the file.
+    assert str(failure.value) == f"{TOKEN_FILE_ENV} names {token_file}, which {reason}."
+    # Nothing was sent, and nothing read from the file travels with the error.
     assert exchange.bodies == []
     for link in exception_chain(failure.value):
         assert projected_token(1) not in repr(link)
-        assert SECRET not in repr(link)
 
 
 async def test_throttled_and_unavailable_exchanges_wait_as_long_as_retry_after_asks(
@@ -308,9 +338,11 @@ async def test_throttled_and_unavailable_exchanges_wait_as_long_as_retry_after_a
 async def test_retries_back_off_without_a_usable_retry_after_and_are_bounded(
     tmp_path, connect, no_wait, status, retry_after
 ):
+    token_file = tmp_path / "token"
+    token_file.write_text(projected_token(1), encoding="utf-8")
     headers = {} if retry_after is None else {"Retry-After": retry_after}
     exchange = StandInExchange((status, headers))
-    auth = connect(managed_settings(tmp_path, runtime_credential_secret=SECRET), exchange)
+    auth = connect(managed_settings(tmp_path, runtime_identity_token_file=token_file), exchange)
 
     with pytest.raises(BackendError) as failure:
         await auth.headers()
@@ -331,8 +363,10 @@ async def test_retry_after_may_be_an_http_date(tmp_path, connect, no_wait, zone)
     else:  # a date without a zone is read as UTC
         retry_after = format_datetime(later.replace(tzinfo=None))
     assert retry_after.endswith(zone)
+    token_file = tmp_path / "token"
+    token_file.write_text(projected_token(1), encoding="utf-8")
     exchange = StandInExchange((503, {"Retry-After": retry_after}), GRANTED)
-    auth = connect(managed_settings(tmp_path, runtime_credential_secret=SECRET), exchange)
+    auth = connect(managed_settings(tmp_path, runtime_identity_token_file=token_file), exchange)
 
     await auth.headers()
 
@@ -342,8 +376,10 @@ async def test_retry_after_may_be_an_http_date(tmp_path, connect, no_wait, zone)
 
 
 async def test_a_retry_after_beyond_the_bound_fails_without_waiting(tmp_path, connect, no_wait):
+    token_file = tmp_path / "token"
+    token_file.write_text(projected_token(1), encoding="utf-8")
     exchange = StandInExchange((503, {"Retry-After": "3600"}))
-    auth = connect(managed_settings(tmp_path, runtime_credential_secret=SECRET), exchange)
+    auth = connect(managed_settings(tmp_path, runtime_identity_token_file=token_file), exchange)
 
     with pytest.raises(BackendError) as failure:
         await auth.headers()
@@ -372,24 +408,23 @@ async def test_other_failed_exchanges_are_not_retried(tmp_path, connect, no_wait
     no_wait.assert_not_awaited()
 
 
-@pytest.mark.parametrize("proof", ["workload_identity_token", "credential_secret"])
-async def test_a_rejected_exchange_fails_at_once_without_another_proof(
-    tmp_path, connect, no_wait, proof
-):
+async def test_a_rejected_exchange_fails_at_once_without_a_retry(tmp_path, connect, no_wait):
     token_file = tmp_path / "token"
     token_file.write_text(projected_token(1), encoding="utf-8")
-    overrides: dict[str, Any] = {"runtime_credential_secret": SECRET}
-    if proof == "workload_identity_token":
-        overrides["runtime_identity_token_file"] = token_file
     exchange = StandInExchange(REJECTED, GRANTED)
-    auth = connect(managed_settings(tmp_path, **overrides), exchange)
+    auth = connect(managed_settings(tmp_path, runtime_identity_token_file=token_file), exchange)
 
     with pytest.raises(BackendError) as failure:
         await auth.headers()
 
     assert failure.value.backend_status == 401
-    assert str(failure.value).startswith("Runtime credential exchange was rejected (HTTP 401)")
-    assert [list(body) for body in exchange.bodies] == [["credential_id", proof]]
+    assert str(failure.value) == (
+        "Runtime credential exchange was rejected (HTTP 401): the platform did not accept the "
+        f"workload identity token read from {TOKEN_FILE_ENV}. A rejected token is not retried."
+    )
+    assert exchange.bodies == [
+        {"credential_id": CREDENTIAL_ID, "workload_identity_token": projected_token(1)}
+    ]
     no_wait.assert_not_awaited()
 
 
@@ -494,7 +529,7 @@ async def test_the_workload_identity_token_never_leaves_the_exchange(
         assert all(token.encode() not in path.read_bytes() for path in stored_files)
 
 
-async def test_a_runtime_deployed_with_a_token_file_and_no_secret_starts_ready(
+async def test_a_runtime_deployed_with_a_token_file_starts_ready(
     tmp_path, monkeypatch, asgi_client
 ):
     token_file = project(tmp_path / "runtime-identity", projected_token(1))
@@ -532,7 +567,6 @@ async def test_startup_with_a_missing_token_file_fails_before_any_request(tmp_pa
     settings = managed_settings(
         tmp_path,
         runtime_identity_token_file=missing,
-        runtime_credential_secret=SECRET,
         state_root=tmp_path / "tau-state",
         exclude_mainsequence_mcp=True,
     )
@@ -543,4 +577,19 @@ async def test_startup_with_a_missing_token_file_fails_before_any_request(tmp_pa
         await services.start()
     await http.aclose()
 
+    assert exchange.bodies == []
+
+
+async def test_startup_without_the_token_file_setting_fails_before_any_request(tmp_path):
+    settings = managed_settings(
+        tmp_path, state_root=tmp_path / "tau-state", exclude_mainsequence_mcp=True
+    )
+    exchange = StandInExchange(GRANTED)
+    services, http = managed_services(settings, exchange)
+
+    with pytest.raises(ConfigurationError) as missing:
+        await services.start()
+    await http.aclose()
+
+    assert str(missing.value) == f"Missing runtime credential settings: {TOKEN_FILE_ENV}"
     assert exchange.bodies == []

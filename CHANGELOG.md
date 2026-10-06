@@ -1,5 +1,24 @@
 # Changelog
 
+## Unreleased
+
+- Runtime credentials require the projected workload identity token file. The runtime credential
+  exchange proves the credential only with the token in the file that
+  `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` names, read again for every exchange, and every
+  exchange request carries exactly `credential_id` and `workload_identity_token`. The bootstrap
+  secret mode is removed: the SDK no longer reads `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET` and never
+  sends `credential_secret`, and `TauSDKSettings` no longer has a `runtime_credential_secret` field.
+  Managed startup without `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` fails with
+  `Missing runtime credential settings: MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE`, and a missing,
+  unreadable, or empty token file fails the exchange with an error that names the file. There is no
+  fallback. Retries after HTTP 429 and 503, the immediate failure on HTTP 401, and the rule that
+  the token never leaves the exchange are unchanged; the `proof` field of the
+  `runtime.auth.exchange.*` log events is always `workload_identity_token`. Tau Board no longer
+  reports whether `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET` is set. Upgrade note: a runtime
+  configured with `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET` and no token file no longer starts; set
+  `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` to the path of the projected token. See the 2026-10-06
+  amendment of ADR 0002.
+
 ## 2.0.1 — 2026-10-05
 
 Published as 2.0.1: the number 2.0.0 belongs to a release that was yanked on 2026-09-19, and PyPI never reuses a version.

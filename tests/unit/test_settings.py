@@ -96,15 +96,18 @@ def test_settings_reject_missing_or_non_directory_workspace(tmp_path):
         TauSDKSettings(_env_file=None, workspace=regular_file)
 
 
-def test_runtime_auth_requires_both_credential_parts():
-    settings = TauSDKSettings(
-        _env_file=None,
-        runtime_credential_id="credential-id",
-        runtime_credential_secret=None,
-    )
+def test_runtime_auth_requires_the_credential_id_and_the_token_file(monkeypatch, tmp_path):
+    for name in ("MAINSEQUENCE_RUNTIME_CREDENTIAL_ID", "MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE"):
+        monkeypatch.delenv(name, raising=False)
+    settings = TauSDKSettings(_env_file=None, workspace=tmp_path)
 
-    with pytest.raises(ConfigurationError, match="MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET"):
+    with pytest.raises(ConfigurationError) as missing:
         settings.validate_runtime_auth()
+
+    assert str(missing.value) == (
+        "Missing runtime credential settings: "
+        "MAINSEQUENCE_RUNTIME_CREDENTIAL_ID, MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE"
+    )
 
 
 def test_runtime_identity_token_file_reads_the_environment(monkeypatch, tmp_path):
@@ -121,7 +124,7 @@ def test_runtime_identity_token_file_reads_the_environment(monkeypatch, tmp_path
     assert TauSDKSettings(_env_file=None, workspace=tmp_path).runtime_identity_token_file is None
 
 
-def test_runtime_auth_accepts_the_token_file_in_place_of_the_secret(tmp_path):
+def test_runtime_auth_checks_the_token_file_setting_without_reading_the_file(tmp_path):
     # The check does not read the file. Each exchange reads it, because the token is rotated.
     settings = TauSDKSettings(
         _env_file=None,
@@ -143,7 +146,8 @@ def test_runtime_auth_accepts_the_token_file_in_place_of_the_secret(tmp_path):
     )
 
 
-def test_runtime_auth_without_a_proof_names_the_secret_and_the_token_file(tmp_path):
+def test_runtime_auth_without_the_token_file_names_it(monkeypatch, tmp_path):
+    monkeypatch.delenv("MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE", raising=False)
     settings = TauSDKSettings(
         _env_file=None,
         workspace=tmp_path,
@@ -154,8 +158,7 @@ def test_runtime_auth_without_a_proof_names_the_secret_and_the_token_file(tmp_pa
         settings.validate_runtime_auth()
 
     assert str(missing.value) == (
-        "Missing runtime credential settings: "
-        "MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET or MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE"
+        "Missing runtime credential settings: MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE"
     )
 
 
@@ -272,7 +275,6 @@ def test_tau_state_home_is_workspace_scoped_and_outside_the_package(tmp_path, mo
     settings = TauSDKSettings(
         _env_file=None,
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
         workspace=tmp_path,
     )
 
@@ -288,13 +290,11 @@ def test_the_state_root_is_explicitly_overridable(tmp_path, monkeypatch):
     from_env = TauSDKSettings(
         _env_file=None,
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
         workspace=tmp_path,
     )
     explicit = TauSDKSettings(
         _env_file=None,
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
         workspace=tmp_path,
         state_root=tmp_path / "explicit",
     )
@@ -474,13 +474,13 @@ def test_local_mode_reports_a_missing_selection_before_the_cli(
 
 
 def test_managed_mode_ignores_the_cli_and_the_local_token_pair(
-    machine_without_credentials, tmp_path
+    machine_without_credentials, runtime_identity_token_file, tmp_path
 ):
     settings = TauSDKSettings(
         _env_file=None,
         workspace=tmp_path,
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
+        runtime_identity_token_file=runtime_identity_token_file,
         mainsequence_cli=tmp_path / "missing-cli",
     )
 

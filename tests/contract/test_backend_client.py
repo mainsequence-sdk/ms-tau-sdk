@@ -20,7 +20,7 @@ from ms_tau_sdk.settings import TauSDKSettings
 
 
 @pytest.mark.asyncio
-async def test_python_client_matches_existing_django_session_contract():
+async def test_python_client_matches_existing_django_session_contract(runtime_identity_token_file):
     session_uid = "session-1"
     requests: list[tuple[str, str, object]] = []
 
@@ -229,7 +229,7 @@ async def test_python_client_matches_existing_django_session_contract():
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
+        runtime_identity_token_file=runtime_identity_token_file,
     )
     async with httpx.AsyncClient(
         base_url=settings.backend_url,
@@ -353,7 +353,9 @@ def test_runtime_lease_route_uses_harness_neutral_contract(
 
 
 @pytest.mark.asyncio
-async def test_python_client_matches_canonical_provider_and_task_contract():
+async def test_python_client_matches_canonical_provider_and_task_contract(
+    runtime_identity_token_file,
+):
     requests: list[tuple[str, str, str]] = []
     task = {
         "uid": "task-uid-1",
@@ -540,7 +542,7 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
+        runtime_identity_token_file=runtime_identity_token_file,
     )
     async with httpx.AsyncClient(
         base_url=settings.backend_url,
@@ -658,7 +660,9 @@ async def test_python_client_matches_canonical_provider_and_task_contract():
 
 
 @pytest.mark.asyncio
-async def test_idempotent_session_get_retries_transient_backend_failure():
+async def test_idempotent_session_get_retries_transient_backend_failure(
+    runtime_identity_token_file,
+):
     session_uid = "session-1"
     session_attempts = 0
 
@@ -687,7 +691,7 @@ async def test_idempotent_session_get_retries_transient_backend_failure():
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
+        runtime_identity_token_file=runtime_identity_token_file,
     )
     async with httpx.AsyncClient(
         base_url=settings.backend_url,
@@ -704,7 +708,7 @@ async def test_idempotent_session_get_retries_transient_backend_failure():
 
 
 @pytest.mark.asyncio
-async def test_session_get_rejects_missing_harness_contract():
+async def test_session_get_rejects_missing_harness_contract(runtime_identity_token_file):
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/v1/runtime-credentials/token/":
             return httpx.Response(200, json={"access": "runtime-token"})
@@ -714,7 +718,7 @@ async def test_session_get_rejects_missing_harness_contract():
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
+        runtime_identity_token_file=runtime_identity_token_file,
     )
     async with httpx.AsyncClient(
         base_url=settings.backend_url,
@@ -730,7 +734,7 @@ async def test_session_get_rejects_missing_harness_contract():
 
 
 @pytest.mark.asyncio
-async def test_session_get_rejects_contradictory_harness_protocol():
+async def test_session_get_rejects_contradictory_harness_protocol(runtime_identity_token_file):
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/v1/runtime-credentials/token/":
             return httpx.Response(200, json={"access": "runtime-token"})
@@ -748,7 +752,7 @@ async def test_session_get_rejects_contradictory_harness_protocol():
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
+        runtime_identity_token_file=runtime_identity_token_file,
     )
     async with httpx.AsyncClient(
         base_url=settings.backend_url,
@@ -761,7 +765,9 @@ async def test_session_get_rejects_contradictory_harness_protocol():
 
 
 @pytest.mark.asyncio
-async def test_rejected_backend_call_logs_safe_structured_error_evidence():
+async def test_rejected_backend_call_logs_safe_structured_error_evidence(
+    runtime_identity_token_file,
+):
     def handler(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/api/v1/runtime-credentials/token/":
             return httpx.Response(200, json={"access": "runtime-token"})
@@ -778,7 +784,7 @@ async def test_rejected_backend_call_logs_safe_structured_error_evidence():
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
+        runtime_identity_token_file=runtime_identity_token_file,
     )
     async with httpx.AsyncClient(
         base_url=settings.backend_url,

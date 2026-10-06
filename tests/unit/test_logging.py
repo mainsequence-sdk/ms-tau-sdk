@@ -77,7 +77,7 @@ def test_structlog_json_matches_backend_fields_and_redacts(capsys):
         "test.native",
         message="Native event",
         authorization="Bearer private-token",
-        nested={"credential_secret": "private-secret"},
+        nested={"signing_secret": "private-secret"},
     )
     logging.getLogger("foreign.test").warning(
         "Foreign bearer %s",
@@ -98,7 +98,7 @@ def test_structlog_json_matches_backend_fields_and_redacts(capsys):
     assert native["request_id"] == "request-1"
     assert native["session_uid"] == "session-1"
     assert native["authorization"] == "[REDACTED]"
-    assert native["nested"] == {"credential_secret": "[REDACTED]"}
+    assert native["nested"] == {"signing_secret": "[REDACTED]"}
     assert "tests/unit/test_logging.py:" in str(native["source"])
     assert foreign["logger"] == "foreign.test"
     assert foreign["severity"] == "WARNING"
@@ -158,7 +158,7 @@ def test_local_file_sink_is_structured_private_and_survives_reconfiguration(tmp_
     structlog.get_logger("ms_tau_sdk.test").info(
         "local.first",
         authorization="Bearer private-token",
-        nested={"credential_secret": "private-credential"},
+        nested={"signing_secret": "private-credential"},
     )
     try:
         raise ValueError("private exception message")
@@ -176,7 +176,7 @@ def test_local_file_sink_is_structured_private_and_survives_reconfiguration(tmp_
     foreign = next(event for event in events if event["logger"] == "foreign.test")
     assert first["request_id"] == "local-request-1"
     assert first["authorization"] == "[REDACTED]"
-    assert first["nested"] == {"credential_secret": "[REDACTED]"}
+    assert first["nested"] == {"signing_secret": "[REDACTED]"}
     assert failed["error_type"] == "ValueError"
     assert failed["exception_frames"]
     assert foreign["error_type"] == "ValueError"
@@ -208,7 +208,6 @@ def test_local_app_always_creates_file_but_managed_app_does_not(tmp_path):
         workspace=tmp_path / "state",
         local_state_root=tmp_path / "managed-state",
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
     )
     create_app(managed_settings)
     assert not managed_settings.local_log_path.exists()

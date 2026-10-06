@@ -64,6 +64,10 @@ def main() -> None:
         subprocess.run([uv, "venv", "--python", "3.13", str(venv)], check=True)
         python = _venv_executable(venv, "python")
         subprocess.run([uv, "pip", "install", "--python", str(python), str(wheel)], check=True)
+        # Startup requires the token file setting. With startup dependencies disabled, no exchange
+        # reads the file.
+        identity_token = root / "runtime-identity-token"
+        identity_token.write_text("offline-release-verification", encoding="utf-8")
 
         environment = os.environ.copy()
         environment.pop("PYTHONPATH", None)
@@ -73,7 +77,7 @@ def main() -> None:
                 "MAINSEQUENCE_TAU_PORT": str(_free_port()),
                 "MAINSEQUENCE_TAU_STARTUP_DEPENDENCIES_ENABLED": "false",
                 "MAINSEQUENCE_RUNTIME_CREDENTIAL_ID": "offline-release-verification",
-                "MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET": "offline-release-verification",
+                "MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE": str(identity_token),
                 "PYTHONNOUSERSITE": "1",
             }
         )
