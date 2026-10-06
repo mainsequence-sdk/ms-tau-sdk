@@ -1,4 +1,5 @@
 import asyncio
+import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
@@ -292,6 +293,50 @@ async def test_mcp_tools_and_resources_are_exposed_to_tau():
     prompt = mainsequence_mcp_resource_prompt(client)
     assert "mainsequence__read_resource" in prompt
     assert resource_uri in prompt
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "text_block", [True, False], ids=["text_and_structured", "structured_only"]
+)
+async def test_runtime_access_credentials_never_become_agent_tool_results(text_block):
+    marker = "SYNTHETIC_RUNTIME_ACCESS_TOKEN_DO_NOT_USE"
+    payload = {
+        "mode": "token",
+        "token": marker,
+        "rpc_url": "https://runtime.example.invalid/a2a",
+    }
+    client = AsyncMock()
+    client.tools = (
+        types.Tool(
+            name="agent_session.resolve_runtime_access",
+            inputSchema={"type": "object", "properties": {}},
+        ),
+        types.Tool(name="agent.get", inputSchema={"type": "object", "properties": {}}),
+    )
+    client.resources = ()
+    credential_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text=json.dumps(payload))] if text_block else [],
+        structuredContent=payload,
+    )
+    ordinary_result = types.CallToolResult(
+        content=[types.TextContent(type="text", text="agent")],
+        structuredContent={"uid": "agent-1"},
+    )
+    client.call_tool.side_effect = lambda name, arguments: (
+        credential_result if name == "agent_session.resolve_runtime_access" else ordinary_result
+    )
+
+    tools = create_mainsequence_mcp_tools(client)
+    results = [await tool.execute("call-1", {}) for tool in tools]
+
+    assert [tool.name for tool in tools] == ["mainsequence__agent_get"]
+    assert results[0].text == "agent"
+    assert results[0].details["structured_content"] == {"uid": "agent-1"}
+    client.call_tool.assert_awaited_once_with("agent.get", {})
+    for result in results:
+        assert marker not in json.dumps([block.text for block in result.content])
+        assert marker not in json.dumps(result.details)
 
 
 @pytest.mark.parametrize("tool_name", ["agent.list", "agent.search"])

@@ -29,6 +29,10 @@ _RESOURCE_TOOL_NAME = "mainsequence__read_resource"
 CALLER_SESSION_PROOF_META_KEY = "mainsequence.ai/caller-session-proof/v1"
 CALLER_SESSION_PROOF_REQUIRED_META_KEY = "mainsequence.ai/requires-caller-session-proof/v1"
 A2A_SEND_TOOL = "a2a.send_message"
+# These operations return credentials for direct-runtime clients. Tau never calls them for
+# the model: agent-to-agent turns use a2a.send_message, so the credential stays out of model
+# content, tool details, events, and persisted history.
+CREDENTIAL_RESULT_MCP_TOOLS = frozenset({"agent_session.resolve_runtime_access"})
 
 
 def _tau_tool_name(mcp_name: str) -> str:
@@ -289,6 +293,8 @@ def create_mainsequence_mcp_tools(
     tools: list[AgentTool] = []
     names: set[str] = set()
     for tool in client.tools:
+        if tool.name in CREDENTIAL_RESULT_MCP_TOOLS:
+            continue
         tau_name = _tau_tool_name(tool.name)
         if tau_name in names or tau_name == _RESOURCE_TOOL_NAME:
             raise ValueError(f"Main Sequence MCP tool name collision: {tool.name}")

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- Main Sequence MCP no longer offers `agent_session.resolve_runtime_access` to the model. Its
+  result carries a short-lived runtime token for direct-runtime clients, and Tau's generic MCP
+  projection copied that token into model-visible tool content and into tool details, which reach
+  stream events and session history. Tau never needs the token: agent-to-agent turns use
+  `a2a.send_message`. The operation is left out of the session's tool list, so
+  `mainsequence__agent_session_resolve_runtime_access` is no longer a tool; every other MCP tool
+  and its result are unchanged. Direct-runtime clients that call the operation themselves are
+  unaffected. See the 2026-10-06 amendment of ADR 0002
+  ([issue #65](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/65)).
+
 ## 2.0.2 — 2026-10-06
 
 - Runtime credentials require the projected workload identity token file. The runtime credential
