@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.2 — 2026-10-06
 
 - Runtime credentials require the projected workload identity token file. The runtime credential
   exchange proves the credential only with the token in the file that
