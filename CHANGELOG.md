@@ -45,6 +45,12 @@
   an Agent that does not use them. Requester-bound calls need a platform that records turn and Task
   requesters; until it does, `current_requester()` returns `None`. See the 2026-10-06 amendment of
   ADR 0019 ([issue #66](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/66)).
+- `MainSequenceClient.list_model_providers(organization_environment_uid=...)` reads the
+  model-provider catalog of that Organization Environment. It raised `TypeError` instead, so
+  local-mode chat could not list the providers of a configured Environment through
+  `GET /api/chat/model-providers`. The Environment is now sent as the `organization_environment_uid`
+  query parameter, as the other list calls send theirs; the call without an Environment is
+  unchanged ([issue #68](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/68)).
 
 ## 2.0.2 — 2026-10-06
 

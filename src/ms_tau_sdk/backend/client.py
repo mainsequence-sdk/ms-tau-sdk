@@ -408,12 +408,13 @@ class MainSequenceClient:
         self, *, organization_environment_uid: str | None = None
     ) -> dict[str, Any]:
         """Read the authenticated user's safe provider catalog from Main Sequence."""
-        options: dict[str, Any] = (
-            {"params": {"organization_environment_uid": organization_environment_uid}}
+        query = (
+            urlencode({"organization_environment_uid": organization_environment_uid})
             if organization_environment_uid
-            else {}
+            else ""
         )
-        data = await self._request("GET", MODEL_PROVIDERS, idempotent=True, **options)
+        path = MODEL_PROVIDERS + (f"?{query}" if query else "")
+        data = await self._request("GET", path, idempotent=True)
         if not isinstance(data, dict) or not isinstance(data.get("providers"), list):
             raise BackendError("Backend model-provider catalog response is invalid")
         return data

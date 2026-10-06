@@ -872,3 +872,37 @@ async def test_task_creation_and_continuation_present_the_caller_assertion(
     output = capsys.readouterr()
     assert "caller-assertion-jws" not in output.out + output.err
     await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_the_model_provider_catalog_is_read_with_and_without_an_environment(
+    runtime_identity_token_file,
+):
+    environment_uid = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+    catalog = {"providers": [{"provider": "openai", "models": []}]}
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/runtime-credentials/token/":
+            return httpx.Response(200, json={"access": "runtime-token"})
+        sent.append(request)
+        return httpx.Response(200, json=catalog)
+
+    settings = TauSDKSettings(
+        _env_file=None,
+        backend_url="http://backend.test",
+        runtime_credential_id="credential-id",
+        runtime_identity_token_file=runtime_identity_token_file,
+    )
+    http = httpx.AsyncClient(base_url=settings.backend_url, transport=httpx.MockTransport(handler))
+    client = MainSequenceClient(settings, RuntimeCredentialAuth(settings), client=http)
+
+    everywhere = await client.list_model_providers()
+    in_environment = await client.list_model_providers(organization_environment_uid=environment_uid)
+
+    assert everywhere == in_environment == catalog
+    assert [(request.method, request.url.path, dict(request.url.params)) for request in sent] == [
+        ("GET", "/api/v1/model-providers/", {}),
+        ("GET", "/api/v1/model-providers/", {"organization_environment_uid": environment_uid}),
+    ]
+    await http.aclose()
