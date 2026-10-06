@@ -19,7 +19,6 @@ ENV_FILE = ".env"
 ACCESS_TOKEN_ENV = "MAINSEQUENCE_ACCESS_TOKEN"
 REFRESH_TOKEN_ENV = "MAINSEQUENCE_REFRESH_TOKEN"
 RUNTIME_CREDENTIAL_ID_ENV = "MAINSEQUENCE_RUNTIME_CREDENTIAL_ID"
-RUNTIME_CREDENTIAL_SECRET_ENV = "MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET"
 RUNTIME_IDENTITY_TOKEN_FILE_ENV = "MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE"
 MAINSEQUENCE_CLI_ENV = "MAINSEQUENCE_CLI"
 MAINSEQUENCE_CLI_NAME = "mainsequence"
@@ -94,16 +93,9 @@ class TauSDKSettings(BaseSettings):
         default=None,
         validation_alias=RUNTIME_CREDENTIAL_ID_ENV,
     )
-    # A plain string, read by the exchange that sends it. It never appears in repr() or str(), so
-    # printing or logging the settings does not show it.
-    runtime_credential_secret: str | None = Field(
-        default=None,
-        validation_alias=RUNTIME_CREDENTIAL_SECRET_ENV,
-        repr=False,
-    )
-    # The file that holds the runtime's projected workload identity token. When it is set, the
-    # runtime credential exchange proves the credential with that token instead of the secret.
-    # Only the path is a setting: the token is read by each exchange and never kept here.
+    # The file that holds the runtime's projected workload identity token, the only proof of the
+    # runtime credential that the exchange sends. Only the path is a setting: the token is read by
+    # each exchange and never kept here.
     runtime_identity_token_file: Path | None = Field(
         default=None,
         validation_alias=RUNTIME_IDENTITY_TOKEN_FILE_ENV,
@@ -151,6 +143,10 @@ class TauSDKSettings(BaseSettings):
     exclude_mainsequence_mcp: bool = Field(
         default=False,
         validation_alias="TAU_EXCLUDE_MAINSEQUENCE_MCP",
+    )
+    local_custom_id: str | None = Field(default=None, validation_alias="TAU_LOCAL_CUSTOM_ID")
+    local_organization_environment_uid: str | None = Field(
+        default=None, validation_alias="TAU_LOCAL_ORGANIZATION_ENVIRONMENT_UID"
     )
     local_provider: str | None = Field(default=None, validation_alias="TAU_LOCAL_PROVIDER")
     local_model: str | None = Field(default=None, validation_alias="TAU_LOCAL_MODEL")
@@ -508,11 +504,11 @@ class TauSDKSettings(BaseSettings):
         missing = []
         if not self.runtime_credential_id:
             missing.append(RUNTIME_CREDENTIAL_ID_ENV)
-        # The credential is proven with the projected workload identity token or with the
-        # secret. With a token file the secret is not needed. The file itself is read, and a
-        # missing or empty file reported, by each exchange, because the token is rotated.
-        if self.runtime_identity_token_file is None and not self.runtime_credential_secret:
-            missing.append(f"{RUNTIME_CREDENTIAL_SECRET_ENV} or {RUNTIME_IDENTITY_TOKEN_FILE_ENV}")
+        # The credential is proven only with the projected workload identity token. The file itself
+        # is read, and a missing or empty file reported, by each exchange, because the token is
+        # rotated.
+        if self.runtime_identity_token_file is None:
+            missing.append(RUNTIME_IDENTITY_TOKEN_FILE_ENV)
         if missing:
             raise ConfigurationError("Missing runtime credential settings: " + ", ".join(missing))
 

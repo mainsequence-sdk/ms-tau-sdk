@@ -356,9 +356,16 @@ class MainSequenceClient:
                 detail=error.errors(include_input=False),
             ) from error
 
-    async def list_model_providers(self) -> dict[str, Any]:
+    async def list_model_providers(
+        self, *, organization_environment_uid: str | None = None
+    ) -> dict[str, Any]:
         """Read the authenticated user's safe provider catalog from Main Sequence."""
-        data = await self._request("GET", MODEL_PROVIDERS, idempotent=True)
+        options: dict[str, Any] = (
+            {"params": {"organization_environment_uid": organization_environment_uid}}
+            if organization_environment_uid
+            else {}
+        )
+        data = await self._request("GET", MODEL_PROVIDERS, idempotent=True, **options)
         if not isinstance(data, dict) or not isinstance(data.get("providers"), list):
             raise BackendError("Backend model-provider catalog response is invalid")
         return data
@@ -370,6 +377,7 @@ class MainSequenceClient:
         provider: str,
         model: str,
         thinking_level: str | None,
+        custom_id: str | None = None,
     ) -> AgentSession:
         payload: dict[str, Any] = {
             "llm_provider": provider,
@@ -377,13 +385,18 @@ class MainSequenceClient:
         }
         if thinking_level is not None:
             payload["llm_thinking"] = thinking_level
+        if custom_id is not None:
+            payload["custom_id"] = custom_id
         data = await self._request(
             "PATCH",
             agent_session(session_uid),
             json=payload,
             idempotent=True,
         )
-        return AgentSession.model_validate(data)
+        session = AgentSession.model_validate(data)
+        if custom_id is not None and session.custom_id != custom_id:
+            raise BackendError("Backend did not select the requested configured provider")
+        return session
 
     async def get_agent_card(self, session_uid: str) -> AgentCardEnvelope:
         data = await self._request(
@@ -601,23 +614,27 @@ class MainSequenceClient:
         model: str,
         session_uid: str,
         holder_id: str,
+        custom_id: str | None = None,
     ) -> ProviderExecutionEvidence:
+        payload: dict[str, Any] = {
+            "agent_session_uid": session_uid,
+            "providers": [provider],
+            "holder_id": holder_id,
+            "supported_provider_control_schema_versions": [1],
+            "execution_selection": {"provider": provider, "model": model},
+        }
+        if custom_id is not None:
+            payload["custom_id"] = custom_id
         data = await self._request(
             "POST",
             model_provider_credentials("hydrate"),
-            json={
-                "agent_session_uid": session_uid,
-                "providers": [provider],
-                "holder_id": holder_id,
-                "supported_provider_control_schema_versions": [1],
-                "execution_selection": {
-                    "provider": provider,
-                    "model": model,
-                },
-            },
+            json=payload,
             idempotent=True,
         )
-        return self._provider_evidence(provider, data)
+        evidence = self._provider_evidence(provider, data)
+        if custom_id is not None and evidence.credential.custom_id != custom_id:
+            raise BackendError("Backend did not hydrate the requested configured provider")
+        return evidence
 
     async def hydrate_local_provider_credential(
         self,
@@ -626,24 +643,33 @@ class MainSequenceClient:
         model: str,
         thinking_level: str | None,
         holder_id: str,
+        custom_id: str | None = None,
+        organization_environment_uid: str | None = None,
     ) -> ProviderExecutionEvidence:
-        """Hydrate one explicit selection for the authenticated local user."""
-
+        """Hydrate an owned or shared selection using the backend's access checks."""
         selection: dict[str, str] = {"provider": provider, "model": model}
         if thinking_level:
             selection["thinking_level"] = thinking_level
+        payload: dict[str, Any] = {
+            "providers": [provider],
+            "holder_id": holder_id,
+            "supported_provider_control_schema_versions": [1],
+            "execution_selection": selection,
+        }
+        if organization_environment_uid is not None:
+            payload["organization_environment_uid"] = organization_environment_uid
+        if custom_id is not None:
+            payload["custom_id"] = custom_id
         data = await self._request(
             "POST",
             model_provider_credentials("hydrate"),
-            json={
-                "providers": [provider],
-                "holder_id": holder_id,
-                "supported_provider_control_schema_versions": [1],
-                "execution_selection": selection,
-            },
+            json=payload,
             idempotent=True,
         )
-        return self._provider_evidence(provider, data)
+        evidence = self._provider_evidence(provider, data)
+        if custom_id is not None and evidence.credential.custom_id != custom_id:
+            raise BackendError("Backend did not hydrate the requested configured provider")
+        return evidence
 
     def _provider_evidence(self, provider: str, data: object) -> ProviderExecutionEvidence:
         if not isinstance(data, dict):
@@ -679,6 +705,10 @@ class MainSequenceClient:
         return ProviderCredential.model_validate(
             {
                 "provider": provider,
+                "custom_id": hydrated.get("custom_id"),
+                "model_provider_credential_uid": hydrated.get("uid"),
+                "organization_environment_uid": hydrated.get("organization_environment_uid"),
+                "owner_user_uid": hydrated.get("user_uid"),
                 "credential_kind": credential_kind,
                 "api_key": raw.get("api_key") or raw.get("key"),
                 "access_token": access_token,

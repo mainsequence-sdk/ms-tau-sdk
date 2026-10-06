@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Literal, Protocol
+from typing import Protocol
 from urllib.parse import urlsplit
 
 import httpx
@@ -24,7 +24,6 @@ from ms_tau_sdk.settings import (
     ACCESS_TOKEN_ENV,
     ENV_FILE,
     REFRESH_TOKEN_ENV,
-    RUNTIME_CREDENTIAL_SECRET_ENV,
     RUNTIME_IDENTITY_TOKEN_FILE_ENV,
     TauSDKSettings,
 )
@@ -44,8 +43,6 @@ EXCHANGE_RETRY_BASE_DELAY_SECONDS = 1.0
 EXCHANGE_MAX_RETRY_DELAY_SECONDS = 60.0
 # A projected token is a JWT of a few kilobytes. A larger file is not a token file.
 IDENTITY_TOKEN_MAX_BYTES = 64 * 1024
-
-type RuntimeCredentialProof = Literal["workload_identity_token", "credential_secret"]
 
 
 class BackendAuth(Protocol):
@@ -73,13 +70,12 @@ def _read_workload_identity_token(path: Path) -> str:
 
     The token file is rotated, so it is read for every exchange and the token is never cached.
     The token leaves this function only as its return value. An error names the file and the
-    reason, never any of its content, and no error falls back to the runtime credential secret.
+    reason, never any of its content.
     """
 
     def unusable(reason: str) -> ConfigurationError:
         return ConfigurationError(
-            f"{RUNTIME_IDENTITY_TOKEN_FILE_ENV} names {path}, which {reason}. The runtime "
-            f"credential exchange does not fall back to {RUNTIME_CREDENTIAL_SECRET_ENV}."
+            f"{RUNTIME_IDENTITY_TOKEN_FILE_ENV} names {path}, which {reason}."
         )
 
     try:
@@ -129,31 +125,13 @@ def _exchange_retry_delay(response: httpx.Response, *, retry: int) -> float:
     return EXCHANGE_RETRY_BASE_DELAY_SECONDS * 2.0 ** (retry - 1)
 
 
-def _rejection_message(proof: RuntimeCredentialProof) -> str:
-    """Explain a 401 from the exchange by the names of the settings involved, never a value."""
-
-    if proof == "workload_identity_token":
-        return (
-            "Runtime credential exchange was rejected (HTTP 401): the platform did not accept "
-            f"the workload identity token read from {RUNTIME_IDENTITY_TOKEN_FILE_ENV}. A rejected "
-            "token is not retried, and the exchange does not fall back to "
-            f"{RUNTIME_CREDENTIAL_SECRET_ENV}."
-        )
-    return (
-        "Runtime credential exchange was rejected (HTTP 401): the platform did not accept "
-        f"{RUNTIME_CREDENTIAL_SECRET_ENV}. A rejected credential is not retried."
-    )
-
-
 class RuntimeCredentialAuth:
     """Exchange the managed runtime credential for short-lived Main Sequence access tokens.
 
-    The exchange proves the credential in one of two ways. With
-    ``MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE`` set, it sends the projected workload identity
-    token read from that file for every exchange, and never the secret. Without it, it sends
-    ``MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET``. The token stays inside the exchange: it is not
-    kept on this object, in the settings, or in the environment, and it is never logged or put
-    in an error.
+    The exchange proves the credential with the projected workload identity token, read from the
+    file that ``MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE`` names for every exchange. The token
+    stays inside the exchange: it is not kept on this object, in the settings, or in the
+    environment, and it is never logged or put in an error.
     """
 
     def __init__(
@@ -180,12 +158,6 @@ class RuntimeCredentialAuth:
         """Authenticate during process startup so readiness is truthful."""
         await self._access_token(force=False)
 
-    def _proof(self) -> RuntimeCredentialProof:
-        """Name the proof the exchange sends. It is a field name, never a value."""
-        if self.settings.runtime_identity_token_file is not None:
-            return "workload_identity_token"
-        return "credential_secret"
-
     async def _access_token(self, *, force: bool) -> AccessToken:
         if not force and self._token is not None and not self._token.needs_refresh():
             return self._token
@@ -193,18 +165,17 @@ class RuntimeCredentialAuth:
             if not force and self._token is not None and not self._token.needs_refresh():
                 return self._token
             self.settings.validate_runtime_auth()
-            proof = self._proof()
             client = self._client or httpx.AsyncClient(timeout=10)
             close_client = self._client is None
             started_at = time.monotonic()
             try:
-                response, attempts = await self._exchange(client, proof)
+                response, attempts = await self._exchange(client)
             except Exception as failure:
                 logger.warning(
                     "runtime.auth.exchange.completed",
                     duration_ms=round((time.monotonic() - started_at) * 1000, 3),
                     outcome="failed",
-                    proof=proof,
+                    proof="workload_identity_token",
                     error_type=type(failure).__name__,
                     status_code=getattr(failure, "backend_status", None),
                 )
@@ -231,16 +202,12 @@ class RuntimeCredentialAuth:
                 "runtime.auth.exchange.completed",
                 duration_ms=round((time.monotonic() - started_at) * 1000, 3),
                 outcome="success",
-                proof=proof,
+                proof="workload_identity_token",
                 attempts=attempts,
             )
             return self._token
 
-    async def _exchange(
-        self,
-        client: httpx.AsyncClient,
-        proof: RuntimeCredentialProof,
-    ) -> tuple[httpx.Response, int]:
+    async def _exchange(self, client: httpx.AsyncClient) -> tuple[httpx.Response, int]:
         """Send the exchange, and send it again a bounded number of times after 429 or 503."""
         url = f"{self.settings.backend_url.rstrip('/')}{RUNTIME_CREDENTIAL_TOKEN}"
         attempt = 1
@@ -251,7 +218,13 @@ class RuntimeCredentialAuth:
             if response.is_success:
                 return response, attempt
             if status == 401:
-                raise BackendError(_rejection_message(proof), status_code=status)
+                # The message names the setting involved, never a value.
+                raise BackendError(
+                    "Runtime credential exchange was rejected (HTTP 401): the platform did not "
+                    "accept the workload identity token read from "
+                    f"{RUNTIME_IDENTITY_TOKEN_FILE_ENV}. A rejected token is not retried.",
+                    status_code=status,
+                )
             if status not in EXCHANGE_RETRY_STATUS_CODES:
                 raise BackendError(
                     f"Runtime credential exchange failed (HTTP {status})", status_code=status
@@ -281,24 +254,19 @@ class RuntimeCredentialAuth:
                 attempt=attempt,
                 max_attempts=EXCHANGE_MAX_RETRIES + 1,
                 delay_seconds=delay,
-                proof=proof,
+                proof="workload_identity_token",
             )
             await asyncio.sleep(delay)
             attempt += 1
 
     async def _exchange_body(self) -> dict[str, str]:
-        """Build one exchange request. It carries exactly one proof of the credential."""
+        """Build one exchange request: the credential id and the token its file holds now."""
         credential_id = self.settings.runtime_credential_id
-        if not credential_id:
-            raise ConfigurationError("Runtime credentials are not configured")
         token_file = self.settings.runtime_identity_token_file
-        if token_file is not None:
-            token = await asyncio.to_thread(_read_workload_identity_token, token_file)
-            return {"credential_id": credential_id, "workload_identity_token": token}
-        secret = self.settings.runtime_credential_secret
-        if not secret:
+        if not credential_id or token_file is None:
             raise ConfigurationError("Runtime credentials are not configured")
-        return {"credential_id": credential_id, "credential_secret": secret}
+        token = await asyncio.to_thread(_read_workload_identity_token, token_file)
+        return {"credential_id": credential_id, "workload_identity_token": token}
 
 
 def _jwt_expiry(token: str) -> int | None:

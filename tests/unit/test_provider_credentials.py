@@ -81,7 +81,7 @@ def _custom_provider_control(
 
 
 @pytest.mark.asyncio
-async def test_hydration_uses_django_tau_credential_contract():
+async def test_hydration_uses_django_tau_credential_contract(runtime_identity_token_file):
     requests: list[dict[str, object]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -113,7 +113,7 @@ async def test_hydration_uses_django_tau_credential_contract():
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="id",
-        runtime_credential_secret="secret",
+        runtime_identity_token_file=runtime_identity_token_file,
     )
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(
@@ -213,7 +213,9 @@ async def test_local_hydration_uses_authenticated_user_without_agent_identity(tm
 
 
 @pytest.mark.asyncio
-async def test_hydration_derives_openai_codex_account_id_from_access_token():
+async def test_hydration_derives_openai_codex_account_id_from_access_token(
+    runtime_identity_token_file,
+):
     payload = (
         base64.urlsafe_b64encode(
             json.dumps(
@@ -261,7 +263,7 @@ async def test_hydration_derives_openai_codex_account_id_from_access_token():
         _env_file=None,
         backend_url="http://backend.test",
         runtime_credential_id="id",
-        runtime_credential_secret="secret",
+        runtime_identity_token_file=runtime_identity_token_file,
     )
     transport = httpx.MockTransport(handler)
     async with httpx.AsyncClient(

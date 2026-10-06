@@ -26,20 +26,19 @@ SDK update. Installing the package and starting the runtime do not copy files au
 
 ## Configure runtime authentication
 
-Set the runtime credential supplied for the process:
+Set the runtime credential supplied for the process and the file that holds the runtime's
+projected workload identity token:
 
 ```bash
 export MAINSEQUENCE_RUNTIME_CREDENTIAL_ID="<runtime-credential-id>"
-export MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET="<runtime-credential-secret>"
+export MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE="/var/run/secrets/mainsequence.io/runtime-identity/token"
 ```
 
-The SDK exchanges this pair for short-lived access credentials. Do not put either value in source
-control or `.tau` files.
-
-A runtime deployed with a projected workload identity token gets
-`MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` instead of the secret. The SDK reads the token from that
-file for every exchange and needs no secret; see
-[Settings and credentials](../reference/settings.md#managed-authenticated-startup).
+The SDK exchanges the credential, proven with the token, for short-lived access credentials.
+Runtime credentials require the token file: startup fails without the setting, and the SDK reads
+the file for every exchange because the token is rotated; see
+[Settings and credentials](../reference/settings.md#managed-authenticated-startup). Do not put the
+credential or the token in source control or `.tau` files.
 
 Set `MAINSEQUENCE_ENDPOINT` only when the project must use a non-default Main Sequence API URL.
 

@@ -48,7 +48,6 @@ def _settings(tmp_path: Path) -> TauSDKSettings:
     return TauSDKSettings(
         _env_file=None,
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
         workspace=workspace,
         state_root=tmp_path / "tau-state",
         startup_dependencies_enabled=False,

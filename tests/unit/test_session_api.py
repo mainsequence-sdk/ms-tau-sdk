@@ -21,7 +21,8 @@ def test_runtime_state_patch_rejects_worker_state_fields():
 
 
 @pytest.mark.asyncio
-async def test_session_model_reads_provider_selection_from_session():
+@pytest.mark.parametrize("custom_id", [None, "openai-work"])
+async def test_session_model_reads_provider_selection_from_session(custom_id):
     client = AsyncMock()
     client.get_session.return_value = AgentSession(
         uid="session-1",
@@ -31,6 +32,7 @@ async def test_session_model_reads_provider_selection_from_session():
         llm_provider="openai",
         llm_model="gpt-5.4",
         llm_thinking="high",
+        custom_id=custom_id,
     )
 
     result = await session_model(client, TauSDKSettings(_env_file=None), "session-1")
@@ -41,6 +43,7 @@ async def test_session_model_reads_provider_selection_from_session():
             "provider": "openai",
             "model": "gpt-5.4",
             "thinkingLevel": "high",
+            **({"customId": custom_id} if custom_id is not None else {}),
         },
     }
     client.get_session.assert_awaited_once_with("session-1")

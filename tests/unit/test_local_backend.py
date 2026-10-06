@@ -1307,3 +1307,53 @@ async def test_cli_token_source_resolves_the_owner_scope_only_where_it_is_used(t
 
     await backend.aclose()
     await renewed.aclose()
+
+
+@pytest.mark.asyncio
+async def test_named_local_selection_retains_uid_and_environment_across_resume(tmp_path):
+    settings = _settings(tmp_path)
+    settings.local_custom_id = "openai-work"
+    settings.local_organization_environment_uid = "environment-one"
+    evidence = _evidence()
+    evidence.credential.custom_id = "openai-work"
+    evidence.credential.model_provider_credential_uid = "credential-one"
+    evidence.credential.organization_environment_uid = "environment-one"
+    services = _services(evidence)
+    backend = LocalDevelopmentBackend(settings, services)
+    session_uid = settings.local_session_uid(None)
+    await backend.bootstrap_tau_runtime(session_uid, _bootstrap("holder-1"))
+    session = await backend.get_session(session_uid)
+    assert session.custom_id == "openai-work"
+    assert session.model_provider_credential_uid == "credential-one"
+    assert session.organization_environment_uid == "environment-one"
+    services.hydrate_local_provider_credential.assert_awaited_with(
+        "openai",
+        model="gpt-5.4",
+        thinking_level="high",
+        holder_id="holder-1",
+        custom_id="openai-work",
+        organization_environment_uid="environment-one",
+    )
+    await backend.aclose()
+    settings.local_custom_id = "some-new-default"
+    settings.local_organization_environment_uid = "some-new-environment"
+    resumed = LocalDevelopmentBackend(settings, services)
+    await resumed.hydrate_provider_credential(
+        "openai", model="gpt-5.4", session_uid=session_uid, holder_id="resumed"
+    )
+    services.hydrate_local_provider_credential.assert_awaited_with(
+        "openai",
+        model="gpt-5.4",
+        thinking_level="high",
+        holder_id="resumed",
+        custom_id="openai-work",
+        organization_environment_uid="environment-one",
+    )
+    replacement = evidence.model_copy(deep=True)
+    replacement.credential.model_provider_credential_uid = "credential-two"
+    services.hydrate_local_provider_credential.return_value = replacement
+    with pytest.raises(BackendConflictError, match="changed the local session credential"):
+        await resumed.hydrate_provider_credential(
+            "openai", model="gpt-5.4", session_uid=session_uid, holder_id="resumed"
+        )
+    await resumed.aclose()

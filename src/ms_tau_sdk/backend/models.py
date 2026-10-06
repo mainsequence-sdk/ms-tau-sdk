@@ -52,7 +52,10 @@ class BackendRequestModel(BackendModel):
 
 
 class AgentSession(BackendModel):
+    organization_environment_uid: str | None = None
     uid: str
+    custom_id: str | None = None
+    model_provider_credential_uid: str | None = None
     agent_uid: str | None = None
     harness: HarnessKind
     harness_protocol: HarnessProtocol
@@ -389,6 +392,10 @@ class TauResumeSnapshotUploadResponse(BackendModel):
 
 class ProviderCredential(BackendModel):
     provider: str
+    custom_id: str | None = None
+    model_provider_credential_uid: str | None = None
+    organization_environment_uid: str | None = None
+    owner_user_uid: str | None = None
     credential_kind: str = "api_key"
     api: str | None = None
     api_key: SecretStr | None = None

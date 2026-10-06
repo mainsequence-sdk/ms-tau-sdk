@@ -11,7 +11,7 @@ from ms_tau_sdk.settings import TauSDKSettings
 
 
 @pytest.mark.asyncio
-async def test_runtime_credential_exchange_is_cached():
+async def test_runtime_credential_exchange_is_cached(runtime_identity_token_file):
     requests = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -26,7 +26,7 @@ async def test_runtime_credential_exchange_is_cached():
         _env_file=None,
         backend_url="http://backend:8000",
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
+        runtime_identity_token_file=runtime_identity_token_file,
     )
     auth = RuntimeCredentialAuth(settings, exchange_client=client)
 
@@ -40,7 +40,7 @@ async def test_runtime_credential_exchange_is_cached():
 
 
 @pytest.mark.asyncio
-async def test_backend_client_binds_auth_to_shared_http_pool():
+async def test_backend_client_binds_auth_to_shared_http_pool(runtime_identity_token_file):
     requests = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -58,7 +58,7 @@ async def test_backend_client_binds_auth_to_shared_http_pool():
         _env_file=None,
         backend_url="http://backend:8000",
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
+        runtime_identity_token_file=runtime_identity_token_file,
     )
     auth = RuntimeCredentialAuth(settings)
     MainSequenceClient(settings, auth, client=http)
@@ -69,7 +69,7 @@ async def test_backend_client_binds_auth_to_shared_http_pool():
 
 
 @pytest.mark.asyncio
-async def test_non_idempotent_request_retries_only_after_unauthorized():
+async def test_non_idempotent_request_retries_only_after_unauthorized(runtime_identity_token_file):
     backend_attempts = 0
     token_attempts = 0
 
@@ -91,7 +91,7 @@ async def test_non_idempotent_request_retries_only_after_unauthorized():
         _env_file=None,
         backend_url="http://backend:8000",
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
+        runtime_identity_token_file=runtime_identity_token_file,
     )
     backend = MainSequenceClient(
         settings,

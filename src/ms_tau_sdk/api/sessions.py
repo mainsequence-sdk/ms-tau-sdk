@@ -37,6 +37,7 @@ async def session_model(
             "provider": session.active_provider,
             "model": session.active_model,
             "thinkingLevel": session.active_thinking,
+            **({"customId": session.custom_id} if session.custom_id is not None else {}),
         },
     }
 
@@ -45,7 +46,13 @@ async def session_model(
 async def model_providers(client: BackendDep, config: SettingsDep) -> dict[str, object]:
     if not config.local_mode:
         raise HTTPException(status_code=409, detail="Provider catalog is local-mode only")
-    return await client.list_model_providers()
+    return await client.list_model_providers(
+        **(
+            {"organization_environment_uid": config.local_organization_environment_uid}
+            if config.local_organization_environment_uid
+            else {}
+        )
+    )
 
 
 @router.put("/session-model")
@@ -62,6 +69,7 @@ async def select_session_model(
         provider=body.provider,
         model=body.model,
         thinking_level=body.thinking_level,
+        **({"custom_id": body.custom_id} if body.custom_id is not None else {}),
     )
     session = await manager.backend.get_session(session_uid)
     return {
@@ -70,6 +78,7 @@ async def select_session_model(
             "provider": session.active_provider,
             "model": session.active_model,
             "thinkingLevel": session.active_thinking,
+            **({"customId": session.custom_id} if session.custom_id is not None else {}),
         },
     }
 

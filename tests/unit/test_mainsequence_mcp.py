@@ -29,7 +29,6 @@ def _settings() -> TauSDKSettings:
         _env_file=None,
         backend_url="http://backend.test/",
         runtime_credential_id="credential-id",
-        runtime_credential_secret="credential-secret",
     )
 
 

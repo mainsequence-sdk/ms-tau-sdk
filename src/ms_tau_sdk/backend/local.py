@@ -147,8 +147,15 @@ class LocalDevelopmentBackend(MainSequenceClient):
     async def aclose(self) -> None:
         await self._services.aclose()
 
-    async def list_model_providers(self) -> dict[str, Any]:
-        return await self._services.list_model_providers()
+    async def list_model_providers(
+        self, *, organization_environment_uid: str | None = None
+    ) -> dict[str, Any]:
+        environment_uid = (
+            organization_environment_uid or self.settings.local_organization_environment_uid
+        )
+        return await self._services.list_model_providers(
+            **({"organization_environment_uid": environment_uid} if environment_uid else {})
+        )
 
     async def _ensure_initialized(self) -> None:
         if self._initialized:
@@ -391,6 +398,13 @@ class LocalDevelopmentBackend(MainSequenceClient):
                 "TEXT NOT NULL DEFAULT ''",
             )
             self._ensure_schema_column(connection, "sessions", "active_task_attempt_uid", "TEXT")
+            self._ensure_schema_column(connection, "sessions", "custom_id", "TEXT")
+            self._ensure_schema_column(
+                connection, "sessions", "model_provider_credential_uid", "TEXT"
+            )
+            self._ensure_schema_column(
+                connection, "sessions", "organization_environment_uid", "TEXT"
+            )
             self._ensure_schema_column(connection, "entries", "turn_uid", "TEXT")
             self._ensure_schema_column(connection, "a2a_task_attempts", "turn_uid", "TEXT")
             self._ensure_schema_column(
@@ -513,14 +527,31 @@ class LocalDevelopmentBackend(MainSequenceClient):
         return "sha256:" + hashlib.sha256(payload).hexdigest()
 
     async def _hydrate_evidence(
-        self, *, holder_id: str, selection: tuple[str, str, str | None] | None = None
+        self,
+        *,
+        holder_id: str,
+        selection: tuple[str, str, str | None] | None = None,
+        custom_id: str | None = None,
+        credential_uid: str | None = None,
+        organization_environment_uid: str | None = None,
     ) -> ProviderExecutionEvidence:
         provider, model, thinking = selection or self._selection()
+        options: dict[str, Any] = {}
+        if custom_id is None and selection is None:
+            custom_id = self.settings.local_custom_id
+        environment_uid = (
+            organization_environment_uid or self.settings.local_organization_environment_uid
+        )
+        if custom_id is not None:
+            options["custom_id"] = custom_id
+        if environment_uid is not None:
+            options["organization_environment_uid"] = environment_uid
         evidence = await self._services.hydrate_local_provider_credential(
             provider,
             model=model,
             thinking_level=thinking,
             holder_id=holder_id,
+            **options,
         )
         if (
             evidence.provider_control.provider != provider
@@ -529,6 +560,16 @@ class LocalDevelopmentBackend(MainSequenceClient):
             raise BackendConflictError(
                 "Main Sequence provider evidence does not match the local selection"
             )
+        if (
+            credential_uid is not None
+            and evidence.credential.model_provider_credential_uid != credential_uid
+        ):
+            raise BackendConflictError("Main Sequence changed the local session credential")
+        if (
+            environment_uid is not None
+            and evidence.credential.organization_environment_uid != environment_uid
+        ):
+            raise BackendConflictError("Main Sequence changed the local session Environment")
         return evidence
 
     async def prefetch_provider(self) -> None:
@@ -560,6 +601,10 @@ class LocalDevelopmentBackend(MainSequenceClient):
         return {
             "credentials": {
                 credential.provider: {
+                    "uid": credential.model_provider_credential_uid,
+                    "custom_id": credential.custom_id,
+                    "organization_environment_uid": credential.organization_environment_uid,
+                    "user_uid": credential.owner_user_uid,
                     "credential_kind": credential.credential_kind,
                     "credential": {key: value for key, value in raw.items() if value is not None},
                     "version": credential.metadata.get("version"),
@@ -576,14 +621,24 @@ class LocalDevelopmentBackend(MainSequenceClient):
         session_uid: str | None = None,
         agent_uid: str | None = None,
         holder_id: str,
+        custom_id: str | None = None,
     ) -> ProviderExecutionEvidence:
         del agent_uid
         selected_provider, selected_model, selected_thinking = self._selection()
+        credential_uid = None
+        environment_uid = None
         if session_uid is not None:
             session = await self.get_session(session_uid)
             selected_provider = session.active_provider or ""
             selected_model = session.active_model or ""
             selected_thinking = session.active_thinking
+            if custom_id is not None and custom_id != session.custom_id:
+                raise BackendConflictError(
+                    "Local refresh must retain the session's configured provider"
+                )
+            custom_id = session.custom_id
+            credential_uid = session.model_provider_credential_uid
+            environment_uid = session.organization_environment_uid
         if provider != selected_provider or model != selected_model:
             raise BackendConflictError(
                 "Local provider refresh does not match the session selection"
@@ -595,6 +650,9 @@ class LocalDevelopmentBackend(MainSequenceClient):
         return await self._hydrate_evidence(
             holder_id=holder_id,
             selection=(selected_provider, selected_model, selected_thinking),
+            custom_id=custom_id,
+            credential_uid=credential_uid,
+            organization_environment_uid=environment_uid,
         )
 
     async def get_session(self, session_uid: str) -> AgentSession:
@@ -617,13 +675,19 @@ class LocalDevelopmentBackend(MainSequenceClient):
         provider: str,
         model: str,
         thinking_level: str | None,
+        custom_id: str | None = None,
     ) -> AgentSession:
         if not provider or not model:
             raise BackendConflictError("A provider and model are required")
         selection = (provider, model, thinking_level)
-        await self._hydrate_evidence(
+        previous = await self.get_session(session_uid)
+        retained = custom_id is None and previous.active_provider == provider
+        evidence = await self._hydrate_evidence(
             holder_id=f"local-selection-{self.settings.workspace_digest}",
             selection=selection,
+            custom_id=previous.custom_id if retained else custom_id,
+            credential_uid=previous.model_provider_credential_uid if retained else None,
+            organization_environment_uid=previous.organization_environment_uid,
         )
 
         def operation() -> None:
@@ -637,11 +701,16 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     raise BackendConflictError("Cannot change a model while the session is working")
                 connection.execute(
                     "UPDATE sessions SET provider = ?, model = ?, thinking = ?, "
-                    "runtime_config_sha256 = ?, updated_at = ? WHERE uid = ?",
+                    "runtime_config_sha256 = ?, updated_at = ?, custom_id = ?, "
+                    "model_provider_credential_uid = ?, "
+                    "organization_environment_uid = ? WHERE uid = ?",
                     (
                         *selection,
                         self._runtime_config_sha256(selection),
                         _iso(_utcnow()),
+                        evidence.credential.custom_id,
+                        evidence.credential.model_provider_credential_uid,
+                        evidence.credential.organization_environment_uid,
                         session_uid,
                     ),
                 )
@@ -1504,6 +1573,9 @@ class LocalDevelopmentBackend(MainSequenceClient):
                 "active_provider": str(row["provider"]),
                 "active_model": str(row["model"]),
                 "active_thinking": row["thinking"],
+                "custom_id": row["custom_id"],
+                "model_provider_credential_uid": row["model_provider_credential_uid"],
+                "organization_environment_uid": row["organization_environment_uid"],
                 "status": "local",
                 "runtime_capabilities": LOCAL_RUNTIME_CAPABILITIES,
                 "runtime_config_sha256": str(row["runtime_config_sha256"]),
@@ -1586,18 +1658,31 @@ class LocalDevelopmentBackend(MainSequenceClient):
         session_uid: str,
         request: TauRuntimeBootstrapRequest,
     ) -> TauRuntimeBootstrap:
-        def stored_selection() -> tuple[str, str, str | None]:
+        def stored_selection() -> tuple[
+            tuple[str, str, str | None], str | None, str | None, str | None
+        ]:
             with closing(self._connect()) as connection:
                 row = connection.execute(
-                    "SELECT provider, model, thinking FROM sessions WHERE uid = ?", (session_uid,)
+                    "SELECT * FROM sessions WHERE uid = ?", (session_uid,)
                 ).fetchone()
                 if row is None:
-                    return self._selection()
-                return str(row["provider"]), str(row["model"]), row["thinking"]
+                    return self._selection(), self.settings.local_custom_id, None, None
+                return (
+                    (str(row["provider"]), str(row["model"]), row["thinking"]),
+                    row["custom_id"],
+                    row["model_provider_credential_uid"],
+                    row["organization_environment_uid"],
+                )
 
-        selection = await self._run(stored_selection)
+        selection, custom_id, credential_uid, environment_uid = await self._run(stored_selection)
         provider, model, thinking = selection
-        evidence = await self._hydrate_evidence(holder_id=request.holder_id, selection=selection)
+        evidence = await self._hydrate_evidence(
+            holder_id=request.holder_id,
+            selection=selection,
+            custom_id=custom_id,
+            credential_uid=credential_uid,
+            organization_environment_uid=environment_uid,
+        )
 
         def operation() -> TauRuntimeBootstrap:
             now = _utcnow()
@@ -1640,6 +1725,20 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     raise BackendConflictError(
                         "Existing local session uses a different provider/model selection"
                     )
+                if row is not None and row["model_provider_credential_uid"] is None:
+                    connection.execute(
+                        "UPDATE sessions SET custom_id = ?, model_provider_credential_uid = ?, "
+                        "organization_environment_uid = ? WHERE uid = ?",
+                        (
+                            evidence.credential.custom_id,
+                            evidence.credential.model_provider_credential_uid,
+                            evidence.credential.organization_environment_uid,
+                            session_uid,
+                        ),
+                    )
+                    row = connection.execute(
+                        "SELECT * FROM sessions WHERE uid = ?", (session_uid,)
+                    ).fetchone()
                 assert row is not None
                 current_lease = connection.execute(
                     "SELECT * FROM leases WHERE session_uid = ?",
