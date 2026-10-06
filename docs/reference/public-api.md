@@ -65,7 +65,8 @@ them), or `None`:
 | Chat (`POST /api/chat`) or A2A Message turn (`message:send` and JSON-RPC `SendMessage` answered with a Message) of a hosted runtime | The verified caller of the request, when the platform recorded that person as the turn's requester. The platform records a person who owns the session; it records nobody for an Agent caller. |
 | A2A Task attempt started by the platform's dispatch | The person the dispatch names as the Task's requester. `team_uids` is empty. |
 | A2A Task attempt run by the request that created or continued the Task (`message:send` answered with a Task, `message:stream`) of a hosted runtime | The verified caller of the request, when the platform's answer to that creation or continuation names that person as the Task's requester (`requester_identity_type` `human`). |
-| Agent callers, the platform's own calls (caller delivery), local mode, a runtime that is not hosted, and code outside a turn, such as Tau Board's tool workbench | `None` |
+| Turn that resumes a caller delivery (`POST /internal/a2a/task-caller-delivery`) of a hosted runtime | The person who asked for the turn that delegated the work, when the delivery names them and the platform recorded the same person for the turn. `team_uids` is empty. |
+| Agent callers, the platform's other calls, local mode, a runtime that is not hosted, and code outside a turn, such as Tau Board's tool workbench | `None` |
 
 When a hosted chat or A2A Message turn starts, the runtime presents its request's verified caller
 assertion with the transition that marks the turn active. When a hosted request creates or

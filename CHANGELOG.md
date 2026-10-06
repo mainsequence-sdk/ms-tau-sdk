@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- A turn that a caller delivery resumes serves the person who asked for the delegated work. When
+  `POST /internal/a2a/task-caller-delivery` resumes a hosted session, the turn presents no
+  assertion. It names the delivery in `caller_delivery_uid` on the
+  `PATCH /api/v1/agent-sessions/<uid>/tau-runtime-activity/` transition that marks it active, and
+  the platform answers with the requester it recorded for the turn: the person who asked for the
+  turn that delegated with `resume_caller`. `current_requester()` returns that person, with empty
+  `team_uids`, and `requester_client()` reads for them, only when the delivery signal names the
+  same User with `requester_identity_type` `human`. Local mode and a runtime that is not hosted
+  name no delivery.
 - Main Sequence MCP no longer offers `agent_session.resolve_runtime_access` to the model. Its
   result carries a short-lived runtime token for direct-runtime clients, and Tau's generic MCP
   projection copied that token into model-visible tool content and into tool details, which reach
@@ -24,7 +33,7 @@
   platform's dispatch takes its requester from the dispatch's same two facts. Two new public
   functions:
   - `current_requester()` returns that person inside the turn (`uid`, `team_uids`), or `None` for
-    Agent callers, the platform's own calls, local mode, a runtime that is not hosted, and code
+    Agent callers, the platform's other calls, local mode, a runtime that is not hosted, and code
     outside a turn;
   - `requester_client()` returns a client bound to the turn. `request(method, path, ...)` calls a
     platform API path with the runtime's credential and `X-MainSequence-Acting-For-Session`,

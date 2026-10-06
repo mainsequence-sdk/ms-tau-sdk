@@ -14,6 +14,10 @@ tools read the verified requester of a turn or Task attempt with `current_reques
 with that person's access through `requester_client()` (section 9,
 [issue #66](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/66)).
 
+Amended 2026-10-06: a turn that a caller delivery resumes names the delivery when it marks the
+turn active, and serves the requester the platform records for it: the person who asked for the
+turn that delegated the work (section 9).
+
 Amended 2026-10-06: the Agent that delegated to a child session may address it. When Agent A
 delegates to Agent B, the platform creates B's child session for the person who owns A's session,
 and A addresses it with its own credential, so the caller assertion names A's workload User. The
@@ -237,6 +241,13 @@ never on the platform's own calls, and never in the Task's body. The platform re
 as the Task's requester and names them in the answer's `requester_user_uid` and
 `requester_identity_type`, and its later dispatches of the Task name the same facts.
 
+**A turn that resumes a caller delivery.** When the platform's
+`POST /internal/a2a/task-caller-delivery` resumes a hosted session for delegated work, the turn it
+starts has no request of its own and presents no assertion. The transition that marks it active
+names the delivery in `caller_delivery_uid` instead. The platform answers with `requester_user_uid`:
+the person who asked for the turn that delegated the work with `resume_caller`, while they still
+own the session, or null. Local mode and a runtime that is not hosted name no delivery.
+
 **The turn's requester.** `current_requester()` returns, inside a turn, an immutable object with
 `uid` and `team_uids`, or None:
 
@@ -251,7 +262,10 @@ as the Task's requester and names them in the answer's `requester_user_uid` and
   dispatch's `requester_user_uid` when its `requester_identity_type` is `human`, with no Team
   UIDs. Only a hosted runtime reads these facts, because only it verifies the platform assertion
   on its internal routes;
-- otherwise None: Agent callers, the platform's own calls such as caller delivery, local mode, a
+- a turn that resumes a caller delivery: the delivery's `requester_user_uid` when its
+  `requester_identity_type` is `human`, only when the platform's answer to the turn start names
+  the same User, with no Team UIDs;
+- otherwise None: Agent callers, the platform's other calls, local mode, a
   runtime that is not hosted, and code outside a turn. A caller that section 6 admitted as the
   Agent that delegated to the session is a workload User, so it is never the requester, whatever
   the platform answers.

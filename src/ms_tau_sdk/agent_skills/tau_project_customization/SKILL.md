@@ -129,8 +129,9 @@ async def revenue_by_region(tool_call_id, arguments, signal=None, on_update=None
 ```
 
 - `current_requester()` returns the turn's verified requester, with `uid` and `team_uids`, or
-  `None`. It is `None` for Agent callers, the platform's own calls, local mode, and code outside a
-  turn. Only it names the requester:
+  `None`. It is `None` for Agent callers, the platform's own calls other than a caller delivery
+  (which resumes delegated work for the person who asked), local mode, and code outside a turn.
+  Only it names the requester:
   never take a person's UID from tool arguments, the prompt, history, or a header.
 - `requester_client()` returns a client bound to the turn. `await client.request("GET",
   "/api/v1/...")` reads a platform API path for the requester. `await client.call_release(

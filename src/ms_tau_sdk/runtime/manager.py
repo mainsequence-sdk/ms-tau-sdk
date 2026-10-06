@@ -65,6 +65,7 @@ from ms_tau_sdk.runtime.live_turns import LiveTurn, LocalChatTurn
 from ms_tau_sdk.runtime.observability import TauTurnObserver
 from ms_tau_sdk.runtime.provenance import TurnProvenance
 from ms_tau_sdk.runtime.requester import (
+    CallerDelivery,
     Requester,
     TurnRequesterBinding,
     bind_turn_requester,
@@ -1323,11 +1324,14 @@ class SessionRuntimeManager:
         platform_event: PlatformEvent | None = None,
         turn_uid: str | None = None,
         caller_assertion: CallerAssertion | None = None,
+        caller_delivery: CallerDelivery | None = None,
     ) -> AsyncIterator[TauRuntimeEvent]:
         """Run one turn in a session.
 
         ``caller_assertion`` is the verified caller assertion of the hosted chat or A2A Message
         request that starts the turn. It is presented only when the turn is marked active.
+        ``caller_delivery`` is, instead, the caller delivery that a turn the platform starts
+        resumes the session for. It is named only when the turn is marked active.
         """
 
         agent_run_uid = str(uuid.uuid4())
@@ -1345,6 +1349,7 @@ class SessionRuntimeManager:
                 provenance=provenance,
                 platform_event=platform_event,
                 caller_assertion=caller_assertion,
+                caller_delivery=caller_delivery,
             ):
                 yield event
 
@@ -1356,6 +1361,7 @@ class SessionRuntimeManager:
         provenance: TurnProvenance | None = None,
         platform_event: PlatformEvent | None = None,
         caller_assertion: CallerAssertion | None = None,
+        caller_delivery: CallerDelivery | None = None,
     ) -> AsyncIterator[TauRuntimeEvent]:
         live_turn = self._open_live_turn(session_uid, content, provenance)
         try:
@@ -1365,6 +1371,7 @@ class SessionRuntimeManager:
                 provenance=provenance,
                 platform_event=platform_event,
                 caller_assertion=caller_assertion,
+                caller_delivery=caller_delivery,
             ):
                 if live_turn is not None:
                     live_turn.observe(event)
@@ -1497,6 +1504,7 @@ class SessionRuntimeManager:
         provenance: TurnProvenance | None = None,
         platform_event: PlatformEvent | None = None,
         caller_assertion: CallerAssertion | None = None,
+        caller_delivery: CallerDelivery | None = None,
     ) -> AsyncIterator[TauRuntimeEvent]:
         logger.info(
             "agent.run.accepted",
@@ -1522,11 +1530,17 @@ class SessionRuntimeManager:
         context = get_contextvars()
         turn_uid = str(context.get("turn_uid") or uuid.uuid4())
         task_context = active_task_execution()
-        # Only a hosted chat or A2A Message turn presents its request's caller assertion. A Task
+        # Only a hosted chat or A2A Message turn presents its request's caller assertion, and only
+        # a hosted turn the platform starts for a caller delivery names that delivery. A Task
         # attempt takes its requester from the platform's dispatch instead.
         presented = (
             caller_assertion
             if task_context is None and self._requester_identity_verified()
+            else None
+        )
+        delivery = (
+            caller_delivery
+            if presented is None and task_context is None and self._requester_identity_verified()
             else None
         )
         runtime = await self._begin_turn_with_one_reload(
@@ -1534,6 +1548,7 @@ class SessionRuntimeManager:
             runtime=runtime,
             turn_uid=turn_uid,
             caller_assertion=presented,
+            caller_delivery_uid=delivery.uid if delivery is not None else None,
         )
         requester_binding = TurnRequesterBinding(
             session_uid=session_uid,
@@ -1541,6 +1556,7 @@ class SessionRuntimeManager:
                 runtime,
                 caller_assertion=presented,
                 task_context=task_context,
+                caller_delivery=delivery,
             ),
             lease_proof=lambda: LeaseProof(
                 session_uid=session_uid,
@@ -1677,16 +1693,24 @@ class SessionRuntimeManager:
         runtime: ActiveSessionRuntime,
         turn_uid: str,
         caller_assertion: CallerAssertion | None = None,
+        caller_delivery_uid: str | None = None,
     ) -> ActiveSessionRuntime:
         for begin_attempt in range(2):
             runtime.activity_sequence += 1
             # An expired assertion is not presented, and the platform then records nobody.
             presented = caller_assertion.unexpired_token() if caller_assertion else None
+            named: dict[str, str] = (
+                {"caller_assertion": presented}
+                if presented
+                else {"caller_delivery_uid": caller_delivery_uid}
+                if caller_delivery_uid
+                else {}
+            )
             try:
                 state = await runtime.storage.begin_turn(
                     turn_uid=turn_uid,
                     activity_sequence=runtime.activity_sequence,
-                    **({"caller_assertion": presented} if presented else {}),
+                    **named,
                 )
             except BackendConflictError:
                 if begin_attempt:
@@ -1700,7 +1724,7 @@ class SessionRuntimeManager:
             runtime.activity_sequence = state.activity_sequence or runtime.activity_sequence
             requester_user_uid = state.requester_user_uid
             runtime.requester_user_uid = (
-                requester_user_uid if presented and isinstance(requester_user_uid, str) else None
+                requester_user_uid if named and isinstance(requester_user_uid, str) else None
             )
             return runtime
         raise AssertionError("Tau turn reload loop did not terminate")
@@ -1716,19 +1740,27 @@ class SessionRuntimeManager:
         *,
         caller_assertion: CallerAssertion | None,
         task_context: TaskExecutionContext | None,
+        caller_delivery: CallerDelivery | None = None,
     ) -> Requester | None:
         """Name the verified person a turn serves, or None.
 
         A Task turn serves the person its execution context names, as the platform recorded the
         Task's requester. A chat or A2A Message turn serves its verified caller only when the
         platform recorded that same person as the turn's requester, which it does for a person who
-        owns the session and never for an Agent caller.
+        owns the session and never for an Agent caller. A turn the platform starts for a caller
+        delivery serves the requester the delivery names, only when the platform recorded that
+        same person for the turn.
         """
 
         if not self._requester_identity_verified():
             return None
         if task_context is not None:
             return task_context.requester
+        if caller_delivery is not None:
+            requester = caller_delivery.requester
+            if requester is None or runtime.requester_user_uid != requester.uid:
+                return None
+            return requester
         if caller_assertion is None or caller_assertion.caller_is_workload:
             return None
         caller = caller_assertion.caller

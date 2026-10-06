@@ -61,6 +61,7 @@ from ms_tau_sdk.providers.factory import ProviderRuntime
 from ms_tau_sdk.runtime.events import TauRuntimeEvent
 from ms_tau_sdk.runtime.manager import RUNTIME_CAPABILITIES, SessionRuntimeManager
 from ms_tau_sdk.runtime.requester import (
+    CallerDelivery,
     Requester,
     RequesterBindingError,
     TurnRequesterBinding,
@@ -335,12 +336,78 @@ async def test_session_storage_presents_an_assertion_only_with_the_turn_it_start
 
     await storage.begin_turn(turn_uid="turn-1", activity_sequence=1, caller_assertion=RAW_ASSERTION)
     await storage.begin_turn(turn_uid="turn-2", activity_sequence=2)
+    await storage.begin_turn(
+        turn_uid="turn-3", activity_sequence=3, caller_delivery_uid="delivery-1"
+    )
 
-    presented, without = platform.patch_runtime_activity.await_args_list
+    presented, without, resumed = platform.patch_runtime_activity.await_args_list
     assert presented.kwargs == {"caller_assertion": RAW_ASSERTION}
     assert presented.args[1].active_turn_uid == "turn-1"
     assert without.kwargs == {}
     assert RAW_ASSERTION not in presented.args[1].model_dump_json()
+    assert "caller_delivery_uid" not in presented.args[1].model_dump(exclude_none=True)
+    assert resumed.kwargs == {}
+    assert resumed.args[1].caller_delivery_uid == "delivery-1"
+
+
+# The person a caller delivery names, as the route builds it from the platform's facts.
+DELEGATED = Requester(uid=OWNER_UID)
+
+
+@pytest.mark.parametrize(
+    ("named", "answered_requester", "expected"),
+    [
+        pytest.param(DELEGATED, OWNER_UID, DELEGATED, id="recorded"),
+        # The platform records nobody when the delegating turn had no requester, or the person
+        # no longer owns the session.
+        pytest.param(DELEGATED, None, None, id="nobody_recorded"),
+        pytest.param(DELEGATED, OTHER_UID, None, id="someone_else_recorded"),
+        pytest.param(None, OWNER_UID, None, id="the_delivery_names_nobody"),
+    ],
+)
+async def test_a_caller_delivery_turn_names_its_delivery_and_serves_the_recorded_requester(
+    platform_keys,
+    tmp_path,
+    named,
+    answered_requester,
+    expected,
+):
+    seen: list[Requester | None] = []
+
+    async def tool() -> None:
+        seen.append(current_requester())
+
+    manager, storage = _turn_manager(
+        platform_keys.hosted_settings(tmp_path),
+        tool,
+        answered_requester=answered_requester,
+    )
+
+    await _run_turn(manager, caller_delivery=CallerDelivery(uid="delivery-1", requester=named))
+
+    storage.begin_turn.assert_awaited_once_with(
+        turn_uid=ANY,
+        activity_sequence=1,
+        caller_delivery_uid="delivery-1",
+    )
+    assert seen == [expected]
+    assert current_requester() is None
+    await _close(manager)
+
+
+async def test_without_hosting_a_caller_delivery_turn_names_nothing(tmp_path):
+    seen: list[Requester | None] = []
+
+    async def tool() -> None:
+        seen.append(current_requester())
+
+    manager, storage = _turn_manager(_managed_settings(tmp_path), tool)
+
+    await _run_turn(manager, caller_delivery=CallerDelivery(uid="delivery-1", requester=DELEGATED))
+
+    storage.begin_turn.assert_awaited_once_with(turn_uid=ANY, activity_sequence=1)
+    assert seen == [None]
+    await _close(manager)
 
 
 def _task_context(requester: Requester | None) -> TaskExecutionContext:
@@ -496,15 +563,16 @@ class _RecordingManager:
     async def prompt(self, session_uid: str, _prompt: str, *, provenance=None, **options: Any):
         task = active_task_execution()
         assertion = options.get("caller_assertion")
-        self.turns.append(
-            {
-                "session_uid": session_uid,
-                "assertion": assertion.token if assertion is not None else None,
-                "caller": assertion.caller.uid if assertion is not None else None,
-                "task_attempt": task is not None,
-                "task_requester": task.requester if task is not None else None,
-            }
-        )
+        turn = {
+            "session_uid": session_uid,
+            "assertion": assertion.token if assertion is not None else None,
+            "caller": assertion.caller.uid if assertion is not None else None,
+            "task_attempt": task is not None,
+            "task_requester": task.requester if task is not None else None,
+        }
+        if options.get("caller_delivery") is not None:
+            turn["delivery"] = options["caller_delivery"]
+        self.turns.append(turn)
         answer = self.answers.pop(0) if len(self.answers) > 1 else self.answers[0]
         yield TauRuntimeEvent(
             type="message_end",
@@ -1525,10 +1593,19 @@ async def test_a_hosted_turn_acts_for_its_requester_and_exposes_no_secret(
         assert secret not in model_context
 
 
-async def test_a_caller_delivery_turn_is_the_platforms_and_has_no_requester(
+@pytest.mark.parametrize(
+    ("identity_type", "requester"),
+    [
+        pytest.param("human", Requester(uid=OWNER_UID), id="a_person"),
+        pytest.param("workload", None, id="an_agent"),
+    ],
+)
+async def test_a_caller_delivery_turn_names_its_delivery_and_the_delegated_requester(
     served_platform_keys,
     tmp_path,
     asgi_client,
+    identity_type,
+    requester,
 ):
     app, manager = _hosted_routes(served_platform_keys, tmp_path)
 
@@ -1543,13 +1620,14 @@ async def test_a_caller_delivery_turn_is_the_platforms_and_has_no_requester(
                 "caller_agent_session_uid": SESSION_UID,
                 "event_cursor": 3,
                 "requester_user_uid": OWNER_UID,
-                "requester_identity_type": "human",
+                "requester_identity_type": identity_type,
             },
             headers={ASSERTION_HEADER: served_platform_keys.platform_assertion()},
         )
     await manager.run_background()
 
     assert response.status_code == 200, response.text
+    # No assertion: the platform starts the turn, and the turn names the delivery instead.
     assert manager.turns == [
         {
             "session_uid": SESSION_UID,
@@ -1557,6 +1635,7 @@ async def test_a_caller_delivery_turn_is_the_platforms_and_has_no_requester(
             "caller": None,
             "task_attempt": False,
             "task_requester": None,
+            "delivery": CallerDelivery(uid="delivery-1", requester=requester),
         }
     ]
 

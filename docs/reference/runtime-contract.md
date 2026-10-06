@@ -116,6 +116,11 @@ it is working on, and the platform finds the person in its own records (ADR 0019
 - **Task dispatch.** `POST /internal/a2a/task-dispatch` carries `requester_user_uid` and
   `requester_identity_type`. A hosted runtime takes the Task attempt's requester from them when
   `requester_identity_type` is `human`.
+- **Caller delivery.** `POST /internal/a2a/task-caller-delivery` carries the same two facts for the
+  person who asked for the delegated work. A hosted runtime starts the resumed turn without an
+  assertion and names the delivery in `caller_delivery_uid` on the transition that marks it
+  active. The turn serves that person when the facts name a `human` and the answer's
+  `requester_user_uid` names the same User.
 - **Requester-bound calls.** An extension tool's call through `requester_client()` sends the
   runtime's credential with `X-MainSequence-Acting-For-Session` (the turn's session),
   `X-MainSequence-Lease-Holder` and `X-MainSequence-Lease-Token` (the runtime's lease on it), to

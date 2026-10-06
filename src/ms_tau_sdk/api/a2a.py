@@ -63,7 +63,7 @@ from ms_tau_sdk.runtime.provenance import (
     TurnProvenance,
     turn_provenance_from_request,
 )
-from ms_tau_sdk.runtime.requester import Requester, canonical_requester_uid
+from ms_tau_sdk.runtime.requester import CallerDelivery, Requester, canonical_requester_uid
 from ms_tau_sdk.runtime.task_context import (
     TaskExecutionContext,
     active_task_execution,
@@ -2150,7 +2150,7 @@ def _durable_task_execution_input(
 
 
 def _dispatched_requester(body: dict[str, Any], config: TauSDKSettings) -> Requester | None:
-    """Return the Task's requester as the platform's verified dispatch names it.
+    """Return the requester that the platform's verified dispatch or caller delivery names.
 
     Only a person is a requester: an Agent's workload User never is. A runtime that does not
     verify the platform's assertion on its internal routes takes no requester from them.
@@ -2213,6 +2213,7 @@ async def _resume_caller_delivery(
     task_id: str,
     task_status: str,
     caller_agent_session_uid: str,
+    delivery: CallerDelivery,
 ) -> None:
     prompt = (
         "A delegated asynchronous A2A Task has new actionable state. "
@@ -2229,6 +2230,9 @@ async def _resume_caller_delivery(
             "actorKind": "platform",
             "actorUid": "mainsequence",
         },
+        # The turn names its delivery, so that the platform records the requester of the
+        # delegated work for it.
+        caller_delivery=delivery,
     ):
         pass
     manager.mark_response_delivered(caller_agent_session_uid)
@@ -2238,6 +2242,7 @@ async def _resume_caller_delivery(
 async def task_caller_delivery_available(
     body: dict[str, Any],
     manager: RuntimeManagerDep,
+    config: SettingsDep,
 ) -> dict[str, Any]:
     delivery_uid = str(body.get("delivery_uid") or "").strip()
     task_uid = str(body.get("task_uid") or "").strip()
@@ -2284,6 +2289,10 @@ async def task_caller_delivery_available(
             task_id=task_id,
             task_status=task_status,
             caller_agent_session_uid=caller_agent_session_uid,
+            delivery=CallerDelivery(
+                uid=delivery_uid,
+                requester=_dispatched_requester(body, config),
+            ),
         ),
         name=f"a2a-caller-delivery-{delivery_uid}",
     )

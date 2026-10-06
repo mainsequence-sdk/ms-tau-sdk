@@ -58,6 +58,19 @@ class Requester:
     team_uids: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True, slots=True)
+class CallerDelivery:
+    """The caller delivery that a turn the platform starts resumes its session for.
+
+    ``requester`` is the person the platform's verified signal names as the requester of the
+    delegated work, or None. The turn serves that person only when the platform records the same
+    person for the turn it starts.
+    """
+
+    uid: str
+    requester: Requester | None = None
+
+
 class RequesterBindingError(TauSDKError, PermissionError):
     """The turn has no verified requester, or the platform ended the requester's binding.
 
@@ -551,6 +564,7 @@ def _token_access(answer: ReleaseRuntimeAccess) -> _ReleaseAccess:
 
 
 __all__ = [
+    "CallerDelivery",
     "Requester",
     "RequesterBindingError",
     "RequesterClient",

@@ -295,7 +295,8 @@ class RuntimeState(BackendModel):
     cancel_requested: bool = False
     cancellation_id: str | None = None
     # The person the platform recorded as the active turn's requester, from the caller assertion
-    # the runtime presented when it marked the turn active. None when it recorded nobody.
+    # the runtime presented, or the caller delivery it named, when it marked the turn active.
+    # None when it recorded nobody.
     requester_user_uid: str | None = None
 
     @model_validator(mode="after")
@@ -322,6 +323,9 @@ class RuntimeActivityPatch(BackendRequestModel):
     activity_sequence: int | None = Field(default=None, ge=1)
     runtime_activity: AgentRuntimeActivity
     active_turn_uid: str | None = None
+    # The caller delivery a turn the platform starts resumes the session for, sent only with the
+    # transition that marks that turn active, and never together with a caller assertion.
+    caller_delivery_uid: str | None = None
 
     @model_validator(mode="after")
     def validate_concurrency_mode(self) -> RuntimeActivityPatch:
