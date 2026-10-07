@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 from mcp import types
+from tau_agent.types import JSONValue
 
 from ms_tau_sdk.backend.mcp import MainSequenceMCPClient, MCPConnectionClient
 from ms_tau_sdk.settings import TauSDKSettings
@@ -81,18 +82,27 @@ async def test_a_connection_sends_no_private_metadata_unless_its_policy_adds_it(
 
 
 @pytest.mark.asyncio
-async def test_a_policy_refusal_is_returned_before_the_call_is_sent():
+async def test_private_metadata_is_computed_for_each_call():
     application = _connection(("orders.list",))
+    computed: list[str] = []
+
+    def private_meta(tool: types.Tool) -> dict[str, JSONValue]:
+        computed.append(tool.name)
+        return {"example.test/call/v1": {"number": len(computed)}}
+
     tool = create_mcp_connection_tools(
         application,
-        MCPToolPolicy(prefix="orders", display_name="Orders", refusal=lambda _tool: "Not now."),
+        MCPToolPolicy(prefix="orders", display_name="Orders", private_meta=private_meta),
     )[0]
+    assert computed == []
 
-    result = await tool.execute("call-1", {})
+    await tool.execute("call-1", {})
+    await tool.execute("call-2", {})
 
-    assert result.text == "Not now."
-    assert result.details == {"mcp_tool": "orders.list", "is_error": True, "refused": True}
-    application.call_tool.assert_not_awaited()
+    assert [call.kwargs for call in application.call_tool.await_args_list] == [
+        {"meta": {"example.test/call/v1": {"number": 1}}},
+        {"meta": {"example.test/call/v1": {"number": 2}}},
+    ]
 
 
 def test_tool_names_collide_only_within_one_connection():

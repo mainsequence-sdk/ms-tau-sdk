@@ -14,7 +14,7 @@ from ms_tau_sdk.backend.mcp import (
     ENVIRONMENT_SCOPED_AGENT_TOOLS,
     ENVIRONMENT_UID_ARGUMENT,
 )
-from ms_tau_sdk.runtime.requester import current_requester
+from ms_tau_sdk.runtime.requester import _current_turn_binding
 from ms_tau_sdk.tools.mcp_connection import (
     MCPConnection,
     MCPToolPolicy,
@@ -25,26 +25,17 @@ from ms_tau_sdk.tools.mcp_connection import (
 _PREFIX = "mainsequence"
 _DISPLAY_NAME = "Main Sequence"
 _RESOURCE_TOOL_NAME = mcp_resource_tool_name(_PREFIX)
+# Every hosted call names the session the turn works on (ADR 0021). It never asks for a person.
 CALLER_SESSION_PROOF_META_KEY = "mainsequence.ai/caller-session-proof/v1"
-CALLER_SESSION_PROOF_REQUIRED_META_KEY = "mainsequence.ai/requires-caller-session-proof/v1"
-# A tool the platform runs for the person the turn serves (ADR 0021). The SDK sends the session
-# proof with it, from which the platform finds that person, and refuses it in a hosted turn that
-# serves nobody. Tools without the mark run as the Agent's workload.
-REQUESTER_REQUIRED_META_KEY = "mainsequence.ai/requires-requester/v1"
-_NO_REQUESTER = (
-    "This Main Sequence tool works only for the person whose request this turn serves, and this "
-    "turn serves nobody."
-)
+# A hosted call made while the turn serves a person also carries that person's delegation: the
+# same session proof, from which the platform finds the person. Without it the call is the
+# Agent's own, and the tool decides what it may do.
+DELEGATION_META_KEY = "mainsequence.ai/delegation/v1"
 A2A_SEND_TOOL = "a2a.send_message"
 # These operations return credentials for direct-runtime clients. Tau never calls them for
 # the model: agent-to-agent turns use a2a.send_message, so the credential stays out of model
 # content, tool details, events, and persisted history.
 CREDENTIAL_RESULT_MCP_TOOLS = frozenset({"agent_session.resolve_runtime_access"})
-# Private Secret entry is withdrawn. A platform that has not yet deployed its removal still lists
-# these operations; Tau never offers them to the model.
-WITHDRAWN_SECRET_ENTRY_MCP_TOOLS = frozenset(
-    {"secret.list", "secret_entry.start", "secret_entry.status", "secret_entry.cancel"}
-)
 
 
 def _tau_tool_input_schema(
@@ -103,32 +94,22 @@ def _tau_tool_input_schema(
     return cast(Mapping[str, JSONValue], schema)
 
 
-def _caller_session_meta(
-    tool: types.Tool,
-    proof: Mapping[str, JSONValue] | None,
-    *,
-    allow_missing_proof: bool = False,
-) -> Mapping[str, JSONValue] | None:
-    tool_meta = tool.meta or {}
-    if tool_meta.get(
-        CALLER_SESSION_PROOF_REQUIRED_META_KEY
-    ) is not True and not _requires_requester(tool):
-        return None
-    if proof is None:
-        if allow_missing_proof:
-            return None
-        raise ValueError(f"Main Sequence MCP tool requires caller-session proof: {tool.name}")
-    return {CALLER_SESSION_PROOF_META_KEY: dict(proof)}
+def _turn_envelope(session_uid: str) -> dict[str, JSONValue]:
+    """The private metadata of one hosted call: the session, and the delegation when serving."""
 
-
-def _requires_requester(tool: types.Tool) -> bool:
-    return (tool.meta or {}).get(REQUESTER_REQUIRED_META_KEY) is True
-
-
-def _requester_refusal(tool: types.Tool, *, hosted: bool) -> str | None:
-    if not hosted or not _requires_requester(tool) or current_requester() is not None:
-        return None
-    return _NO_REQUESTER
+    binding = _current_turn_binding()
+    if binding is None or binding.session_uid != session_uid:
+        raise RuntimeError("Main Sequence MCP tools run only inside their session's turn")
+    proof = binding.session_proof()
+    session: dict[str, JSONValue] = {
+        "caller_agent_session_uid": proof.session_uid,
+        "lease_holder_id": proof.holder_id,
+        "lease_token": proof.lease_token,
+    }
+    envelope: dict[str, JSONValue] = {CALLER_SESSION_PROOF_META_KEY: session}
+    if binding.serving:
+        envelope[DELEGATION_META_KEY] = dict(session)
+    return envelope
 
 
 def _check_arguments(
@@ -154,19 +135,19 @@ def _check_arguments(
         raise ValueError("completion_policy is not valid for Message response_kind")
 
 
-def mainsequence_mcp_policy(
-    *,
-    caller_session_proof: Mapping[str, JSONValue] | None = None,
-    allow_missing_session_proof: bool = False,
-) -> MCPToolPolicy:
-    """The platform connection's policy: hidden tools, A2A rules, private session proof, and the
-    tools that run for the turn's person."""
+def mainsequence_mcp_policy(*, session_uid: str | None = None) -> MCPToolPolicy:
+    """The platform connection's policy: hidden tools, A2A rules, and the private envelope.
 
-    local_user_semantics = allow_missing_session_proof
+    ``session_uid`` is the hosted session whose turns call the tools: every call names it, and
+    carries the delegation while the turn serves a person. In local mode it is None, the calls
+    carry no private metadata, and A2A Tasks are polled.
+    """
+
+    local_user_semantics = session_uid is None
     return MCPToolPolicy(
         prefix=_PREFIX,
         display_name=_DISPLAY_NAME,
-        excluded_tools=CREDENTIAL_RESULT_MCP_TOOLS | WITHDRAWN_SECRET_ENTRY_MCP_TOOLS,
+        excluded_tools=CREDENTIAL_RESULT_MCP_TOOLS,
         input_schema=lambda tool: _tau_tool_input_schema(
             tool,
             local_user_semantics=local_user_semantics,
@@ -176,12 +157,9 @@ def mainsequence_mcp_policy(
             arguments,
             local_user_semantics=local_user_semantics,
         ),
-        private_meta=lambda tool: _caller_session_meta(
-            tool,
-            caller_session_proof,
-            allow_missing_proof=allow_missing_session_proof,
+        private_meta=(
+            (lambda _tool: _turn_envelope(session_uid)) if session_uid is not None else None
         ),
-        refusal=lambda tool: _requester_refusal(tool, hosted=caller_session_proof is not None),
         resource_tool_description="Read one advertised Main Sequence platform resource from MCP.",
     )
 
@@ -189,16 +167,9 @@ def mainsequence_mcp_policy(
 def create_mainsequence_mcp_tools(
     client: MCPConnection,
     *,
-    caller_session_proof: Mapping[str, JSONValue] | None = None,
-    allow_missing_session_proof: bool = False,
+    session_uid: str | None = None,
 ) -> list[AgentTool]:
-    return create_mcp_connection_tools(
-        client,
-        mainsequence_mcp_policy(
-            caller_session_proof=caller_session_proof,
-            allow_missing_session_proof=allow_missing_session_proof,
-        ),
-    )
+    return create_mcp_connection_tools(client, mainsequence_mcp_policy(session_uid=session_uid))
 
 
 def mainsequence_mcp_resource_prompt(

@@ -10,7 +10,7 @@ import pytest
 from pydantic import SecretStr
 
 from ms_tau_sdk.api.a2a import _reconcile_local_tasks_once
-from ms_tau_sdk.backend.client import MainSequenceClient
+from ms_tau_sdk.backend.client import LeaseProof, MainSequenceClient
 from ms_tau_sdk.backend.local import LocalDevelopmentBackend
 from ms_tau_sdk.backend.models import (
     ProviderControl,
@@ -183,6 +183,37 @@ async def test_local_backend_rejects_platform_orchestration_routes(tmp_path):
     with pytest.raises(LocalModeUnsupportedError, match="registered Agent"):
         await backend._request("POST", "/api/v1/agent-tasks/")
 
+    await backend.aclose()
+
+
+@pytest.mark.asyncio
+async def test_local_platform_calls_use_the_signed_in_persons_own_credential(tmp_path):
+    services = _services(_evidence())
+    services.platform_request = AsyncMock(return_value="answer")
+    services.resolve_release_runtime_access = AsyncMock(return_value="access")
+    backend = LocalDevelopmentBackend(_settings(tmp_path), services)
+    proof = LeaseProof(session_uid="session-1", holder_id="holder-1", lease_token="lease")
+
+    assert await backend.platform_request("GET", "/api/v1/data-nodes/", proof=None) == "answer"
+    assert await backend.resolve_release_runtime_access("release-1", proof=None) == "access"
+    # A local turn serves no delegated person, so a call never carries a delegation.
+    with pytest.raises(LocalModeUnsupportedError, match="no delegation"):
+        await backend.platform_request("GET", "/api/v1/data-nodes/", proof=proof)
+    with pytest.raises(LocalModeUnsupportedError, match="no delegation"):
+        await backend.resolve_release_runtime_access("release-1", proof=proof)
+
+    services.platform_request.assert_awaited_once_with(
+        "GET",
+        "/api/v1/data-nodes/",
+        proof=None,
+        params=None,
+        json=None,
+        content=None,
+        data=None,
+        files=None,
+        headers=None,
+    )
+    services.resolve_release_runtime_access.assert_awaited_once_with("release-1", proof=None)
     await backend.aclose()
 
 

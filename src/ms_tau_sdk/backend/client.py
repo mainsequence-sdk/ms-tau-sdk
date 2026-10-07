@@ -88,8 +88,8 @@ PATH_IDENTIFIER_PATTERN = re.compile(
     r"(?<=/)(?:[0-9a-f]{8}-[0-9a-f-]{27,}|[0-9]+)(?=/|$)",
     re.IGNORECASE,
 )
-# A requester-bound call names the session the runtime is serving and proves the runtime's lease on
-# it, beside the runtime's own credential. The platform finds the person in its own record of that
+# A delegated call names the session the runtime is serving and proves the runtime's lease on it,
+# beside the runtime's own credential. The platform finds the person in its own record of that
 # session's active turn or Task attempt: the call never names a person.
 ACTING_FOR_SESSION_HEADER = "X-MainSequence-Acting-For-Session"
 LEASE_HOLDER_HEADER = "X-MainSequence-Lease-Holder"
@@ -119,7 +119,7 @@ def _field_error_paths(value: object, *, prefix: str = "") -> list[str]:
 
 @dataclass(frozen=True, slots=True)
 class LeaseProof:
-    """The session a requester-bound call serves, and the runtime's lease on that session."""
+    """The session a delegated call serves, and the runtime's lease on that session."""
 
     session_uid: str
     holder_id: str
@@ -601,14 +601,18 @@ class MainSequenceClient:
         self,
         release_uid: str,
         *,
-        proof: LeaseProof,
+        proof: LeaseProof | None,
     ) -> ReleaseRuntimeAccess:
-        """Obtain access to an application release as a requester-bound call."""
+        """Obtain access to an application release.
+
+        With ``proof`` the call carries the delegation of the person the turn serves, and the
+        token acts for that person. Without it the token is the runtime's own.
+        """
 
         data = await self._request(
             "POST",
             resource_release_runtime_access(release_uid),
-            headers=proof.headers(),
+            headers=proof.headers() if proof is not None else None,
         )
         try:
             return ReleaseRuntimeAccess.model_validate(data)
@@ -617,12 +621,12 @@ class MainSequenceClient:
         # Raised outside the handler: a validation error repeats its input, which holds the token.
         raise BackendError("Backend release access response is invalid")
 
-    async def requester_bound_request(
+    async def platform_request(
         self,
         method: str,
         path: str,
         *,
-        proof: LeaseProof,
+        proof: LeaseProof | None,
         params: Any = None,
         json: Any = None,
         content: bytes | str | None = None,
@@ -630,11 +634,12 @@ class MainSequenceClient:
         files: Any = None,
         headers: Mapping[str, str] | None = None,
     ) -> httpx.Response:
-        """Send one requester-bound call to a platform path, with the runtime's own credential.
+        """Send one call to a platform path, with the runtime's own credential.
 
-        ``path`` is relative to the configured platform base URL, and the call never leaves that
-        origin or follows a redirect. The answer is returned on a copy of the request that carries
-        no header, so neither the credential nor the lease proof travels with it.
+        With ``proof`` the call also carries the delegation of the person the turn serves. ``path``
+        is relative to the configured platform base URL, and the call never leaves that origin or
+        follows a redirect. The answer is returned on a copy of the request that carries no header,
+        so neither the credential nor the lease proof travels with it.
         """
 
         base = httpx.URL(self.settings.backend_url)
@@ -644,7 +649,8 @@ class MainSequenceClient:
             base.host,
             base.port,
         ):
-            raise ValueError("A requester-bound call takes a path on the platform's base URL")
+            raise ValueError("A platform call takes a path on the platform's base URL")
+        delegation = proof.headers() if proof is not None else {}
         force_auth = False
         operation = _dependency_operation(method, path)
         while True:
@@ -661,7 +667,7 @@ class MainSequenceClient:
                     files=files,
                     headers={
                         **dict(headers or {}),
-                        **proof.headers(),
+                        **delegation,
                         **await self.auth.headers(force=force_auth),
                     },
                     follow_redirects=False,
@@ -671,22 +677,22 @@ class MainSequenceClient:
             if failure:
                 logger.warning(
                     "dependency.call.failed",
-                    message="Requester-bound backend call failed",
+                    message="Platform call failed",
                     dependency_operation=operation,
                     target_system="mainsequence_backend",
-                    requester_bound=True,
+                    requester_bound=proof is not None,
                     duration_ms=round((time.monotonic() - started_at) * 1000, 3),
                     error_type=failure,
                     outcome="failed",
                 )
                 # Raised outside the handler: the error holds the request and its credentials.
-                raise BackendError(f"Requester-bound backend call failed: {failure}")
+                raise BackendError(f"Platform call failed: {failure}")
             logger.info(
                 "dependency.call.completed",
-                message="Requester-bound backend call completed",
+                message="Platform call completed",
                 dependency_operation=operation,
                 target_system="mainsequence_backend",
-                requester_bound=True,
+                requester_bound=proof is not None,
                 status_code=response.status_code,
                 duration_ms=round((time.monotonic() - started_at) * 1000, 3),
                 outcome=(

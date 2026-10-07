@@ -97,10 +97,11 @@ tools do not grant new platform permissions merely because they run inside TAU.
 
 ## Acting for the person a turn serves
 
-An Agent that an Organization admin enabled for it can use supported platform reads and writes,
-and ask other platform applications, with the access of the person whose request a turn is serving: the requester. The
-platform keeps that authority and finds the person in its own records; the runtime only proves
-which of its sessions it is working on. Extension tools use two SDK functions and nothing else:
+An Agent that an Organization admin enabled for it can call the platform and other platform
+applications with the ordinary permissions of the person whose request a turn is serving: the
+requester. The platform keeps that authority and finds the person in its own records; the runtime
+only proves which of its sessions it is working on. Extension tools use two SDK functions and
+nothing else:
 
 ```python
 import json
@@ -108,57 +109,55 @@ import json
 from tau_agent.messages import TextContent
 from tau_agent.tools import AgentToolResult
 
-from ms_tau_sdk import current_requester, requester_client
+from ms_tau_sdk import platform_client
 
 ANALYST_DATA_RELEASE_UID = "..."  # the release of the application to ask
 
 
 async def revenue_by_region(tool_call_id, arguments, signal=None, on_update=None):
-    if current_requester() is None:
-        return AgentToolResult(content=[TextContent(text="Ask me from your own conversation.")])
+    # This tool answers each person with their own data, so it needs a person.
     try:
-        answer = await requester_client().call_release(
+        answer = await platform_client(delegation="required").call_release(
             ANALYST_DATA_RELEASE_UID,
             "POST",
             "/query",
             json={"question": "revenue by region"},
         )
     except PermissionError:
-        return AgentToolResult(content=[TextContent(text="Your access for this request ended.")])
+        return AgentToolResult(content=[TextContent(text="Ask me from your own conversation.")])
     return AgentToolResult(content=[TextContent(text=json.dumps(answer.json()["rows"]))])
 ```
 
-- `current_requester()` returns the turn's verified requester, with `uid` and `team_uids`, or
-  `None`. It is `None` for Agent callers, the platform's own calls other than a caller delivery
-  (which resumes delegated work for the person who asked), local mode, and code outside a turn.
-  Only it names the requester:
-  never take a person's UID from tool arguments, the prompt, history, or a header.
-- `requester_client()` returns a client bound to the turn. `await client.request("GET",
-  "/api/v1/...")` reads a platform API path for the requester. `await client.call_release(
-  release_uid, method, path, ...)` asks another platform application, which answers as the
-  requester. Both return an `httpx.Response`.
-- Without a requester, `requester_client()` raises a `PermissionError`. So does a call that the
-  platform refuses because the requester's access ended (`code` `requester_binding_invalid` or
-  `runtime_lease_*`): the turn is over, the access was removed, more than 24 hours passed, or the
-  Agent is not enabled. Catch it, say in plain words that the request cannot be served, and never
-  fall back to the Agent's own access.
+- `current_requester()` returns the person the turn serves, with `uid` and `team_uids`, or
+  `None`. The platform names that person when the turn starts, whoever called; it is `None` when
+  the platform names nobody, in local mode, and in code outside a turn. Only it names the
+  requester: never take a person's UID from tool arguments, the prompt, history, or a header.
+- `platform_client()` returns a client. `await client.request("GET", "/api/v1/...")` calls a
+  platform API path, and `await client.call_release(release_uid, method, path, ...)` calls another
+  platform application. Both return an `httpx.Response`.
+- By default (`delegation="auto"`) a call carries the person's delegation while the turn serves a
+  person, and is the Agent's own otherwise; the operation or application decides what it may do.
+  `delegation="none"` never carries it. `delegation="required"` raises a `PermissionError` before
+  sending when the turn serves nobody; use it in a tool that only makes sense for a person.
+- A call the platform refuses because the person's access ended (`code`
+  `requester_binding_invalid` or `runtime_lease_*`) raises a `PermissionError`: the turn is over,
+  the access was removed, more than 24 hours passed, or the Agent is not enabled. Catch it, say in
+  plain words that the request cannot be served, and never retry it as the Agent.
 
 Rules for tools that act for the requester:
 
 - Never handle proofs or tokens. The SDK attaches the session, the lease proof, and the
   credentials itself. A tool never reads, logs, stores, or forwards them, passes a path rather than
   a URL, and never sets `Authorization` or an `X-MainSequence-*` header.
-- Requester-bound calls use the person's member-level rights on operations the deployed platform
-  explicitly supports. Writes may create, change, run, share, or delete only with that permission.
-  Secret values, credential/token management, billing, and admin operations remain excluded;
-  let the SDK resolve application access. Never infer write permission from view access.
-- Check the installed SDK and deployed platform before depending on requester-marked MCP tools,
-  declared application connections, or inherited requester identity in delegated Tasks. Their SDK
-  support is currently documented as Unreleased and does not supply the platform prerequisites.
+- A delegated call uses the person's ordinary permissions, including administrative ones; any other
+  call uses the Agent's own. Each operation decides what it needs. Never infer write permission
+  from view access.
+- This needs the platform's matching change, deployed in the same cutover; check the deployed
+  platform and the installed SDK before depending on it.
 - Return to the model only business results, such as rows, numbers, and names. Never return the
   response object, its headers, a token, a proof, or a raw error body.
-- Keep nothing for another turn or another person. The binding ends with the turn, and a task the
-  tool leaves running has no access afterwards.
+- Keep nothing for another turn or another person. The delegation ends with the turn, and a task
+  the tool leaves running acts only as the Agent afterwards.
 - What a tool reads for a person belongs to that person's conversation. Do not write it to shared
   stores, other Agents, or external systems.
 
@@ -167,13 +166,14 @@ People who use such an Agent are told:
 > **This Agent works with your identity.** It can read, create, change, run,
 > share or delete only what your permissions allow through supported operations,
 > only while serving your request, and for at most 24 hours after you ask. It
-> never receives your admin powers or Secret values, and access is checked on
-> every call. Your Organization's administrator approved it to work this way.
+> uses your ordinary permissions, including administrative permissions, and
+> access is checked on every call. Your Organization's administrator approved it
+> to work this way.
 
-The statement describes requester-bound operations. The Agent's own grants and trusted extension
-code remain separate authority. Prompt injection can cause unintended changes, sharing, or deletion
-within the person's permissions, and completed writes can outlast the binding. Only Organization
-admins enable this authority.
+The statement describes delegated calls. The Agent's own grants and trusted extension code remain
+separate authority. Prompt injection can cause unintended changes, sharing, or deletion within the
+person's permissions, and completed writes can outlast the delegation. Only Organization admins
+enable this authority.
 
 ## Validation
 

@@ -1,5 +1,6 @@
 import json
-from contextlib import asynccontextmanager
+from collections.abc import Iterator
+from contextlib import asynccontextmanager, contextmanager
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -19,6 +20,7 @@ from ms_tau_sdk.runtime.requester import (
     Requester,
     RequesterBindingError,
     TurnRequesterBinding,
+    _turn_application_access,
     _TurnApplicationAccess,
     bind_turn_requester,
     unbind_turn_requester,
@@ -35,8 +37,12 @@ ORDERS = MCPApplication(name="orders", resource_release_uid=RELEASE_UID)
 TOKEN = "SYNTHETIC_APPLICATION_TOKEN"
 
 
-@pytest.fixture
-def person():
+LEASE = LeaseProof(
+    session_uid="session-1", holder_id="holder-1", lease_token="SYNTHETIC_LEASE_TOKEN"
+)
+
+
+def _platform() -> AsyncMock:
     platform = AsyncMock()
     platform.resolve_release_runtime_access.return_value = ReleaseRuntimeAccess(
         resource_release_uid=RELEASE_UID,
@@ -44,20 +50,37 @@ def person():
             mode="token", token=SecretStr(TOKEN), rpc_url="https://orders.apps.test/"
         ),
     )
+    return platform
+
+
+@contextmanager
+def _turn(platform: AsyncMock, requester: Requester | None) -> Iterator[None]:
     binding = TurnRequesterBinding(
         session_uid="session-1",
-        requester=Requester(uid="person-1"),
-        lease_proof=lambda: LeaseProof(
-            session_uid="session-1", holder_id="holder-1", lease_token="SYNTHETIC_LEASE_TOKEN"
-        ),
+        requester=requester,
+        lease_proof=lambda: LEASE,
         platform=platform,
         application_http=AsyncMock(),
     )
     token = bind_turn_requester(binding)
     try:
-        yield platform
+        yield
     finally:
         unbind_turn_requester(binding, token)
+
+
+@pytest.fixture
+def person():
+    platform = _platform()
+    with _turn(platform, Requester(uid="person-1")):
+        yield platform
+
+
+@pytest.fixture
+def nobody():
+    platform = _platform()
+    with _turn(platform, None):
+        yield platform
 
 
 def _client(tools=(), result=None):
@@ -97,17 +120,17 @@ def test_a_duplicate_application_name_fails_the_session():
 
 
 @pytest.mark.asyncio
-async def test_a_turn_that_serves_nobody_is_refused_before_anything_is_sent():
-    connect = AsyncMock()
+async def test_a_turn_that_serves_nobody_still_calls_the_application(nobody):
+    client = _client(tools=[types.Tool(name="orders.list", inputSchema={})])
+    connect = AsyncMock(return_value=client)
     tools = _tools(connect)
 
     listed = await tools["orders__list_tools"].execute("call-1", {})
     called = await tools["orders__call_tool"].execute("call-2", {"tool": "orders.list"})
 
     for result in (listed, called):
-        assert result.details["refused"] is True
-        assert "serves nobody" in result.text
-    connect.assert_not_awaited()
+        assert result.details["is_error"] is False
+    assert [call.args for call in connect.await_args_list] == [(ORDERS, True), (ORDERS, False)]
 
 
 @pytest.mark.asyncio
@@ -164,7 +187,7 @@ async def test_call_tool_calls_one_tool_by_name_without_reading_the_catalog(pers
         (RequesterBindingError("ended"), "Your access for this request ended."),
         (
             BackendError("not found", status_code=404),
-            "The orders application is not available to the person this turn serves.",
+            "The orders application is not available for this call.",
         ),
         (RuntimeError(f"failed with {TOKEN}"), "The orders application could not be reached."),
     ],
@@ -236,7 +259,9 @@ async def test_the_application_token_is_sent_and_renewed_once_on_401():
 
 
 @pytest.mark.asyncio
-async def test_the_connector_opens_the_applications_mcp_endpoint_for_the_person(person):
+@pytest.mark.parametrize("serving", [True, False], ids=["a_person", "nobody"])
+async def test_the_connector_opens_the_applications_mcp_endpoint_with_the_turns_token(serving):
+    platform = _platform()
     opened: list[str] = []
 
     @asynccontextmanager
@@ -271,6 +296,7 @@ async def test_the_connector_opens_the_applications_mcp_endpoint_for_the_person(
         _env_file=None, backend_url="http://backend.test/", runtime_credential_id="credential-id"
     )
     with (
+        _turn(platform, Requester(uid="person-1") if serving else None),
         patch("ms_tau_sdk.backend.mcp.streamable_http_client", fake_transport),
         patch("ms_tau_sdk.backend.mcp.ClientSession", FakeClientSession),
     ):
@@ -280,5 +306,32 @@ async def test_the_connector_opens_the_applications_mcp_endpoint_for_the_person(
     assert opened == ["https://orders.apps.test/mcp"]
     assert [tool.name for tool in client.tools] == ["orders.list"]
     assert client.resources == ()
-    person.resolve_release_runtime_access.assert_awaited_once()
-    assert person.resolve_release_runtime_access.await_args.args == (RELEASE_UID,)
+    # The token carries the person's delegation when the turn serves one, and is the Agent's own
+    # otherwise. The lease proof goes only to the platform.
+    platform.resolve_release_runtime_access.assert_awaited_once_with(
+        RELEASE_UID, proof=LEASE if serving else None
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_refused_delegation_is_reported_and_never_retried_as_the_agent():
+    platform = _platform()
+    platform.resolve_release_runtime_access.side_effect = BackendError(
+        "refused", status_code=403, detail={"code": "requester_binding_invalid"}
+    )
+    settings = TauSDKSettings(
+        _env_file=None, backend_url="http://backend.test/", runtime_credential_id="credential-id"
+    )
+
+    with _turn(platform, Requester(uid="person-1")):
+        with pytest.raises(RequesterBindingError):
+            await _turn_application_access(RELEASE_UID)
+        result = await _tools(application_connector(settings))["orders__call_tool"].execute(
+            "call-1", {"tool": "orders.list"}
+        )
+
+    assert result.text == "Your access for this request ended."
+    assert [call.kwargs for call in platform.resolve_release_runtime_access.await_args_list] == [
+        {"proof": LEASE},
+        {"proof": LEASE},
+    ]

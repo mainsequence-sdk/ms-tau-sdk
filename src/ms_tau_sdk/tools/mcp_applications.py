@@ -1,12 +1,13 @@
 """MCP endpoints of the applications an Agent declares (ADR 0021, section 4).
 
-Declaring an application registers its MCP. The platform resolves each declared application in
-the Agent's Environment and hands the runtime its name and release at startup. Each application
-gets two tools, ``<name>__list_tools`` and ``<name>__call_tool``. Both run inside the turn for the
-turn's person: the SDK obtains the application's address and a short-lived token for that person,
-opens an MCP session for the call, and closes it afterwards. No session, token or catalog is shared
-between turns or people, and nothing is read when the session loads, because no person is known
-then.
+Declaring an application registers its MCP; it grants no access. The platform resolves each
+declared application in the Agent's Environment and hands the runtime its name and release at
+startup. Each application gets two tools, ``<name>__list_tools`` and ``<name>__call_tool``. Both run
+inside the turn: the SDK obtains the application's address and a short-lived token, opens an MCP
+session for the call, and closes it afterwards. The token carries the delegation of the person the
+turn serves, when it serves one, and is the Agent's own otherwise; the application decides what the
+call may do. No session, token or catalog is shared between turns or people, and nothing is read
+when the session loads, because no turn is running then.
 """
 
 from __future__ import annotations
@@ -34,7 +35,6 @@ from ms_tau_sdk.runtime.requester import (
     RequesterBindingError,
     _turn_application_access,
     _TurnApplicationAccess,
-    current_requester,
 )
 from ms_tau_sdk.settings import TauSDKSettings
 from ms_tau_sdk.tools.mcp_connection import mcp_tool_result
@@ -48,7 +48,7 @@ type ApplicationConnector = Callable[[MCPApplication, bool], Awaitable[MCPConnec
 
 
 class _ApplicationTokenAuth(httpx.Auth):
-    """Send the person's application token; obtain a new one once when the application says 401."""
+    """Send the turn's application token; obtain a new one once when the application says 401."""
 
     def __init__(self, access: _TurnApplicationAccess) -> None:
         self._token = access.token
@@ -67,7 +67,7 @@ class _ApplicationTokenAuth(httpx.Auth):
 
 
 def application_connector(settings: TauSDKSettings) -> ApplicationConnector:
-    """Open an MCP session to one application for the current turn's person."""
+    """Open an MCP session to one application for the current turn."""
 
     async def connect(application: MCPApplication, read_catalog: bool) -> MCPConnectionClient:
         access = await _turn_application_access(application.resource_release_uid)
@@ -94,7 +94,7 @@ def _failure(name: str, error: BaseException) -> str:
     if isinstance(error, RequesterBindingError):
         return "Your access for this request ended."
     if isinstance(error, BackendError) and error.backend_status in {403, 404}:
-        return f"The {name} application is not available to the person this turn serves."
+        return f"The {name} application is not available for this call."
     return f"The {name} application could not be reached."
 
 
@@ -120,10 +120,6 @@ def _application_tools(
     connect: ApplicationConnector,
 ) -> list[AgentTool]:
     name = application.name
-    no_requester = (
-        f"The {name} application's tools work only for the person whose request this turn "
-        "serves, and this turn serves nobody."
-    )
 
     async def list_tools(
         tool_call_id: str,
@@ -134,8 +130,6 @@ def _application_tools(
         del tool_call_id, arguments, on_update
         if signal is not None and signal.is_cancelled():
             return _error(name, f"Listing the {name} tools was cancelled.", cancelled=True)
-        if current_requester() is None:
-            return _error(name, no_requester, refused=True)
         try:
             client = await connect(application, True)
             try:
@@ -176,8 +170,6 @@ def _application_tools(
             return _error(name, "`arguments` must be an object.")
         if signal is not None and signal.is_cancelled():
             return _error(name, f"The {name} tool call was cancelled.", cancelled=True)
-        if current_requester() is None:
-            return _error(name, no_requester, refused=True)
         try:
             client = await connect(application, False)
             try:
@@ -202,8 +194,8 @@ def _application_tools(
             name=f"{name}__list_tools",
             label=f"List {name} tools",
             description=(
-                f"List the tools of the {name} application, as the person this turn serves: "
-                "each tool's name, description and input schema."
+                f"List the tools of the {name} application: each tool's name, description and "
+                "input schema."
             ),
             parameters={"type": "object", "properties": {}, "additionalProperties": False},
             execute_fn=list_tools,
@@ -213,8 +205,8 @@ def _application_tools(
             name=f"{name}__call_tool",
             label=f"Call a {name} tool",
             description=(
-                f"Call one tool of the {name} application by name, as the person this turn "
-                f"serves. Use {name}__list_tools first to see the tools and their input schemas."
+                f"Call one tool of the {name} application by name. Use {name}__list_tools first "
+                "to see the tools and their input schemas."
             ),
             parameters={
                 "type": "object",

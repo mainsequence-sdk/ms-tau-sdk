@@ -15,6 +15,8 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, Never, TypeVar, cast
 
+import httpx
+
 from ms_tau_sdk.errors import (
     BackendConflictError,
     LocalModeUnsupportedError,
@@ -2193,30 +2195,48 @@ class LocalDevelopmentBackend(MainSequenceClient):
         self,
         release_uid: str,
         *,
-        proof: LeaseProof,
+        proof: LeaseProof | None,
     ) -> ReleaseRuntimeAccess:
-        """Local turns have no requester, so they make no requester-bound call."""
+        """Obtain access to an application with the signed-in person's own credential.
 
-        del release_uid, proof
-        raise LocalModeUnsupportedError("Requester-bound calls are unavailable in local mode")
+        Local turns serve no delegated person, so a call never carries a delegation.
+        """
 
-    async def requester_bound_request(
+        if proof is not None:
+            raise LocalModeUnsupportedError("Local turns carry no delegation")
+        return await self._services.resolve_release_runtime_access(release_uid, proof=None)
+
+    async def platform_request(
         self,
         method: str,
         path: str,
         *,
-        proof: LeaseProof,
+        proof: LeaseProof | None,
         params: Any = None,
         json: Any = None,
         content: bytes | str | None = None,
         data: Any = None,
         files: Any = None,
         headers: Mapping[str, str] | None = None,
-    ) -> Never:
-        """Local turns have no requester, so they make no requester-bound call."""
+    ) -> httpx.Response:
+        """Call a platform path with the signed-in person's own credential.
 
-        del method, path, proof, params, json, content, data, files, headers
-        raise LocalModeUnsupportedError("Requester-bound calls are unavailable in local mode")
+        Local turns serve no delegated person, so a call never carries a delegation.
+        """
+
+        if proof is not None:
+            raise LocalModeUnsupportedError("Local turns carry no delegation")
+        return await self._services.platform_request(
+            method,
+            path,
+            proof=None,
+            params=params,
+            json=json,
+            content=content,
+            data=data,
+            files=files,
+            headers=headers,
+        )
 
     async def get_runtime_state(self, session_uid: str) -> RuntimeState:
         def operation() -> RuntimeState:

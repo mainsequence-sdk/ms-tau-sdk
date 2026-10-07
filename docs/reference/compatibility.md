@@ -4,7 +4,7 @@ Version `1.0.0` establishes the first stable Main Sequence TAU SDK contract. The
 semantic versioning for these supported surfaces:
 
 - the exported Python API: `ms_tau_sdk.create_app`, `TauSDKSettings`, `__version__`,
-  `current_requester`, `requester_client`, `register_deployment_readiness_hook`, and
+  `current_requester`, `platform_client`, `register_deployment_readiness_hook`, and
   `RUNTIME_HEALTH_ABI_VERSION` (see the [public API](./public-api.md));
 - the `ms-tau` command and its workspace-bound startup behavior;
 - documented `MAINSEQUENCE_TAU_*`, `MAINSEQUENCE_ENDPOINT`, `MAINSEQUENCE_AUTH_MODE`, and
@@ -38,15 +38,14 @@ consumer, project-configuration, and protocol contracts.
 
 ## Requester and MCP availability
 
-Requester access depends on the platform's enabled operations and the Agent's administrator
-configuration. An SDK upgrade does not add permissions or make an unsupported endpoint accept
-requester calls. See the [Security and access guide](./security-model.md#availability).
+Acting for a person depends on the Agent's administrator configuration and on the person's own
+permissions. An SDK upgrade does not add permissions. See the
+[Security and access guide](./security-model.md#availability).
 
-Requester-marked MCP tools and declared-application MCP connections are currently documented under
-**Unreleased** in the [changelog](../../CHANGELOG.md#unreleased). They require both a supporting SDK
-and platform support. Unmarked platform tools keep their existing workload behavior during this
-transition. Delegated requester access additionally requires the platform to record the requester;
-an SDK release alone cannot provide that record.
+The delegation envelope and declared-application MCP connections are documented under
+**Unreleased** in the [changelog](../../CHANGELOG.md#unreleased). They ship in one cutover with the
+matching platform change, with no transition: this release works only with that platform, and
+earlier releases stop acting for people once it is deployed.
 
 ## Branch and Release Standard
 

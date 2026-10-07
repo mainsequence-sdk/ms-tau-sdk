@@ -23,19 +23,18 @@ The SDK owns:
 
 - projecting the authenticated Main Sequence MCP catalog into a TAU session;
 - preserving each tool's canonical name and metadata through host normalization;
-- privately attaching active caller-session proof when a tool advertises
-  `mainsequence.ai/requires-caller-session-proof/v1: true`;
-- attaching the same proof when a tool advertises `mainsequence.ai/requires-requester/v1: true`,
-  which the platform runs for the turn's requester, and refusing that tool before sending it in a
-  hosted turn that serves nobody;
+- privately attaching, to every hosted Main Sequence MCP call, the turn's caller-session proof under
+  `mainsequence.ai/caller-session-proof/v1`, and, while the turn serves a person, the same proof as
+  that person's delegation under `mainsequence.ai/delegation/v1`. No tool metadata decides it;
 - verifying the platform's signed caller or platform assertion on every inbound request of a
   hosted runtime, and admitting a request to a session or its Tasks only for the session's owner,
   an Organization admin, or the workload User of the Agent that delegated to that child session,
   which the platform's own records establish, never the `X-Caller-*` headers;
 - presenting the verified caller assertion of the request that starts a chat or A2A Message turn
-  only when it marks that turn active, so that the platform can record the turn's requester, and
-  giving extension tools that requester and requester-bound calls through `current_requester()`
-  and `requester_client()` without exposing the assertion, the lease proof, or any token;
+  only when it marks that turn active, so that the platform can record the turn's requester;
+  taking the person the turn serves only from the platform's answer to the turn start; and giving
+  extension tools that person and calls for the work through `current_requester()` and
+  `platform_client()` without exposing the assertion, the lease proof, or any token;
 - translating inbound A2A requests into the shared TAU runtime; and
 - translating runtime events and results into validated A2A responses.
 

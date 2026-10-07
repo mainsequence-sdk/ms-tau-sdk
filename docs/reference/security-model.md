@@ -7,13 +7,12 @@ access rules, not a guarantee that arbitrary project code is isolated from the r
 
 ## Availability
 
-This guide covers the current SDK development documentation. The MCP requester-mark handling and
+This guide covers the current SDK development documentation. The delegation envelope and the
 application MCP connections in [ADR 0021](../adrs/0021-mcp-connections-on-the-persons-identity.md)
-are listed under **Unreleased** in the [changelog](../../CHANGELOG.md#unreleased). They also need
-platform support: marked tools, declared application startup data, and, for delegated requester
-access, a recorded requester on the delegated Task. Installing a newer SDK alone does not enable
-those platform capabilities. Check the deployed platform and your installed SDK before relying on
-them. Existing requester-client calls can use the operations the deployed platform has opted in.
+are listed under **Unreleased** in the [changelog](../../CHANGELOG.md#unreleased). They take effect
+together with the matching platform change, deployed in one cutover: this SDK works only with that
+platform, and earlier SDK releases stop acting for people once it is deployed. Check the deployed
+platform and your installed SDK before relying on them.
 
 ## Who is who
 
@@ -86,51 +85,38 @@ access that all of them may have.
 
 ## Acting for the person (`acts_for_requester`)
 
-An Agent can be enabled to use the member-level access of its requester for supported reads and
-writes. Project tools identify the person with `current_requester()` and make those calls through
-`requester_client()`. This authority is separate from the Agent's own grants. See the
-[public API](./public-api.md#current_requester-and-requester_client).
+An Agent can be enabled to act with the ordinary permissions of its requester. Every call the Agent
+makes for the work, its Main Sequence MCP tools, its application tools and project code's calls
+through `platform_client()`, carries the person's delegation while the turn serves a person, and
+none otherwise. The platform operation or the application decides what each call may do. Project
+tools identify the person with `current_requester()`. This authority is separate from the Agent's
+own grants. See the [public API](./public-api.md#current_requester-and-platform_client).
 
-This access is narrow:
+- A delegated call uses the requester's ordinary permissions, including administrative ones when
+  the requester is an Organization admin. Read access does not grant edit, run, sharing, or
+  deletion rights.
+- It stays in the Agent's Environment.
+- It lasts at most 24 hours after the request, and only while the turn or Task serving it runs.
+- Delegating to another Agent passes the person on only when the delegating work serves that
+  person and the receiving Agent is enabled too. The platform records the person from its own
+  records, never from anything an Agent states.
 
-- reads and opted-in writes use the requester's member-level permissions, never an Organization
-  admin's powers, even when the requester is an admin;
-- it reaches only operations the platform opened for it; read access does not grant edit, run,
-  sharing, or deletion rights;
-- Secret values, credential/token management, billing, and administrative operations are excluded;
-  resolving access to an application is the limited credential exception handled by the SDK;
-- it stays in the Agent's Environment;
-- it lasts at most 24 hours after the request, and only while the turn or Task serving it runs;
-- calling another Agent or application does not by itself pass on the person's authority. A
-  delegated Task has a requester only when the platform explicitly records one; see
-  [availability](#availability) and [calling other applications](#calling-other-applications-for-the-person).
+The platform checks the delegation again on every call. It ends at once when the person is
+deactivated, leaves the Organization or loses access to the Agent, and when someone else continues
+the Task. A turn with no person behind it, background work outside a turn, and local mode carry no
+delegation: their calls are the Agent's own (in local mode, your own). A refused delegated call is
+reported; the SDK never retries it as the Agent, and project code should not either. A Task
+continued by a different person no longer serves a single person. Resuming work after a delegated
+result does not restart the original request's 24-hour allowance.
 
-The platform checks it again on every call. It ends at once when the person is deactivated, leaves
-the Organization or loses access to the Agent, and when someone else continues the Task. A turn
-with no recorded person behind it, background work outside a turn, or local mode has no requester,
-and `requester_client()` refuses. Do not retry a refused requester operation with the Agent's own
-credentials. A Task continued by a different person no longer has a single person's requester
-binding. Resuming work after a delegated result does not restart the original request's 24-hour
-allowance.
+### What each call may do
 
-### Supported operations
-
-The deployed platform's API schema and MCP tool catalog determine which operations accept
-requester access. A route existing does not imply that it accepts such calls.
-
-| Operation family | Requester behavior when supported by the platform |
-| --- | --- |
-| User and team directory reads | Return what the person can see at member level. |
-| Repository creation and user/team sharing | Require the person's create or sharing rights. |
-| Image deletion and release update/deletion | Require the person's relevant permissions and obey dependency protection. |
-| Job execution | Requires the person's permission to run the Job. |
-| Agent session creation, runtime updates, and sharing | Apply the person's session, edit, and sharing permissions. |
-| Repository issue creation, editing, and comments | Require access to the relevant branch and operation. |
-| Task creation, continuation, and cancellation | Apply Task permissions; MCP routing and inherited requester identity also depend on the rollout above. |
-| Calls to another platform application | Require access to that application; its verified-requester policy governs the requested action and returned data. |
-
-Unsupported endpoints refuse the call. The SDK does not expand the allowlist or change the
-person's permissions. See [requester troubleshooting](./troubleshooting.md#requester-access-is-refused).
+Each platform operation applies the person's ordinary permissions to a delegated call, exactly as
+to the person's own request, and the Agent's own permissions to any other call. No list decides
+which operations accept a delegation. An operation that needs a person returns its own error when
+the call carries none. Applications decide the same way; see
+[calling other applications](#calling-other-applications) and
+[delegation troubleshooting](./troubleshooting.md#requester-access-is-refused).
 
 ### Only an Organization admin can turn it on
 
@@ -154,7 +140,7 @@ on.
 
 Every grant is capped at the granter's own access, and a push grants with the pusher's authority
 (see [what an Agent can reach on its own](#what-an-agent-can-reach-on-its-own)).
-`acts_for_requester` is different: once it is on, the Agent reads with the access of whoever talks
+`acts_for_requester` is different: once it is on, the Agent acts with the access of whoever talks
 to it, not of its managers.
 
 Example:
@@ -168,8 +154,9 @@ Example:
 If Alice could turn the switch on herself, she would gain indirect access to data she was never
 granted. The switch lets code that the managers control read every requester's data, which no
 manager holds, so no manager can grant it. Only an Organization admin, who answers for the whole
-Organization's data, can accept that risk. The same trust decision covers supported writes:
-Agent code can also change or share data using the requester's permissions.
+Organization's data, can accept that risk. The same trust decision covers writes and
+administrative operations: Agent code can also change, share or delete data, and use administrative
+permissions, as the requester.
 
 ### What people are told
 
@@ -178,20 +165,22 @@ People who use such an Agent are told:
 > **This Agent works with your identity.** It can read, create, change, run,
 > share or delete only what your permissions allow through supported operations,
 > only while serving your request, and for at most 24 hours after you ask. It
-> never receives your admin powers or Secret values, and access is checked on
-> every call. Your Organization's administrator approved it to work this way.
+> uses your ordinary permissions, including administrative permissions, and
+> access is checked on every call. Your Organization's administrator approved it
+> to work this way.
 
-This statement describes requester-bound operations. The Agent's own grants, local human login,
-and trusted extension code are separate sources of authority; enabling requester access does not
-remove them. Prompt injection can cause unintended changes, sharing, or deletion within the
+This statement describes delegated calls. The Agent's own grants, local human login, and trusted
+extension code are separate sources of authority; enabling requester access does not remove
+them. Prompt injection can cause unintended changes, sharing, or deletion within the
 person's permitted operations. Completed changes can persist after access ends. Only an
 Organization admin can accept that risk by enabling requester access.
 
 ## Secrets
 
-- **The platform refuses a hosted Agent's direct reads and writes of Secret values, even with a
-  grant.** The Agent may see the names of Secrets its workload was
-  granted.
+- **Secret values follow ordinary permissions.** A hosted Agent can read a Secret value its
+  workload was granted and, in a delegated call, a value the person may read. Anything the Agent
+  reads can reach the model provider and the session history, so grant an Agent no Secret it does
+  not need.
 - **People enter Secret values themselves,** on the Secrets page in Command Center or with
   `mainsequence secrets create <NAME>`, which asks for the value without showing it. An Agent must
   never ask for a value in chat. Do not paste one into a conversation: everything in it reaches the
@@ -229,8 +218,7 @@ The SDK does not sandbox code that runs in the Agent's process:
   delivered to it.
 
 Commands the model chooses and every extension can therefore act with the Agent's workload identity
-and use those provider credentials. Direct platform Secret-value access is still refused; this
-is not a guarantee against values exposed by another workload or placed in the workspace.
+and use those provider credentials, including the Secret values the workload may read.
 `TAU_EXCLUDE_BASE_TOOLS` removes the coding tools from the model, but it does not sandbox extensions. Review extension code
 as code that holds these credentials. See
 [ownership and trust](../guides/project-configuration.md#ownership-and-trust).
@@ -239,31 +227,29 @@ as code that holds these credentials. See
 
 Local mode signs in with your own Main Sequence login (`mainsequence login`) or a user token pair.
 The Agent then acts as you: its tools and extensions can do anything you can do on the platform,
-including reading the Secret values you can view. The hosted rules above, such as no Secret values
-and no access beyond the Agent's grants, do not apply to your own login. Local mode refuses to start
+including reading the Secret values you can view. The hosted rules above, such as no access
+beyond the Agent's grants, do not apply to your own login. Local mode refuses to start
 in a process that carries the platform's hosting settings. See
 [authenticated local development](./settings.md#authenticated-local-development).
 
-## Calling other applications for the person
+## Calling other applications
 
-`requester_client().call_release()` lets a project tool call another platform application for its
-requester. The platform first checks that the person can view that application in the Agent's
-Environment, then issues an access token tied to the request. On every call the application
-receives a signed assertion that names the Agent as the caller and the person as the requester.
+`platform_client().call_release()` lets a project tool call another platform application. The
+platform first checks that the caller can view that application in the Agent's Environment, the
+person for a delegated call and the Agent's workload otherwise, then issues an access token for the
+call. On every call the application receives a signed assertion that names the Agent as the caller
+and, for a delegated call, the person as the requester.
 
-- The application decides what to return. It should answer only with data the verified person may
-  see.
-- Knowing the person does not give the application the person's authority. It works with its own
-  grants: acting for a person is never passed on, so the application cannot read as that person
-  on the Agent's behalf.
+- The application decides what each call may do. It should authorize against the verified person
+  when the call carries one, and against the caller otherwise.
+- Knowing the person does not let the application act as the person elsewhere: it cannot reuse the
+  assertion against the platform or forward it.
 - Every route of the application works this way, including an MCP endpoint it serves.
-- When the SDK and platform provide the application-connection capability described under
-  [availability](#availability), each declared application supplies `<name>__list_tools` and
-  `<name>__call_tool`. They call the application for the turn's person and are refused in a turn
-  that serves nobody.
-- The SDK's Main Sequence MCP tools are different: they run as the Agent's workload, except the
-  tools the platform marks to run for the person. The SDK sends those with the turn's private
-  session proof, and refuses them in a turn that serves nobody.
+- Each declared application supplies `<name>__list_tools` and `<name>__call_tool`. They carry the
+  person's delegation while the turn serves a person, and run as the Agent otherwise. Declaring an
+  application grants no access: without a person, the Agent's workload needs its own grants on it.
+- The SDK's Main Sequence MCP tools follow the same rule: every call names the turn's session, and
+  carries the person's delegation while the turn serves a person.
 
 ## Checklist for project authors
 
@@ -273,6 +259,8 @@ receives a signed assertion that names the Agent as the caller and the person as
 - Never ask for a Secret value in chat. Ask the person to create the Secret, and declare it under
   `access.secrets` on the workload that uses it.
 - Keep Secrets away from workloads the Agent can edit.
-- In an application that serves people, check the verified requester before returning their data.
+- In an application that serves people, authorize against the verified requester when the call
+  carries one, and against the caller otherwise.
+- Do not retry a refused delegated call as the Agent.
 - Return business results to the model, never tokens, proofs or raw responses.
 - Review extensions: they run with the Agent's credentials.

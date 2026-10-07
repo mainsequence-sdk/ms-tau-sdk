@@ -30,7 +30,7 @@ from tau_agent.types import JSONValue
 from tau_coding import CodingSession, CodingSessionConfig
 from tau_coding.tools import create_coding_tools
 
-from ms_tau_sdk.backend.assertions import CallerAssertion
+from ms_tau_sdk.backend.assertions import CallerAssertion, VerifiedCaller
 from ms_tau_sdk.backend.client import LeaseProof, MainSequenceClient
 from ms_tau_sdk.backend.mcp import MainSequenceMCPClient
 from ms_tau_sdk.backend.models import (
@@ -69,7 +69,10 @@ from ms_tau_sdk.runtime.requester import (
     Requester,
     TurnRequesterBinding,
     bind_turn_requester,
+    canonical_requester_uid,
     detach_turn_requester,
+    register_runtime_platform,
+    release_runtime_platform,
     unbind_turn_requester,
 )
 from ms_tau_sdk.runtime.snapshots import (
@@ -80,11 +83,10 @@ from ms_tau_sdk.runtime.snapshots import (
     restore_snapshot,
     sha256_json,
 )
-from ms_tau_sdk.runtime.task_context import TaskExecutionContext, active_task_execution
+from ms_tau_sdk.runtime.task_context import active_task_execution
 from ms_tau_sdk.sessions.storage import SESSION_ENTRY_ADAPTER, BackendSessionStorage
 from ms_tau_sdk.settings import TauSDKSettings
 from ms_tau_sdk.tools.mainsequence_mcp import (
-    CALLER_SESSION_PROOF_REQUIRED_META_KEY,
     create_mainsequence_mcp_tools,
     mainsequence_mcp_resource_prompt,
 )
@@ -265,6 +267,11 @@ class SessionRuntimeManager:
         self._mcp_client: MainSequenceMCPClient | None = None
         self._mcp_lock = asyncio.Lock()
         self._requester_http_client: httpx.AsyncClient | None = None
+        # Calls project code makes outside a turn go through this runtime, with no delegation.
+        self._process_binding = register_runtime_platform(
+            platform=backend,
+            application_http=self._requester_http,
+        )
         self._startup_ready = False
         self._local_state_ready = False
         self._auth_ready = False
@@ -339,14 +346,6 @@ class SessionRuntimeManager:
             "mcp_connected": self._mcp_client is not None,
             "mcp_tool_count": len(self._mcp_client.tools) if self._mcp_client else 0,
             "mcp_resource_count": len(self._mcp_client.resources) if self._mcp_client else 0,
-            "mcp_session_proof_limited_tool_count": (
-                sum(
-                    (tool.meta or {}).get(CALLER_SESSION_PROOF_REQUIRED_META_KEY) is True
-                    for tool in self._mcp_client.tools
-                )
-                if self.settings.local_mode and self._mcp_client is not None
-                else 0
-            ),
             "snapshot_restore_count": self._snapshot_restore_count,
             "snapshot_fallback_count": self._snapshot_fallback_count,
             "snapshot_upload_count": self._snapshot_upload_count,
@@ -1132,13 +1131,6 @@ class SessionRuntimeManager:
             )
             cwd = self._resolve_cwd()
             project_extension_state = ProjectExtensionState(enabled=True)
-            caller_session_proof = None
-            if not self.settings.local_mode:
-                caller_session_proof = {
-                    "caller_agent_session_uid": session_uid,
-                    "lease_holder_id": lease.holder_id,
-                    "lease_token": lease.lease_token,
-                }
             tools = []
             if self.settings.exclude_base_tools:
                 # Tau lists skills only when a tool named `read` exists. The tool runs only in
@@ -1147,11 +1139,12 @@ class SessionRuntimeManager:
             else:
                 tools.extend(create_coding_tools(cwd=cwd))
             if mcp_client is not None:
+                # A hosted call names this session, and carries the delegation while the turn
+                # serves a person; both come from the turn's binding when the call is made.
                 tools.extend(
                     create_mainsequence_mcp_tools(
                         mcp_client,
-                        caller_session_proof=caller_session_proof,
-                        allow_missing_session_proof=self.settings.local_mode,
+                        session_uid=None if self.settings.local_mode else session_uid,
                     )
                 )
             if not self.settings.local_mode:
@@ -1535,8 +1528,8 @@ class SessionRuntimeManager:
         turn_uid = str(context.get("turn_uid") or uuid.uuid4())
         task_context = active_task_execution()
         # Only a hosted chat or A2A Message turn presents its request's caller assertion, and only
-        # a hosted turn the platform starts for a caller delivery names that delivery. A Task
-        # attempt takes its requester from the platform's dispatch instead.
+        # a hosted turn the platform starts for a caller delivery names that delivery. Whatever the
+        # turn presents, the platform's answer names the person the turn serves, or nobody.
         presented = (
             caller_assertion
             if task_context is None and self._requester_identity_verified()
@@ -1558,9 +1551,13 @@ class SessionRuntimeManager:
             session_uid=session_uid,
             requester=self._turn_requester(
                 runtime,
-                caller_assertion=presented,
-                task_context=task_context,
-                caller_delivery=delivery,
+                caller=(
+                    presented.caller
+                    if presented is not None
+                    else task_context.caller
+                    if task_context is not None
+                    else None
+                ),
             ),
             lease_proof=lambda: LeaseProof(
                 session_uid=session_uid,
@@ -1726,10 +1723,8 @@ class SessionRuntimeManager:
             runtime.runtime_activity = state.runtime_activity or "working"
             runtime.active_turn_uid = state.active_turn_uid
             runtime.activity_sequence = state.activity_sequence or runtime.activity_sequence
-            requester_user_uid = state.requester_user_uid
-            runtime.requester_user_uid = (
-                requester_user_uid if named and isinstance(requester_user_uid, str) else None
-            )
+            # The answer to every turn start names the person the turn serves, or nobody.
+            runtime.requester_user_uid = canonical_requester_uid(state.requester_user_uid)
             return runtime
         raise AssertionError("Tau turn reload loop did not terminate")
 
@@ -1742,38 +1737,26 @@ class SessionRuntimeManager:
         self,
         runtime: ActiveSessionRuntime,
         *,
-        caller_assertion: CallerAssertion | None,
-        task_context: TaskExecutionContext | None,
-        caller_delivery: CallerDelivery | None = None,
+        caller: VerifiedCaller | None,
     ) -> Requester | None:
-        """Name the verified person a turn serves, or None.
+        """Name the person a turn serves, or None.
 
-        A Task turn serves the person its execution context names, as the platform recorded the
-        Task's requester. A chat or A2A Message turn serves its verified caller only when the
-        platform recorded that same person as the turn's requester, which it does for a person who
-        owns the session and never for an Agent caller. A turn the platform starts for a caller
-        delivery serves the requester the delivery names, only when the platform recorded that
-        same person for the turn.
+        The platform's answer to the turn start names that person, whoever called: a chat or A2A
+        Message turn, a Task attempt, and a turn the platform starts for a caller delivery alike.
+        ``caller`` is the verified caller of the request, when there is one; it supplies the
+        person's teams only when it is that person.
         """
 
         if not self._requester_identity_verified():
             return None
-        if task_context is not None:
-            return task_context.requester
-        if caller_delivery is not None:
-            requester = caller_delivery.requester
-            if requester is None or runtime.requester_user_uid != requester.uid:
-                return None
-            return requester
-        if caller_assertion is None or caller_assertion.caller_is_workload:
+        uid = runtime.requester_user_uid
+        if uid is None:
             return None
-        caller = caller_assertion.caller
-        if runtime.requester_user_uid != caller.uid:
-            return None
-        return Requester(uid=caller.uid, team_uids=caller.team_uids)
+        team_uids = caller.team_uids if caller is not None and caller.uid == uid else ()
+        return Requester(uid=uid, team_uids=team_uids)
 
     def _requester_http(self) -> httpx.AsyncClient:
-        """The client for requester-bound calls to platform applications, made when first used."""
+        """The client for calls to platform applications, made when first used."""
 
         if self._requester_http_client is None:
             self._requester_http_client = httpx.AsyncClient(
@@ -2379,6 +2362,7 @@ class SessionRuntimeManager:
         if self._mcp_client is not None:
             with contextlib.suppress(Exception):
                 await self._mcp_client.aclose()
+        release_runtime_platform(self._process_binding)
         if self._requester_http_client is not None:
             with contextlib.suppress(Exception):
                 await self._requester_http_client.aclose()

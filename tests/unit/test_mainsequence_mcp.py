@@ -1,8 +1,8 @@
 import asyncio
 import json
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, patch
+from collections.abc import AsyncIterator, Callable, Iterator
+from contextlib import asynccontextmanager, contextmanager
+from unittest.mock import AsyncMock, Mock, patch
 
 import anyio
 import httpx
@@ -12,14 +12,21 @@ from starlette.applications import Starlette
 from starlette.responses import StreamingResponse
 from starlette.routing import Route
 
+from ms_tau_sdk.backend.client import LeaseProof
 from ms_tau_sdk.backend.mcp import (
     MainSequenceMCPClient,
     _RuntimeCredentialHTTPXAuth,
 )
+from ms_tau_sdk.runtime.requester import (
+    Requester,
+    TurnRequesterBinding,
+    bind_turn_requester,
+    unbind_turn_requester,
+)
 from ms_tau_sdk.settings import TauSDKSettings
 from ms_tau_sdk.tools.mainsequence_mcp import (
     CALLER_SESSION_PROOF_META_KEY,
-    CALLER_SESSION_PROOF_REQUIRED_META_KEY,
+    DELEGATION_META_KEY,
     create_mainsequence_mcp_tools,
     mainsequence_mcp_resource_prompt,
 )
@@ -339,25 +346,6 @@ async def test_runtime_access_credentials_never_become_agent_tool_results(text_b
         assert marker not in json.dumps(result.details)
 
 
-def test_withdrawn_secret_entry_tools_are_never_offered_to_the_model():
-    client = AsyncMock()
-    client.tools = tuple(
-        types.Tool(name=name, inputSchema={"type": "object", "properties": {}})
-        for name in (
-            "secret.list",
-            "secret_entry.start",
-            "secret_entry.status",
-            "secret_entry.cancel",
-            "agent.get",
-        )
-    )
-    client.resources = ()
-
-    assert [tool.name for tool in create_mainsequence_mcp_tools(client)] == [
-        "mainsequence__agent_get"
-    ]
-
-
 @pytest.mark.parametrize("tool_name", ["agent.list", "agent.search"])
 def test_agent_discovery_tool_hides_backend_controlled_environment_argument(tool_name):
     client = AsyncMock()
@@ -442,90 +430,7 @@ async def test_a2a_send_requires_explicit_result_and_completion_policy_before_ne
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("canonical_name", ["a2a.send_message", "agent.update_runtime"])
-async def test_marked_mcp_tool_uses_generic_projection_with_private_context(
-    canonical_name,
-):
-    client = AsyncMock()
-    client.tools = (
-        types.Tool(
-            name=canonical_name,
-            inputSchema={
-                "type": "object",
-                "properties": {"message": {"type": "string"}},
-                "required": ["message"],
-            },
-            _meta={CALLER_SESSION_PROOF_REQUIRED_META_KEY: True},
-        ),
-    )
-    client.resources = ()
-    client.call_tool.return_value = types.CallToolResult(
-        content=[types.TextContent(type="text", text="sent")],
-        isError=False,
-    )
-    proof = {
-        "caller_agent_session_uid": "session-1",
-        "lease_holder_id": "holder-1",
-        "lease_token": "lease-1",
-    }
-
-    tools = create_mainsequence_mcp_tools(
-        client,
-        caller_session_proof=proof,
-    )
-    arguments = {"message": "hello"}
-    if canonical_name == "a2a.send_message":
-        arguments["response_kind"] = "message"
-    result = await tools[0].execute("call-1", arguments)
-
-    assert tools[0].name == f"mainsequence__{canonical_name.replace('.', '_')}"
-    assert result.text == "sent"
-    client.call_tool.assert_awaited_once_with(
-        canonical_name,
-        arguments,
-        meta={CALLER_SESSION_PROOF_META_KEY: proof},
-    )
-
-
-def test_marked_mcp_tool_fails_closed_without_caller_session_proof():
-    client = AsyncMock()
-    client.tools = (
-        types.Tool(
-            name="agent.update_runtime",
-            inputSchema={"type": "object"},
-            _meta={CALLER_SESSION_PROOF_REQUIRED_META_KEY: True},
-        ),
-    )
-    client.resources = ()
-
-    with pytest.raises(ValueError, match="requires caller-session proof"):
-        create_mainsequence_mcp_tools(client)
-
-
-@pytest.mark.asyncio
-async def test_local_mode_keeps_marked_mcp_tool_without_fabricating_session_proof():
-    client = AsyncMock()
-    client.tools = (
-        types.Tool(
-            name="asset.list",
-            inputSchema={"type": "object"},
-            _meta={CALLER_SESSION_PROOF_REQUIRED_META_KEY: True},
-        ),
-    )
-    client.resources = ()
-    client.call_tool.return_value = types.CallToolResult(content=[])
-
-    tools = create_mainsequence_mcp_tools(
-        client,
-        allow_missing_session_proof=True,
-    )
-    await tools[0].execute("call-1", {})
-
-    client.call_tool.assert_awaited_once_with("asset.list", {})
-
-
-@pytest.mark.asyncio
-async def test_local_a2a_supports_polled_task_without_caller_session_proof():
+async def test_local_a2a_supports_polled_task_without_private_metadata():
     client = AsyncMock()
     client.tools = (
         types.Tool(
@@ -535,15 +440,11 @@ async def test_local_a2a_supports_polled_task_without_caller_session_proof():
                 "properties": {"message": {"type": "string"}},
                 "required": ["message"],
             },
-            _meta={CALLER_SESSION_PROOF_REQUIRED_META_KEY: True},
         ),
     )
     client.resources = ()
     client.call_tool.return_value = types.CallToolResult(content=[])
-    tool = create_mainsequence_mcp_tools(
-        client,
-        allow_missing_session_proof=True,
-    )[0]
+    tool = create_mainsequence_mcp_tools(client)[0]
 
     assert tool.parameters["properties"]["completion_policy"]["enum"] == ["poll"]
     await tool.execute(
@@ -572,26 +473,6 @@ async def test_local_a2a_supports_polled_task_without_caller_session_proof():
             "completion_policy": "poll",
         },
     )
-
-
-@pytest.mark.asyncio
-async def test_unmarked_mcp_tool_does_not_receive_caller_session_proof():
-    client = AsyncMock()
-    client.tools = (types.Tool(name="agent.get", inputSchema={"type": "object"}),)
-    client.resources = ()
-    client.call_tool.return_value = types.CallToolResult(content=[])
-
-    tools = create_mainsequence_mcp_tools(
-        client,
-        caller_session_proof={
-            "caller_agent_session_uid": "session-1",
-            "lease_holder_id": "holder-1",
-            "lease_token": "lease-1",
-        },
-    )
-    await tools[0].execute("call-1", {})
-
-    client.call_tool.assert_awaited_once_with("agent.get", {})
 
 
 def test_only_read_only_idempotent_mcp_tools_are_parallel():
@@ -672,17 +553,52 @@ async def test_process_mcp_runs_safe_reads_concurrently_and_orders_mutations():
     await client.aclose()
 
 
-def _requester_marked_platform(marked: bool) -> AsyncMock:
-    from ms_tau_sdk.tools.mainsequence_mcp import REQUESTER_REQUIRED_META_KEY
+# --- The private envelope of a hosted call ------------------------------------------------------
 
-    client = AsyncMock()
-    client.tools = (
-        types.Tool(
-            name="job.run",
-            inputSchema={"type": "object", "properties": {}},
-            _meta={REQUESTER_REQUIRED_META_KEY: True} if marked else None,
+SESSION_UID = "11111111-aaaa-4bbb-8ccc-222222222222"
+PERSON = Requester(uid="2b7f1c48-3d1e-4a5b-9c6d-0e1f2a3b4c5d")
+LEASE_TOKEN = "SYNTHETIC_LEASE_TOKEN"
+
+
+def _session_proof(lease_token: str = LEASE_TOKEN) -> dict[str, str]:
+    return {
+        "caller_agent_session_uid": SESSION_UID,
+        "lease_holder_id": "holder-1",
+        "lease_token": lease_token,
+    }
+
+
+def _binding(
+    *,
+    requester: Requester | None,
+    session_uid: str = SESSION_UID,
+    lease_token: Callable[[], str] = lambda: LEASE_TOKEN,
+) -> TurnRequesterBinding:
+    return TurnRequesterBinding(
+        session_uid=session_uid,
+        requester=requester,
+        lease_proof=lambda: LeaseProof(
+            session_uid=session_uid,
+            holder_id="holder-1",
+            lease_token=lease_token(),
         ),
+        platform=AsyncMock(),
+        application_http=Mock(),
     )
+
+
+@contextmanager
+def _turn(binding: TurnRequesterBinding) -> Iterator[None]:
+    token = bind_turn_requester(binding)
+    try:
+        yield
+    finally:
+        unbind_turn_requester(binding, token)
+
+
+def _platform(*tools: types.Tool) -> AsyncMock:
+    client = AsyncMock()
+    client.tools = tools or (types.Tool(name="job.run", inputSchema={"type": "object"}),)
     client.resources = ()
     client.call_tool.return_value = types.CallToolResult(
         content=[types.TextContent(type="text", text="ran")]
@@ -690,77 +606,107 @@ def _requester_marked_platform(marked: bool) -> AsyncMock:
     return client
 
 
-_PROOF = {
-    "caller_agent_session_uid": "session-1",
-    "lease_holder_id": "holder-1",
-    "lease_token": "SYNTHETIC_LEASE_TOKEN",
-}
+@pytest.mark.asyncio
+async def test_a_hosted_call_for_a_person_names_the_session_and_carries_the_delegation():
+    client = _platform()
+    tool = create_mainsequence_mcp_tools(client, session_uid=SESSION_UID)[0]
+
+    with _turn(_binding(requester=PERSON)):
+        result = await tool.execute("call-1", {})
+
+    assert result.text == "ran"
+    client.call_tool.assert_awaited_once_with(
+        "job.run",
+        {},
+        meta={
+            CALLER_SESSION_PROOF_META_KEY: _session_proof(),
+            DELEGATION_META_KEY: _session_proof(),
+        },
+    )
+    assert LEASE_TOKEN not in result.text + json.dumps(result.details)
 
 
 @pytest.mark.asyncio
-async def test_a_tool_marked_for_the_requester_is_refused_in_a_hosted_turn_that_serves_nobody():
-    client = _requester_marked_platform(marked=True)
-    tool = create_mainsequence_mcp_tools(client, caller_session_proof=_PROOF)[0]
+async def test_a_hosted_call_that_serves_nobody_names_the_session_and_carries_no_delegation():
+    client = _platform()
+    tool = create_mainsequence_mcp_tools(client, session_uid=SESSION_UID)[0]
 
-    result = await tool.execute("call-1", {})
+    with _turn(_binding(requester=None)):
+        result = await tool.execute("call-1", {})
 
-    assert result.details == {"mcp_tool": "job.run", "is_error": True, "refused": True}
-    assert "serves nobody" in result.text
-    assert "SYNTHETIC_LEASE_TOKEN" not in result.text + json.dumps(result.details)
+    assert result.text == "ran"
+    client.call_tool.assert_awaited_once_with(
+        "job.run", {}, meta={CALLER_SESSION_PROOF_META_KEY: _session_proof()}
+    )
+
+
+@pytest.mark.asyncio
+async def test_tool_metadata_never_decides_the_envelope():
+    labelled = types.Tool(
+        name="a2a.send_message",
+        inputSchema={"type": "object", "properties": {"message": {"type": "string"}}},
+        _meta={
+            "mainsequence.ai/requires-caller-session-proof/v1": True,
+            "mainsequence.ai/requires-requester/v1": True,
+        },
+    )
+    plain = types.Tool(name="agent.get", inputSchema={"type": "object"})
+    client = _platform(labelled, plain)
+    tools = create_mainsequence_mcp_tools(client, session_uid=SESSION_UID)
+
+    with _turn(_binding(requester=None)):
+        await tools[0].execute("call-1", {"message": "hi", "response_kind": "message"})
+        await tools[1].execute("call-2", {})
+
+    envelope = {CALLER_SESSION_PROOF_META_KEY: _session_proof()}
+    assert [call.kwargs for call in client.call_tool.await_args_list] == [
+        {"meta": envelope},
+        {"meta": envelope},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_the_envelope_is_built_for_each_call_from_the_turn_that_makes_it():
+    client = _platform()
+    tool = create_mainsequence_mcp_tools(client, session_uid=SESSION_UID)[0]
+    tokens = iter(["lease-1", "lease-2", "lease-3"])
+
+    with _turn(_binding(requester=PERSON, lease_token=lambda: next(tokens))):
+        await tool.execute("call-1", {})
+    with _turn(_binding(requester=None, lease_token=lambda: next(tokens))):
+        await tool.execute("call-2", {})
+
+    first, second = (call.kwargs["meta"] for call in client.call_tool.await_args_list)
+    assert first == {
+        CALLER_SESSION_PROOF_META_KEY: _session_proof("lease-1"),
+        DELEGATION_META_KEY: _session_proof("lease-1"),
+    }
+    assert second == {CALLER_SESSION_PROOF_META_KEY: _session_proof("lease-2")}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("turn", ["none", "another_session"])
+async def test_a_hosted_call_outside_its_sessions_turn_fails_before_it_is_sent(turn):
+    client = _platform()
+    tool = create_mainsequence_mcp_tools(client, session_uid=SESSION_UID)[0]
+
+    with pytest.raises(RuntimeError, match="inside their session's turn"):
+        if turn == "none":
+            await tool.execute("call-1", {})
+        else:
+            with _turn(_binding(requester=PERSON, session_uid="another-session")):
+                await tool.execute("call-1", {})
+
     client.call_tool.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_a_tool_marked_for_the_requester_carries_the_session_proof_for_the_turns_person():
-    from ms_tau_sdk.backend.client import LeaseProof
-    from ms_tau_sdk.runtime.requester import (
-        Requester,
-        TurnRequesterBinding,
-        bind_turn_requester,
-        unbind_turn_requester,
-    )
+async def test_local_mode_calls_carry_no_private_metadata():
+    client = _platform()
+    tool = create_mainsequence_mcp_tools(client)[0]
 
-    client = _requester_marked_platform(marked=True)
-    tool = create_mainsequence_mcp_tools(client, caller_session_proof=_PROOF)[0]
-    binding = TurnRequesterBinding(
-        session_uid="session-1",
-        requester=Requester(uid="person-1"),
-        lease_proof=lambda: LeaseProof(
-            session_uid="session-1", holder_id="holder-1", lease_token="SYNTHETIC_LEASE_TOKEN"
-        ),
-        platform=AsyncMock(),
-        application_http=AsyncMock(),
-    )
-    token = bind_turn_requester(binding)
-    try:
+    with _turn(_binding(requester=None)):
         result = await tool.execute("call-1", {})
-    finally:
-        unbind_turn_requester(binding, token)
-
-    assert result.text == "ran"
-    client.call_tool.assert_awaited_once_with(
-        "job.run", {}, meta={CALLER_SESSION_PROOF_META_KEY: _PROOF}
-    )
-    assert "SYNTHETIC_LEASE_TOKEN" not in result.text + json.dumps(result.details)
-
-
-@pytest.mark.asyncio
-async def test_local_mode_runs_a_tool_marked_for_the_requester_as_the_signed_in_person():
-    client = _requester_marked_platform(marked=True)
-    tool = create_mainsequence_mcp_tools(client, allow_missing_session_proof=True)[0]
-
-    result = await tool.execute("call-1", {})
-
-    assert result.text == "ran"
-    client.call_tool.assert_awaited_once_with("job.run", {})
-
-
-@pytest.mark.asyncio
-async def test_an_unmarked_tool_keeps_running_as_the_agents_workload_in_any_turn():
-    client = _requester_marked_platform(marked=False)
-    tool = create_mainsequence_mcp_tools(client, caller_session_proof=_PROOF)[0]
-
-    result = await tool.execute("call-1", {})
 
     assert result.text == "ran"
     client.call_tool.assert_awaited_once_with("job.run", {})

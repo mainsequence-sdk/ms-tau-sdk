@@ -394,19 +394,9 @@ async def test_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
         assert load_call.args[0].project_extensions_enabled is True
         assert load_call.args[0].trust_override == "approve"
         assert load_call.args[0].resource_paths.agents_root is None
+    # Each session's tools build their private envelope from the turn when a call is made.
     assert create_mcp_tools.call_args_list == [
-        (
-            (mcp_client,),
-            {
-                "caller_session_proof": {
-                    "caller_agent_session_uid": session_uid,
-                    "lease_holder_id": "holder",
-                    "lease_token": f"lease-{session_uid}",
-                },
-                "allow_missing_session_proof": False,
-            },
-        )
-        for session_uid in ("session-1", "session-2")
+        ((mcp_client,), {"session_uid": session_uid}) for session_uid in ("session-1", "session-2")
     ]
     assert first.storage.next_sequence == 0
     assert second.storage.next_sequence == 0

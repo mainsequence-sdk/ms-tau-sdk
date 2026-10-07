@@ -88,26 +88,34 @@ names the assertion the route required (`caller` or `platform`) and the reason, 
 
 ## Requester access is refused
 
-`current_requester()` is `None` outside a supported hosted turn, in local mode, and when the
-platform has recorded no person for that turn. `requester_client()` then raises `PermissionError`
-with `code` `requester_binding_invalid` before sending a request. Start from the person's own
-conversation; do not supply a person UID yourself. A Task sent by another Agent has requester
-access only when the platform records the requester for that delegated work.
+`current_requester()` is `None` outside a hosted turn, in local mode, and when the platform names
+nobody for the turn. A turn that serves nobody carries no delegation: its calls are the Agent's
+own, and `platform_client(delegation="required")` raises `PermissionError` with `code`
+`requester_binding_invalid` before sending a request. Start from the person's own conversation; do
+not supply a person UID yourself. Work another Agent sends serves a person only when the platform
+records that person for it.
 
 For a refused call, check these conditions:
 
 | Symptom | Check and recovery |
 | --- | --- |
-| Agent is not enabled | Ask an Organization admin to enable `acts_for_requester`; a non-admin workflow push is refused with `declared_access_not_granted`. |
-| `requester_binding_invalid` on one operation | Check whether the deployed platform API supports requester access on that operation. An existing route is not necessarily opted in. |
-| Access worked earlier | Check that the person is active and still has access to the Agent, Environment, and target resource. A finished turn or request older than 24 hours cannot reuse its binding; start a new authorized request. |
-| A Task was continued by another person | The Task no longer has one requester's binding. Start separate work for the person whose access is needed. |
+| Agent is not enabled | Ask an Organization admin to enable `acts_for_requester`; a non-admin workflow push is refused with `declared_access_not_granted`. Until then the platform names nobody, and the Agent's calls are its own. |
+| Access worked earlier | Check that the person is active and still has access to the Agent, Environment, and target resource. A finished turn or request older than 24 hours cannot reuse its delegation; start a new authorized request. |
+| A Task was continued by another person | The Task no longer serves one person. Start separate work for the person whose access is needed. |
 | A `runtime_lease_*` refusal | The running work no longer has valid execution ownership. Inspect its status and let normal recovery finish; do not reuse proofs or force a retry with old credentials. |
-| Other non-success HTTP response | Inspect the safe status/code before consuming the response body. The requester client returns other responses unchanged. |
+| The operation refuses the person | The person lacks the permission on that resource. A delegated call uses the person's ordinary permissions, exactly as their own request would. |
+| Other non-success HTTP response | Inspect the safe status/code before consuming the response body. The client returns other responses unchanged. |
 
-Never fall back to the Agent's own grants after a requester-bound call is refused. See the
+Never retry a refused delegated call as the Agent. See the
 [Security and access guide](./security-model.md#acting-for-the-person-acts_for_requester) for
-permissions and [availability](./security-model.md#availability) for MCP rollout requirements.
+permissions and [availability](./security-model.md#availability) for the platform requirement.
+
+## An application refuses the Agent's own calls
+
+A turn that serves nobody calls a declared application with the Agent's own token. Declaring an
+application grants no access: the Agent's workload needs its own grants on the application's
+release and Environment, given in the workflow's `access` declaration or by a person who manages
+them. The application itself decides what each call may do.
 
 ## Conversation or Task access is denied
 
@@ -228,19 +236,10 @@ detach entries from their Task or hide an ambiguous external side effect.
 
 ## An MCP tool fails only in local mode
 
-Main Sequence MCP remains connected with user JWT authentication. Tools marked as requiring a real
-caller AgentSession proof are still visible, but local mode does not fabricate that proof. Such a
-tool may return a typed server-side capability/authorization failure. Other MCP tools and resources
-remain live and may mutate real platform resources.
-
-## An MCP tool says the turn serves nobody
-
-The platform runs that tool for the person whose request the turn serves, and marks it with
-`mainsequence.ai/requires-requester/v1`. A hosted turn with no requester, such as a Task sent by
-another Agent without a person behind it, gets the refusal before anything is sent. Ask from the
-person's own chat. Delegated work can do this only when the platform records its requester; check
-[rollout support](./security-model.md#availability) before relying on it. See the
-[Security and access guide](./security-model.md#acting-for-the-person-acts_for_requester).
+Main Sequence MCP remains connected with user JWT authentication, and local calls carry no session
+proof or delegation. A tool that needs a real caller AgentSession, such as an A2A send, may return
+a typed server-side capability/authorization failure. Other MCP tools and resources remain live and
+may mutate real platform resources.
 
 ## A project extension fails
 
