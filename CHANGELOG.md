@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.5 — 2026-10-07
+
+- Tau never offers `secret.list`, `secret_entry.start`, `secret_entry.status` or
+  `secret_entry.cancel` to the model. A platform that has not yet deployed the removal of private
+  Secret entry still lists them, and 2.0.4 offered them like any other Main Sequence MCP tool. They
+  are now left out of the session's tool list, as `agent_session.resolve_runtime_access` is.
+
 ## 2.0.4 — 2026-10-07
 
 - Private Secret entry is removed, and ADR 0020 with it. Tau no longer gives the Main Sequence MCP
