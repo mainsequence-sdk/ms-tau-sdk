@@ -93,12 +93,15 @@ list without `contextId` returns only Tasks of sessions the caller may address.
 
 The runtime never creates a session in managed mode: the platform creates it and records its
 owner. The platform's own `/internal/*` calls carry no caller and are not subject to the check.
+These runtime admission rules differ from the platform's conversation and Task permissions; see
+[the permission matrix](./security-model.md#conversation-and-task-permissions).
 
 ### The turn's requester
 
-An Agent that an Organization admin enabled for it can read with the access of the person whose
-request a turn is serving. The runtime never names that person; it proves which of its own sessions
-it is working on, and the platform finds the person in its own records (ADR 0019, section 9).
+An Agent that an Organization admin enabled for it can use supported reads and writes with the
+member-level access of the person whose request a turn is serving. The runtime never names that
+person; it proves which of its own sessions it is working on, and the platform finds the person
+in its own records (ADR 0019, section 9).
 
 - **Turn start.** When a hosted runtime marks a chat or A2A Message turn active
   (`PATCH /api/v1/agent-sessions/<uid>/tau-runtime-activity/` with `runtime_activity` `working` and
@@ -150,6 +153,13 @@ with that token, renews the token once on `401`, and closes the session when the
 without a requester gets a refusal before anything is sent. A name must match
 `^[a-z][a-z0-9_]{0,39}$` and must not be `mainsequence`; an invalid or repeated name fails the
 session load. Local mode has no declared applications.
+
+Requester calls remain limited to the deployed platform's opted-in operations. They do not grant
+administrative powers, Secret values, or credential management. For configuration, write risk,
+revocation, and the distinction between requester and workload authority, see the
+[Security and access guide](./security-model.md#acting-for-the-person-acts_for_requester).
+MCP and delegated requester behavior additionally depend on the
+[documented rollout requirements](./security-model.md#availability).
 
 ### Chat turns and client disconnects
 

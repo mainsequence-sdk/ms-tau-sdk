@@ -5,6 +5,7 @@ The intentionally small public surface is exported from `ms_tau_sdk`:
 ```python
 from ms_tau_sdk import TauSDKSettings, __version__, create_app
 from ms_tau_sdk import current_requester, requester_client
+from ms_tau_sdk import RUNTIME_HEALTH_ABI_VERSION, register_deployment_readiness_hook
 ```
 
 ## `create_app`
@@ -49,10 +50,12 @@ implementation boundaries. Importing them does not create a compatibility promis
 
 ## `current_requester` and `requester_client`
 
-An Agent that an Organization admin enabled for it can read platform data, and call other platform
-applications, with the access of the person whose request a turn is serving: the requester. The
-platform keeps that authority. The runtime only proves which of its own sessions it is working on,
-and the platform finds the person in its own records. No call names a person.
+An Agent that an Organization admin enabled for it can use supported platform reads and writes,
+and call other platform applications, with the access of the person whose request a turn is serving:
+the requester. The platform keeps that authority. The runtime only proves which of its own sessions it is working on,
+and the platform finds the person in its own records. No call names a person. Enable it with the
+[administrator setup](./security-model.md#only-an-organization-admin-can-turn-it-on), and check
+[operation and rollout support](./security-model.md#supported-operations) before using it.
 
 ### `current_requester`
 
@@ -131,25 +134,57 @@ async def revenue_by_region(tool_call_id, arguments, signal=None, on_update=None
 - A 403 whose JSON `code` is `requester_binding_invalid` or starts with `runtime_lease_` raises a
   `PermissionError` with that `code`: the requester's binding ended because the turn is over, the
   requester's access was removed, more than 24 hours passed since the request, or the Agent is not
-  enabled to act for its requester. Every other answer is returned as it is.
-- Requester-bound calls are read-only, at the requester's member level. The platform answers only
-  the reads it opted in for them, and refuses writes, sharing, and Secret values.
+  enabled to act for its requester. An endpoint that does not accept requester-bound calls also
+  returns `requester_binding_invalid`; see [troubleshooting](./troubleshooting.md#requester-access-is-refused).
+  Every other answer is returned as it is: check the status before using the body.
+- Requester-bound reads and opted-in writes use the requester's member-level permissions. Writes
+  may create, change, run, share, or delete only where the deployed platform supports the operation
+  and the person has that permission. Secret values, credential/token management, billing, and
+  admin operations remain excluded; application-access resolution is handled by the SDK.
 - The client is bound to the turn that created it. After the turn ends every call raises the same
   `PermissionError` without being sent.
 
 Return only business results to the model: never the response object, its headers, a token, or
 a proof. People who use such an Agent are told:
 
-> **This Agent works with your identity, securely.** It reads only what you can already read, only
-> to answer your own requests, and for at most 24 hours after you ask. It cannot act as anyone else,
-> cannot change, share or delete anything, never sees your secret values, and stops the moment your
-> access ends. Your Organization's administrator approved it to work this way.
+> **This Agent works with your identity.** It can read, create, change, run,
+> share or delete only what your permissions allow through supported operations,
+> only while serving your request, and for at most 24 hours after you ask. It
+> never receives your admin powers or Secret values, and access is checked on
+> every call. Your Organization's administrator approved it to work this way.
 
-The limit is plain: while it works on your request, the Agent's code can read what you can read,
-which is why only administrators decide which Agents may work this way. The
-[agent security model](./security-model.md#why-only-an-admin) explains why, with an example. See the 2026-10-06
-amendment of [ADR 0019](../adrs/0019-verified-request-identity-and-session-ownership.md) and the
+This statement applies to requester-bound calls. It does not remove the Agent's own grants or
+sandbox project code. Prompt injection can cause unintended writes within the person's permissions;
+completed changes can persist after access ends. Only administrators enable this authority. The
+[Security and access guide](./security-model.md#why-only-an-admin) explains why, with an example. See
+[ADR 0019](../adrs/0019-verified-request-identity-and-session-ownership.md) and the
 [runtime contract](./runtime-contract.md#the-turns-requester).
+
+## `register_deployment_readiness_hook`
+
+```python
+register_deployment_readiness_hook(
+    app: FastAPI,
+    hook: Callable[[], bool | Awaitable[bool]],
+) -> None
+```
+
+Register one optional, side-effect-free predicate on the application returned by `create_app()`.
+The hook takes no arguments and may be synchronous or asynchronous. It is evaluated after the
+runtime is otherwise ready; only the boolean `True` means ready. An exception, a result other than
+`True`, or exceeding the three-second evaluation timeout produces a sanitized not-ready response.
+Keep the hook fast and bounded; a timeout does not forcibly terminate synchronous work.
+
+A non-callable hook raises `TypeError`; registering a second hook raises `RuntimeError`.
+Registration adds no route. The platform deployment probe and SDK `/ready` use the same readiness
+result, with the access rules described in the
+[deployment readiness contract](./runtime-contract.md#deployment-readiness).
+
+## `RUNTIME_HEALTH_ABI_VERSION`
+
+The exported version identifier for the SDK's readiness integration with the platform launcher.
+`create_app()` publishes it automatically. Consumers may inspect it for compatibility diagnostics;
+leave its value and the launcher's reserved health routes to the SDK/platform integration.
 
 ## `__version__`
 

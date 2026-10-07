@@ -44,7 +44,7 @@ arbitrary Python code in the same process. Project authors are responsible for:
 
 The SDK does not sandbox project extensions. It continues to protect runtime credentials,
 authenticated caller and lease proof, persistence ordering, secret redaction, and wire validation.
-The [agent security model](../reference/security-model.md#what-the-agents-code-can-reach) lists
+The [Security and access guide](../reference/security-model.md#what-the-agents-code-can-reach) lists
 what code in the Agent's process can reach.
 
 ## Optional tools
@@ -91,30 +91,32 @@ and A2A Task-control tools are visible but cannot be executed from this project-
 
 ## Named providers and sharing
 
-The existing `MainSequenceClient.update_session_config`,
-`hydrate_provider_credential`, and `hydrate_local_provider_credential` methods
-accept `custom_id=None`. Omission keeps existing request bodies. To select a
-configured record, pass its name, for example `custom_id="openai-work"`.
-The provider integration key remains unchanged. Explicit names must match the
-backend response; a missing or substituted selection fails.
+A built-in provider can have several configured credentials in an Environment. Choose a record by
+its `custom_id`, such as `openai-work`; this is a name, not a credential value. The provider name
+and model name remain unchanged. For local setup, use the existing settings:
 
-Local setup accepts `TAU_LOCAL_CUSTOM_ID` and
-`TAU_LOCAL_ORGANIZATION_ENVIRONMENT_UID`. Both are optional. Local sessions
-persist the resolved credential UID and Environment alongside their model
-selection. Resume and refresh retain that binding; changing an idle session's
-selection uses the existing session-model operation. Local SQLite upgrades add
-nullable columns without changing existing session identifiers or schema versions.
+```bash
+export TAU_LOCAL_CUSTOM_ID=openai-work
+export TAU_LOCAL_ORGANIZATION_ENVIRONMENT_UID="<your-environment-uid>"
+```
 
-`AgentSession.custom_id`, `model_provider_credential_uid` and
-`organization_environment_uid` expose the safe selected identity. Hydrated
-`ProviderCredential` also carries `owner_user_uid`. Old server responses may
-omit these fields. Custom endpoints retain their existing identifier and
-configuration envelope and do not require `custom_id`.
+Replace the Environment placeholder before running the commands. Both settings are optional.
+Without an Environment, the platform uses an accessible active Environment or the sole accessible
+one; if neither is unambiguous, select one explicitly. Without a credential name, a new session
+prefers your original owned credential, then the first shared record. An explicit name must match
+exactly one accessible record in that Environment. Custom endpoints keep their provider identifier
+and do not use `custom_id`.
 
-Sharing a configured provider lets recipients receive and copy its credentials
-in their own runtime, including local Tau. Only share with people and workload
-operators you trust. Their usage counts against the provider quota or billing
-associated with those credentials. Removing access stops future credential
-retrieval; credentials already received may work until they expire or are revoked
-at the provider. Never include keys or tokens in model-visible messages, logs,
-or ordinary metadata responses.
+The session records its resolved credential and Environment. Resume and refresh keep that selection;
+changing an idle session's model or configured provider uses the session-model operation. A revoked
+or unavailable selection fails rather than silently switching credentials. Check the selected name,
+owner, and Environment before use. See the [settings reference](../reference/settings.md#authenticated-local-development)
+and [provider troubleshooting](../reference/troubleshooting.md#local-provider-hydration-is-rejected).
+
+Sharing a configured provider lets recipients receive and copy its credentials in their own
+runtime, including local Tau. Only share with people and workload operators you trust. Their usage
+counts against the provider quota or billing associated with those credentials. Removing access
+stops future credential retrieval; credentials already received may work until they expire or are
+revoked at the provider. Never include keys or tokens in model-visible messages, logs, or ordinary
+metadata responses. The [Security and access guide](../reference/security-model.md#what-the-agents-code-can-reach)
+explains why trusted runtime code can reach delivered provider credentials.

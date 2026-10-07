@@ -97,8 +97,8 @@ tools do not grant new platform permissions merely because they run inside TAU.
 
 ## Acting for the person a turn serves
 
-An Agent that an Organization admin enabled for it can read platform data, and ask other platform
-applications, with the access of the person whose request a turn is serving: the requester. The
+An Agent that an Organization admin enabled for it can use supported platform reads and writes,
+and ask other platform applications, with the access of the person whose request a turn is serving: the requester. The
 platform keeps that authority and finds the person in its own records; the runtime only proves
 which of its sessions it is working on. Extension tools use two SDK functions and nothing else:
 
@@ -148,8 +148,13 @@ Rules for tools that act for the requester:
 - Never handle proofs or tokens. The SDK attaches the session, the lease proof, and the
   credentials itself. A tool never reads, logs, stores, or forwards them, passes a path rather than
   a URL, and never sets `Authorization` or an `X-MainSequence-*` header.
-- Requester-bound calls are read-only. The platform refuses writes, sharing, and Secret values;
-  do not build tools that try them.
+- Requester-bound calls use the person's member-level rights on operations the deployed platform
+  explicitly supports. Writes may create, change, run, share, or delete only with that permission.
+  Secret values, credential/token management, billing, and admin operations remain excluded;
+  let the SDK resolve application access. Never infer write permission from view access.
+- Check the installed SDK and deployed platform before depending on requester-marked MCP tools,
+  declared application connections, or inherited requester identity in delegated Tasks. Their SDK
+  support is currently documented as Unreleased and does not supply the platform prerequisites.
 - Return to the model only business results, such as rows, numbers, and names. Never return the
   response object, its headers, a token, a proof, or a raw error body.
 - Keep nothing for another turn or another person. The binding ends with the turn, and a task the
@@ -159,13 +164,16 @@ Rules for tools that act for the requester:
 
 People who use such an Agent are told:
 
-> **This Agent works with your identity, securely.** It reads only what you can already read, only
-> to answer your own requests, and for at most 24 hours after you ask. It cannot act as anyone else,
-> cannot change, share or delete anything, never sees your secret values, and stops the moment your
-> access ends. Your Organization's administrator approved it to work this way.
+> **This Agent works with your identity.** It can read, create, change, run,
+> share or delete only what your permissions allow through supported operations,
+> only while serving your request, and for at most 24 hours after you ask. It
+> never receives your admin powers or Secret values, and access is checked on
+> every call. Your Organization's administrator approved it to work this way.
 
-The limit is plain: while it works on your request, the Agent's code can read what you can read,
-which is why only administrators decide which Agents may work this way.
+The statement describes requester-bound operations. The Agent's own grants and trusted extension
+code remain separate authority. Prompt injection can cause unintended changes, sharing, or deletion
+within the person's permissions, and completed writes can outlast the binding. Only Organization
+admins enable this authority.
 
 ## Validation
 

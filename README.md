@@ -254,13 +254,15 @@ are not bundled into the SDK. Main Sequence transport and protocol behavior rema
 - explicit, version-matched development skills for repository integration, local debugging,
   project customization, and TAU's A2A host adapter
 
-## Security model
+## Security and access guide
 
 A hosted Agent runs as its own workload, with no access until it is granted, and never reads or
-writes Secret values. An Organization admin can let it read with the access of the person it is
-serving, read-only and for at most 24 hours. Everything its tools read reaches the model, and its
+writes Secret values through the platform's Secret API. An Organization admin can let it use
+supported reads and writes with the member-level access of the person it serves, only during that
+work and for at most 24 hours. Prompt injection can cause unintended actions within those rights;
+completed changes can outlast that access. Everything its tools read reaches the model, and its
 tools and extensions run with its credentials. The
-[agent security model](docs/reference/security-model.md) explains what people who build and use
+[Security and access guide](docs/reference/security-model.md) explains what people who build and use
 Agents need to know.
 
 ## Deployment boundary

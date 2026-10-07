@@ -1,5 +1,10 @@
 # ADR 0019: Verified Request Identity and Session Ownership
 
+Amended 2026-10-07 for [issue #74](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/74):
+align section 9 and the user-facing statement with the accepted requester read/write policy in
+[ADR 0021](./0021-mcp-connections-on-the-persons-identity.md). This documentation correction
+changes no runtime behavior; platform opt-in and rollout requirements still determine availability.
+
 Status: Accepted — implemented
 
 Date: 2026-10-05
@@ -207,9 +212,9 @@ installed through `mcp`. It still neither depends on nor imports `mainsequence`.
 
 Amended 2026-10-06.
 
-An Agent that an Organization admin enabled for it may read platform data, and call other platform
-applications, with the access of the person whose request a turn is serving: the requester. The
-platform keeps that authority. The runtime proves only which of its own sessions it is working on,
+An Agent that an Organization admin enabled for it may use supported platform reads and writes,
+and call other platform applications, with the access of the person whose request a turn is serving:
+the requester. The platform keeps that authority. The runtime proves only which of its own sessions it is working on,
 and the platform finds the person in its own records. No call the runtime makes names a person.
 
 **Recording who asked.** When a hosted runtime marks a chat or A2A Message turn active, with
@@ -294,18 +299,25 @@ requester.
   `PermissionError` carrying that code: the turn is over, the requester's access was removed, more
   than 24 hours passed since the request, or the Agent is not enabled to act for its requester.
   Every other answer is returned to the tool as it is.
-- The platform enforces that requester-bound calls are read-only and member-level.
+- The platform enforces member-level rights for requester-bound reads and opted-in writes.
+  Supported writes may create, change, run, share, or delete only with the person's permission.
+  Secret values, credential/token management, billing, and admin operations remain excluded;
+  SDK-managed application-access resolution is the limited credential exception.
 
 **What people are told.** Every SDK document and skill that describes this access uses this
 statement:
 
-> **This Agent works with your identity, securely.** It reads only what you can already read, only
-> to answer your own requests, and for at most 24 hours after you ask. It cannot act as anyone else,
-> cannot change, share or delete anything, never sees your secret values, and stops the moment your
-> access ends. Your Organization's administrator approved it to work this way.
+> **This Agent works with your identity.** It can read, create, change, run,
+> share or delete only what your permissions allow through supported operations,
+> only while serving your request, and for at most 24 hours after you ask. It
+> never receives your admin powers or Secret values, and access is checked on
+> every call. Your Organization's administrator approved it to work this way.
 
-The limit is stated plainly: while it works on your request, the Agent's code can read what you can
-read, which is why only administrators decide which Agents may work this way.
+The statement describes requester-bound operations, not the Agent's separate workload grants or
+local human credentials. Prompt injection can steer the Agent into unintended reads or writes
+within the person's rights. Changes, sharing, or deletion can persist after the binding ends;
+only administrators enable this authority. See the
+[Security and access guide](../reference/security-model.md#availability) for rollout status.
 
 ## Consequences
 

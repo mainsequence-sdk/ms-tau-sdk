@@ -1,5 +1,10 @@
 # ADR 0021: MCP Connections on the Person's Identity
 
+Amended 2026-10-07 for [issue #74](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/74):
+clarify the documentation's availability boundary. Steps 1 to 3 are SDK source support; the
+platform requirements below must also be met before the complete requester/delegation behavior
+is available. This clarification makes no new architecture or release decision.
+
 Status: Accepted — SDK steps 1 to 3 implemented; they take effect as the platform meets its
 requirements
 
@@ -25,8 +30,9 @@ The platform also lets a FastAPI application serve its own MCP endpoint at `/mcp
 receives the verified user on every request, as it does for its other routes. An Agent can reach
 such an application today only from project code, over plain HTTP, through `requester_client()`.
 
-Acting for the person is read-only and available only to project tools. A delegated Agent serves
-nobody: when Agent A, working for a person, delegates to Agent B, B's turns have no requester.
+Before this decision, acting for the person was read-only and available only to project tools.
+Without platform support for recording a delegated requester, a delegated Agent serves nobody:
+when Agent A, working for a person, delegates to Agent B, B's turns have no requester.
 
 ## Decision
 
@@ -131,6 +137,15 @@ The SDK depends on the platform to:
    carries `mainsequence.ai/requires-caller-session-proof/v1`; and
 5. update the statement people are shown, so every client shows the same words.
 
+## Rollout status
+
+The current SDK steps are listed under **Unreleased** in the [changelog](../../CHANGELOG.md#unreleased).
+Requester-client reads and writes depend on platform endpoint opt-in. Marked MCP calls and
+application connections take effect only when the platform supplies the corresponding metadata
+and startup data. An unmarked platform tool retains workload authority during the transition.
+A delegated Task serves a person only when the platform records that person. The following
+consequences describe the completed decision, not a promise that an SDK-only upgrade enables it.
+
 ## Consequences
 
 - An Agent never has more access through MCP than the person it serves, and broad grants on Agents
@@ -156,7 +171,7 @@ for each Agent, and limiting `requester_client()` to the applications an Agent d
 3. Register the two tools for each application in `mcp_applications`. This changes nothing until
    the platform hands applications under requirement 3.
 4. In the same change as each step, update the
-   [agent security model](../reference/security-model.md), the public API reference and the
+   [Security and access guide](../reference/security-model.md), the public API reference and the
    packaged skills. The security model states the write risk in section 2, application
    connections, delegation and turns that serve nobody.
 5. Tests show that tokens, proofs and assertions never reach model context, tool results, history

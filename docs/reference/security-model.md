@@ -1,8 +1,19 @@
-# Agent Security Model
+# Security and access guide
 
 This page explains who an Agent built on this SDK acts as, what it can reach, and what the people
 who build and use such an Agent need to know. The [public API](./public-api.md) and the
-[runtime contract](./runtime-contract.md) define the exact behavior.
+[runtime contract](./runtime-contract.md) define the exact behavior. These are platform and SDK
+access rules, not a guarantee that arbitrary project code is isolated from the runtime's credentials.
+
+## Availability
+
+This guide covers the current SDK development documentation. The MCP requester-mark handling and
+application MCP connections in [ADR 0021](../adrs/0021-mcp-connections-on-the-persons-identity.md)
+are listed under **Unreleased** in the [changelog](../../CHANGELOG.md#unreleased). They also need
+platform support: marked tools, declared application startup data, and, for delegated requester
+access, a recorded requester on the delegated Task. Installing a newer SDK alone does not enable
+those platform capabilities. Check the deployed platform and your installed SDK before relying on
+them. Existing requester-client calls can use the operations the deployed platform has opted in.
 
 ## Who is who
 
@@ -27,6 +38,32 @@ Anyone else gets `403` before the runtime acts. An Organization admin who writes
 person's session is not its requester: the answer goes to the owner's history, and that turn
 cannot act for anyone. See [session ownership](./runtime-contract.md#session-ownership).
 
+## Conversation and Task permissions
+
+Sharing an Agent lets another person use it; it does not share your conversation. The following
+rules describe platform API and Command Center access for people who can view the Agent in the
+selected Environment. Platform operators with superuser access have additional operational access.
+
+| Operation | Who may perform it |
+| --- | --- |
+| Read a conversation, its history, logs, or artifacts | Its owner or an Organization admin. Agent viewers and editors do not gain conversation access from that grant alone. |
+| Update, archive, delete, or change a conversation's configuration | Its owner. An Organization admin's oversight reads do not confer ordinary mutation rights. |
+| Request that a conversation stop | Its owner or an Agent editor; Organization admins can edit Agents in their Organization. |
+| Read an ordinary Agent's Tasks and outputs | People who can view the Agent. |
+| Read Tasks and outputs of an Agent enabled to act for requesters | A requester of that Task or an Organization admin. Agent visibility alone is insufficient. |
+| Cancel a visible Task | A requester of the Task or an Agent editor. |
+| Continue a visible Task awaiting input or authorization | A requester of the Task. There is no Organization-admin override for continuation. |
+
+A Task requester includes the person who created it or a verified person who requested its creation
+or a continuation. Losing access to the Agent removes access to its Tasks. Hidden conversations and
+Tasks are omitted from lists and normally return `404`; a visible Task that you cannot cancel or
+continue returns `403`. See [permission troubleshooting](./troubleshooting.md#conversation-or-task-access-is-denied).
+
+The SDK runtime's own chat and A2A routes additionally apply the
+[session ownership check](#who-can-talk-to-an-agents-session). An Agent editor's permission to
+request cancellation through the platform does not let that editor address another person's
+session directly through the runtime.
+
 ## What an Agent can reach on its own
 
 The Agent's workload starts with no access. It reaches only what it created, what its workflow
@@ -49,28 +86,56 @@ access that all of them may have.
 
 ## Acting for the person (`acts_for_requester`)
 
-An Agent can be enabled to read with the access of its requester instead of its own. Project tools
-then read who the person is with `current_requester()`, and read the platform or ask another
-platform application for them with `requester_client()`. See the
+An Agent can be enabled to use the member-level access of its requester for supported reads and
+writes. Project tools identify the person with `current_requester()` and make those calls through
+`requester_client()`. This authority is separate from the Agent's own grants. See the
 [public API](./public-api.md#current_requester-and-requester_client).
 
 This access is narrow:
 
-- it is read-only, at the requester's member level, never with an Organization admin's powers, even
-  when the requester is an admin;
-- it reaches only the reads the platform opened for it, and never Secret values;
+- reads and opted-in writes use the requester's member-level permissions, never an Organization
+  admin's powers, even when the requester is an admin;
+- it reaches only operations the platform opened for it; read access does not grant edit, run,
+  sharing, or deletion rights;
+- Secret values, credential/token management, billing, and administrative operations are excluded;
+  resolving access to an application is the limited credential exception handled by the SDK;
 - it stays in the Agent's Environment;
 - it lasts at most 24 hours after the request, and only while the turn or Task serving it runs;
-- it is never passed on to another Agent or application.
+- calling another Agent or application does not by itself pass on the person's authority. A
+  delegated Task has a requester only when the platform explicitly records one; see
+  [availability](#availability) and [calling other applications](#calling-other-applications-for-the-person).
 
 The platform checks it again on every call. It ends at once when the person is deactivated, leaves
 the Organization or loses access to the Agent, and when someone else continues the Task. A turn
-with no person behind it, such as a Task sent by another Agent, background work or local mode, has
-no requester, and `requester_client()` refuses.
+with no recorded person behind it, background work outside a turn, or local mode has no requester,
+and `requester_client()` refuses. Do not retry a refused requester operation with the Agent's own
+credentials. A Task continued by a different person no longer has a single person's requester
+binding. Resuming work after a delegated result does not restart the original request's 24-hour
+allowance.
+
+### Supported operations
+
+The deployed platform's API schema and MCP tool catalog determine which operations accept
+requester access. A route existing does not imply that it accepts such calls.
+
+| Operation family | Requester behavior when supported by the platform |
+| --- | --- |
+| User and team directory reads | Return what the person can see at member level. |
+| Repository creation and user/team sharing | Require the person's create or sharing rights. |
+| Image deletion and release update/deletion | Require the person's relevant permissions and obey dependency protection. |
+| Job execution | Requires the person's permission to run the Job. |
+| Agent session creation, runtime updates, and sharing | Apply the person's session, edit, and sharing permissions. |
+| Repository issue creation, editing, and comments | Require access to the relevant branch and operation. |
+| Task creation, continuation, and cancellation | Apply Task permissions; MCP routing and inherited requester identity also depend on the rollout above. |
+| Calls to another platform application | Require access to that application; its verified-requester policy governs the requested action and returned data. |
+
+Unsupported endpoints refuse the call. The SDK does not expand the allowlist or change the
+person's permissions. See [requester troubleshooting](./troubleshooting.md#requester-access-is-refused).
 
 ### Only an Organization admin can turn it on
 
-Declare it on the Agent's resource in the workflow file:
+In a workflow using API version `2.3.0`, add it beside `key`, `kind`, `spec`, and `access` on the
+Agent's resource (keep the existing `spec`):
 
 ```yaml
 - key: analyst
@@ -80,8 +145,8 @@ Declare it on the Agent's resource in the workflow file:
 ```
 
 The declaration takes effect only when the person behind the push is an Organization admin; any
-other push fails the resource before it deploys. An Organization admin can also turn it on after
-the Agent is created. The Agent's managers can turn it off, because that only narrows access.
+other push fails the resource before it deploys with `declared_access_not_granted`. An Organization
+admin can also turn it on after the Agent is created. The Agent's managers can turn it off, because that only narrows access.
 Removing the line turns off what the declaration turned on. The runtime itself can never turn it
 on.
 
@@ -103,23 +168,29 @@ Example:
 If Alice could turn the switch on herself, she would gain indirect access to data she was never
 granted. The switch lets code that the managers control read every requester's data, which no
 manager holds, so no manager can grant it. Only an Organization admin, who answers for the whole
-Organization's data, can accept that risk.
+Organization's data, can accept that risk. The same trust decision covers supported writes:
+Agent code can also change or share data using the requester's permissions.
 
 ### What people are told
 
 People who use such an Agent are told:
 
-> **This Agent works with your identity, securely.** It reads only what you can already read, only
-> to answer your own requests, and for at most 24 hours after you ask. It cannot act as anyone else,
-> cannot change, share or delete anything, never sees your secret values, and stops the moment your
-> access ends. Your Organization's administrator approved it to work this way.
+> **This Agent works with your identity.** It can read, create, change, run,
+> share or delete only what your permissions allow through supported operations,
+> only while serving your request, and for at most 24 hours after you ask. It
+> never receives your admin powers or Secret values, and access is checked on
+> every call. Your Organization's administrator approved it to work this way.
 
-The limit is plain: while it works on your request, the Agent's code can read what you can read.
+This statement describes requester-bound operations. The Agent's own grants, local human login,
+and trusted extension code are separate sources of authority; enabling requester access does not
+remove them. Prompt injection can cause unintended changes, sharing, or deletion within the
+person's permitted operations. Completed changes can persist after access ends. Only an
+Organization admin can accept that risk by enabling requester access.
 
 ## Secrets
 
-- **A hosted Agent never reads or writes Secret values, even with a grant.** The platform refuses
-  before it touches the secret store. The Agent may see the names of Secrets its workload was
+- **The platform refuses a hosted Agent's direct reads and writes of Secret values, even with a
+  grant.** The Agent may see the names of Secrets its workload was
   granted.
 - **People enter Secret values themselves,** on the Secrets page in Command Center or with
   `mainsequence secrets create <NAME>`, which asks for the value without showing it. An Agent must
@@ -134,10 +205,12 @@ The limit is plain: while it works on your request, the Agent's code can read wh
 
 ## What reaches the model
 
-Everything an Agent reads with its tools enters the model's context: file contents, command output,
-tool results, and answers from the platform and from other applications. It is also stored in the
-session history, streamed to chat clients and kept in Task records. Tool result details are not
-private either.
+Treat file contents, command output, tool results, and application responses returned to the
+Agent as information the model can see. Conversation history and chat streams may expose that
+information to people who can read the session. Task outputs and deliberately persisted Task
+Messages have their own visibility rules; `Task.history` is not a copy of every tool call or Tau
+entry. See [A2A Task history](./public-api.md#a2a-task-history). Do not put credentials in result
+details or rely on a hidden UI field to keep them outside the model or persisted conversation.
 
 The SDK keeps its own credentials out of that path. The runtime credential, access tokens, lease
 and session proofs, application tokens and caller assertions are never tool arguments or results,
@@ -156,8 +229,9 @@ The SDK does not sandbox code that runs in the Agent's process:
   delivered to it.
 
 Commands the model chooses and every extension can therefore act with the Agent's workload identity
-and use those provider credentials; they still cannot read Secret values. `TAU_EXCLUDE_BASE_TOOLS`
-removes the coding tools from the model, but it does not sandbox extensions. Review extension code
+and use those provider credentials. Direct platform Secret-value access is still refused; this
+is not a guarantee against values exposed by another workload or placed in the workspace.
+`TAU_EXCLUDE_BASE_TOOLS` removes the coding tools from the model, but it does not sandbox extensions. Review extension code
 as code that holds these credentials. See
 [ownership and trust](../guides/project-configuration.md#ownership-and-trust).
 
@@ -183,9 +257,10 @@ receives a signed assertion that names the Agent as the caller and the person as
   grants: acting for a person is never passed on, so the application cannot read as that person
   on the Agent's behalf.
 - Every route of the application works this way, including an MCP endpoint it serves.
-- An application the Agent declares in its workflow file has its MCP endpoint registered: the
-  Agent gets `<name>__list_tools` and `<name>__call_tool`, which call the application in the same
-  way, for the turn's person, and are refused in a turn that serves nobody.
+- When the SDK and platform provide the application-connection capability described under
+  [availability](#availability), each declared application supplies `<name>__list_tools` and
+  `<name>__call_tool`. They call the application for the turn's person and are refused in a turn
+  that serves nobody.
 - The SDK's Main Sequence MCP tools are different: they run as the Agent's workload, except the
   tools the platform marks to run for the person. The SDK sends those with the turn's private
   session proof, and refuses them in a turn that serves nobody.

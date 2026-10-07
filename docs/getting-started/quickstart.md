@@ -129,6 +129,11 @@ or subscribe to the Task while recovery resolves it.
 Local mode defaults to `127.0.0.1:8787`. Explicitly binding another interface exposes a process
 that acts with the authenticated user's live Main Sequence authority.
 
+For multiple provider accounts or Environments, follow
+[named provider selection](../guides/project-configuration.md#named-providers-and-sharing).
+Before sharing a deployed Agent, review the [Security and access guide](../reference/security-model.md)
+for conversation privacy, the Agent's own grants, and administrator-enabled requester access.
+
 ## Customize Tau
 
 Add a project `.tau/SYSTEM.md` to replace the packaged behavioral default. Add project skills,

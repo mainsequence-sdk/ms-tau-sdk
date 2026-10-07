@@ -86,13 +86,63 @@ names the assertion the route required (`caller` or `platform`) and the reason, 
   application `create_app()` returns; an application that mounts it inside another one declares
   nothing.
 
+## Requester access is refused
+
+`current_requester()` is `None` outside a supported hosted turn, in local mode, and when the
+platform has recorded no person for that turn. `requester_client()` then raises `PermissionError`
+with `code` `requester_binding_invalid` before sending a request. Start from the person's own
+conversation; do not supply a person UID yourself. A Task sent by another Agent has requester
+access only when the platform records the requester for that delegated work.
+
+For a refused call, check these conditions:
+
+| Symptom | Check and recovery |
+| --- | --- |
+| Agent is not enabled | Ask an Organization admin to enable `acts_for_requester`; a non-admin workflow push is refused with `declared_access_not_granted`. |
+| `requester_binding_invalid` on one operation | Check whether the deployed platform API supports requester access on that operation. An existing route is not necessarily opted in. |
+| Access worked earlier | Check that the person is active and still has access to the Agent, Environment, and target resource. A finished turn or request older than 24 hours cannot reuse its binding; start a new authorized request. |
+| A Task was continued by another person | The Task no longer has one requester's binding. Start separate work for the person whose access is needed. |
+| A `runtime_lease_*` refusal | The running work no longer has valid execution ownership. Inspect its status and let normal recovery finish; do not reuse proofs or force a retry with old credentials. |
+| Other non-success HTTP response | Inspect the safe status/code before consuming the response body. The requester client returns other responses unchanged. |
+
+Never fall back to the Agent's own grants after a requester-bound call is refused. See the
+[Security and access guide](./security-model.md#acting-for-the-person-acts_for_requester) for
+permissions and [availability](./security-model.md#availability) for MCP rollout requirements.
+
+## Conversation or Task access is denied
+
+A `404` can mean that a conversation or Task is not visible to the caller; it does not prove it was
+deleted. Check the selected Environment, access to the Agent, and the
+[conversation and Task permission matrix](./security-model.md#conversation-and-task-permissions).
+Sharing the Agent does not share its conversation histories. Tasks of requester-enabled Agents are
+visible only to their requesters and Organization admins.
+
+For a visible Task, `agent_task_cancel_forbidden` means the caller is neither a requester nor an
+Agent editor. `agent_task_continue_forbidden` means the caller is not a requester; being an
+Organization admin does not override that rule. Ask the requester to continue the Task. Runtime
+chat and A2A routes also apply their session-owner check, so platform cancellation permission does
+not itself grant direct runtime access.
+
 ## Local provider hydration is rejected
 
-Local mode requires the Main Sequence backend's authenticated-user hydration contract. The
-request intentionally contains no Agent or AgentSession UID. A rejection can mean that the
-provider/model is unauthorized, the user's stored provider credential is unavailable, or the
-backend environment has not deployed that contract. The SDK never falls back to an environment
-provider API key.
+Check the signed-in user, selected provider/model, configured credential, and Environment:
+
+- If the Environment is ambiguous, set `TAU_LOCAL_ORGANIZATION_ENVIRONMENT_UID` to an Environment
+  you can access.
+- `Configured provider name is ambiguous.` means the explicit `TAU_LOCAL_CUSTOM_ID` matches
+  multiple accessible records. Choose a uniquely named record in the intended Environment; ask
+  its owner to resolve duplicate names when necessary.
+- `Selected configured provider is not available in this Environment.` means that selection is
+  missing or inaccessible. Check its name, Environment, and sharing with the signed-in user.
+- `model_provider_credential_unavailable` means the selected credential is unusable. Check its
+  status and ask its owner to restore or replace it, then explicitly select an available record.
+- If selection is correct, check that the deployed platform supports authenticated local provider
+  use and that the provider publishes the selected model.
+
+A resumed session retains its recorded selection; changing process defaults alone does not replace
+it. Change the selection on an idle session or start a new session. The SDK never falls back to an
+environment provider API key or silently swaps a revoked credential for another. See
+[named providers and sharing](../guides/project-configuration.md#named-providers-and-sharing).
 
 ## Reset or inspect local conversations
 
@@ -188,8 +238,9 @@ remain live and may mutate real platform resources.
 The platform runs that tool for the person whose request the turn serves, and marks it with
 `mainsequence.ai/requires-requester/v1`. A hosted turn with no requester, such as a Task sent by
 another Agent without a person behind it, gets the refusal before anything is sent. Ask from the
-person's own chat, or delegate from a turn that serves a person. See the
-[agent security model](./security-model.md#acting-for-the-person-acts_for_requester).
+person's own chat. Delegated work can do this only when the platform records its requester; check
+[rollout support](./security-model.md#availability) before relying on it. See the
+[Security and access guide](./security-model.md#acting-for-the-person-acts_for_requester).
 
 ## A project extension fails
 
