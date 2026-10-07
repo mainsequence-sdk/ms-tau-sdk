@@ -44,6 +44,8 @@ arbitrary Python code in the same process. Project authors are responsible for:
 
 The SDK does not sandbox project extensions. It continues to protect runtime credentials,
 authenticated caller and lease proof, persistence ordering, secret redaction, and wire validation.
+The [agent security model](../reference/security-model.md#what-the-agents-code-can-reach) lists
+what code in the Agent's process can reach.
 
 ## Optional tools
 

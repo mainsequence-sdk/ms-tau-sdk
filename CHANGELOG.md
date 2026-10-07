@@ -7,6 +7,10 @@
   platform". The archived Astro documents (`docs/history/astro`) and the ADR 56 migration workspace
   (`docs/migration/adr-56`) are removed. Provider-control validation errors now begin with
   "Platform provider-control" instead of naming the backend framework.
+- A new [agent security model](./docs/reference/security-model.md) page explains who an Agent acts
+  as, who can address its sessions, how its grants are capped, why only an Organization admin can
+  let it act for the person it serves, how Secrets are handled, what reaches the model, what code in
+  its process can reach, and what local mode changes. The README links to it.
 
 ## 2.0.5 — 2026-10-07
 

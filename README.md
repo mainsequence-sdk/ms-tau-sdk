@@ -254,6 +254,15 @@ are not bundled into the SDK. Main Sequence transport and protocol behavior rema
 - explicit, version-matched development skills for repository integration, local debugging,
   project customization, and TAU's A2A host adapter
 
+## Security model
+
+A hosted Agent runs as its own workload, with no access until it is granted, and never reads or
+writes Secret values. An Organization admin can let it read with the access of the person it is
+serving, read-only and for at most 24 hours. Everything its tools read reaches the model, and its
+tools and extensions run with its credentials. The
+[agent security model](docs/reference/security-model.md) explains what people who build and use
+Agents need to know.
+
 ## Deployment boundary
 
 This repository publishes Python distributions only. It contains no Dockerfile, Compose stack,
