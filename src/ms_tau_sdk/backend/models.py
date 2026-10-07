@@ -374,6 +374,13 @@ class TauResumeSnapshot(BackendModel):
     snapshot: dict[str, Any]
 
 
+class MCPApplication(BackendModel):
+    """An application whose MCP endpoint the Agent declared; the platform resolved its release."""
+
+    name: str
+    resource_release_uid: str
+
+
 class TauRuntimeBootstrap(BackendModel):
     session: AgentSession
     lease: RuntimeLease
@@ -386,6 +393,9 @@ class TauRuntimeBootstrap(BackendModel):
     provider_control: ProviderControl
     runtime_capabilities: dict[str, str]
     bootstrap_replayed: bool = False
+    # Declaring an application registers its MCP; the platform resolves it in the Agent's
+    # Environment, so the workflow file and the runtime never carry its UID or URL.
+    mcp_applications: list[MCPApplication] = Field(default_factory=list)
 
 
 class TauResumeSnapshotUploadRequest(BackendRequestModel):

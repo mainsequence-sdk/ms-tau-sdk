@@ -133,6 +133,24 @@ it is working on, and the platform finds the person in its own records (ADR 0019
 The assertion, the lease token, the runtime credential and application tokens never appear in a
 log line, a persisted entry, model context, a tool result, the UI stream or history.
 
+### Declared application MCP endpoints
+
+Declaring an application in the Agent's workflow file registers its MCP endpoint. The platform
+resolves each declared application in the Agent's Environment and returns it in the startup data
+as an `mcp_applications` entry with `name` and `resource_release_uid`; no UID or URL is configured
+in the project. For each entry the runtime offers two tools:
+
+- `<name>__list_tools` returns the application's tools: name, description, input schema and
+  whether it only reads; and
+- `<name>__call_tool` takes `tool` and `arguments` and calls that tool.
+
+Both act for the turn's requester. For each call the runtime obtains the application's RPC URL and
+a token for the requester through `resolve-runtime-access`, opens an MCP session to `<rpc_url>/mcp`
+with that token, renews the token once on `401`, and closes the session when the call ends. A turn
+without a requester gets a refusal before anything is sent. A name must match
+`^[a-z][a-z0-9_]{0,39}$` and must not be `mainsequence`; an invalid or repeated name fails the
+session load. Local mode has no declared applications.
+
 ### Chat turns and client disconnects
 
 A managed `/api/chat` turn is bound to the request that streams it: a client disconnect before the

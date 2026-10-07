@@ -20,6 +20,12 @@
   runs for the turn's requester (ADR 0021, step 2). The SDK sends the turn's private session proof
   with it, and refuses it before sending in a hosted turn that serves nobody. Local mode runs it as
   the signed-in person. Tools without the mark are unchanged.
+- An application an Agent declares in its workflow file has its MCP endpoint registered (ADR 0021,
+  step 3). The platform returns each declared application in the startup data as an
+  `mcp_applications` entry with `name` and `resource_release_uid`, and the runtime offers
+  `<name>__list_tools` and `<name>__call_tool` for it. Both call the application's `/mcp` endpoint
+  for the turn's requester, with a session opened for the call and a token issued for that person,
+  and are refused in a turn that serves nobody. No UID or URL is configured in the project.
 
 ## 2.0.5 — 2026-10-07
 

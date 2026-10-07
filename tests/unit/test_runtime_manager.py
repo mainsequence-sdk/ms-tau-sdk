@@ -1057,3 +1057,43 @@ async def test_managed_chat_turns_stay_bound_to_their_request(tmp_path):
         await manager.start_local_chat_turn("session-1", "hello")
     assert manager.live_turn("session-1") is None
     await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_declared_applications_register_their_mcp_tools_in_a_hosted_session(tmp_path):
+    from ms_tau_sdk.backend.models import MCPApplication
+
+    bootstrap = _bootstrap("session-1").model_copy(
+        update={
+            "mcp_applications": [
+                MCPApplication(
+                    name="orders", resource_release_uid="6f2c7c52-2b41-4c4e-9c43-36d2e0a8f1aa"
+                )
+            ]
+        }
+    )
+    manager, _backend, _providers = _manager_dependencies(tmp_path, [bootstrap])
+    coding_session = _coding_session()
+
+    with (
+        patch(
+            "ms_tau_sdk.runtime.manager.MainSequenceMCPClient.connect",
+            AsyncMock(return_value=_mcp_client()),
+        ),
+        patch("ms_tau_sdk.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
+        patch("ms_tau_sdk.runtime.manager.create_coding_tools", return_value=[]),
+        patch(
+            "ms_tau_sdk.runtime.manager.CodingSession.load",
+            AsyncMock(side_effect=lambda config: _load_coding_session(coding_session, config)),
+        ) as load_coding_session,
+    ):
+        await manager.get("session-1")
+        await asyncio.sleep(0)
+
+    assert [tool.name for tool in load_coding_session.await_args.args[0].tools] == [
+        "orders__list_tools",
+        "orders__call_tool",
+        "task_request_input",
+        "task_request_authorization",
+    ]
+    await manager.aclose()

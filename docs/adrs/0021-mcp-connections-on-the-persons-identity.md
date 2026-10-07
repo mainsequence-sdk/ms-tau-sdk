@@ -1,6 +1,7 @@
 # ADR 0021: MCP Connections on the Person's Identity
 
-Status: Accepted — SDK steps 1 and 2 implemented; step 3 waits for the platform
+Status: Accepted — SDK steps 1 to 3 implemented; they take effect as the platform meets its
+requirements
 
 Date: 2026-10-07
 
@@ -85,15 +86,24 @@ The SDK already gives a Task attempt that the platform dispatches the person the
 
 ### 4. Application MCP endpoints
 
-An Agent declares, in its workflow file, the applications whose MCP endpoints it uses. The platform
-resolves each one to its MCP URL when the Agent deploys and hands the list to the runtime at
-startup. For each connection the SDK:
+An Agent declares, in its workflow file, the applications whose MCP endpoints it uses. Declaring an
+application registers its MCP. Neither the workflow file nor the runtime carries an application's
+UID or URL: UIDs differ per Environment and do not exist before the first deploy. The platform
+resolves each declared application in the Agent's Environment and hands the runtime its name and
+release in the startup data, as `mcp_applications` entries with `name` and `resource_release_uid`.
 
-- opens one MCP session per conversation, authenticated for the turn's person and renewed when the
-  turn changes, and never shares it between conversations;
-- reads the application's tool catalog with that identity, and reads it again when the application
-  deploys a new revision; and
-- prefixes the tools with the application's name.
+Each application gets two tools:
+
+- `<name>__list_tools` asks the application for its tools, with each tool's name, description and
+  input schema; and
+- `<name>__call_tool` calls one of them by name with its arguments.
+
+Both run inside the turn for the turn's person. For each call the SDK asks the platform for the
+application's address and a short-lived token for that person, opens an MCP session to the
+application's `/mcp` endpoint, and closes it afterwards. No session, token or catalog is shared
+between turns or people, and a turn that serves nobody is refused before anything is sent. The SDK
+reads no catalog when the session loads, because no person is known then; the model lists an
+application's tools when it needs them. Local mode has no declared applications.
 
 ### 5. Credentials
 
@@ -114,7 +124,8 @@ The SDK depends on the platform to:
    `mainsequence.ai/requires-requester/v1`, find the person from the session proof sent with it,
    and check the person on every call;
 2. record the person who started the work on a delegated Task, with the limits in section 3;
-3. resolve the application MCP endpoints an Agent declares and hand them to its runtime at startup;
+3. resolve the applications an Agent declares in its Environment and hand their names and releases
+   to its runtime in the startup data (`mcp_applications`);
 4. keep accepting MCP calls made as the Agent's workload until the released SDK versions that make
    them are retired. An SDK released before the mark sends the proof only for a tool that also
    carries `mainsequence.ai/requires-caller-session-proof/v1`; and
@@ -142,7 +153,8 @@ for each Agent, and limiting `requester_client()` to the applications an Agent d
 2. Honor the requester mark: send the session proof with a marked tool, and refuse it in a hosted
    turn that serves nobody. This changes nothing until the platform marks tools under
    requirement 1.
-3. When the platform supports requirement 3, add application MCP connections.
+3. Register the two tools for each application in `mcp_applications`. This changes nothing until
+   the platform hands applications under requirement 3.
 4. In the same change as each step, update the
    [agent security model](../reference/security-model.md), the public API reference and the
    packaged skills. The security model states the write risk in section 2, application

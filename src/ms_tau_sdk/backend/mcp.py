@@ -74,6 +74,14 @@ ENVIRONMENT_SCOPED_AGENT_TOOLS = frozenset({"agent.list", "agent.search"})
 ENVIRONMENT_UID_ARGUMENT = "organization_environment_uid"
 
 
+async def _no_tools() -> types.ListToolsResult:
+    return types.ListToolsResult(tools=[])
+
+
+async def _no_resources() -> types.ListResourcesResult:
+    return types.ListResourcesResult(resources=[])
+
+
 class MCPConnectionClient:
     """One remote MCP server over Streamable HTTP.
 
@@ -91,8 +99,10 @@ class MCPConnectionClient:
         timeout: httpx.Timeout,
         read_timeout_seconds: float,
         read_concurrency: int,
+        read_catalog: bool = True,
     ) -> None:
         self.name = name
+        self._read_catalog = read_catalog
         self.display_name = display_name
         self.url = url
         self._http_auth = auth
@@ -156,13 +166,8 @@ class MCPConnectionClient:
                         read_timeout_seconds=timedelta(seconds=self._read_timeout_seconds),
                     ) as session:
                         with bound_contextvars(**initial_log_context):
-                            await session.initialize()
-                            tools_result, resources_result = await asyncio.gather(
-                                session.list_tools(),
-                                session.list_resources(),
-                            )
-                            self.tools = tuple(tools_result.tools)
-                            self.resources = tuple(resources_result.resources)
+                            initialized = await session.initialize()
+                            await self._read_server_catalog(session, initialized)
                             self._parallel_tool_names = frozenset(
                                 tool.name
                                 for tool in self.tools
@@ -187,6 +192,24 @@ class MCPConnectionClient:
             self._fail_pending_commands(
                 failure or RuntimeError(f"{self.display_name} MCP client closed")
             )
+
+    async def _read_server_catalog(
+        self,
+        session: ClientSession,
+        initialized: types.InitializeResult | None,
+    ) -> None:
+        if not self._read_catalog:
+            return
+        # Read only what the server offers; a server without resources answers "not found".
+        capabilities = initialized.capabilities if initialized is not None else None
+        offers_tools = capabilities is None or capabilities.tools is not None
+        offers_resources = capabilities is None or capabilities.resources is not None
+        tools_result, resources_result = await asyncio.gather(
+            session.list_tools() if offers_tools else _no_tools(),
+            session.list_resources() if offers_resources else _no_resources(),
+        )
+        self.tools = tuple(tools_result.tools)
+        self.resources = tuple(resources_result.resources)
 
     async def _serve(self, session: ClientSession) -> None:
         commands = self._commands

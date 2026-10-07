@@ -88,6 +88,10 @@ from ms_tau_sdk.tools.mainsequence_mcp import (
     create_mainsequence_mcp_tools,
     mainsequence_mcp_resource_prompt,
 )
+from ms_tau_sdk.tools.mcp_applications import (
+    application_connector,
+    create_mcp_application_tools,
+)
 from ms_tau_sdk.tools.skill_read import create_skill_read_tool
 from ms_tau_sdk.tools.task_control import create_task_control_tools
 
@@ -1148,6 +1152,13 @@ class SessionRuntimeManager:
                         mcp_client,
                         caller_session_proof=caller_session_proof,
                         allow_missing_session_proof=self.settings.local_mode,
+                    )
+                )
+            if not self.settings.local_mode:
+                tools.extend(
+                    create_mcp_application_tools(
+                        bootstrap.mcp_applications,
+                        connect=application_connector(self.settings),
                     )
                 )
             tools.extend(create_task_control_tools())
