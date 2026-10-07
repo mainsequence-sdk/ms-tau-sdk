@@ -1,6 +1,6 @@
 ---
 name: tau-a2a-runtime-adapter
-description: Implement and diagnose the TAU host side of Main Sequence A2A without duplicating the Django-owned protocol, authorization, discovery, and task-lifecycle contract.
+description: Implement and diagnose the TAU host side of Main Sequence A2A without duplicating the platform-owned protocol, authorization, discovery, and task-lifecycle contract.
 ---
 
 # TAU A2A Runtime Adapter
@@ -11,7 +11,7 @@ idempotency, and retry semantics.
 
 ## Ownership boundary
 
-Django owns:
+The platform owns:
 
 - canonical `a2a.*` MCP schemas and platform discovery;
 - AgentSession and AgentTask lifecycle;
@@ -25,6 +25,9 @@ The SDK owns:
 - preserving each tool's canonical name and metadata through host normalization;
 - privately attaching active caller-session proof when a tool advertises
   `mainsequence.ai/requires-caller-session-proof/v1: true`;
+- attaching the same proof when a tool advertises `mainsequence.ai/requires-requester/v1: true`,
+  which the platform runs for the turn's requester, and refusing that tool before sending it in a
+  hosted turn that serves nobody;
 - verifying the platform's signed caller or platform assertion on every inbound request of a
   hosted runtime, and admitting a request to a session or its Tasks only for the session's owner,
   an Organization admin, or the workload User of the Agent that delegated to that child session,
@@ -48,7 +51,7 @@ log, persist, or reuse the proof as general authorization.
 
 ## Send Work To Another Agent
 
-For a deployed Agent, use the projected `a2a.send_message` MCP operation. Django creates or
+For a deployed Agent, use the projected `a2a.send_message` MCP operation. The platform creates or
 resolves the target `AgentSession`, waits for its runtime to become ready, and dispatches the
 message. For asynchronous work, use the returned Task handle with `a2a.wait_task`.
 
@@ -105,4 +108,4 @@ responder Message; never send the removed ad hoc status-detail shape. Status eve
 Message and consumers reload the Task snapshot.
 
 Change this SDK only for catalog projection, proof attachment, runtime execution, or transport
-translation defects. Platform contract changes belong to Django.
+translation defects. Platform contract changes are made in the platform, not in this SDK.

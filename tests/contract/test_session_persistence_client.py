@@ -12,7 +12,7 @@ from ms_tau_sdk.backend.models import (
 from ms_tau_sdk.settings import TauSDKSettings
 
 
-async def test_batch_append_and_tau_activity_match_django_contract(runtime_identity_token_file):
+async def test_batch_append_and_tau_activity_match_platform_contract(runtime_identity_token_file):
     session_uid = "session-1"
     calls = []
 

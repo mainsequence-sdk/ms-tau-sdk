@@ -88,6 +88,10 @@ from ms_tau_sdk.tools.mainsequence_mcp import (
     create_mainsequence_mcp_tools,
     mainsequence_mcp_resource_prompt,
 )
+from ms_tau_sdk.tools.mcp_applications import (
+    application_connector,
+    create_mcp_application_tools,
+)
 from ms_tau_sdk.tools.skill_read import create_skill_read_tool
 from ms_tau_sdk.tools.task_control import create_task_control_tools
 
@@ -1150,6 +1154,13 @@ class SessionRuntimeManager:
                         allow_missing_session_proof=self.settings.local_mode,
                     )
                 )
+            if not self.settings.local_mode:
+                tools.extend(
+                    create_mcp_application_tools(
+                        bootstrap.mcp_applications,
+                        connect=application_connector(self.settings),
+                    )
+                )
             tools.extend(create_task_control_tools())
             sdk_tool_names = frozenset(tool.name for tool in tools)
             if len(sdk_tool_names) != len(tools):
@@ -2050,7 +2061,7 @@ class SessionRuntimeManager:
         *,
         name: str,
     ) -> tuple[asyncio.Task[object], bool]:
-        """Deduplicate local accelerators; Django's dispatch remains recovery owner."""
+        """Deduplicate local accelerators; the platform's dispatch remains recovery owner."""
 
         existing = self._a2a_task_executions.get(task_uid)
         if existing is not None and not existing.done():

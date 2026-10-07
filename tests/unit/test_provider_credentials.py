@@ -81,7 +81,7 @@ def _custom_provider_control(
 
 
 @pytest.mark.asyncio
-async def test_hydration_uses_django_tau_credential_contract(runtime_identity_token_file):
+async def test_hydration_uses_platform_tau_credential_contract(runtime_identity_token_file):
     requests: list[dict[str, object]] = []
 
     def handler(request: httpx.Request) -> httpx.Response:

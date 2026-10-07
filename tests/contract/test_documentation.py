@@ -11,7 +11,7 @@ def _active_documents() -> list[Path]:
     documents = [REPOSITORY_ROOT / "README.md", REPOSITORY_ROOT / "CHANGELOG.md"]
     for path in (REPOSITORY_ROOT / "docs").rglob("*.md"):
         relative = path.relative_to(REPOSITORY_ROOT / "docs")
-        if relative.parts[0] in {"history", "migration"}:
+        if relative.parts[0] == "migration":
             continue
         if path.name.startswith("adr-56-"):
             continue
@@ -58,4 +58,5 @@ def test_active_adr_index_lists_the_complete_sdk_decision_set() -> None:
         "0017-local-direct-a2a-conversation-discovery.md",
         "0018-reload-safe-local-chat-sessions.md",
         "0019-verified-request-identity-and-session-ownership.md",
+        "0021-mcp-connections-on-the-persons-identity.md",
     }

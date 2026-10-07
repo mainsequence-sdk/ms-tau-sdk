@@ -15,9 +15,8 @@ Amends:
 - [ADR 0009: Backend model selection and Task timelines in Tau Board](./0009-tau-board-session-model-and-task-timeline.md)
   by adding first-class failure and recovery information to Task inspection.
 
-The historical Astro
-[ADR 54](../history/astro/adrs/adr-54-durable-asynchronous-a2a-task-lifecycle.md)
-describes the origin of the managed dispatch design but does not govern this SDK. This record
+The managed dispatch design originated in the retired Astro project, whose decisions do not
+govern this SDK. This record
 adopts the necessary lifecycle guarantees in the current Main Sequence TAU SDK ontology.
 
 ## Context
@@ -171,7 +170,7 @@ cancellation operation.
 
 ### 7. Make the SDK the local-mode recovery owner
 
-Local mode has no Django dispatch worker, so the SDK owns reconciliation for the workspace-scoped
+Local mode has no platform dispatch worker, so the SDK owns reconciliation for the workspace-scoped
 SQLite Task store. Reconciliation runs at startup before the process advertises Task readiness and
 continues periodically while the process is serving. An idempotent replay of an existing Task ID
 also triggers bounded reconciliation rather than waiting forever on a stranded record.
@@ -214,7 +213,7 @@ The managed contract must provide:
 TAU must expose the attempt, lease, heartbeat, checkpoint, and settlement operations required by
 that contract, but must not create a competing managed recovery loop.
 
-This ADR does not authorize changes to Django from this repository. Backend implementation and
+This ADR does not authorize changes to the platform from this repository. Backend implementation and
 deployment are work in the owning repository. This SDK's release evidence must include integration
 tests against the deployed managed contract; mocked SDK tests alone cannot prove managed
 terminalization.
@@ -327,7 +326,7 @@ the existing lease and attempt ownership boundary.
   settlement, delivery, shutdown, and restart.
 - Define stable failure codes, safe public fields, internal attempt outcomes, retryability, stale
   thresholds, attempt limits, and execution deadlines.
-- Record the managed backend operations and evidence needed by the SDK without modifying Django.
+- Record the managed backend operations and evidence needed by the SDK without modifying the platform.
 
 Gate: every failure boundary has exactly one recovery owner and expected durable state; contract
 tests reject a second terminal flag and reject a non-Message `Task.status.message`.
@@ -395,7 +394,7 @@ streaming-failure examples or claims that persistence alone guarantees recovery.
 | T0 | Complete | Protocol helpers, failure inventory, recovery-owner matrix, and contract tests |
 | T1 | Complete | Cross-transport terminal failure, uncertainty, valid-Message, and bounded-wait tests |
 | T2 | Complete | Durable local recovery metadata, startup/periodic reconciliation, lease-owner protection, exhaustion, and ambiguous-outcome tests |
-| T3 | Pending external conformance | Deployed managed-backend lease-loss, stale-attempt, bounded-redispatch, and terminal-event evidence; no Django change is authorized by this ADR |
+| T3 | Pending external conformance | Deployed managed-backend lease-loss, stale-attempt, bounded-redispatch, and terminal-event evidence; no platform change is authorized by this ADR |
 | T4 | Complete | Board failure/recovery inspection, health diagnostics, structured lifecycle telemetry, and read-only Board tests |
 | T5 | Complete for SDK-owned gates | Documentation and skills updated; core, Board, lint, type, JavaScript, distribution, and isolated clean-install gates pass. Managed end-to-end evidence remains part of T3 |
 

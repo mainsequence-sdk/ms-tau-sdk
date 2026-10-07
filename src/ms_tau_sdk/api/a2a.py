@@ -846,7 +846,7 @@ def _task_message_for_backend(
             status_code=400,
             detail="message.extensions is not supported for managed Tasks",
         )
-    # Django's AgentTaskInitialMessageSerializer requires message_id and defaults
+    # The platform's Task message contract requires message_id and defaults
     # optional extensions. Omission works with both its dictionary and URI-list forms.
     return {
         "message_id": message["messageId"],

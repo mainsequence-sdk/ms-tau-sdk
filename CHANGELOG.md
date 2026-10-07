@@ -1,5 +1,32 @@
 # Changelog
 
+## 2.0.6 — 2026-10-07
+
+- The documentation no longer describes the platform's internal implementation. It no longer names
+  the backend framework, its repositories, ADRs, classes or commits, and calls the backend "the
+  platform". The archived Astro documents (`docs/history/astro`) and the ADR 56 migration workspace
+  (`docs/migration/adr-56`) are removed. Provider-control validation errors now begin with
+  "Platform provider-control" instead of naming the backend framework.
+- A new [agent security model](./docs/reference/security-model.md) page explains who an Agent acts
+  as, who can address its sessions, how its grants are capped, why only an Organization admin can
+  let it act for the person it serves, how Secrets are handled, what reaches the model, what code in
+  its process can reach, and what local mode changes. The README links to it.
+- Main Sequence MCP is the first connection of a general MCP connection primitive
+  ([ADR 0021](./docs/adrs/0021-mcp-connections-on-the-persons-identity.md), step 1). One client
+  and one adapter serve a remote MCP server over Streamable HTTP, each connection with its own tool
+  prefix, tool filter, session and catalog. The platform connection offers the same tools, names,
+  schemas and results as before.
+- A Main Sequence MCP tool that the platform marks with `mainsequence.ai/requires-requester/v1`
+  runs for the turn's requester (ADR 0021, step 2). The SDK sends the turn's private session proof
+  with it, and refuses it before sending in a hosted turn that serves nobody. Local mode runs it as
+  the signed-in person. Tools without the mark are unchanged.
+- An application an Agent declares in its workflow file has its MCP endpoint registered (ADR 0021,
+  step 3). The platform returns each declared application in the startup data as an
+  `mcp_applications` entry with `name` and `resource_release_uid`, and the runtime offers
+  `<name>__list_tools` and `<name>__call_tool` for it. Both call the application's `/mcp` endpoint
+  for the turn's requester, with a session opened for the call and a token issued for that person,
+  and are refused in a turn that serves nobody. No UID or URL is configured in the project.
+
 ## 2.0.5 — 2026-10-07
 
 - Tau never offers `secret.list`, `secret_entry.start`, `secret_entry.status` or
@@ -274,7 +301,7 @@ Published as 2.0.1: the number 2.0.0 belongs to a release that was yanked on 202
 ## 1.2.10 — 2026-09-26
 
 - Restored the managed A2A Task creation and continuation adapter removed before the 1.2.9
-  release. It sends Django's required snake_case `message_id` and `reference_task_ids` fields
+  release. It sends the platform's required snake_case `message_id` and `reference_task_ids` fields
   and omits empty `extensions`, which the backend defaults. Local Task messages retain the
   complete A2A binding shape. A nonempty extension URI list on a managed Task returns HTTP 400
   until the backend can persist it. A clean-wheel check now guards this contract. Fixes #42.
@@ -372,10 +399,10 @@ Published as 2.0.1: the number 2.0.0 belongs to a release that was yanked on 202
 
 - Retired Agent-targeted one-shot responses, the deployment execution snapshot setting, and
   Agent-UID-only provider hydration. Chat, local and durable A2A, and session snapshots remain.
-- Aligned managed AgentTask execution with Django's canonical ADR-034 actions for dispatch claim,
+- Aligned managed AgentTask execution with the platform's canonical Task actions for dispatch claim,
   attempt start and settlement, and output create, append, and finalize. Removed the nonexistent
   attempt-Message and caller-delivery backend routes; signed caller delivery now persists its
-  idempotent platform event before the runtime acknowledges Django's push.
+  idempotent platform event before the runtime acknowledges the platform's push.
 
 ## 1.2.3 — 2026-09-18
 
@@ -388,7 +415,7 @@ Published as 2.0.1: the number 2.0.0 belongs to a release that was yanked on 202
 
 - Replaced the retired AgentSession `checkpoint-lease/*` client routes with the canonical
   harness-neutral `runtime-lease/*` acquire, renew, and release routes.
-- Aligned internal A2A task-dispatch and caller-delivery signals with the current Django contract.
+- Aligned internal A2A task-dispatch and caller-delivery signals with the platform's current contract.
 
 ## 1.2.1 — 2026-09-17
 
@@ -408,7 +435,7 @@ Published as 2.0.1: the number 2.0.0 belongs to a release that was yanked on 202
 - Moved TAU repository integration, local development, project customization, and A2A host-adapter
   guidance into skills packaged with the SDK.
 - Defined the hard ownership boundary that leaves platform ontology and canonical A2A semantics in
-  Django while keeping SDK-versioned implementation mechanics in this distribution.
+  the platform while keeping SDK-versioned implementation mechanics in this distribution.
 
 ## 1.1.1 — 2026-09-17
 
@@ -442,6 +469,3 @@ Published as 2.0.1: the number 2.0.0 belongs to a release that was yanked on 202
 - Declared the reviewed Python API, command, settings, project-configuration, and tested wire
   contracts as the first stable compatibility surface.
 - Removed residual provider-specific image-build and push material from the historical archive.
-
-The changelog for the retired deployment project is retained as
-[historical context](./docs/history/astro/CHANGELOG.md).

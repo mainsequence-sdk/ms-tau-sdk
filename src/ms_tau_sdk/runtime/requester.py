@@ -23,10 +23,10 @@ from __future__ import annotations
 import asyncio
 import time
 import uuid
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from contextvars import ContextVar, Token
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import httpx
@@ -108,6 +108,19 @@ class _RequesterPlatform(Protocol):
         *,
         proof: LeaseProof,
     ) -> ReleaseRuntimeAccess: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _TurnApplicationAccess:
+    """SDK-private: one application's RPC URL and a token for the turn's requester.
+
+    Never give the token to the model or to project code. ``renew`` obtains a new token for the
+    same turn, from any task.
+    """
+
+    rpc_url: httpx.URL
+    token: str = field(repr=False)
+    renew: Callable[[], Awaitable[str]] = field(repr=False)
 
 
 @dataclass(slots=True)
@@ -456,6 +469,23 @@ def canonical_requester_uid(value: object) -> str | None:
         return value if str(uuid.UUID(value)) == value else None
     except ValueError:
         return None
+
+
+async def _turn_application_access(release_uid: str) -> _TurnApplicationAccess:
+    """SDK-private: the current turn's access to one application, for its requester."""
+
+    binding = _TURN_BINDING.get()
+    if binding is None:
+        raise RequesterBindingError(
+            "This turn has no verified requester, so it cannot act for one."
+        )
+    uid = _canonical_uid(release_uid)
+    access = await binding._release_access_for(uid, refresh=False)
+
+    async def renew() -> str:
+        return (await binding._release_access_for(uid, refresh=True)).token.value
+
+    return _TurnApplicationAccess(rpc_url=access.rpc_url, token=access.token.value, renew=renew)
 
 
 def _canonical_uid(value: str) -> str:

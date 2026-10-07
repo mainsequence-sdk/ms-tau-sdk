@@ -43,7 +43,7 @@ session in that process, in managed and local mode. A request, Agent Card, sessi
 or model response cannot change them. Python applications may pass an explicit
 `TauSDKSettings` instance to `create_app`; the `ms-tau` command reads the same
 environment settings. These two `TAU_` names are exceptions to the earlier
-`MAINSEQUENCE_TAU_*` naming convention because Django reserves the
+`MAINSEQUENCE_TAU_*` naming convention because the platform reserves the
 `MAINSEQUENCE_` prefix in repository workflow environment variables.
 
 The resulting model-facing catalog is:
@@ -149,16 +149,9 @@ resources:
           value: "true"
 ```
 
-Django's existing workflow accepts these portable, non-reserved names. The
-verified path is `env_vars` validation and normalization, backing Job custom
-environment persistence, `Job.get_environment()`, ResourceRelease deployment
-environment construction, Harness Agent Knative construction, and the container
-environment list. No new workflow field, Agent Card field, backend setting, or
-deployment adapter is required. Verification against `tdag-django` commit
-`51e96e8fb2bcf09cb6124ad2cd4287bfd3630d01` directly accepted both exact
-variable names and passed four focused workflow, Job-environment, and Harness
-Agent deployment tests on 2026-09-24. This verifies the generic environment
-path; SDK setting and catalog tests cover the runtime.
+The platform's existing workflow accepts these portable, non-reserved names and passes them into
+the deployed runtime's environment. No new workflow field, Agent Card field, backend setting, or
+deployment adapter is required. SDK setting and catalog tests cover the runtime.
 
 ### Version-matched project-customization skill
 

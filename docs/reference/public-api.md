@@ -146,7 +146,8 @@ a proof. People who use such an Agent are told:
 > access ends. Your Organization's administrator approved it to work this way.
 
 The limit is plain: while it works on your request, the Agent's code can read what you can read,
-which is why only administrators decide which Agents may work this way. See the 2026-10-06
+which is why only administrators decide which Agents may work this way. The
+[agent security model](./security-model.md#why-only-an-admin) explains why, with an example. See the 2026-10-06
 amendment of [ADR 0019](../adrs/0019-verified-request-identity-and-session-ownership.md) and the
 [runtime contract](./runtime-contract.md#the-turns-requester).
 

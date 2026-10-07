@@ -24,7 +24,7 @@ contents. It rejects retired namespaces, bytecode, tests, and deployment/contain
 release workflow also rejects tracked changes relative to the provenance commit. The
 clean-install verifier creates an isolated environment and workspace outside the checkout, imports
 the public API with user and source paths disabled, verifies the installed wheel's managed Task
-Message payload against Django's `AgentTaskInitialMessageSerializer` field contract, starts the
+Message payload against the platform's Task message field contract, starts the
 installed `ms-tau` command, calls health and version, and verifies graceful shutdown.
 
 The sdist allowlist includes `.gitignore` because Hatchling always adds that file to source

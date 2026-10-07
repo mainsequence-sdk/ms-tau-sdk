@@ -686,7 +686,7 @@ without the `mainsequence` distribution installed in the runtime environment.
 | C5 | Complete: local REST/JSON-RPC A2A Message/Task execution and narrow platform-only failures | None |
 | C6 | SDK documentation, migration text, changelog, build, and clean test suite complete | End-to-end clean-project run against the deployed backend capability |
 
-No Django or other backend repository is modified by this ADR's SDK implementation. The external
+No platform backend repository is modified by this ADR's SDK implementation. The external
 items above are release evidence, not authorization for this repository to change their owner.
 
 ## Verification Requirements
