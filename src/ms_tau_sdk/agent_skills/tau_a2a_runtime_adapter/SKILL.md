@@ -25,6 +25,9 @@ The SDK owns:
 - preserving each tool's canonical name and metadata through host normalization;
 - privately attaching active caller-session proof when a tool advertises
   `mainsequence.ai/requires-caller-session-proof/v1: true`;
+- attaching the same proof when a tool advertises `mainsequence.ai/requires-requester/v1: true`,
+  which the platform runs for the turn's requester, and refusing that tool before sending it in a
+  hosted turn that serves nobody;
 - verifying the platform's signed caller or platform assertion on every inbound request of a
   hosted runtime, and admitting a request to a session or its Tasks only for the session's owner,
   an Organization admin, or the workload User of the Agent that delegated to that child session,

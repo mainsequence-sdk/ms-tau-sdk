@@ -183,6 +183,14 @@ caller AgentSession proof are still visible, but local mode does not fabricate t
 tool may return a typed server-side capability/authorization failure. Other MCP tools and resources
 remain live and may mutate real platform resources.
 
+## An MCP tool says the turn serves nobody
+
+The platform runs that tool for the person whose request the turn serves, and marks it with
+`mainsequence.ai/requires-requester/v1`. A hosted turn with no requester, such as a Task sent by
+another Agent without a person behind it, gets the refusal before anything is sent. Ask from the
+person's own chat, or delegate from a turn that serves a person. See the
+[agent security model](./security-model.md#acting-for-the-person-acts_for_requester).
+
 ## A project extension fails
 
 Extension diagnostics include a project-relative path, extension name, severity, safe error type,

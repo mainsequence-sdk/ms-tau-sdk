@@ -1,6 +1,6 @@
 # ADR 0021: MCP Connections on the Person's Identity
 
-Status: Accepted — implementation pending
+Status: Accepted — SDK steps 1 and 2 implemented; step 3 waits for the platform
 
 Date: 2026-10-07
 
@@ -54,7 +54,13 @@ application MCP endpoints alike. The platform checks the person's access on ever
 - **Admin approval.** An Agent uses MCP only when an Organization admin has enabled it to act for
   its requester. The managers of an Agent control its code; with this switch that code acts with
   the access of every person who uses the Agent, which no manager holds.
-- **No person, no MCP.** A turn that serves nobody has no MCP tools.
+- **No person, no MCP.** A turn that serves nobody gets no MCP tool call.
+- **How the platform moves a tool.** The platform marks each tool that runs for the person with
+  the tool metadata key `mainsequence.ai/requires-requester/v1: true`. For such a tool the SDK
+  sends the turn's private session proof, from which the platform finds the person, and in a
+  hosted turn that serves nobody it refuses the call before sending it. A tool without the mark
+  keeps running as the Agent's workload, so the platform can move tools one at a time and retire
+  the workload path last.
 - **The risk.** Model-driven code can be steered by prompt injection. With writes, the damage
   reaches as far as the person's own rights, for at most 24 hours after their request and only
   while the turn or Task serving it runs. This is why the admin approval stays, and why the
@@ -104,12 +110,14 @@ own credentials.
 
 The SDK depends on the platform to:
 
-1. accept MCP tool calls made for the turn's person, reads and writes, and check the person on every
-   call;
+1. accept MCP tool calls made for the turn's person, reads and writes: mark each such tool with
+   `mainsequence.ai/requires-requester/v1`, find the person from the session proof sent with it,
+   and check the person on every call;
 2. record the person who started the work on a delegated Task, with the limits in section 3;
 3. resolve the application MCP endpoints an Agent declares and hand them to its runtime at startup;
 4. keep accepting MCP calls made as the Agent's workload until the released SDK versions that make
-   them are retired; and
+   them are retired. An SDK released before the mark sends the proof only for a tool that also
+   carries `mainsequence.ai/requires-caller-session-proof/v1`; and
 5. update the statement people are shown, so every client shows the same words.
 
 ## Consequences
@@ -131,8 +139,9 @@ for each Agent, and limiting `requester_client()` to the applications an Agent d
 
 1. Build the connection primitive and make the platform's own MCP its first connection, with no
    change in behavior.
-2. When the platform supports requirement 1, run the platform's own MCP for the turn's person, and
-   offer no MCP tools to a turn that serves nobody.
+2. Honor the requester mark: send the session proof with a marked tool, and refuse it in a hosted
+   turn that serves nobody. This changes nothing until the platform marks tools under
+   requirement 1.
 3. When the platform supports requirement 3, add application MCP connections.
 4. In the same change as each step, update the
    [agent security model](../reference/security-model.md), the public API reference and the

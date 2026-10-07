@@ -14,6 +14,7 @@ from ms_tau_sdk.backend.mcp import (
     ENVIRONMENT_SCOPED_AGENT_TOOLS,
     ENVIRONMENT_UID_ARGUMENT,
 )
+from ms_tau_sdk.runtime.requester import current_requester
 from ms_tau_sdk.tools.mcp_connection import (
     MCPConnection,
     MCPToolPolicy,
@@ -26,6 +27,14 @@ _DISPLAY_NAME = "Main Sequence"
 _RESOURCE_TOOL_NAME = mcp_resource_tool_name(_PREFIX)
 CALLER_SESSION_PROOF_META_KEY = "mainsequence.ai/caller-session-proof/v1"
 CALLER_SESSION_PROOF_REQUIRED_META_KEY = "mainsequence.ai/requires-caller-session-proof/v1"
+# A tool the platform runs for the person the turn serves (ADR 0021). The SDK sends the session
+# proof with it, from which the platform finds that person, and refuses it in a hosted turn that
+# serves nobody. Tools without the mark run as the Agent's workload.
+REQUESTER_REQUIRED_META_KEY = "mainsequence.ai/requires-requester/v1"
+_NO_REQUESTER = (
+    "This Main Sequence tool works only for the person whose request this turn serves, and this "
+    "turn serves nobody."
+)
 A2A_SEND_TOOL = "a2a.send_message"
 # These operations return credentials for direct-runtime clients. Tau never calls them for
 # the model: agent-to-agent turns use a2a.send_message, so the credential stays out of model
@@ -101,13 +110,25 @@ def _caller_session_meta(
     allow_missing_proof: bool = False,
 ) -> Mapping[str, JSONValue] | None:
     tool_meta = tool.meta or {}
-    if tool_meta.get(CALLER_SESSION_PROOF_REQUIRED_META_KEY) is not True:
+    if tool_meta.get(
+        CALLER_SESSION_PROOF_REQUIRED_META_KEY
+    ) is not True and not _requires_requester(tool):
         return None
     if proof is None:
         if allow_missing_proof:
             return None
         raise ValueError(f"Main Sequence MCP tool requires caller-session proof: {tool.name}")
     return {CALLER_SESSION_PROOF_META_KEY: dict(proof)}
+
+
+def _requires_requester(tool: types.Tool) -> bool:
+    return (tool.meta or {}).get(REQUESTER_REQUIRED_META_KEY) is True
+
+
+def _requester_refusal(tool: types.Tool, *, hosted: bool) -> str | None:
+    if not hosted or not _requires_requester(tool) or current_requester() is not None:
+        return None
+    return _NO_REQUESTER
 
 
 def _check_arguments(
@@ -138,7 +159,8 @@ def mainsequence_mcp_policy(
     caller_session_proof: Mapping[str, JSONValue] | None = None,
     allow_missing_session_proof: bool = False,
 ) -> MCPToolPolicy:
-    """The platform connection's policy: hidden tools, A2A rules and private session proof."""
+    """The platform connection's policy: hidden tools, A2A rules, private session proof, and the
+    tools that run for the turn's person."""
 
     local_user_semantics = allow_missing_session_proof
     return MCPToolPolicy(
@@ -159,6 +181,7 @@ def mainsequence_mcp_policy(
             caller_session_proof,
             allow_missing_proof=allow_missing_session_proof,
         ),
+        refusal=lambda tool: _requester_refusal(tool, hosted=caller_session_proof is not None),
         resource_tool_description="Read one advertised Main Sequence platform resource from MCP.",
     )
 

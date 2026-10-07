@@ -183,8 +183,9 @@ receives a signed assertion that names the Agent as the caller and the person as
   grants: acting for a person is never passed on, so the application cannot read as that person
   on the Agent's behalf.
 - Every route of the application works this way, including an MCP endpoint it serves.
-- The SDK's Main Sequence MCP tools are different: they run as the Agent's workload, never as the
-  person.
+- The SDK's Main Sequence MCP tools are different: they run as the Agent's workload, except the
+  tools the platform marks to run for the person. The SDK sends those with the turn's private
+  session proof, and refuses them in a turn that serves nobody.
 
 ## Checklist for project authors
 

@@ -16,6 +16,10 @@
   and one adapter serve a remote MCP server over Streamable HTTP, each connection with its own tool
   prefix, tool filter, session and catalog. The platform connection offers the same tools, names,
   schemas and results as before.
+- A Main Sequence MCP tool that the platform marks with `mainsequence.ai/requires-requester/v1`
+  runs for the turn's requester (ADR 0021, step 2). The SDK sends the turn's private session proof
+  with it, and refuses it before sending in a hosted turn that serves nobody. Local mode runs it as
+  the signed-in person. Tools without the mark are unchanged.
 
 ## 2.0.5 — 2026-10-07
 
