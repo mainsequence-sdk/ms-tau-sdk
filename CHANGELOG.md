@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.6 — 2026-10-07
 
 - The documentation no longer describes the platform's internal implementation. It no longer names
   the backend framework, its repositories, ADRs, classes or commits, and calls the backend "the
