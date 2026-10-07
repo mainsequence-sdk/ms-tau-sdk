@@ -10,6 +10,7 @@ from typing import Any, Literal
 
 from ms_tau_sdk.protocols.a2a_failure import TASK_STATUS_DETAIL_EXTENSION_URI
 from ms_tau_sdk.protocols.a2a_message import agent_message
+from ms_tau_sdk.runtime.requester import Requester
 
 TaskInterruptionStatus = Literal["input_required", "auth_required"]
 
@@ -24,6 +25,9 @@ class TaskExecutionContext:
     lease_token: str
     interruption_status: TaskInterruptionStatus | None = None
     interruption_message: dict[str, Any] | None = None
+    # The person the platform recorded as the Task's requester, as its dispatch or its answer to the
+    # request that runs this attempt names them, or None.
+    requester: Requester | None = None
 
     def request_interruption(
         self,

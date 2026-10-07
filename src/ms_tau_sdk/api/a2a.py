@@ -20,6 +20,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from structlog.contextvars import bind_contextvars
 from tau_agent.types import JSONValue
 
+from ms_tau_sdk.backend.assertions import CallerAssertion
 from ms_tau_sdk.backend.client import MainSequenceClient
 from ms_tau_sdk.backend.models import (
     AgentTask,
@@ -62,6 +63,7 @@ from ms_tau_sdk.runtime.provenance import (
     TurnProvenance,
     turn_provenance_from_request,
 )
+from ms_tau_sdk.runtime.requester import CallerDelivery, Requester, canonical_requester_uid
 from ms_tau_sdk.runtime.task_context import (
     TaskExecutionContext,
     active_task_execution,
@@ -72,6 +74,7 @@ from ms_tau_sdk.settings import TauSDKSettings
 from .dependencies import backend, runtime_manager, settings
 from .request_identity import (
     SessionAccessDeniedError,
+    request_caller_assertion,
     require_session_access,
     sessions_the_caller_may_address,
     verified_user_uid,
@@ -740,11 +743,14 @@ async def _collect_turn(
     max_output_bytes: int,
     provenance: TurnProvenance,
     turn_uid: str | None = None,
+    caller_assertion: CallerAssertion | None = None,
 ) -> str:
     accumulator = _TurnAccumulator(max_output_bytes=max_output_bytes)
     prompt_options: dict[str, Any] = {"provenance": provenance}
     if turn_uid is not None:
         prompt_options["turn_uid"] = turn_uid
+    if caller_assertion is not None:
+        prompt_options["caller_assertion"] = caller_assertion
     async for event in manager.prompt(context_id, prompt, **prompt_options):
         accumulator.consume(event)
     context = active_task_execution()
@@ -772,6 +778,7 @@ async def _collect_validated_turn(
     max_output_bytes: int,
     provenance: TurnProvenance,
     turn_uid: str | None = None,
+    caller_assertion: CallerAssertion | None = None,
 ) -> str:
     text = await _collect_turn(
         manager,
@@ -780,6 +787,7 @@ async def _collect_validated_turn(
         max_output_bytes=max_output_bytes,
         provenance=provenance,
         turn_uid=turn_uid,
+        caller_assertion=caller_assertion,
     )
     if not contract.enabled:
         return text
@@ -809,6 +817,7 @@ async def _collect_validated_turn(
                 ),
                 max_output_bytes=max_output_bytes,
                 provenance=provenance,
+                caller_assertion=caller_assertion,
             )
     raise AssertionError("strict JSON repair loop did not terminate")
 
@@ -855,6 +864,7 @@ async def _create_backend_task(
     local_mode: bool,
     output_contract: StrictJsonContract | None = None,
     provenance: TurnProvenance | None = None,
+    caller_assertion: CallerAssertion | None = None,
 ) -> AgentTaskCreateResult:
     context_id = str(message["contextId"])
     initial_message = _task_message_for_backend(
@@ -883,8 +893,49 @@ async def _create_backend_task(
                     "provenance": dict(provenance or {}),
                 },
             },
-        }
+        },
+        **_presented_assertion(caller_assertion),
     )
+
+
+def _task_caller_assertion(
+    request: Request,
+    config: TauSDKSettings,
+) -> CallerAssertion | None:
+    """Return the request's verified caller assertion while it is valid, to present for a Task.
+
+    Presented beside the runtime's credential when the request creates or continues a Task, it
+    lets the platform record the request's person as the Task's requester. Local mode and the
+    platform's own calls have none.
+    """
+
+    caller_assertion = request_caller_assertion(request)
+    if config.local_mode or caller_assertion is None:
+        return None
+    return caller_assertion if caller_assertion.unexpired_token() else None
+
+
+def _presented_assertion(caller_assertion: CallerAssertion | None) -> dict[str, str]:
+    token = caller_assertion.unexpired_token() if caller_assertion is not None else None
+    return {"caller_assertion": token} if token else {}
+
+
+def _requester_named_by_task(
+    task: AgentTask,
+    caller_assertion: CallerAssertion | None,
+) -> Requester | None:
+    """Return the request's verified caller when the platform recorded that person as requester.
+
+    This is the requester of a Task attempt that the request itself runs: the platform's Task
+    answer must name the same User, as a person, as ``requester_user_uid``.
+    """
+
+    if caller_assertion is None or caller_assertion.caller_is_workload:
+        return None
+    caller = caller_assertion.caller
+    if task.requester_identity_type != "human" or task.requester_user_uid != caller.uid:
+        return None
+    return Requester(uid=caller.uid, team_uids=caller.team_uids)
 
 
 async def _wait_for_task_return_state(
@@ -1238,6 +1289,7 @@ async def _execute_task(
     config: TauSDKSettings | None = None,
     dispatch_uid: str | None = None,
     claim: _ClaimedTask | None = None,
+    requester: Requester | None = None,
 ) -> dict[str, Any]:
     bind_contextvars(
         a2a_task_id=task.task_id,
@@ -1270,6 +1322,7 @@ async def _execute_task(
         attempt_uid=claim.attempt_uid,
         holder_id=claim.holder_id,
         lease_token=claim.lease_token,
+        requester=requester,
     )
     try:
         await writer.ensure_not_canceled(force=True)
@@ -1355,6 +1408,7 @@ async def _schedule_task_accelerator(
     max_output_bytes: int,
     provenance: TurnProvenance,
     config: TauSDKSettings,
+    requester: Requester | None = None,
 ) -> bool:
     """Best-effort local start after durable creation; dispatch remains recovery owner."""
 
@@ -1386,6 +1440,7 @@ async def _schedule_task_accelerator(
         provenance=provenance,
         config=config,
         claim=claim,
+        requester=requester,
     )
     try:
         _background, scheduled = manager.create_a2a_task_execution(
@@ -1573,6 +1628,7 @@ async def _execute_message(
     output_contract: StrictJsonContract,
     max_output_bytes: int,
     provenance: TurnProvenance,
+    caller_assertion: CallerAssertion | None = None,
 ) -> dict[str, Any]:
     text = await _collect_validated_turn(
         manager,
@@ -1581,6 +1637,7 @@ async def _execute_message(
         output_contract,
         max_output_bytes=max_output_bytes,
         provenance=provenance,
+        caller_assertion=caller_assertion,
     )
     message = _agent_message(
         context_id=context_id,
@@ -1623,6 +1680,7 @@ async def _stream_task_events(
     provenance: TurnProvenance,
     config: TauSDKSettings | None = None,
     history_length: int = DEFAULT_TASK_HISTORY_LENGTH,
+    requester: Requester | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     claim = await _claim_backend_task(client, manager, task)
     resolved = config or manager.settings
@@ -1642,6 +1700,7 @@ async def _stream_task_events(
         attempt_uid=claim.attempt_uid,
         holder_id=claim.holder_id,
         lease_token=claim.lease_token,
+        requester=requester,
     )
     working = await client.get_task(task.uid)
     working = await _task_with_history(client, working, history_length=history_length)
@@ -1819,6 +1878,7 @@ def _message_stream_response(
     history_length: int = DEFAULT_TASK_HISTORY_LENGTH,
     json_rpc: bool = False,
     request_id: object = None,
+    requester: Requester | None = None,
 ) -> StreamingResponse:
     async def stream() -> AsyncIterator[bytes]:
         try:
@@ -1832,6 +1892,7 @@ def _message_stream_response(
                 provenance=provenance,
                 config=config,
                 history_length=history_length,
+                requester=requester,
             ):
                 yield _sse(
                     _stream_payload(
@@ -2088,6 +2149,21 @@ def _durable_task_execution_input(
     return prompt, contract, provenance
 
 
+def _dispatched_requester(body: dict[str, Any], config: TauSDKSettings) -> Requester | None:
+    """Return the requester that the platform's verified dispatch or caller delivery names.
+
+    Only a person is a requester: an Agent's workload User never is. A runtime that does not
+    verify the platform's assertion on its internal routes takes no requester from them.
+    """
+
+    if config.local_mode or config.request_identity_mode != "assertion":
+        return None
+    if body.get("requester_identity_type") != "human":
+        return None
+    uid = canonical_requester_uid(body.get("requester_user_uid"))
+    return Requester(uid=uid) if uid is not None else None
+
+
 @router.post("/internal/a2a/task-dispatch", status_code=200)
 async def task_dispatch_available(
     body: dict[str, Any],
@@ -2123,6 +2199,7 @@ async def task_dispatch_available(
             provenance=provenance,
             config=config,
             claim=claim,
+            requester=_dispatched_requester(body, config),
         ),
         name=f"a2a-task-{task.task_id}",
     )
@@ -2136,6 +2213,7 @@ async def _resume_caller_delivery(
     task_id: str,
     task_status: str,
     caller_agent_session_uid: str,
+    delivery: CallerDelivery,
 ) -> None:
     prompt = (
         "A delegated asynchronous A2A Task has new actionable state. "
@@ -2152,6 +2230,9 @@ async def _resume_caller_delivery(
             "actorKind": "platform",
             "actorUid": "mainsequence",
         },
+        # The turn names its delivery, so that the platform records the requester of the
+        # delegated work for it.
+        caller_delivery=delivery,
     ):
         pass
     manager.mark_response_delivered(caller_agent_session_uid)
@@ -2161,6 +2242,7 @@ async def _resume_caller_delivery(
 async def task_caller_delivery_available(
     body: dict[str, Any],
     manager: RuntimeManagerDep,
+    config: SettingsDep,
 ) -> dict[str, Any]:
     delivery_uid = str(body.get("delivery_uid") or "").strip()
     task_uid = str(body.get("task_uid") or "").strip()
@@ -2207,6 +2289,10 @@ async def task_caller_delivery_available(
             task_id=task_id,
             task_status=task_status,
             caller_agent_session_uid=caller_agent_session_uid,
+            delivery=CallerDelivery(
+                uid=delivery_uid,
+                requester=_dispatched_requester(body, config),
+            ),
         ),
         name=f"a2a-caller-delivery-{delivery_uid}",
     )
@@ -2273,7 +2359,12 @@ async def message_send(
             task_id=existing_task.task_id,
             local_mode=config.local_mode,
         )
-        task = await client.continue_task(existing_task.uid, continued_message)
+        caller_assertion = _task_caller_assertion(request, config)
+        task = await client.continue_task(
+            existing_task.uid,
+            continued_message,
+            **_presented_assertion(caller_assertion),
+        )
         if config.local_mode:
             task = await _persist_local_recovery_contract(
                 client,
@@ -2290,6 +2381,7 @@ async def message_send(
             max_output_bytes=config.max_turn_output_bytes,
             provenance=provenance,
             config=config,
+            requester=_requester_named_by_task(task, caller_assertion),
         )
         if return_immediately:
             task = await _task_with_history(client, task, history_length=history_length)
@@ -2303,6 +2395,7 @@ async def message_send(
         task = await _task_with_history(client, task, history_length=history_length)
         return {"task": _task_payload(task, history_length=history_length)}
     if response_kind is ResponseKind.TASK:
+        caller_assertion = _task_caller_assertion(request, config)
         creation = await _create_backend_task(
             client,
             message=message,
@@ -2310,6 +2403,7 @@ async def message_send(
             local_mode=config.local_mode,
             output_contract=output_contract,
             provenance=provenance,
+            caller_assertion=caller_assertion,
         )
         task = creation.task
         if creation.created:
@@ -2322,6 +2416,7 @@ async def message_send(
                 max_output_bytes=config.max_turn_output_bytes,
                 provenance=provenance,
                 config=config,
+                requester=_requester_named_by_task(task, caller_assertion),
             )
             if return_immediately:
                 task = await _task_with_history(client, task, history_length=history_length)
@@ -2371,6 +2466,7 @@ async def message_send(
         output_contract=output_contract,
         max_output_bytes=config.max_turn_output_bytes,
         provenance=provenance,
+        caller_assertion=request_caller_assertion(request),
     )
     if config.local_mode:
         result = await client.complete_local_conversation_message(
@@ -2418,6 +2514,7 @@ async def message_stream(
     output_contract = _output_contract(body)
     if config.local_mode:
         await manager.get(str(message["contextId"]))
+    caller_assertion = _task_caller_assertion(request, config)
     creation = await _create_backend_task(
         client,
         message=message,
@@ -2425,6 +2522,7 @@ async def message_stream(
         local_mode=config.local_mode,
         output_contract=output_contract,
         provenance=provenance,
+        caller_assertion=caller_assertion,
     )
     task = creation.task
     if not creation.created:
@@ -2458,6 +2556,7 @@ async def message_stream(
         provenance=provenance,
         config=config,
         history_length=history_length,
+        requester=_requester_named_by_task(task, caller_assertion),
     )
 
 
@@ -2662,6 +2761,7 @@ async def json_rpc(
             output_contract = _output_contract(params)
             if config.local_mode:
                 await manager.get(str(message["contextId"]))
+            caller_assertion = _task_caller_assertion(request, config)
             creation = await _create_backend_task(
                 client,
                 message=message,
@@ -2669,6 +2769,7 @@ async def json_rpc(
                 local_mode=config.local_mode,
                 output_contract=output_contract,
                 provenance=provenance,
+                caller_assertion=caller_assertion,
             )
             task = creation.task
             if not creation.created:
@@ -2707,6 +2808,7 @@ async def json_rpc(
                 history_length=history_length,
                 json_rpc=True,
                 request_id=request_id,
+                requester=_requester_named_by_task(task, caller_assertion),
             )
         elif method in {"GetTask", "tasks/get"}:
             result = await get_task(

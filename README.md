@@ -93,11 +93,17 @@ app = create_app()
 
 When Main Sequence hosts the runtime, `create_app()` admits a request only with the platform's
 signed assertion in `X-MainSequence-Caller-Assertion`, never on gateway identity headers, and lets
-only a session's owner or an Organization admin address that session. It declares this request
+only a session's owner, an Organization admin, or the Agent that delegated to it address that
+session. It declares this request
 identity to the platform launcher in `app.state.mainsequence_request_identity`; the launcher serves
 only an application that declares it, so serve the application `create_app()` returns. Outside
 hosting, requests are handled as before. See
 [request identity](docs/reference/runtime-contract.md#request-identity).
+
+An Agent that an Organization admin enabled for it can read with the access of the person whose
+request a turn is serving. Project tools read that person with `current_requester()` and call the
+platform or another platform application for them with `requester_client()`; neither exposes a
+proof or a token. See the [public API](docs/reference/public-api.md#current_requester-and-requester_client).
 
 Job-hosted batch execution is an [accepted design](docs/adrs/0015-job-hosted-batch-execution.md)
 with implementation pending. It will run this SDK's configured Tau composition for one assignment

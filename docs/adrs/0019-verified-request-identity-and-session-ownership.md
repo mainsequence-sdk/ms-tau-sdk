@@ -7,6 +7,24 @@ Date: 2026-10-05
 Issues: [#59](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/59) and
 [#60](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/60)
 
+Amended 2026-10-06: a hosted chat or A2A Message turn presents the verified caller assertion of
+the request that started it when it marks the turn active, and a hosted request that creates or
+continues a Task presents it with that call, so that the platform can record who asked. Extension
+tools read the verified requester of a turn or Task attempt with `current_requester()` and read
+with that person's access through `requester_client()` (section 9,
+[issue #66](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/66)).
+
+Amended 2026-10-06: a turn that a caller delivery resumes names the delivery when it marks the
+turn active, and serves the requester the platform records for it: the person who asked for the
+turn that delegated the work (section 9).
+
+Amended 2026-10-06: the Agent that delegated to a child session may address it. When Agent A
+delegates to Agent B, the platform creates B's child session for the person who owns A's session,
+and A addresses it with its own credential, so the caller assertion names A's workload User. The
+runtime admits that caller when the session names A as its parent session's Agent and the
+platform's directory shows the caller to be A's workload User. Such a caller is never a requester
+(section 6, [issue #67](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/67)).
+
 Amends:
 
 - [ADR 0002: Runtime and protocol contracts](./0002-runtime-and-protocol-contracts.md) by
@@ -127,14 +145,33 @@ Turn provenance takes a `user` caller from the verified `sub` and never reads `X
 Agent-caller provenance still comes from the gateway's `X-Caller-*` headers, and `X-Caller-Kind`
 stays required on the chat and A2A message routes.
 
-### 6. Only the owner or an Organization admin addresses a session
+### 6. Only the owner, an Organization admin, or the delegating Agent addresses a session
 
-In hosted mode, a request that addresses an existing session must come from the session's owner or
-from an Organization admin. The owner is the session's `created_by_user_uid`, compared with the
-verified `sub`. An Organization admin is a caller whose assertion says `is_organization_admin`; the
-runtime does not read the session for an admin. Anyone else gets 403 with
+In hosted mode, a request that addresses an existing session must come from the session's owner,
+from an Organization admin, or, for a delegated child session, from the workload User of the Agent
+that delegated to it. The owner is the session's `created_by_user_uid`, compared with the verified
+`sub`. An Organization admin is a caller whose assertion says `is_organization_admin`; the runtime
+does not read the session for an admin. Anyone else gets 403 with
 `{"detail": "Only the session's owner or an Organization admin can address this session."}`
 before the runtime acts. A JSON-RPC call gets the same HTTP 403.
+
+Amended 2026-10-06. When Agent A delegates to Agent B, the platform creates B's child session for
+the person who owns A's session, and A sends the request with its own credential, so the verified
+`sub` is A's workload User, neither the owner nor an admin. The runtime admits that caller only
+when all of these hold:
+
+- the session names its parent session's Agent in `parent_session_agent_uid`, which the runtime
+  reads on its own session with its runtime credential;
+- the platform's directory, `GET /api/v1/users/<sub>/` read with the runtime credential, shows the
+  `sub` as a workload User (`identity_type` `workload`); and
+- that workload's `agent_uid`, the Agent its release serves, equals `parent_session_agent_uid`.
+
+The `X-Caller-*` headers never take part: they describe a caller and never admit one. A session
+without a parent, the workload of another Agent, and a person who is not the owner still get 403.
+A lookup that fails refuses the request. One request looks a User up at most once; nothing is kept
+after the request. The admitted Agent is never a requester (section 9): its assertion names a
+workload, not a person, so its turns and the Tasks it creates have none, whatever the platform
+answers.
 
 The check covers:
 
@@ -166,6 +203,110 @@ caller from the gateway headers.
 The SDK depends directly on PyJWT with the `crypto` extra and on `cryptography`. Both were already
 installed through `mcp`. It still neither depends on nor imports `mainsequence`.
 
+### 9. The turn's requester and requester-bound calls
+
+Amended 2026-10-06.
+
+An Agent that an Organization admin enabled for it may read platform data, and call other platform
+applications, with the access of the person whose request a turn is serving: the requester. The
+platform keeps that authority. The runtime proves only which of its own sessions it is working on,
+and the platform finds the person in its own records. No call the runtime makes names a person.
+
+**Recording who asked.** When a hosted runtime marks a chat or A2A Message turn active, with
+`PATCH /api/v1/agent-sessions/<uid>/tau-runtime-activity/`, `runtime_activity` `working` and the
+new `active_turn_uid`, it sends the verified caller assertion of the request that started the turn
+in `X-MainSequence-Caller-Assertion`, beside its own credential. The platform verifies it and
+answers with the usual runtime state plus `requester_user_uid`: the person it recorded as the
+turn's requester, or null. It records nobody for an Agent caller, for a person who does not own
+the session, or when no assertion is sent.
+
+- The middleware keeps the verified raw assertion in the request's own scope, not in
+  `request.state` and not in a context variable. Only the chat route and the A2A Message routes
+  (`message:send` and JSON-RPC `SendMessage` answered with a Message, including a strict JSON
+  repair turn of the same request) read it, and they hand it to the turn they start.
+- The turn presents it only with the transition that marks it active, and only while the assertion
+  is valid; an expired assertion is not sent. A turn start repeated after a stale lease presents it
+  again.
+- A Task attempt never presents one when it starts its turn: the Task's creation or continuation
+  already did. Local mode and a runtime that is not hosted never present one.
+- It is never logged, persisted, or placed in model context, a tool result, the UI stream or
+  history, and it is dropped with its request.
+
+**Recording who asked for a Task.** When a hosted request creates a Task
+(`POST /api/v1/agent-tasks/`, from `message:send` answered with a Task, `message:stream` and
+JSON-RPC `SendStreamingMessage`) or continues one (`POST /api/v1/agent-tasks/<uid>/continue/`),
+the runtime sends the request's verified caller assertion in the same header beside its own
+credential, under the same rules: only while it is valid, never in local mode or outside hosting,
+never on the platform's own calls, and never in the Task's body. The platform records the person
+as the Task's requester and names them in the answer's `requester_user_uid` and
+`requester_identity_type`, and its later dispatches of the Task name the same facts.
+
+**A turn that resumes a caller delivery.** When the platform's
+`POST /internal/a2a/task-caller-delivery` resumes a hosted session for delegated work, the turn it
+starts has no request of its own and presents no assertion. The transition that marks it active
+names the delivery in `caller_delivery_uid` instead. The platform answers with `requester_user_uid`:
+the person who asked for the turn that delegated the work with `resume_caller`, while they still
+own the session, or null. Local mode and a runtime that is not hosted name no delivery.
+
+**The turn's requester.** `current_requester()` returns, inside a turn, an immutable object with
+`uid` and `team_uids`, or None:
+
+- a chat or A2A Message turn: the verified caller, only when the platform answered with a
+  non-null `requester_user_uid` equal to that caller's UID. `team_uids` come from the assertion.
+  The Organization-admin flag is never part of it, because requester-bound access is member-level;
+- a Task attempt that the request creating or continuing the Task runs itself (`message:send`
+  answered with a Task, `message:stream`, a continuation): the request's verified caller, only when
+  the platform's answer to that creation or continuation names the same User as
+  `requester_user_uid` with `requester_identity_type` `human`;
+- a Task attempt started by the platform's dispatch (`POST /internal/a2a/task-dispatch`): the
+  dispatch's `requester_user_uid` when its `requester_identity_type` is `human`, with no Team
+  UIDs. Only a hosted runtime reads these facts, because only it verifies the platform assertion
+  on its internal routes;
+- a turn that resumes a caller delivery: the delivery's `requester_user_uid` when its
+  `requester_identity_type` is `human`, only when the platform's answer to the turn start names
+  the same User, with no Team UIDs;
+- otherwise None: Agent callers, the platform's other calls, local mode, a
+  runtime that is not hosted, and code outside a turn. A caller that section 6 admitted as the
+  Agent that delegated to the session is a workload User, so it is never the requester, whatever
+  the platform answers.
+
+The turn binds its requester for its own duration and ends the binding when it ends. Detached SDK
+work never inherits it, and a task a tool leaves running sees no requester after the turn.
+
+**Requester-bound calls.** `requester_client()` returns a client bound to the current turn and
+raises a `PermissionError` with `code` `requester_binding_invalid` when the turn has no
+requester.
+
+- `request(method, path, ...)` calls a platform API path relative to the platform base URL with
+  the runtime's credential and `X-MainSequence-Acting-For-Session` (the turn's session),
+  `X-MainSequence-Lease-Holder` and `X-MainSequence-Lease-Token` (the runtime's current lease on
+  it). They are the values of the runtime's private caller-session proof.
+- `call_release(release_uid, method, path, ...)` obtains access with
+  `POST /api/v1/resource-releases/<release_uid>/resolve-runtime-access/`, sent with the same
+  headers. The answer's `access` is `{"mode": "token", "token": <bearer>, "rpc_url": <base URL>}`.
+  The client calls `rpc_url` plus `path` with only `Authorization: Bearer <token>`, keeps the token
+  for the turn while it is valid, replaces it shortly before it expires, and replaces it once after
+  a 401. The application answers as the requester.
+- The binding headers and the runtime credential go only to the platform base URL. A tool passes a
+  path, never a URL, and cannot set `Authorization` or any `X-MainSequence-*` header. Redirects are
+  not followed. The answer is returned on a request copy that carries no header.
+- A 403 whose JSON `code` is `requester_binding_invalid` or starts with `runtime_lease_` raises a
+  `PermissionError` carrying that code: the turn is over, the requester's access was removed, more
+  than 24 hours passed since the request, or the Agent is not enabled to act for its requester.
+  Every other answer is returned to the tool as it is.
+- The platform enforces that requester-bound calls are read-only and member-level.
+
+**What people are told.** Every SDK document and skill that describes this access uses this
+statement:
+
+> **This Agent works with your identity, securely.** It reads only what you can already read, only
+> to answer your own requests, and for at most 24 hours after you ask. It cannot act as anyone else,
+> cannot change, share or delete anything, never sees your secret values, and stops the moment your
+> access ends. Your Organization's administrator approved it to work this way.
+
+The limit is stated plainly: while it works on your request, the Agent's code can read what you can
+read, which is why only administrators decide which Agents may work this way.
+
 ## Consequences
 
 - A hosted runtime answers only requests that carry the platform's assertion. Anything that called
@@ -180,6 +321,12 @@ installed through `mcp`. It still neither depends on nor imports `mainsequence`.
   time.
 - Every token with an unknown `kid` costs one fetch of the key set. There is no limit on how often
   that happens.
+- A caller that is neither the owner nor an admin of a delegated child session costs one directory
+  lookup per request.
+- A turn start, a Task creation and a Task continuation carry one more header. A platform that
+  does not record requesters answers without `requester_user_uid`, and the turn or Task attempt
+  then has no requester.
+- While it serves a requester, an enabled Agent's code can read what that person can read.
 
 ## Verification
 
@@ -193,4 +340,21 @@ unavailable, invalid or oversized key set; and the configuration errors.
 and local mode; internal against other routes and the wrong kind on each; `OPTIONS`; WebSocket;
 the request log; the verified caller in handlers and in turn provenance; and session ownership for
 the owner, an Organization admin and another user on every route in section 6, including JSON-RPC
-and the filtered Task list.
+and the filtered Task list. With the platform's real delegation combination, a person-owned child
+session whose parent is Agent A's and a caller assertion naming A's workload User, it covers A's
+admission to Message send and stream, JSON-RPC, and Task continuation, read, list and cancel; the
+refusal of another Agent's workload, a person who is not the owner, a session without a parent and
+a failed lookup; and one lookup per request.
+
+`tests/unit/test_requester_identity.py` covers section 9: the assertion on the turn-start
+transition of hosted chat, A2A Message, JSON-RPC and strict JSON repair turns, for person and
+Agent callers; none on Task attempts, after expiry, in local mode or outside hosting; the requester
+the platform recorded, nobody, or someone else; the assertion on Task creation and continuation
+and the requester of an attempt the request runs, for each answer the platform can give; the
+dispatched Task requester and its rejected variants; the binding ending with the turn; the three headers only to the platform origin; the
+release access flow, its cache, its renewal near expiry and after a 401; the refusal codes; and a
+hosted turn end to end, with a project tool on a real Tau session, whose logs, persisted entries,
+stream, tool result and model context contain no assertion, lease token, runtime credential or
+application token. `tests/contract/test_session_persistence_client.py` freezes the header and the
+`requester_user_uid` answer of the transition, and `tests/contract/test_backend_client.py` the
+header and the requester answer of Task creation and continuation.

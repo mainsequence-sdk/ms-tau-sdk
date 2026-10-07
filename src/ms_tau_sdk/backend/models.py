@@ -74,6 +74,9 @@ class AgentSession(BackendModel):
     )
     status: str | None = None
     created_by_user_uid: str | None = None
+    # The Agent of the parent session, or None for a session without a parent. The Agent that
+    # delegated to a child session addresses it with its own workload User.
+    parent_session_agent_uid: str | None = None
     runtime_capabilities: dict[str, str] = Field(default_factory=dict)
 
     @model_validator(mode="after")
@@ -85,6 +88,18 @@ class AgentSession(BackendModel):
         if self.harness_protocol != expected:
             raise ValueError(f"Harness {self.harness!r} requires protocol {expected!r}")
         return self
+
+
+class DirectoryUser(BackendModel):
+    """A User of the Organization as the platform's directory shows it to the runtime.
+
+    A workload User's row carries ``identity_type`` ``workload`` and, for the workload of an
+    Agent's release, ``agent_uid``.
+    """
+
+    uid: str
+    identity_type: str | None = None
+    agent_uid: str | None = None
 
 
 class AgentCardEnvelope(BackendModel):
@@ -279,6 +294,10 @@ class RuntimeState(BackendModel):
     cancel_state: Literal["not_running", "requested"] | None = None
     cancel_requested: bool = False
     cancellation_id: str | None = None
+    # The person the platform recorded as the active turn's requester, from the caller assertion
+    # the runtime presented, or the caller delivery it named, when it marked the turn active.
+    # None when it recorded nobody.
+    requester_user_uid: str | None = None
 
     @model_validator(mode="after")
     def validate_harness_protocol(self) -> RuntimeState:
@@ -304,6 +323,9 @@ class RuntimeActivityPatch(BackendRequestModel):
     activity_sequence: int | None = Field(default=None, ge=1)
     runtime_activity: AgentRuntimeActivity
     active_turn_uid: str | None = None
+    # The caller delivery a turn the platform starts resumes the session for, sent only with the
+    # transition that marks that turn active, and never together with a caller assertion.
+    caller_delivery_uid: str | None = None
 
     @model_validator(mode="after")
     def validate_concurrency_mode(self) -> RuntimeActivityPatch:
@@ -423,6 +445,24 @@ class ProviderExecutionEvidence(BaseModel):
     provider_control: ProviderControl
 
 
+class ReleaseAccessGrant(BackendModel):
+    """How to call a platform application: in token mode, a bearer token and its RPC base URL."""
+
+    mode: str
+    # The bearer token never appears in repr() or str().
+    token: SecretStr | None = Field(default=None, repr=False)
+    rpc_url: str | None = None
+    expires_at: datetime | None = None
+
+
+class ReleaseRuntimeAccess(BackendModel):
+    """The platform's answer to a request for access to one application release."""
+
+    resource_release_uid: str
+    access: ReleaseAccessGrant | None = None
+    runtime_access: dict[str, Any] = Field(default_factory=dict)
+
+
 class AgentTask(BackendModel):
     uid: str
     task_id: str
@@ -444,6 +484,10 @@ class AgentTask(BackendModel):
     correlation_id: str = ""
     recovery_owner: str = ""
     recovery_count: int = 0
+    # The verified User who asked for the Task's creation or latest continuation, and that User's
+    # identity type (`human` for a person). Both are None when the platform recorded nobody.
+    requester_user_uid: str | None = None
+    requester_identity_type: str | None = None
 
 
 class AgentTaskCreateResult(BackendModel):

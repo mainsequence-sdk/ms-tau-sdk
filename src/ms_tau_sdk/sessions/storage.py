@@ -67,7 +67,18 @@ class BackendSessionStorage(SessionStorage):
         *,
         turn_uid: str,
         activity_sequence: int,
+        caller_assertion: str | None = None,
+        caller_delivery_uid: str | None = None,
     ) -> RuntimeState:
+        """Mark ``turn_uid`` active.
+
+        ``caller_assertion`` is the verified caller assertion of the request that started the
+        turn. It goes only to this transition, so that the platform can record who asked.
+        ``caller_delivery_uid`` names, instead, the caller delivery that a turn the platform
+        starts resumes the session for; the platform then records the requester of the delegated
+        work.
+        """
+
         async with self._state_lock:
             self._raise_persistence_error()
             if not self._lease_valid:
@@ -82,7 +93,9 @@ class BackendSessionStorage(SessionStorage):
                     activity_sequence=activity_sequence,
                     runtime_activity="working",
                     active_turn_uid=turn_uid,
+                    caller_delivery_uid=caller_delivery_uid,
                 ),
+                **({"caller_assertion": caller_assertion} if caller_assertion else {}),
             )
             self._defer_pending_until_commit = False
             self._turn_lifecycle = TauTurnLifecycle(

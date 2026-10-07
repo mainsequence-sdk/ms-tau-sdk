@@ -28,6 +28,13 @@ credential, and `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` is required. The boot
 is removed: the SDK no longer reads `MAINSEQUENCE_RUNTIME_CREDENTIAL_SECRET`, and an exchange
 request carries only `credential_id` and `workload_identity_token`.
 
+Amended 2026-10-06: Main Sequence MCP operations whose results carry credentials for
+direct-runtime clients, currently `agent_session.resolve_runtime_access`, are not offered to the
+model, so their tokens never enter model requests, tool results, stream events, or session
+history. This boundary is the model channel only: code in the runtime host holds its own runtime
+credential and can still call the operation
+([issue #65](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/65)).
+
 ## Context
 
 The project identity changed, but its useful transport and execution behavior remains necessary.
@@ -64,13 +71,14 @@ The SDK adopts the following contracts:
    before constructing a provider.
 7. Main Sequence MCP uses the same authenticated client lifecycle. MCP tools and advertised
    resources are projected into durable sessions; caller-session proof remains private host data.
+   Operations whose results carry credentials are not projected.
 8. Structured logs redact credentials and conversation content. Health and logs may report safe
    composition counts and digests.
 9. Application startup and shutdown have one owner. Shutdown stops new work, drains or cancels
    bounded work, closes Tau sessions and MCP, releases leases, and closes the shared HTTP client.
 10. A hosted runtime authenticates every inbound request with the platform's signed assertion and
-    lets only a session's owner or an Organization admin address that session. ADR 0019 holds the
-    contract.
+    lets only a session's owner, an Organization admin, or the Agent that delegated to it address
+    that session. ADR 0019 holds the contract.
 
 External HTTP field names that are part of an existing service contract remain wire details; they
 do not define local SDK runtime roles or deployment modes.

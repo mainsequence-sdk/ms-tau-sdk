@@ -31,6 +31,7 @@ from ms_tau_sdk.protocols.a2a_failure import (
     TASK_STATUS_DETAIL_EXTENSION_URI,
 )
 from ms_tau_sdk.runtime.events import TauRuntimeEvent
+from ms_tau_sdk.runtime.requester import CallerDelivery
 from ms_tau_sdk.runtime.task_context import (
     TaskExecutionContext,
     active_task_execution,
@@ -680,6 +681,7 @@ async def test_active_caller_turn_leaves_durable_delivery_queued():
                 "status": "completed",
             },
             manager,
+            TauSDKSettings(_env_file=None),
         )
 
     assert raised.value.status_code == 409
@@ -719,8 +721,11 @@ async def test_caller_delivery_adds_bounded_platform_event_before_resuming():
             *,
             provenance=None,
             platform_event=None,
+            caller_delivery=None,
         ):
             assert platform_event is None
+            # The resumed turn names its delivery; this runtime is not hosted, so no requester.
+            assert caller_delivery == CallerDelivery(uid="delivery-1")
             yield TauRuntimeEvent(type="agent_settled")
 
         def mark_response_delivered(self, session_uid: str) -> bool:
@@ -738,6 +743,7 @@ async def test_caller_delivery_adds_bounded_platform_event_before_resuming():
             "status": "completed",
         },
         manager,  # type: ignore[arg-type]
+        TauSDKSettings(_env_file=None),
     )
 
     assert result == {
@@ -782,6 +788,7 @@ async def test_replayed_caller_delivery_does_not_schedule_a_second_continuation(
             "status": "completed",
         },
         manager,
+        TauSDKSettings(_env_file=None),
     )
 
     assert result == {

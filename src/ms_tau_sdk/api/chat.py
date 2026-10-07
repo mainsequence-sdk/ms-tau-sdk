@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from typing import Annotated
+from typing import Annotated, Any
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Request
@@ -22,7 +22,11 @@ from ms_tau_sdk.runtime.provenance import (
 
 from .dependencies import runtime_manager
 from .models import ChatRequest
-from .request_identity import require_session_access, verified_user_uid
+from .request_identity import (
+    request_caller_assertion,
+    require_session_access,
+    verified_user_uid,
+)
 
 router = APIRouter(prefix="/api")
 RuntimeManagerDep = Annotated[SessionRuntimeManager, Depends(runtime_manager)]
@@ -110,10 +114,16 @@ async def chat(
         if manager.settings.local_mode
         else None
     )
+    # A hosted turn presents its request's verified caller assertion when it starts, so that the
+    # platform can record who asked for it.
+    caller_assertion = None if local_turn is not None else request_caller_assertion(request)
+    turn_options: dict[str, Any] = {"provenance": provenance}
+    if caller_assertion is not None:
+        turn_options["caller_assertion"] = caller_assertion
     events = (
         local_turn.events()
         if local_turn is not None
-        else manager.prompt(session_uid, prompt, provenance=provenance)
+        else manager.prompt(session_uid, prompt, **turn_options)
     )
 
     async def stream() -> AsyncIterator[bytes]:

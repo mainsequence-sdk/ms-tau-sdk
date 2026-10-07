@@ -22,6 +22,8 @@ These records are the normative decisions for Main Sequence TAU SDK:
 - [ADR 0017: Local direct A2A conversation discovery](./0017-local-direct-a2a-conversation-discovery.md)
 - [ADR 0018: Reload-safe local chat sessions](./0018-reload-safe-local-chat-sessions.md)
 - [ADR 0019: Verified request identity and session ownership](./0019-verified-request-identity-and-session-ownership.md)
+- [ADR 0020: Secret entry and agent access boundaries](./0020-secret-entry-and-agent-access-boundaries.md)
+  (Accepted; authenticated link/status entry implemented in source on 2026-10-06)
 
 [ADR 56](./adr-56-main-sequence-tau-sdk-workspace-bound-library-deployment.md) is the accepted
 transition record and implementation ledger. Earlier decisions are preserved only in the

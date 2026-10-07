@@ -46,9 +46,9 @@ TAU image, overlay, or SDK-owned deployment.
 
 `create_app()` installs the runtime's request identity. When Main Sequence hosts the runtime, the
 application admits only requests that carry the platform's signed assertion, lets only a session's
-owner or an Organization admin address that session, and declares all this in
-`app.state.mainsequence_request_identity`. The platform launcher serves an application only with
-that declaration, read from the object it serves. Therefore:
+owner, an Organization admin, or the Agent that delegated to it address that session, and declares
+all this in `app.state.mainsequence_request_identity`. The platform launcher serves an application
+only with that declaration, read from the object it serves. Therefore:
 
 - export the object `create_app()` returns as the module's `app`. An application that mounts it
   inside another one declares nothing, and the launcher refuses it;

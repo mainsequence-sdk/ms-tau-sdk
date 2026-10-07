@@ -79,15 +79,59 @@ Outside hosted mode nothing is verified and every route behaves as before.
 ### Session ownership
 
 In hosted mode, a request that addresses an existing session must come from the session's owner,
-the User the platform recorded as `created_by_user_uid`, or from an Organization admin
-(`is_organization_admin` in the caller assertion). Anyone else gets 403 before the runtime acts,
-on REST and JSON-RPC alike. The check covers chat, the session model read, session cancellation,
+the User the platform recorded as `created_by_user_uid`, from an Organization admin
+(`is_organization_admin` in the caller assertion), or, for a delegated child session, from the
+workload User of the Agent that delegated to it. That last caller is admitted only when the
+session's `parent_session_agent_uid` names an Agent, and the platform's directory
+(`GET /api/v1/users/<sub>/`) shows the caller as a workload User whose `agent_uid` is that Agent.
+The `X-Caller-*` headers never admit a caller, a failed lookup refuses the request, and the
+admitted Agent is never a requester. Anyone else gets 403 before the runtime acts, on REST and
+JSON-RPC alike. The check covers chat, the session model read, session cancellation,
 A2A Message send and stream (the `contextId` session, and the session of a continued or existing
 Task), Task get, cancel, subscribe, and list by `contextId`, and the extended Agent Card. A Task
 list without `contextId` returns only Tasks of sessions the caller may address.
 
 The runtime never creates a session in managed mode: the platform creates it and records its
 owner. The platform's own `/internal/*` calls carry no caller and are not subject to the check.
+
+### The turn's requester
+
+An Agent that an Organization admin enabled for it can read with the access of the person whose
+request a turn is serving. The runtime never names that person; it proves which of its own sessions
+it is working on, and the platform finds the person in its own records (ADR 0019, section 9).
+
+- **Turn start.** When a hosted runtime marks a chat or A2A Message turn active
+  (`PATCH /api/v1/agent-sessions/<uid>/tau-runtime-activity/` with `runtime_activity` `working` and
+  the new `active_turn_uid`), it sends the verified caller assertion of the request that started
+  the turn in `X-MainSequence-Caller-Assertion`, beside its own credential. Only that transition
+  carries it, only while it is valid, and never for a Task attempt, in local mode, or outside
+  hosting. The answer is the usual runtime state plus `requester_user_uid`: the person the
+  platform recorded as the turn's requester, or `null`.
+- **Task creation and continuation.** When a hosted request creates a Task
+  (`POST /api/v1/agent-tasks/`) or continues one (`POST /api/v1/agent-tasks/<uid>/continue/`), the
+  runtime sends the request's verified caller assertion in the same header, under the same rules.
+  The answer names the Task's recorded requester in `requester_user_uid` and
+  `requester_identity_type`. A Task attempt that the request runs itself serves the request's
+  verified caller when the answer names that User with `requester_identity_type` `human`.
+- **Task dispatch.** `POST /internal/a2a/task-dispatch` carries `requester_user_uid` and
+  `requester_identity_type`. A hosted runtime takes the Task attempt's requester from them when
+  `requester_identity_type` is `human`.
+- **Caller delivery.** `POST /internal/a2a/task-caller-delivery` carries the same two facts for the
+  person who asked for the delegated work. A hosted runtime starts the resumed turn without an
+  assertion and names the delivery in `caller_delivery_uid` on the transition that marks it
+  active. The turn serves that person when the facts name a `human` and the answer's
+  `requester_user_uid` names the same User.
+- **Requester-bound calls.** An extension tool's call through `requester_client()` sends the
+  runtime's credential with `X-MainSequence-Acting-For-Session` (the turn's session),
+  `X-MainSequence-Lease-Holder` and `X-MainSequence-Lease-Token` (the runtime's lease on it), to
+  the platform base URL only. A call to another application first sends
+  `POST /api/v1/resource-releases/<release_uid>/resolve-runtime-access/` with the same headers,
+  then calls the returned `access.rpc_url` with `Authorization: Bearer <access.token>` only.
+- **Refusal.** A 403 whose JSON `code` is `requester_binding_invalid` or starts with
+  `runtime_lease_` ends the binding for the tool, which receives a `PermissionError` with that code.
+
+The assertion, the lease token, the runtime credential and application tokens never appear in a
+log line, a persisted entry, model context, a tool result, the UI stream or history.
 
 ### Chat turns and client disconnects
 

@@ -803,3 +803,106 @@ async def test_rejected_backend_call_logs_safe_structured_error_evidence(
     assert rejected.kwargs["backend_error_detail"] == "Tau session entry is invalid."
     assert rejected.kwargs["backend_field_error_paths"] == ["entries.0.entry.0"]
     assert "timing is not allowed" not in str(rejected)
+
+
+@pytest.mark.asyncio
+async def test_task_creation_and_continuation_present_the_caller_assertion(
+    runtime_identity_token_file,
+    capsys,
+):
+    requester_uid = "2b7f1c48-3d1e-4a5b-9c6d-0e1f2a3b4c5d"
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/runtime-credentials/token/":
+            return httpx.Response(200, json={"access": "runtime-token"})
+        sent.append(request)
+        presented = "X-MainSequence-Caller-Assertion" in request.headers
+        task = {
+            "uid": "task-uid-1",
+            "task_id": "task-1",
+            "context_id": "session-1",
+            "agent_uid": "agent-1",
+            "agent_session_uid": "session-1",
+            "status": "submitted",
+            "requester_user_uid": requester_uid if presented else None,
+            "requester_identity_type": "human" if presented else None,
+        }
+        return httpx.Response(201, json=task)
+
+    settings = TauSDKSettings(
+        _env_file=None,
+        backend_url="http://backend.test",
+        runtime_credential_id="credential-id",
+        runtime_identity_token_file=runtime_identity_token_file,
+    )
+    http = httpx.AsyncClient(base_url=settings.backend_url, transport=httpx.MockTransport(handler))
+    client = MainSequenceClient(settings, RuntimeCredentialAuth(settings), client=http)
+    payload = {"agent_uid": "agent-1", "task_id": "task-1", "initial_message": {}}
+    message = {"message_id": "message-2", "parts": [{"text": "More."}]}
+
+    created = await client.create_task(payload, caller_assertion="caller-assertion-jws")
+    continued = await client.continue_task(
+        "task-uid-1",
+        message,
+        caller_assertion="caller-assertion-jws",
+    )
+    anonymous = await client.create_task(payload)
+    await client.continue_task("task-uid-1", message)
+
+    assert [(request.method, request.url.path) for request in sent] == [
+        ("POST", "/api/v1/agent-tasks/"),
+        ("POST", "/api/v1/agent-tasks/task-uid-1/continue/"),
+        ("POST", "/api/v1/agent-tasks/"),
+        ("POST", "/api/v1/agent-tasks/task-uid-1/continue/"),
+    ]
+    assert [request.headers.get("X-MainSequence-Caller-Assertion") for request in sent] == [
+        "caller-assertion-jws",
+        "caller-assertion-jws",
+        None,
+        None,
+    ]
+    # The assertion travels only in its header: the bodies are unchanged.
+    assert json.loads(sent[0].content) == json.loads(sent[2].content) == payload
+    assert json.loads(sent[1].content) == json.loads(sent[3].content) == message
+    assert created.task.requester_user_uid == requester_uid
+    assert created.task.requester_identity_type == "human"
+    assert continued.requester_user_uid == requester_uid
+    assert anonymous.task.requester_user_uid is None
+    output = capsys.readouterr()
+    assert "caller-assertion-jws" not in output.out + output.err
+    await http.aclose()
+
+
+@pytest.mark.asyncio
+async def test_the_model_provider_catalog_is_read_with_and_without_an_environment(
+    runtime_identity_token_file,
+):
+    environment_uid = "0a1b2c3d-4e5f-4a6b-8c7d-9e0f1a2b3c4d"
+    catalog = {"providers": [{"provider": "openai", "models": []}]}
+    sent: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/api/v1/runtime-credentials/token/":
+            return httpx.Response(200, json={"access": "runtime-token"})
+        sent.append(request)
+        return httpx.Response(200, json=catalog)
+
+    settings = TauSDKSettings(
+        _env_file=None,
+        backend_url="http://backend.test",
+        runtime_credential_id="credential-id",
+        runtime_identity_token_file=runtime_identity_token_file,
+    )
+    http = httpx.AsyncClient(base_url=settings.backend_url, transport=httpx.MockTransport(handler))
+    client = MainSequenceClient(settings, RuntimeCredentialAuth(settings), client=http)
+
+    everywhere = await client.list_model_providers()
+    in_environment = await client.list_model_providers(organization_environment_uid=environment_uid)
+
+    assert everywhere == in_environment == catalog
+    assert [(request.method, request.url.path, dict(request.url.params)) for request in sent] == [
+        ("GET", "/api/v1/model-providers/", {}),
+        ("GET", "/api/v1/model-providers/", {"organization_environment_uid": environment_uid}),
+    ]
+    await http.aclose()

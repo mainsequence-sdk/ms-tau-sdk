@@ -25,7 +25,7 @@ import re
 import time
 import uuid
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
@@ -99,6 +99,28 @@ class VerifiedAssertion:
     caller: VerifiedCaller | None
     issued_at: int
     expires_at: int
+
+
+@dataclass(frozen=True, slots=True)
+class CallerAssertion:
+    """The verified caller assertion of one request, kept only to start that request's turns.
+
+    When the runtime marks a turn active it presents this assertion, so that the platform can
+    record who asked for the turn. It is never logged, persisted, or shown to the model, a tool,
+    a stream, or history, and it is not used after it expires.
+    """
+
+    caller: VerifiedCaller
+    expires_at: int
+    token: str = field(repr=False)
+    # True when the platform's directory showed the caller to be a workload User. A workload is
+    # never a turn's or a Task's requester.
+    caller_is_workload: bool = False
+
+    def unexpired_token(self, *, now: float | None = None) -> str | None:
+        """Return the raw assertion while it is valid, and None once it has expired."""
+
+        return self.token if (time.time() if now is None else now) < self.expires_at else None
 
 
 def _is_canonical_uid(value: object) -> bool:
@@ -393,6 +415,7 @@ __all__ = [
     "AssertionKeysUnavailableError",
     "AssertionKind",
     "AssertionVerifier",
+    "CallerAssertion",
     "InvalidAssertionError",
     "VerifiedAssertion",
     "VerifiedCaller",

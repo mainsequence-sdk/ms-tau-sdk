@@ -1,5 +1,79 @@
 # Changelog
 
+## 2.0.3 — 2026-10-07
+
+- A turn that a caller delivery resumes serves the person who asked for the delegated work. When
+  `POST /internal/a2a/task-caller-delivery` resumes a hosted session, the turn presents no
+  assertion. It names the delivery in `caller_delivery_uid` on the
+  `PATCH /api/v1/agent-sessions/<uid>/tau-runtime-activity/` transition that marks it active, and
+  the platform answers with the requester it recorded for the turn: the person who asked for the
+  turn that delegated with `resume_caller`. `current_requester()` returns that person, with empty
+  `team_uids`, and `requester_client()` reads for them, only when the delivery signal names the
+  same User with `requester_identity_type` `human`. Local mode and a runtime that is not hosted
+  name no delivery.
+- Main Sequence MCP no longer offers `agent_session.resolve_runtime_access` to the model. Its
+  result carries a short-lived runtime token for direct-runtime clients, and Tau's generic MCP
+  projection copied that token into model-visible tool content and into tool details, which reach
+  stream events and session history. Tau never needs the token: agent-to-agent turns use
+  `a2a.send_message`. The operation is left out of the session's tool list, so
+  `mainsequence__agent_session_resolve_runtime_access` is no longer a tool; every other MCP tool
+  and its result are unchanged. Direct-runtime clients that call the operation themselves are
+  unaffected. See the 2026-10-06 amendment of ADR 0002
+  ([issue #65](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/65)).
+- Extension tools can read with the access of the person a turn serves, its requester, when an
+  Organization admin enabled the Agent for it. When a hosted runtime starts a chat or A2A Message
+  turn, it sends the verified caller assertion of the request in `X-MainSequence-Caller-Assertion`
+  with the `PATCH /api/v1/agent-sessions/<uid>/tau-runtime-activity/` transition that marks the
+  turn active. The platform answers with `requester_user_uid`, the person it recorded as the turn's
+  requester, or null. A hosted request that creates a Task (`POST /api/v1/agent-tasks/`) or
+  continues one (`POST /api/v1/agent-tasks/<uid>/continue/`) sends the same header with that call,
+  so that the platform records the Task's requester. A Task attempt that the request runs itself
+  serves the request's verified caller when the platform's Task answer names that User as
+  `requester_user_uid` with `requester_identity_type` `human`; a Task attempt started by the
+  platform's dispatch takes its requester from the dispatch's same two facts. Two new public
+  functions:
+  - `current_requester()` returns that person inside the turn (`uid`, `team_uids`), or `None` for
+    Agent callers, the platform's other calls, local mode, a runtime that is not hosted, and code
+    outside a turn;
+  - `requester_client()` returns a client bound to the turn. `request(method, path, ...)` calls a
+    platform API path with the runtime's credential and `X-MainSequence-Acting-For-Session`,
+    `X-MainSequence-Lease-Holder` and `X-MainSequence-Lease-Token`, sent only to the platform base
+    URL. `call_release(release_uid, method, path, ...)` obtains access through
+    `resolve-runtime-access` and calls the application with only its bearer token, kept for the
+    turn while it is valid. A 403 whose `code` is `requester_binding_invalid` or starts with
+    `runtime_lease_` raises a `PermissionError` with that code, and without a requester
+    `requester_client()` raises one at once.
+
+  The assertion stays in its request's scope and goes only to the turn start, Task creation or Task
+  continuation of that request. It is not sent once expired, never by the turn start of a Task
+  attempt, never on the platform's own calls, and never in local mode. The assertion, the lease
+  proof, the runtime credential and application tokens never reach a log line, a persisted entry,
+  model context, a tool result, the UI stream or history, and the binding ends with the turn. The
+  `tau-project-customization` skill teaches tools to use both functions, to return only business
+  results, and states what people are told about this access. Upgrade note: nothing changes for
+  an Agent that does not use them. Requester-bound calls need a platform that records turn and Task
+  requesters; until it does, `current_requester()` returns `None`. See the 2026-10-06 amendment of
+  ADR 0019 ([issue #66](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/66)).
+- `MainSequenceClient.list_model_providers(organization_environment_uid=...)` reads the
+  model-provider catalog of that Organization Environment. It raised `TypeError` instead, so
+  local-mode chat could not list the providers of a configured Environment through
+  `GET /api/chat/model-providers`. The Environment is now sent as the `organization_environment_uid`
+  query parameter, as the other list calls send theirs; the call without an Environment is
+  unchanged ([issue #68](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/68)).
+- A hosted runtime admits the Agent that delegated to a child session. When Agent A delegates to
+  Agent B through `a2a.send_message`, the platform creates B's child session for the person who
+  owns A's session, and A addresses it with its own credential, so the caller assertion names A's
+  workload User. B's runtime refused every such request with 403. It now also admits that caller
+  when the session's `parent_session_agent_uid` names an Agent and the platform's directory
+  (`GET /api/v1/users/<uid>/`, read with the runtime credential) shows the caller as a workload
+  User whose `agent_uid` is that Agent: Message send and stream, JSON-RPC, and Task continuation,
+  reads, list and cancel. The `X-Caller-*` headers never admit a caller. A session without a
+  parent, another Agent's workload, and a person who is not the owner still get 403, and a lookup
+  that fails refuses the request. One request looks a User up at most once, and nothing is kept
+  after it. The admitted Agent is never a requester: `current_requester()` stays `None` in its
+  turns and in the Task attempts its requests run. See the 2026-10-06 amendment of ADR 0019
+  ([issue #67](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/67)).
+
 ## 2.0.2 — 2026-10-06
 
 - Runtime credentials require the projected workload identity token file. The runtime credential
