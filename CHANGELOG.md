@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.3 — 2026-10-07
 
 - A turn that a caller delivery resumes serves the person who asked for the delegated work. When
   `POST /internal/a2a/task-caller-delivery` resumes a hosted session, the turn presents no
