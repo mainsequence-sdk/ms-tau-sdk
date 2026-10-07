@@ -1,5 +1,17 @@
 # ADR 0019: Verified Request Identity and Session Ownership
 
+Amended 2026-10-07 for [issue #78](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/78):
+section 9 follows the one delegation envelope of
+[ADR 0021](./0021-mcp-connections-on-the-persons-identity.md). The platform's answer to every turn
+start is the only source of the person a turn serves, whoever called; `platform_client()`
+replaces `requester_client()`; a delegated call uses the person's ordinary permissions; and the
+statement people are shown changes.
+
+Amended 2026-10-07 for [issue #74](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/74):
+align section 9 and the user-facing statement with the accepted requester read/write policy in
+[ADR 0021](./0021-mcp-connections-on-the-persons-identity.md). This documentation correction
+changes no runtime behavior; platform opt-in and rollout requirements still determine availability.
+
 Status: Accepted — implemented
 
 Date: 2026-10-05
@@ -203,13 +215,13 @@ caller from the gateway headers.
 The SDK depends directly on PyJWT with the `crypto` extra and on `cryptography`. Both were already
 installed through `mcp`. It still neither depends on nor imports `mainsequence`.
 
-### 9. The turn's requester and requester-bound calls
+### 9. The turn's requester and the calls made for the work
 
-Amended 2026-10-06.
+Amended 2026-10-06 and 2026-10-07.
 
-An Agent that an Organization admin enabled for it may read platform data, and call other platform
-applications, with the access of the person whose request a turn is serving: the requester. The
-platform keeps that authority. The runtime proves only which of its own sessions it is working on,
+An Agent that an Organization admin enabled for it may call the platform and other platform
+applications with the ordinary permissions of the person whose request a turn is serving: the
+requester. The platform keeps that authority. The runtime proves only which of its own sessions it is working on,
 and the platform finds the person in its own records. No call the runtime makes names a person.
 
 **Recording who asked.** When a hosted runtime marks a chat or A2A Message turn active, with
@@ -239,7 +251,8 @@ the runtime sends the request's verified caller assertion in the same header bes
 credential, under the same rules: only while it is valid, never in local mode or outside hosting,
 never on the platform's own calls, and never in the Task's body. The platform records the person
 as the Task's requester and names them in the answer's `requester_user_uid` and
-`requester_identity_type`, and its later dispatches of the Task name the same facts.
+`requester_identity_type`, and its later dispatches of the Task name the same facts. These are
+records: the runtime does not take the person it serves from them.
 
 **A turn that resumes a caller delivery.** When the platform's
 `POST /internal/a2a/task-caller-delivery` resumes a hosted session for delegated work, the turn it
@@ -249,63 +262,63 @@ the person who asked for the turn that delegated the work with `resume_caller`, 
 own the session, or null. Local mode and a runtime that is not hosted name no delivery.
 
 **The turn's requester.** `current_requester()` returns, inside a turn, an immutable object with
-`uid` and `team_uids`, or None:
-
-- a chat or A2A Message turn: the verified caller, only when the platform answered with a
-  non-null `requester_user_uid` equal to that caller's UID. `team_uids` come from the assertion.
-  The Organization-admin flag is never part of it, because requester-bound access is member-level;
-- a Task attempt that the request creating or continuing the Task runs itself (`message:send`
-  answered with a Task, `message:stream`, a continuation): the request's verified caller, only when
-  the platform's answer to that creation or continuation names the same User as
-  `requester_user_uid` with `requester_identity_type` `human`;
-- a Task attempt started by the platform's dispatch (`POST /internal/a2a/task-dispatch`): the
-  dispatch's `requester_user_uid` when its `requester_identity_type` is `human`, with no Team
-  UIDs. Only a hosted runtime reads these facts, because only it verifies the platform assertion
-  on its internal routes;
-- a turn that resumes a caller delivery: the delivery's `requester_user_uid` when its
-  `requester_identity_type` is `human`, only when the platform's answer to the turn start names
-  the same User, with no Team UIDs;
-- otherwise None: Agent callers, the platform's other calls, local mode, a
-  runtime that is not hosted, and code outside a turn. A caller that section 6 admitted as the
-  Agent that delegated to the session is a workload User, so it is never the requester, whatever
-  the platform answers.
+`uid` and `team_uids`, or None. The platform's answer to the transition that marks the turn active
+names that person in `requester_user_uid`, or null, for every kind of turn: a chat or A2A Message
+turn, a Task attempt the platform dispatches or the request runs itself, and a turn that resumes a
+caller delivery. That answer is the only source, whoever called: the runtime never takes a person
+from an assertion claim, a dispatch or a Task answer. `team_uids` come from the verified caller
+assertion of the request when its caller is that person, and are empty otherwise. Local mode, a
+runtime that is not hosted, and code outside a turn have None.
 
 The turn binds its requester for its own duration and ends the binding when it ends. Detached SDK
 work never inherits it, and a task a tool leaves running sees no requester after the turn.
 
-**Requester-bound calls.** `requester_client()` returns a client bound to the current turn and
-raises a `PermissionError` with `code` `requester_binding_invalid` when the turn has no
-requester.
+**Calls for the work.** `platform_client()` returns a client for project code. Its `delegation`
+argument decides, when each call is made, whether the call carries the delegation of the person the
+turn serves: `"auto"` (the default) when the turn serves a person, `"none"` never, and `"required"`
+always, refusing the call before it is sent with a `PermissionError` whose `code` is
+`requester_binding_invalid` when the turn serves nobody. Outside a turn no call carries a
+delegation.
 
-- `request(method, path, ...)` calls a platform API path relative to the platform base URL with
-  the runtime's credential and `X-MainSequence-Acting-For-Session` (the turn's session),
-  `X-MainSequence-Lease-Holder` and `X-MainSequence-Lease-Token` (the runtime's current lease on
-  it). They are the values of the runtime's private caller-session proof.
+- `request(method, path, ...)` calls a platform API path relative to the platform base URL with the
+  runtime's credential and, when the call carries the delegation, `X-MainSequence-Acting-For-Session`
+  (the turn's session), `X-MainSequence-Lease-Holder` and `X-MainSequence-Lease-Token` (the
+  runtime's current lease on it). They are the values of the runtime's private caller-session
+  proof.
 - `call_release(release_uid, method, path, ...)` obtains access with
-  `POST /api/v1/resource-releases/<release_uid>/resolve-runtime-access/`, sent with the same
-  headers. The answer's `access` is `{"mode": "token", "token": <bearer>, "rpc_url": <base URL>}`.
-  The client calls `rpc_url` plus `path` with only `Authorization: Bearer <token>`, keeps the token
-  for the turn while it is valid, replaces it shortly before it expires, and replaces it once after
-  a 401. The application answers as the requester.
+  `POST /api/v1/resource-releases/<release_uid>/resolve-runtime-access/`, sent with the same headers
+  when the call carries the delegation and without them otherwise. The answer's `access` is
+  `{"mode": "token", "token": <bearer>, "rpc_url": <base URL>}`. The client calls `rpc_url` plus
+  `path` with only `Authorization: Bearer <token>`, keeps the token for the turn while it is valid,
+  replaces it shortly before it expires, and replaces it once after a 401. The application answers
+  as the person when the token carries the delegation, and as the Agent otherwise.
 - The binding headers and the runtime credential go only to the platform base URL. A tool passes a
   path, never a URL, and cannot set `Authorization` or any `X-MainSequence-*` header. Redirects are
   not followed. The answer is returned on a request copy that carries no header.
 - A 403 whose JSON `code` is `requester_binding_invalid` or starts with `runtime_lease_` raises a
   `PermissionError` carrying that code: the turn is over, the requester's access was removed, more
-  than 24 hours passed since the request, or the Agent is not enabled to act for its requester.
-  Every other answer is returned to the tool as it is.
-- The platform enforces that requester-bound calls are read-only and member-level.
+  than 24 hours passed since the request, or the Agent is not enabled to act for its requester. A
+  refused delegated call is never retried without the delegation. Every other answer is returned
+  to the tool as it is.
+- A delegated call uses the person's ordinary permissions, including administrative ones; any other
+  call uses the Agent's own. Each operation decides what it needs: nothing restricts delegated calls
+  specifically.
 
 **What people are told.** Every SDK document and skill that describes this access uses this
 statement:
 
-> **This Agent works with your identity, securely.** It reads only what you can already read, only
-> to answer your own requests, and for at most 24 hours after you ask. It cannot act as anyone else,
-> cannot change, share or delete anything, never sees your secret values, and stops the moment your
-> access ends. Your Organization's administrator approved it to work this way.
+> **This Agent works with your identity.** It can read, create, change, run,
+> share or delete only what your permissions allow through supported operations,
+> only while serving your request, and for at most 24 hours after you ask. It
+> uses your ordinary permissions, including administrative permissions, and
+> access is checked on every call. Your Organization's administrator approved it
+> to work this way.
 
-The limit is stated plainly: while it works on your request, the Agent's code can read what you can
-read, which is why only administrators decide which Agents may work this way.
+The statement describes operations done for the person, not the Agent's separate workload grants or
+local human credentials. Prompt injection can steer the Agent into unintended reads or writes
+within the person's rights. Changes, sharing, or deletion can persist after the binding ends;
+only administrators enable this authority. See the
+[Security and access guide](../reference/security-model.md#availability) for rollout status.
 
 ## Consequences
 
@@ -326,7 +339,8 @@ read, which is why only administrators decide which Agents may work this way.
 - A turn start, a Task creation and a Task continuation carry one more header. A platform that
   does not record requesters answers without `requester_user_uid`, and the turn or Task attempt
   then has no requester.
-- While it serves a requester, an enabled Agent's code can read what that person can read.
+- While it serves a requester, an enabled Agent's code can read and change what that person can,
+  with that person's ordinary permissions.
 
 ## Verification
 
@@ -348,13 +362,15 @@ a failed lookup; and one lookup per request.
 
 `tests/unit/test_requester_identity.py` covers section 9: the assertion on the turn-start
 transition of hosted chat, A2A Message, JSON-RPC and strict JSON repair turns, for person and
-Agent callers; none on Task attempts, after expiry, in local mode or outside hosting; the requester
-the platform recorded, nobody, or someone else; the assertion on Task creation and continuation
-and the requester of an attempt the request runs, for each answer the platform can give; the
-dispatched Task requester and its rejected variants; the binding ending with the turn; the three headers only to the platform origin; the
-release access flow, its cache, its renewal near expiry and after a 401; the refusal codes; and a
-hosted turn end to end, with a project tool on a real Tau session, whose logs, persisted entries,
-stream, tool result and model context contain no assertion, lease token, runtime credential or
-application token. `tests/contract/test_session_persistence_client.py` freezes the header and the
+Agent callers; none on Task attempts, after expiry, in local mode or outside hosting; the person
+the platform names for every kind of turn, whoever called, and nobody; the caller's teams only
+when it is that person; the assertion on Task creation and continuation, the verified caller an
+attempt keeps, and a dispatch that is not a source of the person; the delegation ending with the
+turn; `platform_client()` with each delegation mode, inside and outside a turn; the three headers
+only on delegated calls and only to the platform origin; the release access flow, its cache, its
+renewal near expiry and after a 401; the refusal codes; and a hosted turn end to end, with a
+project tool on a real Tau session, whose housekeeping carries no delegation and whose logs,
+persisted entries, stream, tool result and model context contain no assertion, lease token,
+runtime credential or application token. `tests/contract/test_session_persistence_client.py` freezes the header and the
 `requester_user_uid` answer of the transition, and `tests/contract/test_backend_client.py` the
 header and the requester answer of Task creation and continuation.

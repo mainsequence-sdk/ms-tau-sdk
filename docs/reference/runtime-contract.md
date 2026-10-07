@@ -93,63 +93,77 @@ list without `contextId` returns only Tasks of sessions the caller may address.
 
 The runtime never creates a session in managed mode: the platform creates it and records its
 owner. The platform's own `/internal/*` calls carry no caller and are not subject to the check.
+These runtime admission rules differ from the platform's conversation and Task permissions; see
+[the permission matrix](./security-model.md#conversation-and-task-permissions).
 
 ### The turn's requester
 
-An Agent that an Organization admin enabled for it can read with the access of the person whose
-request a turn is serving. The runtime never names that person; it proves which of its own sessions
-it is working on, and the platform finds the person in its own records (ADR 0019, section 9).
+An Agent that an Organization admin enabled for it can act with the ordinary permissions of the
+person whose request a turn is serving. The runtime never names that person; it proves which of its
+own sessions it is working on, and the platform finds the person in its own records (ADR 0019,
+section 9, and ADR 0021).
 
-- **Turn start.** When a hosted runtime marks a chat or A2A Message turn active
+- **Turn start.** When a hosted runtime marks a turn active
   (`PATCH /api/v1/agent-sessions/<uid>/tau-runtime-activity/` with `runtime_activity` `working` and
-  the new `active_turn_uid`), it sends the verified caller assertion of the request that started
-  the turn in `X-MainSequence-Caller-Assertion`, beside its own credential. Only that transition
-  carries it, only while it is valid, and never for a Task attempt, in local mode, or outside
-  hosting. The answer is the usual runtime state plus `requester_user_uid`: the person the
-  platform recorded as the turn's requester, or `null`.
+  the new `active_turn_uid`), the answer is the usual runtime state plus `requester_user_uid`: the
+  person the turn serves, or `null`. This answer is the only source of the person, for every kind
+  of turn and whoever called. A chat or A2A Message turn sends the verified caller assertion of the
+  request that started it in `X-MainSequence-Caller-Assertion`, beside its own credential: only on
+  that transition, only while it is valid, and never in local mode or outside hosting. A turn that
+  resumes a caller delivery names the delivery in `caller_delivery_uid` instead. A Task attempt
+  sends neither.
 - **Task creation and continuation.** When a hosted request creates a Task
   (`POST /api/v1/agent-tasks/`) or continues one (`POST /api/v1/agent-tasks/<uid>/continue/`), the
   runtime sends the request's verified caller assertion in the same header, under the same rules.
-  The answer names the Task's recorded requester in `requester_user_uid` and
-  `requester_identity_type`. A Task attempt that the request runs itself serves the request's
-  verified caller when the answer names that User with `requester_identity_type` `human`.
-- **Task dispatch.** `POST /internal/a2a/task-dispatch` carries `requester_user_uid` and
-  `requester_identity_type`. A hosted runtime takes the Task attempt's requester from them when
-  `requester_identity_type` is `human`.
-- **Caller delivery.** `POST /internal/a2a/task-caller-delivery` carries the same two facts for the
-  person who asked for the delegated work. A hosted runtime starts the resumed turn without an
-  assertion and names the delivery in `caller_delivery_uid` on the transition that marks it
-  active. The turn serves that person when the facts name a `human` and the answer's
-  `requester_user_uid` names the same User.
-- **Requester-bound calls.** An extension tool's call through `requester_client()` sends the
-  runtime's credential with `X-MainSequence-Acting-For-Session` (the turn's session),
-  `X-MainSequence-Lease-Holder` and `X-MainSequence-Lease-Token` (the runtime's lease on it), to
-  the platform base URL only. A call to another application first sends
-  `POST /api/v1/resource-releases/<release_uid>/resolve-runtime-access/` with the same headers,
-  then calls the returned `access.rpc_url` with `Authorization: Bearer <access.token>` only.
+  The answer's `requester_user_uid` and `requester_identity_type` are the Task's records; the
+  runtime does not take the person from them. The request's verified caller supplies the person's
+  teams when the attempt's turn start names that caller.
+- **Task dispatch and caller delivery.** `POST /internal/a2a/task-dispatch` and
+  `POST /internal/a2a/task-caller-delivery` may carry `requester_user_uid` and
+  `requester_identity_type`; the runtime does not take the person from them either.
+- **Calls for the work.** While the turn serves a person, every call made for the work carries the
+  person's delegation: a Main Sequence MCP call carries the turn's session proof under
+  `mainsequence.ai/delegation/v1` in its private metadata, and a REST call through
+  `platform_client()` sends the runtime's credential with `X-MainSequence-Acting-For-Session` (the
+  turn's session), `X-MainSequence-Lease-Holder` and `X-MainSequence-Lease-Token` (the runtime's
+  lease on it), to the platform base URL only. A hosted Main Sequence MCP call also names its
+  session under `mainsequence.ai/caller-session-proof/v1`, whether or not it carries a delegation.
+  A call to another application first sends
+  `POST /api/v1/resource-releases/<release_uid>/resolve-runtime-access/`, with the delegation
+  headers when the call carries the delegation and without them otherwise, then calls the returned
+  `access.rpc_url` with `Authorization: Bearer <access.token>` only.
+- **Housekeeping.** The runtime's own calls (the lease, turn activity, entries, snapshots and Task
+  status) never carry a delegation.
 - **Refusal.** A 403 whose JSON `code` is `requester_binding_invalid` or starts with
-  `runtime_lease_` ends the binding for the tool, which receives a `PermissionError` with that code.
+  `runtime_lease_` ends the delegation for the call, which raises a `PermissionError` with that
+  code. It is never retried without the delegation.
 
 The assertion, the lease token, the runtime credential and application tokens never appear in a
 log line, a persisted entry, model context, a tool result, the UI stream or history.
 
 ### Declared application MCP endpoints
 
-Declaring an application in the Agent's workflow file registers its MCP endpoint. The platform
-resolves each declared application in the Agent's Environment and returns it in the startup data
-as an `mcp_applications` entry with `name` and `resource_release_uid`; no UID or URL is configured
-in the project. For each entry the runtime offers two tools:
+Declaring an application in the Agent's workflow file registers its MCP endpoint; it grants no
+access. The platform resolves each declared application in the Agent's Environment and returns it
+in the startup data as an `mcp_applications` entry with `name` and `resource_release_uid`; no UID
+or URL is configured in the project. For each entry the runtime offers two tools:
 
 - `<name>__list_tools` returns the application's tools: name, description, input schema and
   whether it only reads; and
 - `<name>__call_tool` takes `tool` and `arguments` and calls that tool.
 
-Both act for the turn's requester. For each call the runtime obtains the application's RPC URL and
-a token for the requester through `resolve-runtime-access`, opens an MCP session to `<rpc_url>/mcp`
-with that token, renews the token once on `401`, and closes the session when the call ends. A turn
-without a requester gets a refusal before anything is sent. A name must match
-`^[a-z][a-z0-9_]{0,39}$` and must not be `mainsequence`; an invalid or repeated name fails the
-session load. Local mode has no declared applications.
+For each call the runtime obtains the application's RPC URL and a token through
+`resolve-runtime-access`: for the person the turn serves, or the Agent's own when it serves nobody.
+It opens an MCP session to `<rpc_url>/mcp` with that token, renews the token once on `401`, and
+closes the session when the call ends. Without a person, the Agent's workload needs its own grants
+on the application. A name must match `^[a-z][a-z0-9_]{0,39}$` and must not be `mainsequence`; an
+invalid or repeated name fails the session load. Local mode has no declared applications.
+
+A delegated call uses the person's ordinary permissions, including administrative ones; any other
+call uses the Agent's own, and each operation decides what it needs. For configuration, write
+risk, revocation, and the distinction between requester and workload authority, see the
+[Security and access guide](./security-model.md#acting-for-the-person-acts_for_requester). Both
+need the matching platform change; see [availability](./security-model.md#availability).
 
 ### Chat turns and client disconnects
 

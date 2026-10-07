@@ -3,7 +3,9 @@
 Version `1.0.0` establishes the first stable Main Sequence TAU SDK contract. The project follows
 semantic versioning for these supported surfaces:
 
-- `ms_tau_sdk.create_app`, `ms_tau_sdk.TauSDKSettings`, and `ms_tau_sdk.__version__`;
+- the exported Python API: `ms_tau_sdk.create_app`, `TauSDKSettings`, `__version__`,
+  `current_requester`, `platform_client`, `register_deployment_readiness_hook`, and
+  `RUNTIME_HEALTH_ABI_VERSION` (see the [public API](./public-api.md));
 - the `ms-tau` command and its workspace-bound startup behavior;
 - documented `MAINSEQUENCE_TAU_*`, `MAINSEQUENCE_ENDPOINT`, `MAINSEQUENCE_AUTH_MODE`, and
   `MAINSEQUENCE_RUNTIME_CREDENTIAL_ID`, `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE`,
@@ -33,6 +35,17 @@ A major release is required to remove or incompatibly change one of those surfac
 may add backward-compatible settings, APIs, routes, or behavior. Patch releases contain compatible
 fixes. Every release records relevant changes in the changelog and passes the same distribution,
 consumer, project-configuration, and protocol contracts.
+
+## Requester and MCP availability
+
+Acting for a person depends on the Agent's administrator configuration and on the person's own
+permissions. An SDK upgrade does not add permissions. See the
+[Security and access guide](./security-model.md#availability).
+
+The delegation envelope and declared-application MCP connections are documented under
+**Unreleased** in the [changelog](../../CHANGELOG.md#unreleased). They ship in one cutover with the
+matching platform change, with no transition: this release works only with that platform, and
+earlier releases stop acting for people once it is deployed.
 
 ## Branch and Release Standard
 

@@ -100,10 +100,11 @@ only an application that declares it, so serve the application `create_app()` re
 hosting, requests are handled as before. See
 [request identity](docs/reference/runtime-contract.md#request-identity).
 
-An Agent that an Organization admin enabled for it can read with the access of the person whose
-request a turn is serving. Project tools read that person with `current_requester()` and call the
-platform or another platform application for them with `requester_client()`; neither exposes a
-proof or a token. See the [public API](docs/reference/public-api.md#current_requester-and-requester_client).
+An Agent that an Organization admin enabled for it can act with the ordinary permissions of the
+person whose request a turn is serving. Project tools read that person with `current_requester()`
+and call the platform or another platform application with `platform_client()`, which carries the
+person's delegation by default while the turn serves one; neither exposes a proof or a token. See
+the [public API](docs/reference/public-api.md#current_requester-and-platform_client).
 
 Job-hosted batch execution is an [accepted design](docs/adrs/0015-job-hosted-batch-execution.md)
 with implementation pending. It will run this SDK's configured Tau composition for one assignment
@@ -254,13 +255,14 @@ are not bundled into the SDK. Main Sequence transport and protocol behavior rema
 - explicit, version-matched development skills for repository integration, local debugging,
   project customization, and TAU's A2A host adapter
 
-## Security model
+## Security and access guide
 
-A hosted Agent runs as its own workload, with no access until it is granted, and never reads or
-writes Secret values. An Organization admin can let it read with the access of the person it is
-serving, read-only and for at most 24 hours. Everything its tools read reaches the model, and its
+A hosted Agent runs as its own workload, with no access until it is granted. An Organization admin
+can let it act with the ordinary permissions of the person it serves, including administrative
+ones, only during that work and for at most 24 hours. Prompt injection can cause unintended actions within those rights;
+completed changes can outlast that access. Everything its tools read reaches the model, and its
 tools and extensions run with its credentials. The
-[agent security model](docs/reference/security-model.md) explains what people who build and use
+[Security and access guide](docs/reference/security-model.md) explains what people who build and use
 Agents need to know.
 
 ## Deployment boundary

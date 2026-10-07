@@ -82,6 +82,8 @@ hosted.
 | `TAU_LOCAL_PROVIDER` | Required exact provider selection; contains no secret. |
 | `TAU_LOCAL_MODEL` | Required exact model selection; contains no secret. |
 | `TAU_LOCAL_THINKING` | Optional Tau thinking level. |
+| `TAU_LOCAL_CUSTOM_ID` | Optional configured credential name for the selected built-in provider; default unset. It must identify one accessible record in the selected Environment. Custom endpoints use their provider identifier instead. |
+| `TAU_LOCAL_ORGANIZATION_ENVIRONMENT_UID` | Optional Environment UID for local provider selection; default unset. Set it when the platform cannot select an accessible active or sole Environment. |
 | `TAU_LOCAL_STATE_ROOT` | Local state root; defaults to `~/.tau/mainsequence`. |
 | `TAU_LOCAL_A2A_TASK_RECONCILE_INTERVAL_SECONDS` | Local Task recovery scan interval; default `5`. |
 | `TAU_LOCAL_A2A_TASK_STALE_AFTER_SECONDS` | Age after which an unowned working attempt is stale; default `120`. |
@@ -92,6 +94,12 @@ The user's JWT authenticates Main Sequence provider hydration and MCP. It is nev
 selected model provider. Provider credentials are hydrated remotely and kept out of the
 environment and local database. The SDK does not depend on, import, or dynamically load the
 `mainsequence` Python package, and it does not read the Main Sequence CLI's credential store.
+
+Named provider selection is described in [project configuration](../guides/project-configuration.md#named-providers-and-sharing).
+When no credential name is supplied for a new session, selection prefers the user's original owned
+record, then the first shared record. Existing sessions keep their selected credential and
+Environment when resumed or refreshed; a revoked selection does not silently switch to another
+record. See [provider troubleshooting](./troubleshooting.md#local-provider-hydration-is-rejected).
 
 ### Local credential source
 

@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased
+
+- **Breaking: one delegation envelope on every call made for the work
+  ([#78](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/78), ADR 0021 amendment).** This
+  release works only with the matching platform change, deployed in the same cutover; there is no
+  deprecation period, and earlier releases, including 2.0.6, stop acting for people once that
+  platform is deployed.
+  - Every hosted Main Sequence MCP call names the turn's session, and carries the person's
+    delegation (`mainsequence.ai/delegation/v1`) while the turn serves a person. The platform's
+    per-tool labels (`mainsequence.ai/requires-requester/v1`,
+    `mainsequence.ai/requires-caller-session-proof/v1`) are no longer read, and a turn that serves
+    nobody keeps its MCP tools: its calls are the Agent's own.
+  - Declared application tools run in every turn, with a token for the person the turn serves or
+    the Agent's own token when it serves nobody. A refused delegated call is reported and never
+    retried as the Agent.
+  - The person a turn serves comes only from the platform's answer to the turn start, whoever
+    called; dispatch, delivery and Task answers are no longer read for it. Delegated work serves
+    the person the platform records for it.
+  - `platform_client()` replaces `requester_client()`, with no alias. By default a call carries the
+    delegation while the turn serves a person; `delegation="none"` never carries it and
+    `delegation="required"` refuses the call before sending when the turn serves nobody. Outside a
+    turn no call carries a delegation, and in local mode calls use the signed-in person's own
+    credential.
+  - Delegated calls use the person's ordinary permissions, including administrative ones; the
+    statement people are shown changes accordingly.
+  - The SDK no longer hides the withdrawn private Secret entry operations, and the local health
+    field `mcp_session_proof_limited_tool_count` is removed.
+
+- A new packaged skill, `tau_security_and_access`, teaches building project tools that act for the
+  person a turn serves: which delegation each tool should use, a worked example of tools that use
+  a person's own Secret without exposing it to the model, and how sharing decides what a delegated
+  call can reach. `ms-tau skills sync` now installs five skills.
+
+- Documentation now distinguishes requester-bound reads and supported writes from workload grants,
+  states the write risk and platform rollout requirements, and includes conversation/Task
+  permissions and denial recovery. The Security and access guide keeps its `security-model.md`
+  path. Provider selection settings and troubleshooting, the public readiness-hook reference, and
+  the exported API compatibility list are complete. This changes documentation only.
+
 ## 2.0.6 — 2026-10-07
 
 - The documentation no longer describes the platform's internal implementation. It no longer names

@@ -9,7 +9,7 @@ from .runtime.deployment_health import (
     RUNTIME_HEALTH_ABI_VERSION,
     register_deployment_readiness_hook,
 )
-from .runtime.requester import current_requester, requester_client
+from .runtime.requester import current_requester, platform_client
 from .settings import TauSDKSettings
 
 __all__ = [
@@ -18,6 +18,6 @@ __all__ = [
     "__version__",
     "create_app",
     "current_requester",
+    "platform_client",
     "register_deployment_readiness_hook",
-    "requester_client",
 ]

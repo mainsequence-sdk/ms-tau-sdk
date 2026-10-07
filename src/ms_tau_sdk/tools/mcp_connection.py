@@ -45,8 +45,8 @@ class MCPToolPolicy:
 
     ``prefix`` names the connection's tools (``<prefix>__<tool>``) and ``display_name`` appears in
     the messages the model sees. The hooks let a connection exclude tools, reshape an input schema,
-    check arguments before a call, attach private metadata the model never sees, and refuse a call
-    before it is sent.
+    check arguments before a call, and attach private metadata the model never sees. The private
+    metadata is computed for each call, so that it reflects the turn that makes it.
     """
 
     prefix: str
@@ -55,7 +55,6 @@ class MCPToolPolicy:
     input_schema: Callable[[types.Tool], Mapping[str, JSONValue]] | None = None
     check_arguments: Callable[[str, Mapping[str, JSONValue]], None] | None = None
     private_meta: Callable[[types.Tool], Mapping[str, JSONValue] | None] | None = None
-    refusal: Callable[[types.Tool], str | None] | None = None
     resource_tool_description: str | None = None
 
 
@@ -130,7 +129,6 @@ def _create_tool(
         and bool(getattr(annotations, "idempotentHint", False))
         else "sequential"
     )
-    private_meta = policy.private_meta(tool) if policy.private_meta is not None else None
 
     async def execute(
         tool_call_id: str,
@@ -144,14 +142,9 @@ def _create_tool(
                 content=[TextContent(text=f"{display_name} MCP tool call was cancelled.")],
                 details={"mcp_tool": canonical_name, "cancelled": True},
             )
-        refusal = policy.refusal(tool) if policy.refusal is not None else None
-        if refusal is not None:
-            return AgentToolResult(
-                content=[TextContent(text=refusal)],
-                details={"mcp_tool": canonical_name, "is_error": True, "refused": True},
-            )
         if policy.check_arguments is not None:
             policy.check_arguments(canonical_name, arguments)
+        private_meta = policy.private_meta(tool) if policy.private_meta is not None else None
         if private_meta is None:
             result = await client.call_tool(canonical_name, dict(arguments))
         else:

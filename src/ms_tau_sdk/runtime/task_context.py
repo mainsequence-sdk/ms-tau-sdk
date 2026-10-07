@@ -8,9 +8,9 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from ms_tau_sdk.backend.assertions import VerifiedCaller
 from ms_tau_sdk.protocols.a2a_failure import TASK_STATUS_DETAIL_EXTENSION_URI
 from ms_tau_sdk.protocols.a2a_message import agent_message
-from ms_tau_sdk.runtime.requester import Requester
 
 TaskInterruptionStatus = Literal["input_required", "auth_required"]
 
@@ -25,9 +25,10 @@ class TaskExecutionContext:
     lease_token: str
     interruption_status: TaskInterruptionStatus | None = None
     interruption_message: dict[str, Any] | None = None
-    # The person the platform recorded as the Task's requester, as its dispatch or its answer to the
-    # request that runs this attempt names them, or None.
-    requester: Requester | None = None
+    # The verified caller of the request that runs this attempt itself; None for an attempt the
+    # platform dispatches. It supplies the teams of the person the attempt serves when that
+    # person is the caller; the platform's answer to the turn start names the person.
+    caller: VerifiedCaller | None = None
 
     def request_interruption(
         self,

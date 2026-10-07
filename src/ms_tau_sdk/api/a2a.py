@@ -20,7 +20,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 from structlog.contextvars import bind_contextvars
 from tau_agent.types import JSONValue
 
-from ms_tau_sdk.backend.assertions import CallerAssertion
+from ms_tau_sdk.backend.assertions import CallerAssertion, VerifiedCaller
 from ms_tau_sdk.backend.client import MainSequenceClient
 from ms_tau_sdk.backend.models import (
     AgentTask,
@@ -63,7 +63,7 @@ from ms_tau_sdk.runtime.provenance import (
     TurnProvenance,
     turn_provenance_from_request,
 )
-from ms_tau_sdk.runtime.requester import CallerDelivery, Requester, canonical_requester_uid
+from ms_tau_sdk.runtime.requester import CallerDelivery
 from ms_tau_sdk.runtime.task_context import (
     TaskExecutionContext,
     active_task_execution,
@@ -920,22 +920,14 @@ def _presented_assertion(caller_assertion: CallerAssertion | None) -> dict[str, 
     return {"caller_assertion": token} if token else {}
 
 
-def _requester_named_by_task(
-    task: AgentTask,
-    caller_assertion: CallerAssertion | None,
-) -> Requester | None:
-    """Return the request's verified caller when the platform recorded that person as requester.
+def _request_caller(caller_assertion: CallerAssertion | None) -> VerifiedCaller | None:
+    """Return the verified caller of a request that runs a Task attempt itself.
 
-    This is the requester of a Task attempt that the request itself runs: the platform's Task
-    answer must name the same User, as a person, as ``requester_user_uid``.
+    The platform's answer to the attempt's turn start names the person the attempt serves; this
+    caller only supplies that person's teams, when it is that person.
     """
 
-    if caller_assertion is None or caller_assertion.caller_is_workload:
-        return None
-    caller = caller_assertion.caller
-    if task.requester_identity_type != "human" or task.requester_user_uid != caller.uid:
-        return None
-    return Requester(uid=caller.uid, team_uids=caller.team_uids)
+    return caller_assertion.caller if caller_assertion is not None else None
 
 
 async def _wait_for_task_return_state(
@@ -1289,7 +1281,7 @@ async def _execute_task(
     config: TauSDKSettings | None = None,
     dispatch_uid: str | None = None,
     claim: _ClaimedTask | None = None,
-    requester: Requester | None = None,
+    caller: VerifiedCaller | None = None,
 ) -> dict[str, Any]:
     bind_contextvars(
         a2a_task_id=task.task_id,
@@ -1322,7 +1314,7 @@ async def _execute_task(
         attempt_uid=claim.attempt_uid,
         holder_id=claim.holder_id,
         lease_token=claim.lease_token,
-        requester=requester,
+        caller=caller,
     )
     try:
         await writer.ensure_not_canceled(force=True)
@@ -1408,7 +1400,7 @@ async def _schedule_task_accelerator(
     max_output_bytes: int,
     provenance: TurnProvenance,
     config: TauSDKSettings,
-    requester: Requester | None = None,
+    caller: VerifiedCaller | None = None,
 ) -> bool:
     """Best-effort local start after durable creation; dispatch remains recovery owner."""
 
@@ -1440,7 +1432,7 @@ async def _schedule_task_accelerator(
         provenance=provenance,
         config=config,
         claim=claim,
-        requester=requester,
+        caller=caller,
     )
     try:
         _background, scheduled = manager.create_a2a_task_execution(
@@ -1680,7 +1672,7 @@ async def _stream_task_events(
     provenance: TurnProvenance,
     config: TauSDKSettings | None = None,
     history_length: int = DEFAULT_TASK_HISTORY_LENGTH,
-    requester: Requester | None = None,
+    caller: VerifiedCaller | None = None,
 ) -> AsyncIterator[dict[str, Any]]:
     claim = await _claim_backend_task(client, manager, task)
     resolved = config or manager.settings
@@ -1700,7 +1692,7 @@ async def _stream_task_events(
         attempt_uid=claim.attempt_uid,
         holder_id=claim.holder_id,
         lease_token=claim.lease_token,
-        requester=requester,
+        caller=caller,
     )
     working = await client.get_task(task.uid)
     working = await _task_with_history(client, working, history_length=history_length)
@@ -1878,7 +1870,7 @@ def _message_stream_response(
     history_length: int = DEFAULT_TASK_HISTORY_LENGTH,
     json_rpc: bool = False,
     request_id: object = None,
-    requester: Requester | None = None,
+    caller: VerifiedCaller | None = None,
 ) -> StreamingResponse:
     async def stream() -> AsyncIterator[bytes]:
         try:
@@ -1892,7 +1884,7 @@ def _message_stream_response(
                 provenance=provenance,
                 config=config,
                 history_length=history_length,
-                requester=requester,
+                caller=caller,
             ):
                 yield _sse(
                     _stream_payload(
@@ -2149,21 +2141,6 @@ def _durable_task_execution_input(
     return prompt, contract, provenance
 
 
-def _dispatched_requester(body: dict[str, Any], config: TauSDKSettings) -> Requester | None:
-    """Return the requester that the platform's verified dispatch or caller delivery names.
-
-    Only a person is a requester: an Agent's workload User never is. A runtime that does not
-    verify the platform's assertion on its internal routes takes no requester from them.
-    """
-
-    if config.local_mode or config.request_identity_mode != "assertion":
-        return None
-    if body.get("requester_identity_type") != "human":
-        return None
-    uid = canonical_requester_uid(body.get("requester_user_uid"))
-    return Requester(uid=uid) if uid is not None else None
-
-
 @router.post("/internal/a2a/task-dispatch", status_code=200)
 async def task_dispatch_available(
     body: dict[str, Any],
@@ -2199,7 +2176,6 @@ async def task_dispatch_available(
             provenance=provenance,
             config=config,
             claim=claim,
-            requester=_dispatched_requester(body, config),
         ),
         name=f"a2a-task-{task.task_id}",
     )
@@ -2242,7 +2218,6 @@ async def _resume_caller_delivery(
 async def task_caller_delivery_available(
     body: dict[str, Any],
     manager: RuntimeManagerDep,
-    config: SettingsDep,
 ) -> dict[str, Any]:
     delivery_uid = str(body.get("delivery_uid") or "").strip()
     task_uid = str(body.get("task_uid") or "").strip()
@@ -2289,10 +2264,7 @@ async def task_caller_delivery_available(
             task_id=task_id,
             task_status=task_status,
             caller_agent_session_uid=caller_agent_session_uid,
-            delivery=CallerDelivery(
-                uid=delivery_uid,
-                requester=_dispatched_requester(body, config),
-            ),
+            delivery=CallerDelivery(uid=delivery_uid),
         ),
         name=f"a2a-caller-delivery-{delivery_uid}",
     )
@@ -2381,7 +2353,7 @@ async def message_send(
             max_output_bytes=config.max_turn_output_bytes,
             provenance=provenance,
             config=config,
-            requester=_requester_named_by_task(task, caller_assertion),
+            caller=_request_caller(caller_assertion),
         )
         if return_immediately:
             task = await _task_with_history(client, task, history_length=history_length)
@@ -2416,7 +2388,7 @@ async def message_send(
                 max_output_bytes=config.max_turn_output_bytes,
                 provenance=provenance,
                 config=config,
-                requester=_requester_named_by_task(task, caller_assertion),
+                caller=_request_caller(caller_assertion),
             )
             if return_immediately:
                 task = await _task_with_history(client, task, history_length=history_length)
@@ -2556,7 +2528,7 @@ async def message_stream(
         provenance=provenance,
         config=config,
         history_length=history_length,
-        requester=_requester_named_by_task(task, caller_assertion),
+        caller=_request_caller(caller_assertion),
     )
 
 
@@ -2808,7 +2780,7 @@ async def json_rpc(
                 history_length=history_length,
                 json_rpc=True,
                 request_id=request_id,
-                requester=_requester_named_by_task(task, caller_assertion),
+                caller=_request_caller(caller_assertion),
             )
         elif method in {"GetTask", "tasks/get"}:
             result = await get_task(
