@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.4 — 2026-10-07
 
 - Private Secret entry is removed, and ADR 0020 with it. Tau no longer gives the Main Sequence MCP
   tools `secret_entry.start`, `secret_entry.status` and `secret_entry.cancel` special handling,
