@@ -339,6 +339,25 @@ async def test_runtime_access_credentials_never_become_agent_tool_results(text_b
         assert marker not in json.dumps(result.details)
 
 
+def test_withdrawn_secret_entry_tools_are_never_offered_to_the_model():
+    client = AsyncMock()
+    client.tools = tuple(
+        types.Tool(name=name, inputSchema={"type": "object", "properties": {}})
+        for name in (
+            "secret.list",
+            "secret_entry.start",
+            "secret_entry.status",
+            "secret_entry.cancel",
+            "agent.get",
+        )
+    )
+    client.resources = ()
+
+    assert [tool.name for tool in create_mainsequence_mcp_tools(client)] == [
+        "mainsequence__agent_get"
+    ]
+
+
 @pytest.mark.parametrize("tool_name", ["agent.list", "agent.search"])
 def test_agent_discovery_tool_hides_backend_controlled_environment_argument(tool_name):
     client = AsyncMock()
