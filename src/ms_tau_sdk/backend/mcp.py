@@ -1,4 +1,4 @@
-"""Main Sequence MCP transport using Main Sequence TAU SDK's existing backend authentication."""
+"""MCP connections over Streamable HTTP; the Main Sequence platform's MCP is the first one."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import contextvars
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Literal
+from typing import Literal, Self
 
 import httpx
 from mcp import ClientSession, types
@@ -74,16 +74,31 @@ ENVIRONMENT_SCOPED_AGENT_TOOLS = frozenset({"agent.list", "agent.search"})
 ENVIRONMENT_UID_ARGUMENT = "organization_environment_uid"
 
 
-class MainSequenceMCPClient:
+class MCPConnectionClient:
+    """One remote MCP server over Streamable HTTP.
+
+    Each client owns its own MCP session, tool catalog and resources; nothing is shared between
+    connections.
+    """
+
     def __init__(
         self,
         *,
-        settings: TauSDKSettings,
-        auth: BackendAuth,
+        name: str,
+        display_name: str,
+        url: str,
+        auth: httpx.Auth | None,
+        timeout: httpx.Timeout,
+        read_timeout_seconds: float,
+        read_concurrency: int,
     ) -> None:
-        self.url = f"{settings.backend_url.rstrip('/')}/mcp"
-        self._settings = settings
-        self._auth = auth
+        self.name = name
+        self.display_name = display_name
+        self.url = url
+        self._http_auth = auth
+        self._http_timeout = timeout
+        self._read_timeout_seconds = read_timeout_seconds
+        self._read_concurrency = read_concurrency
         self._commands: asyncio.Queue[_MCPCommand] | None = None
         self._owner_task: asyncio.Task[None] | None = None
         self._ready: asyncio.Future[None] | None = None
@@ -93,28 +108,23 @@ class MainSequenceMCPClient:
         self._parallel_tool_names: frozenset[str] = frozenset()
         self._closed = False
 
-    @classmethod
-    async def connect(
-        cls,
-        *,
-        settings: TauSDKSettings,
-        auth: BackendAuth,
-    ) -> MainSequenceMCPClient:
-        client = cls(settings=settings, auth=auth)
+    async def open(self) -> Self:
+        """Start the session and read the catalog; close everything if that fails."""
+
         try:
-            await client._connect()
+            await self._connect()
         except BaseException as connection_error:
             # Cleanup task groups can raise a secondary ExceptionGroup. Preserve
             # the connection failure because it contains the actionable cause.
             try:
-                await client.aclose()
+                await self.aclose()
             except BaseException as cleanup_error:
                 if isinstance(connection_error, asyncio.CancelledError):
                     actionable = _actionable_cleanup_error(cleanup_error)
                     if actionable is not None:
                         raise actionable from connection_error
             raise
-        return client
+        return self
 
     async def _connect(self) -> None:
         loop = asyncio.get_running_loop()
@@ -123,25 +133,17 @@ class MainSequenceMCPClient:
         initial_log_context = dict(get_contextvars())
         self._owner_task = asyncio.create_task(
             self._run(initial_log_context),
-            name="ms-tau-mainsequence-mcp",
+            name=f"ms-tau-{self.name}-mcp",
             context=contextvars.Context(),
         )
         await asyncio.shield(self._ready)
-
-    def _timeout(self) -> httpx.Timeout:
-        return httpx.Timeout(
-            connect=self._settings.backend_connect_timeout_seconds,
-            read=self._settings.backend_read_timeout_seconds,
-            write=self._settings.backend_write_timeout_seconds,
-            pool=self._settings.backend_pool_timeout_seconds,
-        )
 
     async def _run(self, initial_log_context: dict[str, object]) -> None:
         failure: Exception | None = None
         try:
             async with httpx.AsyncClient(
-                timeout=self._timeout(),
-                auth=_RuntimeCredentialHTTPXAuth(self._auth),
+                timeout=self._http_timeout,
+                auth=self._http_auth,
             ) as http_client:
                 async with streamable_http_client(
                     self.url,
@@ -151,9 +153,7 @@ class MainSequenceMCPClient:
                     async with ClientSession(
                         read_stream,
                         write_stream,
-                        read_timeout_seconds=timedelta(
-                            seconds=self._settings.backend_read_timeout_seconds
-                        ),
+                        read_timeout_seconds=timedelta(seconds=self._read_timeout_seconds),
                     ) as session:
                         with bound_contextvars(**initial_log_context):
                             await session.initialize()
@@ -175,21 +175,25 @@ class MainSequenceMCPClient:
                         await self._serve(session)
         except BaseException as error:
             actionable = _actionable_cleanup_error(error)
-            failure = actionable or RuntimeError("Main Sequence MCP owner task was cancelled")
+            failure = actionable or RuntimeError(
+                f"{self.display_name} MCP owner task was cancelled"
+            )
             self._failure = failure
         finally:
             if self._ready is not None and not self._ready.done():
                 self._ready.set_exception(
-                    failure or RuntimeError("Main Sequence MCP client failed to start")
+                    failure or RuntimeError(f"{self.display_name} MCP client failed to start")
                 )
-            self._fail_pending_commands(failure or RuntimeError("Main Sequence MCP client closed"))
+            self._fail_pending_commands(
+                failure or RuntimeError(f"{self.display_name} MCP client closed")
+            )
 
     async def _serve(self, session: ClientSession) -> None:
         commands = self._commands
         if commands is None:
-            raise RuntimeError("Main Sequence MCP command queue is not initialized")
+            raise RuntimeError(f"{self.display_name} MCP command queue is not initialized")
         active_reads: set[asyncio.Task[None]] = set()
-        read_slots = asyncio.Semaphore(self._settings.mcp_read_concurrency)
+        read_slots = asyncio.Semaphore(self._read_concurrency)
 
         async def execute(command: _CallToolCommand | _ReadResourceCommand) -> None:
             try:
@@ -253,11 +257,11 @@ class MainSequenceMCPClient:
 
     def _require_commands(self) -> asyncio.Queue[_MCPCommand]:
         if self._closed:
-            raise RuntimeError("Main Sequence MCP client is closed")
+            raise RuntimeError(f"{self.display_name} MCP client is closed")
         if self._owner_task is None or self._commands is None:
-            raise RuntimeError("Main Sequence MCP client is not connected")
+            raise RuntimeError(f"{self.display_name} MCP client is not connected")
         if self._owner_task.done():
-            raise RuntimeError("Main Sequence MCP owner task stopped") from self._failure
+            raise RuntimeError(f"{self.display_name} MCP owner task stopped") from self._failure
         return self._commands
 
     async def call_tool(
@@ -304,3 +308,39 @@ class MainSequenceMCPClient:
             await self._owner_task
         if self._failure is not None:
             raise self._failure
+
+
+class MainSequenceMCPClient(MCPConnectionClient):
+    """The Main Sequence platform's own MCP, authenticated with the runtime's credential."""
+
+    def __init__(
+        self,
+        *,
+        settings: TauSDKSettings,
+        auth: BackendAuth,
+    ) -> None:
+        super().__init__(
+            name="mainsequence",
+            display_name="Main Sequence",
+            url=f"{settings.backend_url.rstrip('/')}/mcp",
+            auth=_RuntimeCredentialHTTPXAuth(auth),
+            timeout=httpx.Timeout(
+                connect=settings.backend_connect_timeout_seconds,
+                read=settings.backend_read_timeout_seconds,
+                write=settings.backend_write_timeout_seconds,
+                pool=settings.backend_pool_timeout_seconds,
+            ),
+            read_timeout_seconds=settings.backend_read_timeout_seconds,
+            read_concurrency=settings.mcp_read_concurrency,
+        )
+        self._settings = settings
+        self._auth = auth
+
+    @classmethod
+    async def connect(
+        cls,
+        *,
+        settings: TauSDKSettings,
+        auth: BackendAuth,
+    ) -> MainSequenceMCPClient:
+        return await cls(settings=settings, auth=auth).open()

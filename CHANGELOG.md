@@ -11,6 +11,11 @@
   as, who can address its sessions, how its grants are capped, why only an Organization admin can
   let it act for the person it serves, how Secrets are handled, what reaches the model, what code in
   its process can reach, and what local mode changes. The README links to it.
+- Main Sequence MCP is the first connection of a general MCP connection primitive
+  ([ADR 0021](./docs/adrs/0021-mcp-connections-on-the-persons-identity.md), step 1). One client
+  and one adapter serve a remote MCP server over Streamable HTTP, each connection with its own tool
+  prefix, tool filter, session and catalog. The platform connection offers the same tools, names,
+  schemas and results as before.
 
 ## 2.0.5 — 2026-10-07
 
