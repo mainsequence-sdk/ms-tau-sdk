@@ -462,6 +462,34 @@ async def test_a_task_turn_never_presents_an_assertion_and_serves_the_person_nam
 
 
 @pytest.mark.parametrize(
+    "caller",
+    [
+        pytest.param(
+            VerifiedCaller(uid=AGENT_USER_UID, team_uids=(TEAM_UID,), is_organization_admin=False),
+            id="run_by_the_job",
+        ),
+        pytest.param(None, id="dispatched"),
+    ],
+)
+async def test_a_task_a_job_asked_for_serves_nobody(platform_keys, tmp_path, caller):
+    seen: list[Requester | None] = []
+
+    async def tool() -> None:
+        seen.append(current_requester())
+
+    # A Job's workload asked for the Task, so the platform names nobody for its attempts.
+    manager, _storage = _turn_manager(
+        platform_keys.hosted_settings(tmp_path), tool, answered_requester=None
+    )
+
+    with task_execution_scope(_task_context(caller)):
+        await _run_turn(manager, caller_assertion=_assertion(), turn_uid="turn-of-attempt-1")
+
+    assert seen == [None]
+    await _close(manager)
+
+
+@pytest.mark.parametrize(
     ("named", "caller", "expected"),
     [
         pytest.param(OWNER_UID, THE_CALLER, Requester(uid=OWNER_UID, team_uids=(TEAM_UID,))),
@@ -1264,7 +1292,9 @@ async def test_a_rejected_release_token_is_replaced_once(tmp_path):
 
 @pytest.mark.parametrize("code", ["requester_binding_invalid", "runtime_lease_expired"])
 @pytest.mark.parametrize("where", ["platform", "release_access", "application"])
-async def test_an_ended_binding_raises_a_typed_error(tmp_path, code, where):
+async def test_an_ended_binding_raises_a_typed_error_and_is_never_retried_as_the_agent(
+    tmp_path, code, where
+):
     refusal = httpx.Response(403, json={"code": code, "detail": "Requester binding ended."})
     async with _bound_turn(tmp_path) as (platform, application, _binding, _auth):
         if where == "platform":
@@ -1288,6 +1318,10 @@ async def test_an_ended_binding_raises_a_typed_error(tmp_path, code, where):
     assert code in str(raised.value)
     assert LEASE_TOKEN not in str(raised.value)
     assert RUNTIME_ACCESS_TOKEN not in str(raised.value)
+    # One delegated platform request, never a second one as the Agent.
+    (delegated,) = platform.requests
+    assert BINDING_HEADERS.items() <= _secret_headers(delegated).items()
+    assert len(application.requests) == (1 if where == "application" else 0)
 
 
 async def test_another_refusal_is_the_answer_of_the_platform_or_application(tmp_path):

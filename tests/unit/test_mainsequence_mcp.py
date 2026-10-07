@@ -641,6 +641,37 @@ async def test_a_hosted_call_that_serves_nobody_names_the_session_and_carries_no
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("refusal", ["error_result", "raised"])
+async def test_a_refused_delegated_call_is_never_retried_as_the_agent(refusal):
+    client = _platform()
+    if refusal == "error_result":
+        client.call_tool.return_value = types.CallToolResult(
+            content=[types.TextContent(type="text", text="The delegation was refused.")],
+            isError=True,
+        )
+    else:
+        client.call_tool.side_effect = RuntimeError("The delegation was refused.")
+    tool = create_mainsequence_mcp_tools(client, session_uid=SESSION_UID)[0]
+
+    with _turn(_binding(requester=PERSON)):
+        if refusal == "error_result":
+            result = await tool.execute("call-1", {})
+            assert result.details["is_error"] is True
+        else:
+            with pytest.raises(RuntimeError, match="refused"):
+                await tool.execute("call-1", {})
+
+    client.call_tool.assert_awaited_once_with(
+        "job.run",
+        {},
+        meta={
+            CALLER_SESSION_PROOF_META_KEY: _session_proof(),
+            DELEGATION_META_KEY: _session_proof(),
+        },
+    )
+
+
+@pytest.mark.asyncio
 async def test_tool_metadata_never_decides_the_envelope():
     labelled = types.Tool(
         name="a2a.send_message",

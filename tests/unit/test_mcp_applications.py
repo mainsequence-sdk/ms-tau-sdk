@@ -335,3 +335,23 @@ async def test_a_refused_delegation_is_reported_and_never_retried_as_the_agent()
         {"proof": LEASE},
         {"proof": LEASE},
     ]
+
+
+@pytest.mark.asyncio
+async def test_each_turn_obtains_its_own_application_access():
+    platform = _platform()
+
+    with _turn(platform, Requester(uid="person-1")):
+        await _turn_application_access(RELEASE_UID)
+        await _turn_application_access(RELEASE_UID)
+    with _turn(platform, Requester(uid="person-2")):
+        await _turn_application_access(RELEASE_UID)
+    with _turn(platform, None):
+        await _turn_application_access(RELEASE_UID)
+
+    # A turn reuses its own access, never another turn's or another person's.
+    assert [call.kwargs for call in platform.resolve_release_runtime_access.await_args_list] == [
+        {"proof": LEASE},
+        {"proof": LEASE},
+        {"proof": None},
+    ]
