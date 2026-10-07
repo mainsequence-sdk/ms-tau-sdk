@@ -20,7 +20,9 @@ from ms_tau_sdk.settings import TauSDKSettings
 
 
 @pytest.mark.asyncio
-async def test_python_client_matches_existing_django_session_contract(runtime_identity_token_file):
+async def test_python_client_matches_existing_platform_session_contract(
+    runtime_identity_token_file,
+):
     session_uid = "session-1"
     requests: list[tuple[str, str, object]] = []
 

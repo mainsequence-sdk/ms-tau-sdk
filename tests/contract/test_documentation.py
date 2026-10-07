@@ -11,7 +11,7 @@ def _active_documents() -> list[Path]:
     documents = [REPOSITORY_ROOT / "README.md", REPOSITORY_ROOT / "CHANGELOG.md"]
     for path in (REPOSITORY_ROOT / "docs").rglob("*.md"):
         relative = path.relative_to(REPOSITORY_ROOT / "docs")
-        if relative.parts[0] in {"history", "migration"}:
+        if relative.parts[0] == "migration":
             continue
         if path.name.startswith("adr-56-"):
             continue

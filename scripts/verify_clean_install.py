@@ -121,8 +121,8 @@ def main() -> None:
             check=True,
         )
 
-        # Exercise the installed wheel, not the source checkout. The committed Django
-        # AgentTaskInitialMessageSerializer requires message_id, accepts parts,
+        # Exercise the installed wheel, not the source checkout. The platform's Task
+        # message contract requires message_id, accepts parts,
         # metadata and reference_task_ids, and defaults omitted extensions.
         task_message_check = """
 from ms_tau_sdk.api.a2a import _task_message_for_backend

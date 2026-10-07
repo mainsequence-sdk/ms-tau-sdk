@@ -24,5 +24,5 @@ These records are the normative decisions for Main Sequence TAU SDK:
 - [ADR 0019: Verified request identity and session ownership](./0019-verified-request-identity-and-session-ownership.md)
 
 [ADR 56](./adr-56-main-sequence-tau-sdk-workspace-bound-library-deployment.md) is the accepted
-transition record and implementation ledger. Earlier decisions are preserved only in the
-[historical archive](../history/astro/README.md); they do not independently govern this project.
+transition record and implementation ledger. Decisions of the retired deployment project do not
+govern this project.

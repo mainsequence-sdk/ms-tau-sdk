@@ -1,4 +1,4 @@
-"""Tau SessionStorage backed by atomic Django entry batches."""
+"""Tau SessionStorage backed by atomic platform entry batches."""
 
 from __future__ import annotations
 
@@ -247,7 +247,7 @@ class BackendSessionStorage(SessionStorage):
                 )
 
     async def flush(self) -> None:
-        """Wait until every queued entry is durable in Django."""
+        """Wait until every queued entry is durable on the platform."""
 
         while True:
             async with self._state_lock:

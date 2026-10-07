@@ -2050,7 +2050,7 @@ class SessionRuntimeManager:
         *,
         name: str,
     ) -> tuple[asyncio.Task[object], bool]:
-        """Deduplicate local accelerators; Django's dispatch remains recovery owner."""
+        """Deduplicate local accelerators; the platform's dispatch remains recovery owner."""
 
         existing = self._a2a_task_executions.get(task_uid)
         if existing is not None and not existing.done():

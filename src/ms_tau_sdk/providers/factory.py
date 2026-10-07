@@ -156,11 +156,11 @@ class ProviderFactory:
     ) -> ThinkingLevel:
         if provider_control.provider != provider_name:
             raise ConfigurationError(
-                "Django provider-control evidence does not match the selected provider"
+                "Platform provider-control evidence does not match the selected provider"
             )
         if provider_control.model.model != model:
             raise ConfigurationError(
-                "Django provider-control evidence does not match the selected model"
+                "Platform provider-control evidence does not match the selected model"
             )
         try:
             normalized_thinking = normalize_thinking_level(thinking_level)
@@ -177,12 +177,12 @@ class ProviderFactory:
             projected_inputs = set(provider_control.model.input)
             if not projected_inputs or not projected_inputs.issubset(CUSTOM_INPUT_KINDS):
                 raise ConfigurationError(
-                    "Django provider-control input capabilities are invalid for a custom provider"
+                    "Platform provider-control input capabilities are invalid for a custom provider"
                 )
             projected_thinking = set(provider_control.model.thinking_levels)
             if not provider_control.model.reasoning and projected_thinking:
                 raise ConfigurationError(
-                    "Django provider-control thinking levels contradict the "
+                    "Platform provider-control thinking levels contradict the "
                     "custom model reasoning capability"
                 )
             if thinking_level and normalized_thinking not in projected_thinking:
@@ -226,17 +226,17 @@ class ProviderFactory:
         projected_inputs = set(provider_control.model.input)
         if not projected_inputs or not projected_inputs.issubset(tau_inputs):
             raise ConfigurationError(
-                "Django provider-control input capabilities exceed Tau execution support"
+                "Platform provider-control input capabilities exceed Tau execution support"
             )
         tau_thinking = set(self._thinking_levels(provider, model))
         projected_thinking = set(provider_control.model.thinking_levels)
         if not projected_thinking.issubset(tau_thinking):
             raise ConfigurationError(
-                "Django provider-control thinking levels exceed Tau execution support"
+                "Platform provider-control thinking levels exceed Tau execution support"
             )
         if provider_control.model.reasoning and not tau_thinking:
             raise ConfigurationError(
-                "Django provider-control reasoning capability exceeds Tau execution support"
+                "Platform provider-control reasoning capability exceeds Tau execution support"
             )
         available = tau_thinking.intersection(projected_thinking)
         if thinking_level and normalized_thinking not in available:
@@ -416,7 +416,7 @@ class ProviderFactory:
             if credential.api != api:
                 raise ConfigurationError(
                     "Custom provider credential transport does not match "
-                    "Django provider-control evidence"
+                    "Platform provider-control evidence"
                 )
             if not credential.base_url:
                 raise ConfigurationError("Custom provider credential requires an explicit base_url")

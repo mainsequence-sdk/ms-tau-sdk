@@ -20,7 +20,7 @@ Project extensions remain the consuming project's responsibility. The SDK mainta
 review, license, secure, or operate extensions merely because Tau loads them from a project
 workspace.
 
-Django remains authoritative for platform ontology, deployment resources, canonical A2A protocol,
+The Main Sequence platform remains authoritative for its ontology, deployment resources, canonical A2A protocol,
 authorization, and durable task lifecycle. The `mainsequence-sdk` distribution remains
 authoritative for its Python client and CLI mechanics. Neither dependency may overwrite the
 other's managed skill namespace.

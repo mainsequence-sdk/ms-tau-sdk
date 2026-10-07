@@ -143,27 +143,27 @@ and `POST /api/chat` for a session with a running turn returns 409 `session_busy
 
 ### Managed AgentTask execution
 
-Django owns the durable AgentTask state machine and route contract. A managed runtime lists the
+The platform owns the durable AgentTask state machine and route contract. A managed runtime lists the
 Task's dispatches when needed, claims the selected dispatch through `dispatches/claim`, explicitly
 starts the returned attempt through `attempts/start`, writes artifacts through
 `outputs/create`, `outputs/append`, and `outputs/finalize`, then settles the attempt through
 `attempts/settle`. Settlement returns an attempt record; the runtime reads the Task afterward for
 the resulting protocol state. The SDK does not post attempt Messages or use combined mutation or
-route aliases that Django does not expose.
+route aliases that the platform does not expose.
 
 Local Task creation and continuation persist one complete Main Sequence binding Message with
 `ROLE_REQUESTER` and ordered URI-array `extensions`. Managed Task creation and continuation
-translate the A2A Message into Django's snake_case `message_id`, `parts`, `metadata`, and
+translate the A2A Message into the platform's snake_case `message_id`, `parts`, `metadata`, and
 `reference_task_ids` fields. An empty `extensions` array is omitted so the backend supplies its
 default; a nonempty array returns HTTP 400 before a managed Task mutation until the backend can
 persist extension URIs. Object-valued extensions and other non-A2A-v1 shapes also return HTTP 400.
 
-Caller delivery flows in the other direction. Django sends the signed internal delivery signal,
+Caller delivery flows in the other direction. The platform sends the signed internal delivery signal,
 including the canonical caller AgentSession UID as a selector. The runtime persists the platform
 event idempotently by delivery UID and flushes session storage before returning success, then
-schedules the caller continuation. A busy caller session returns conflict so Django retains and
+schedules the caller continuation. A busy caller session returns conflict so the platform retains and
 retries the delivery. The SDK does not read, claim, or settle caller-delivery records through
-Django.
+the platform.
 
 ### Deployment readiness
 

@@ -1,4 +1,4 @@
-"""Structlog configuration aligned with the Main Sequence Django backend."""
+"""Structlog configuration aligned with the Main Sequence platform backend."""
 
 from __future__ import annotations
 
