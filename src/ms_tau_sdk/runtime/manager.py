@@ -1128,17 +1128,13 @@ class SessionRuntimeManager:
             )
             cwd = self._resolve_cwd()
             project_extension_state = ProjectExtensionState(enabled=True)
-            caller_session_proof: dict[str, JSONValue] | None = None
+            caller_session_proof = None
             if not self.settings.local_mode:
                 caller_session_proof = {
                     "caller_agent_session_uid": session_uid,
                     "lease_holder_id": lease.holder_id,
                     "lease_token": lease.lease_token,
                 }
-
-            async def record_secret_entry(payload: dict[str, JSONValue]) -> None:
-                await coding_session.append_custom_entry("mainsequence.secret_entry", payload)
-
             tools = []
             if self.settings.exclude_base_tools:
                 # Tau lists skills only when a tool named `read` exists. The tool runs only in
@@ -1150,8 +1146,6 @@ class SessionRuntimeManager:
                 tools.extend(
                     create_mainsequence_mcp_tools(
                         mcp_client,
-                        session_uid=session_uid,
-                        on_secret_entry=record_secret_entry,
                         caller_session_proof=caller_session_proof,
                         allow_missing_session_proof=self.settings.local_mode,
                     )
@@ -1220,7 +1214,6 @@ class SessionRuntimeManager:
                 provider_name=provider_runtime.name,
                 model=provider_runtime.model,
                 mcp_client=mcp_client,
-                secret_entry_proof=caller_session_proof,
                 runtime_config_sha256=str(session_extra.get("runtime_config_sha256", "")),
                 provider_control_schema=bootstrap.provider_control.schema_version,
                 catalog_digest=bootstrap.provider_control.catalog_digest,

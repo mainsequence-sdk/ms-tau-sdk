@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Private Secret entry is removed, and ADR 0020 with it. Tau no longer gives the Main Sequence MCP
+  tools `secret_entry.start`, `secret_entry.status` and `secret_entry.cancel` special handling,
+  no longer saves `mainsequence.secret_entry` session entries, and no longer checks pending entry
+  requests before each turn. That check stopped the turn whenever it could not verify a request,
+  so a request that could never be checked again blocked every later turn of its conversation. A
+  person adds a Secret in Command Center or with the `mainsequence` CLI, and a workload receives
+  access through the access it declares or is granted; hosted Agents still never read or write
+  Secret values. Entries that 2.0.3 saved stay in session history, outside the model context, and
+  are ignored. Until the platform stops listing the entry tools, Tau offers them like any other
+  Main Sequence MCP tool.
+
 ## 2.0.3 — 2026-10-07
 
 - A turn that a caller delivery resumes serves the person who asked for the delegated work. When
