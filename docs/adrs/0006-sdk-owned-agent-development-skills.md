@@ -1,5 +1,10 @@
 # ADR 0006: SDK-Owned Agent Development Skills
 
+Amended 2026-10-07: the bundle adds `tau_security_and_access`, which teaches building project
+tools that act for the person a turn serves under
+[ADR 0021](./0021-mcp-connections-on-the-persons-identity.md), including tools that use a
+person's Secret without exposing it.
+
 Status: Accepted
 
 Date: 2026-09-17
@@ -28,12 +33,14 @@ language-neutral semantics while an installed library supplies version-matched e
 
 - `tau_repository_integration`;
 - `tau_local_development`;
-- `tau_project_customization`; and
-- `tau_a2a_runtime_adapter`.
+- `tau_project_customization`;
+- `tau_a2a_runtime_adapter`; and
+- `tau_security_and_access`.
 
 They own SDK installation and entry points, authenticated local execution, debugging, `.tau`
-customization, extension mechanics, and the TAU host side of A2A. They do not redefine platform
-identity, deployment, authorization, discovery, or task-lifecycle semantics.
+customization, extension mechanics, the TAU host side of A2A, and project tools that act for the
+person a turn serves. They do not redefine platform identity, deployment, authorization,
+discovery, or task-lifecycle semantics.
 
 ### 2. Synchronization is explicit and version-matched
 

@@ -175,6 +175,9 @@ separate authority. Prompt injection can cause unintended changes, sharing, or d
 person's permissions, and completed writes can outlast the delegation. Only Organization admins
 enable this authority.
 
+For a complete example, a tool that uses a person's Secret without exposing it, and how sharing
+decides what a delegated call can reach, use `tau_security_and_access`.
+
 ## Validation
 
 Verify each project-owned capability through its observable interface and focused tests. Check

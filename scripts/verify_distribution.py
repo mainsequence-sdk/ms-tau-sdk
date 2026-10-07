@@ -89,6 +89,7 @@ REQUIRED_WHEEL_PATHS = {
     "ms_tau_sdk/agent_skills/tau_local_development/SKILL.md",
     "ms_tau_sdk/agent_skills/tau_project_customization/SKILL.md",
     "ms_tau_sdk/agent_skills/tau_repository_integration/SKILL.md",
+    "ms_tau_sdk/agent_skills/tau_security_and_access/SKILL.md",
     "ms_tau_sdk/cli.py",
     "ms_tau_sdk/resources/SYSTEM.md",
     "ms_tau_sdk/resources/prompts/review-code-repository.md",

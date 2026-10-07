@@ -19,6 +19,7 @@ EXPECTED_SKILLS = (
     "tau_local_development",
     "tau_project_customization",
     "tau_repository_integration",
+    "tau_security_and_access",
 )
 
 
@@ -37,6 +38,25 @@ def test_a2a_skill_explains_deployed_and_local_readiness() -> None:
     assert "waits for its runtime to become ready" in skill
     assert "use the returned Task handle with `a2a.wait_task`" in skill
     assert "wait for its local `/ready` result" in skill
+
+
+def test_security_skill_teaches_delegated_tools_and_secrets() -> None:
+    skill = resolve_packaged_skill("tau_security_and_access").read_text(encoding="utf-8")
+    normalized = " ".join(skill.split())
+
+    required_terms = (
+        'delegation="required"',
+        "never retried as the Agent",
+        "The person creates the Secret themselves",
+        "Never paste the key into this chat",
+        "No tool takes a Secret value or a Secret name from the model",
+        "It travels in a header, never in a URL",
+        "Whoever can edit a Secret decides its value",
+        "That is a choice of the tool, not a platform rule",
+        "it cannot call the platform as that person",
+    )
+    for term in required_terms:
+        assert term in normalized
 
 
 def test_local_development_skill_defines_the_complete_a2a_boundary() -> None:

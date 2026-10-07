@@ -164,6 +164,7 @@ assert _task_message_for_backend(
             "tau_local_development",
             "tau_project_customization",
             "tau_repository_integration",
+            "tau_security_and_access",
         }
         installed_skills = {path.parent.name for path in managed_skills.glob("*/SKILL.md")}
         if installed_skills != expected_skills:

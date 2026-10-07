@@ -28,6 +28,11 @@
   - The SDK no longer hides the withdrawn private Secret entry operations, and the local health
     field `mcp_session_proof_limited_tool_count` is removed.
 
+- A new packaged skill, `tau_security_and_access`, teaches building project tools that act for the
+  person a turn serves: which delegation each tool should use, a worked example of tools that use
+  a person's own Secret without exposing it to the model, and how sharing decides what a delegated
+  call can reach. `ms-tau skills sync` now installs five skills.
+
 - Documentation now distinguishes requester-bound reads and supported writes from workload grants,
   states the write risk and platform rollout requirements, and includes conversation/Task
   permissions and denial recovery. The Security and access guide keeps its `security-model.md`
