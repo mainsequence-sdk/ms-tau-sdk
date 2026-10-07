@@ -10,8 +10,8 @@
   person adds a Secret in Command Center or with the `mainsequence` CLI, and a workload receives
   access through the access it declares or is granted; hosted Agents still never read or write
   Secret values. Entries that 2.0.3 saved stay in session history, outside the model context, and
-  are ignored. Until the platform stops listing the entry tools, Tau offers them like any other
-  Main Sequence MCP tool.
+  are ignored. Tau never offers the entry tools or `secret.list` to the model, even while the
+  platform still lists them.
 
 ## 2.0.3 — 2026-10-07
 

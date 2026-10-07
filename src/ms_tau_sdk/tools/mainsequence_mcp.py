@@ -33,6 +33,11 @@ A2A_SEND_TOOL = "a2a.send_message"
 # the model: agent-to-agent turns use a2a.send_message, so the credential stays out of model
 # content, tool details, events, and persisted history.
 CREDENTIAL_RESULT_MCP_TOOLS = frozenset({"agent_session.resolve_runtime_access"})
+# Private Secret entry is withdrawn. A platform that has not yet deployed its removal still lists
+# these operations; Tau never offers them to the model.
+WITHDRAWN_SECRET_ENTRY_MCP_TOOLS = frozenset(
+    {"secret.list", "secret_entry.start", "secret_entry.status", "secret_entry.cancel"}
+)
 
 
 def _tau_tool_name(mcp_name: str) -> str:
@@ -293,7 +298,7 @@ def create_mainsequence_mcp_tools(
     tools: list[AgentTool] = []
     names: set[str] = set()
     for tool in client.tools:
-        if tool.name in CREDENTIAL_RESULT_MCP_TOOLS:
+        if tool.name in CREDENTIAL_RESULT_MCP_TOOLS | WITHDRAWN_SECRET_ENTRY_MCP_TOOLS:
             continue
         tau_name = _tau_tool_name(tool.name)
         if tau_name in names or tau_name == _RESOURCE_TOOL_NAME:
