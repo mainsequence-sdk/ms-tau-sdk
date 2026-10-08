@@ -99,7 +99,7 @@ For a refused call, check these conditions:
 
 | Symptom | Check and recovery |
 | --- | --- |
-| Agent is not enabled | Ask an Organization admin to enable `acts_for_requester`; a non-admin workflow push is refused with `declared_access_not_granted`. Until then the platform names nobody, and the Agent's calls are its own. |
+| Agent is not enabled | Ask an Organization admin to enable `acts_for_requester`; a non-admin workflow push is refused with `declared_access_not_granted`. A bot's push, such as a GitHub Actions release job committing the next version, keeps the authority of the admin whose push it directly follows only when the workflow file is unchanged; otherwise an admin pushes the change. Until then the platform names nobody, and the Agent's calls are its own. |
 | Access worked earlier | Check that the person is active and still has access to the Agent, Environment, and target resource. A finished turn or request older than 24 hours cannot reuse its delegation; start a new authorized request. |
 | A Task was continued by another person | The Task no longer serves one person. Start separate work for the person whose access is needed. |
 | A `runtime_lease_*` refusal | The running work no longer has valid execution ownership. Inspect its status and let normal recovery finish; do not reuse proofs or force a retry with old credentials. |
