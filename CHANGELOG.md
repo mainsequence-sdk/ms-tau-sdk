@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.7 — 2026-10-08
 
 - **Breaking: one delegation envelope on every call made for the work
   ([#78](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/78), ADR 0021 amendment).** This
