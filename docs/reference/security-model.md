@@ -227,7 +227,9 @@ as code that holds these credentials. See
 
 Local mode signs in with your own Main Sequence login (`mainsequence login`) or a user token pair.
 The Agent then acts as you: its tools and extensions can do anything you can do on the platform,
-including reading the Secret values you can view. The hosted rules above, such as no access
+including reading the Secret values you can view. For an Organization admin, that includes
+receiving and using any member's configured model provider without a share; see
+[named providers and sharing](../guides/project-configuration.md#named-providers-and-sharing). The hosted rules above, such as no access
 beyond the Agent's grants, do not apply to your own login. Local mode refuses to start
 in a process that carries the platform's hosting settings. See
 [authenticated local development](./settings.md#authenticated-local-development).

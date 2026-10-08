@@ -138,7 +138,8 @@ Check the signed-in user, selected provider/model, configured credential, and En
 - If the Environment is ambiguous, set `TAU_LOCAL_ORGANIZATION_ENVIRONMENT_UID` to an Environment
   you can access.
 - `Configured provider name is ambiguous.` means the explicit `TAU_LOCAL_CUSTOM_ID` matches
-  multiple accessible records. Choose a uniquely named record in the intended Environment; ask
+  multiple accessible records. For an Organization admin, every member's record in the
+  Environment is accessible. Choose a uniquely named record in the intended Environment; ask
   its owner to resolve duplicate names when necessary.
 - `Selected configured provider is not available in this Environment.` means that selection is
   missing or inaccessible. Check its name, Environment, and sharing with the signed-in user.
