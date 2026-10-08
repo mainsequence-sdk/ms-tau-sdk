@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- **A thinking level the model cannot run no longer stops the turn
+  ([#82](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/82)).** The platform can offer
+  levels this Tau release cannot run, such as `max` for the GPT-5.6 Codex models; every turn of
+  those models failed with "thinking levels exceed Tau execution support". Tau now uses only the
+  levels both support. A selected level outside them runs at the provider's default (`medium` for
+  Codex), else Tau's default, else the first shared level, and logs
+  `providers.thinking_level_unavailable`. `GET` and `PUT /api/chat/session-model` report the level
+  a loaded session runs at, and Tau Board's picker follows it.
 - **A new local chat reports and accepts its model before the first message
   ([#50](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/50)).** In local mode,
   `GET /api/chat/session-model` for a session that has not had a turn returns the model it would

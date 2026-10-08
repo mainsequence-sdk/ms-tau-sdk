@@ -35,7 +35,13 @@ async def test_session_model_reads_provider_selection_from_session(custom_id):
         custom_id=custom_id,
     )
 
-    result = await session_model(client, TauSDKSettings(_env_file=None), "session-1")
+    not_loaded = SimpleNamespace(running_thinking_level=lambda _session_uid: None)
+    result = await session_model(
+        client,
+        not_loaded,  # type: ignore[arg-type]
+        TauSDKSettings(_env_file=None),
+        "session-1",
+    )
 
     assert result == {
         "sessionUid": "session-1",

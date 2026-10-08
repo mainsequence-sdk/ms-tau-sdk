@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from urllib.parse import urlsplit
 
+import structlog
 from tau_agent.provider import ModelProvider
 from tau_ai.anthropic import AnthropicProvider
 from tau_ai.env import AnthropicConfig, OpenAICompatibleConfig
@@ -68,6 +69,27 @@ BLOCKED_CUSTOM_PROVIDER_HOSTS = frozenset(
         "metadata.google.internal",
     }
 )
+
+logger = structlog.get_logger(__name__)
+
+
+def _fall_back(
+    level: ThinkingLevel,
+    *,
+    selected: ThinkingLevel | None,
+    provider_name: str,
+    model: str,
+) -> ThinkingLevel:
+    """Use ``level`` in place of a selected level the model cannot run, and say so."""
+    if selected is not None:
+        logger.warning(
+            "providers.thinking_level_unavailable",
+            provider=provider_name,
+            model=model,
+            selected=selected,
+            used=level,
+        )
+    return level
 
 
 @dataclass(frozen=True, slots=True)
@@ -185,25 +207,26 @@ class ProviderFactory:
                     "Platform provider-control thinking levels contradict the "
                     "custom model reasoning capability"
                 )
-            if thinking_level and normalized_thinking not in projected_thinking:
-                supported = ", ".join(sorted(projected_thinking)) or "none"
-                raise ConfigurationError(
-                    f"Thinking level {normalized_thinking!r} is not supported by "
-                    f"{provider_name}:{model}; available levels: {supported}"
-                )
             self.validate_input_media(
                 provider_control,
                 media_types=media_types or set(),
             )
-            if thinking_level:
+            if thinking_level and normalized_thinking in projected_thinking:
                 return normalized_thinking
             if not projected_thinking or not provider_control.model.reasoning:
-                return DEFAULT_THINKING_LEVEL
-            if DEFAULT_THINKING_LEVEL in projected_thinking:
-                return DEFAULT_THINKING_LEVEL
-            if "off" in projected_thinking:
-                return "off"
-            return provider_control.model.thinking_levels[0]
+                default = DEFAULT_THINKING_LEVEL
+            elif DEFAULT_THINKING_LEVEL in projected_thinking:
+                default = DEFAULT_THINKING_LEVEL
+            elif "off" in projected_thinking:
+                default = "off"
+            else:
+                default = provider_control.model.thinking_levels[0]
+            return _fall_back(
+                default,
+                selected=normalized_thinking if thinking_level else None,
+                provider_name=provider_name,
+                model=model,
+            )
         if model not in provider.models:
             raise ConfigurationError(
                 f"Model is not configured for provider {provider_name}: {model}"
@@ -229,30 +252,32 @@ class ProviderFactory:
                 "Platform provider-control input capabilities exceed Tau execution support"
             )
         tau_thinking = set(self._thinking_levels(provider, model))
-        projected_thinking = set(provider_control.model.thinking_levels)
-        if not projected_thinking.issubset(tau_thinking):
-            raise ConfigurationError(
-                "Platform provider-control thinking levels exceed Tau execution support"
-            )
         if provider_control.model.reasoning and not tau_thinking:
             raise ConfigurationError(
                 "Platform provider-control reasoning capability exceeds Tau execution support"
             )
-        available = tau_thinking.intersection(projected_thinking)
-        if thinking_level and normalized_thinking not in available:
-            supported = ", ".join(sorted(available)) or "none"
-            raise ConfigurationError(
-                f"Thinking level {normalized_thinking!r} is not supported by "
-                f"{provider_name}:{model}; available levels: {supported}"
-            )
+        # The platform may offer levels this Tau release cannot run; only shared ones are used.
+        available = [
+            level for level in provider_control.model.thinking_levels if level in tau_thinking
+        ]
         self.validate_input_media(
             provider_control,
             media_types=media_types or set(),
         )
-        if thinking_level:
+        if thinking_level and normalized_thinking in available:
             return normalized_thinking
-        default = provider.thinking_default
-        return default if default in available else DEFAULT_THINKING_LEVEL
+        if provider.thinking_default is not None and provider.thinking_default in available:
+            default = provider.thinking_default
+        elif DEFAULT_THINKING_LEVEL in available or not available:
+            default = DEFAULT_THINKING_LEVEL
+        else:
+            default = available[0]
+        return _fall_back(
+            default,
+            selected=normalized_thinking if thinking_level else None,
+            provider_name=provider_name,
+            model=model,
+        )
 
     def validate_input_media(
         self,

@@ -450,13 +450,50 @@ def test_factory_validates_model_and_thinking_level():
             provider_name="openai",
             model="not-a-model",
         )
-    with pytest.raises(ConfigurationError, match="not supported"):
+    assert (
         factory.validate_execution(
             _provider_control("openai", "gpt-4o"),
             provider_name="openai",
             model="gpt-4o",
             thinking_level="high",
         )
+        == "medium"
+    )
+
+
+def test_factory_runs_a_level_the_model_cannot_run_at_a_shared_one():
+    # Issue #82: the platform offers Codex levels this Tau release cannot run.
+    factory = ProviderFactory(backend=None)  # type: ignore[arg-type]
+    control = _provider_control("openai-codex", "gpt-5.6-luna")
+    control.model.thinking_levels = ["low", "medium", "high", "xhigh", "max"]
+
+    def run(thinking_level: str | None = None) -> str:
+        return factory.validate_execution(
+            control,
+            provider_name="openai-codex",
+            model="gpt-5.6-luna",
+            thinking_level=thinking_level,
+        )
+
+    assert run() == "medium"
+    assert run("high") == "high"
+    assert run("max") == "medium"
+    assert run("off") == "medium"
+
+    control.model.thinking_levels = ["high", "max"]
+    assert run() == "high"
+    assert run("max") == "high"
+
+    custom = _custom_provider_control(reasoning=True, thinking_levels=["low", "high"])
+    assert (
+        factory.validate_execution(
+            custom,
+            provider_name="acme-gateway",
+            model="acme-model",
+            thinking_level="max",
+        )
+        == "low"
+    )
 
 
 def test_factory_rejects_all_noncanonical_execution_evidence():
@@ -486,15 +523,6 @@ def test_factory_rejects_all_noncanonical_execution_evidence():
             unknown_model,
             provider_name="openai",
             model="unknown-model",
-        )
-
-    broadened_thinking = _provider_control("openai", "gpt-5.4")
-    broadened_thinking.model.thinking_levels.append("minimal")
-    with pytest.raises(ConfigurationError, match="thinking levels exceed"):
-        factory.validate_execution(
-            broadened_thinking,
-            provider_name="openai",
-            model="gpt-5.4",
         )
 
     contradictory_reasoning = _provider_control("openai", "gpt-4o")

@@ -69,7 +69,7 @@ def _turn(model, answer):
     ]
 
 
-def _local_app(settings, fake_providers, monkeypatch):
+def _local_app(settings, fake_providers, monkeypatch, *, thinking_level="off"):
     remote = Mock(spec=MainSequenceClient)
     remote.auth = Mock()
     remote.hydrate_local_provider_credential = AsyncMock(side_effect=_evidence)
@@ -85,7 +85,7 @@ def _local_app(settings, fake_providers, monkeypatch):
         return ProviderRuntime(
             name=session.active_provider,
             model=session.active_model,
-            thinking_level="off",
+            thinking_level=thinking_level,
             provider=fake_providers[session.active_model],
             credential=evidence.credential,
             provider_control=evidence.provider_control,
@@ -212,3 +212,27 @@ async def test_a_new_chat_reports_the_configured_model_and_starts_on_a_chosen_on
     assert first.headers["X-Agent-Session-Uid"] == uid
     assert "Chosen model" in first.text
     assert fake_providers["gpt-5.4"].calls == []
+
+
+@pytest.mark.asyncio
+async def test_chat_reports_the_level_a_session_runs_at(asgi_client, monkeypatch, tmp_path):
+    # The provider factory runs a level the model cannot run at a shared one (issue #82).
+    settings = _local_settings(tmp_path)
+    fake_providers = {"gpt-5.4": FakeProvider([]), "gpt-5.5": FakeProvider([])}
+    app, _runtime = _local_app(settings, fake_providers, monkeypatch, thinking_level="low")
+
+    async with asgi_client(app, lifespan=True) as http:
+        chosen = await http.put(
+            "/api/chat/session-model",
+            json={
+                "sessionUid": "board-chat",
+                "provider": "openai",
+                "model": "gpt-5.5",
+                "thinkingLevel": "max",
+            },
+        )
+        reported = await http.get("/api/chat/session-model", params={"sessionUid": "board-chat"})
+
+    assert chosen.status_code == 200, chosen.text
+    assert chosen.json()["model"]["thinkingLevel"] == "low"
+    assert reported.json()["model"]["thinkingLevel"] == "low"
