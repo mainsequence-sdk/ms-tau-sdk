@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.8 — 2026-10-08
 
 - **A thinking level the model cannot run no longer stops the turn
   ([#82](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/82)).** The platform can offer
