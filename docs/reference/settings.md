@@ -97,7 +97,8 @@ environment and local database. The SDK does not depend on, import, or dynamical
 
 Named provider selection is described in [project configuration](../guides/project-configuration.md#named-providers-and-sharing).
 When no credential name is supplied for a new session, selection prefers the user's original owned
-record, then the first shared record. Existing sessions keep their selected credential and
+record, then the first shared record; for an Organization admin, the first record anyone added in
+that Environment. Existing sessions keep their selected credential and
 Environment when resumed or refreshed; a revoked selection does not silently switch to another
 record. See [provider troubleshooting](./troubleshooting.md#local-provider-hydration-is-rejected).
 

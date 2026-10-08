@@ -103,7 +103,8 @@ export TAU_LOCAL_ORGANIZATION_ENVIRONMENT_UID="<your-environment-uid>"
 Replace the Environment placeholder before running the commands. Both settings are optional.
 Without an Environment, the platform uses an accessible active Environment or the sole accessible
 one; if neither is unambiguous, select one explicitly. Without a credential name, a new session
-prefers your original owned credential, then the first shared record. An explicit name must match
+prefers your original owned credential, then the first shared record; for an Organization admin,
+the first record anyone added in that Environment. An explicit name must match
 exactly one accessible record in that Environment. Custom endpoints keep their provider identifier
 and do not use `custom_id`.
 
@@ -117,6 +118,8 @@ Sharing a configured provider lets recipients receive and copy its credentials i
 runtime, including local Tau. Only share with people and workload operators you trust. Their usage
 counts against the provider quota or billing associated with those credentials. Removing access
 stops future credential retrieval; credentials already received may work until they expire or are
-revoked at the provider. Never include keys or tokens in model-visible messages, logs, or ordinary
+revoked at the provider. Organization admins don't need a share: they can receive and use the
+credentials of any configured provider in the Organization, and their usage counts against it
+too. An admin with none of their own for a provider gets the first one added in that Environment. Never include keys or tokens in model-visible messages, logs, or ordinary
 metadata responses. The [Security and access guide](../reference/security-model.md#what-the-agents-code-can-reach)
 explains why trusted runtime code can reach delivered provider credentials.
