@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **A new local chat reports and accepts its model before the first message
+  ([#50](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/50)).** In local mode,
+  `GET /api/chat/session-model` for a session that has not had a turn returns the model it would
+  start on (`TAU_LOCAL_PROVIDER`, `TAU_LOCAL_MODEL`, `TAU_LOCAL_THINKING`) instead of
+  `session_not_found`. A model selected with `PUT /api/chat/session-model` before the first turn
+  is used by that turn; that already worked and is now tested. Managed mode is unchanged.
+
 ## 2.0.7 — 2026-10-08
 
 - **Breaking: one delegation envelope on every call made for the work
