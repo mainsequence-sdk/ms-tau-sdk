@@ -104,8 +104,8 @@ Replace the Environment placeholder before running the commands. Both settings a
 Without an Environment, the platform uses an accessible active Environment or the sole accessible
 one; if neither is unambiguous, select one explicitly. Without a credential name, a new session
 prefers your original owned credential, then the first shared record; for an Organization admin,
-the first record anyone added in that Environment. An explicit name must match
-exactly one accessible record in that Environment. Custom endpoints keep their provider identifier
+the first record anyone added in that Environment. An explicit name selects your own record of
+that name first; otherwise it must match exactly one accessible record in that Environment. Custom endpoints keep their provider identifier
 and do not use `custom_id`.
 
 The session records its resolved credential and Environment. Resume and refresh keep that selection;

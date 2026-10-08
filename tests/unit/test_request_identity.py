@@ -438,6 +438,25 @@ async def test_an_organization_admin_is_admitted_without_reading_the_session(
     client.get_session.assert_not_awaited()
 
 
+async def test_a_hosted_session_model_read_of_an_unknown_session_is_not_found(
+    served_platform_keys,
+    tmp_path,
+    asgi_client,
+):
+    app, client, _manager = _hosted_app(served_platform_keys, tmp_path)
+    client.get_session.side_effect = SessionNotFoundError("Backend resource not found")
+
+    async with asgi_client(app) as http:
+        response = await http.get(
+            "/api/chat/session-model",
+            params={"sessionUid": FOREIGN_SESSION},
+            headers=_user_headers(served_platform_keys, ADMIN_UID, admin=True),
+        )
+
+    assert response.status_code == 404, response.text
+    assert response.json()["error"] == "session_not_found"
+
+
 @pytest.mark.parametrize(
     ("caller", "visible"),
     [

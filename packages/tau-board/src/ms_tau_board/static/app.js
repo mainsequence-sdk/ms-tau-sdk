@@ -465,6 +465,9 @@ async function applyModelSelection(kind, sessionUid) {
     }
   } else if (current.status !== 404) throw new Error(errorMessage(await current.json().catch(() => ({})), current.status));
   const data = await json("/tau/api/chat/session-model", { method: "PUT", headers: tauHeaders(kind, { "Content-Type": "application/json" }), body: JSON.stringify({ sessionUid, provider: choice.provider, model: choice.model, thinkingLevel: choice.thinking || null }) });
+  // A level the model cannot run falls back to another; the picker follows what Tau runs.
+  choice.thinking = data.model.thinkingLevel || "";
+  $(`${kind}-thinking`).value = choice.thinking;
   $(`${kind}-effective`).textContent = `Tau confirmed ${data.model.provider} / ${data.model.model} / ${data.model.thinkingLevel || "default"}`;
   return data.sessionUid || sessionUid;
 }

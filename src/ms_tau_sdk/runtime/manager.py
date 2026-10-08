@@ -2205,6 +2205,11 @@ class SessionRuntimeManager:
         with bound_contextvars(session_uid=session_uid):
             await self._evict_with_context(session_uid)
 
+    def running_thinking_level(self, session_uid: str) -> str | None:
+        """The thinking level a loaded session runs at, which may differ from its selection."""
+        runtime = self._runtimes.get(session_uid)
+        return runtime.coding_session.thinking_level if runtime is not None else None
+
     async def change_session_model(
         self,
         session_uid: str,

@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.0.8 — 2026-10-08
+
+- **A thinking level the model cannot run no longer stops the turn
+  ([#82](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/82)).** The platform can offer
+  levels this Tau release cannot run, such as `max` for the GPT-5.6 Codex models; every turn of
+  those models failed with "thinking levels exceed Tau execution support". Tau now uses only the
+  levels both support. A selected level outside them runs at the provider's default (`medium` for
+  Codex), else Tau's default, else the first shared level, and logs
+  `providers.thinking_level_unavailable`. `GET` and `PUT /api/chat/session-model` report the level
+  a loaded session runs at, and Tau Board's picker follows it.
+- **A new local chat reports and accepts its model before the first message
+  ([#50](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/50)).** In local mode,
+  `GET /api/chat/session-model` for a session that has not had a turn returns the model it would
+  start on (`TAU_LOCAL_PROVIDER`, `TAU_LOCAL_MODEL`, `TAU_LOCAL_THINKING`) instead of
+  `session_not_found`. A model selected with `PUT /api/chat/session-model` before the first turn
+  is used by that turn; that already worked and is now tested. Managed mode is unchanged.
+
 ## 2.0.7 — 2026-10-08
 
 - **Breaking: one delegation envelope on every call made for the work

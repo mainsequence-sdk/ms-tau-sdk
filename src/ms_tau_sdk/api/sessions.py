@@ -7,6 +7,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from ms_tau_sdk.backend.client import MainSequenceClient
+from ms_tau_sdk.errors import SessionNotFoundError
 from ms_tau_sdk.runtime.manager import SessionRuntimeManager
 from ms_tau_sdk.settings import TauSDKSettings
 
@@ -20,26 +21,68 @@ RuntimeManagerDep = Annotated[SessionRuntimeManager, Depends(runtime_manager)]
 SettingsDep = Annotated[TauSDKSettings, Depends(settings)]
 
 
+def _session_model(
+    session_uid: str,
+    *,
+    provider: str | None,
+    model: str | None,
+    thinking_level: str | None,
+    custom_id: str | None,
+) -> dict[str, object]:
+    return {
+        "sessionUid": session_uid,
+        "model": {
+            "provider": provider,
+            "model": model,
+            "thinkingLevel": thinking_level,
+            **({"customId": custom_id} if custom_id is not None else {}),
+        },
+    }
+
+
+def _thinking_level(
+    manager: SessionRuntimeManager,
+    session_uid: str,
+    selected: str | None,
+) -> str | None:
+    # A loaded session runs a selected level its model cannot run at a fallback level instead.
+    if selected is None:
+        return None
+    return manager.running_thinking_level(session_uid) or selected
+
+
 @router.get("/session-model")
 async def session_model(
     client: BackendDep,
+    manager: RuntimeManagerDep,
     config: SettingsDep,
     session_uid: str = Query(alias="sessionUid"),
 ) -> dict[str, object]:
     if config.local_mode:
         session_uid = config.local_session_uid(session_uid)
-    session = await require_session_access(client, session_uid)
-    if session is None:
-        session = await client.get_session(session_uid)
-    return {
-        "sessionUid": session_uid,
-        "model": {
-            "provider": session.active_provider,
-            "model": session.active_model,
-            "thinkingLevel": session.active_thinking,
-            **({"customId": session.custom_id} if session.custom_id is not None else {}),
-        },
-    }
+    try:
+        session = await require_session_access(client, session_uid)
+        if session is None:
+            session = await client.get_session(session_uid)
+    except SessionNotFoundError:
+        if not config.local_mode:
+            raise
+        # A local session is created by its first turn or model selection. Until then it reports
+        # the configured model it would start on.
+        return _session_model(
+            session_uid,
+            provider=config.local_provider,
+            model=config.local_model,
+            thinking_level=config.local_thinking,
+            custom_id=config.local_custom_id,
+        )
+    return _session_model(
+        session_uid,
+        provider=session.active_provider,
+        model=session.active_model,
+        thinking_level=_thinking_level(manager, session_uid, session.active_thinking),
+        custom_id=session.custom_id,
+    )
 
 
 @router.get("/model-providers")
@@ -72,15 +115,13 @@ async def select_session_model(
         **({"custom_id": body.custom_id} if body.custom_id is not None else {}),
     )
     session = await manager.backend.get_session(session_uid)
-    return {
-        "sessionUid": session_uid,
-        "model": {
-            "provider": session.active_provider,
-            "model": session.active_model,
-            "thinkingLevel": session.active_thinking,
-            **({"customId": session.custom_id} if session.custom_id is not None else {}),
-        },
-    }
+    return _session_model(
+        session_uid,
+        provider=session.active_provider,
+        model=session.active_model,
+        thinking_level=_thinking_level(manager, session_uid, session.active_thinking),
+        custom_id=session.custom_id,
+    )
 
 
 @router.post("/session/cancel")

@@ -220,7 +220,7 @@ platform probes use the launcher's endpoint.
 | --- | --- |
 | Health, readiness, version | Supported; reports local mode and dependency readiness. |
 | Chat stream | Supported; `sessionUid` may be omitted. The turn is recorded as a chat session and runs to its durable end if the client disconnects. |
-| Session model and cancellation | Supported for an existing local session. |
+| Session model and cancellation | Supported. Before a session's first turn, the session model read reports the configured `TAU_LOCAL_PROVIDER`, `TAU_LOCAL_MODEL`, and `TAU_LOCAL_THINKING`, and a model selected then is used by the first turn. |
 | Mock chat | Supported. |
 | Chat session list/history | Supported through `/api/local/v1/chat-sessions`; history uses the platform's projected-history shape, with text, reasoning, tool calls, and the running turn in `inProgressMessage`, for the authenticated process principal's sessions only. |
 | Local Agent identity | Supported through `/api/local/v1/agent`, from the workspace's `.agents/agent_card.json`. |
