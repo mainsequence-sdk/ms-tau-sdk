@@ -329,6 +329,24 @@ def test_the_mcp_tool_timeout_defaults_to_sixty_seconds_and_reads_the_environmen
         TauSDKSettings(_env_file=None, workspace=tmp_path)
 
 
+@pytest.mark.parametrize("invalid", ["0", "-1", "nan", "inf"])
+def test_application_readiness_wait_has_a_finite_positive_configurable_limit(
+    monkeypatch, tmp_path, invalid
+):
+    assert (
+        TauSDKSettings(_env_file=None, workspace=tmp_path).mcp_application_ready_timeout_seconds
+        == 120
+    )
+    monkeypatch.setenv("TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS", "180")
+    assert (
+        TauSDKSettings(_env_file=None, workspace=tmp_path).mcp_application_ready_timeout_seconds
+        == 180
+    )
+    monkeypatch.setenv("TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS", invalid)
+    with pytest.raises(ValidationError):
+        TauSDKSettings(_env_file=None, workspace=tmp_path)
+
+
 def _executable(path: Path) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")

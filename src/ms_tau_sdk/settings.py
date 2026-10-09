@@ -248,6 +248,12 @@ class TauSDKSettings(BaseSettings):
         gt=0,
         validation_alias="TAU_MCP_TOOL_TIMEOUT_SECONDS",
     )
+    mcp_application_ready_timeout_seconds: float = Field(
+        default=120.0,
+        gt=0,
+        allow_inf_nan=False,
+        validation_alias="TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS",
+    )
     backend_max_response_bytes: int = Field(
         default=10 * 1024 * 1024,
         gt=0,

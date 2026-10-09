@@ -76,6 +76,27 @@ app = create_app(TauSDKSettings(mcp_tool_timeout_seconds=120))
 
 Like the other process settings, it applies to every session in the process.
 
+## Wait for an application that is starting
+
+Before opening MCP, Tau asks the platform for application access. A successful answer with
+`runtime_access.state: waking` and `access: null` means the application is still starting.
+Tau waits for `retry_after_ms` before asking again, under the same turn and delegation. Missing
+or invalid retry guidance means two seconds; guidance below 100 ms is bounded to 100 ms to avoid
+busy polling. A delay beyond the readiness deadline ends at the deadline instead of polling early.
+
+`TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` bounds this readiness wait (default `120`, a finite
+positive number). Set it in the Agent's workflow environment or with
+`TauSDKSettings(mcp_application_ready_timeout_seconds=...)`. The remaining turn deadline still
+applies, and cancellation stops a pending delay or access request. The wait releases the access
+cache lock between polls. Access denial, ended delegation and terminal states are not retried.
+
+Once ready, Tau opens MCP, reads the tool's declared time limit and sends the call. Increasing a
+tool's execution limit does not extend startup readiness. Token renewal uses the same bounded
+wait; a failed renewal does not restart the tool call. A readiness wait that expires returns
+`failure: readiness_timeout`, `phase: readiness`, `runtime_access_state: waking` and the wait's
+`timeout_seconds`. Logs distinguish `runtime.application_access.waiting` and
+`runtime.application_access.ready` without including access tokens or URLs.
+
 ## What else bounds a call
 
 - **The turn.** A call never outlives its turn: when `MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS`
@@ -101,6 +122,7 @@ bodies:
 | --- | --- |
 | The tool did not answer within its limit | The `<name>` tool `<tool>` did not answer within `<N>` seconds. |
 | Opening the session did not finish within its limit | The `<name>` application did not answer within `<N>` seconds. |
+| Application access remains `waking` past its readiness limit | The `<name>` application did not become ready within `<N>` seconds. It is still starting; try again shortly. |
 | The application or gateway reports a timeout (408, 504) | The `<name>` application or its gateway reported a timeout (`<status>`). |
 | Another server or gateway error status (5xx) | The `<name>` application answered with a server error (`<status>`). |
 | The application refused the call (401 after one token renewal, 403) | The `<name>` application refused this call (`<status>`). |

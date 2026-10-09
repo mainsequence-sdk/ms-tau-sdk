@@ -19,7 +19,8 @@ from __future__ import annotations
 import json
 import math
 import re
-from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
+from collections.abc import AsyncGenerator, Mapping, Sequence
+from typing import Protocol
 
 import httpx
 import structlog
@@ -35,7 +36,13 @@ from tau_agent.types import JSONValue
 
 from ms_tau_sdk.backend.mcp import MCPConnectionClient
 from ms_tau_sdk.backend.models import MCPApplication
-from ms_tau_sdk.errors import BackendError, BackendTimeoutError, ConfigurationError
+from ms_tau_sdk.errors import (
+    ApplicationReadinessTimeoutError,
+    ApplicationWakingError,
+    BackendError,
+    BackendTimeoutError,
+    ConfigurationError,
+)
 from ms_tau_sdk.runtime.requester import (
     RequesterBindingError,
     _turn_application_access,
@@ -52,7 +59,11 @@ _RESERVED_NAMES = frozenset({"mainsequence"})
 TIMEOUT_META_KEY = "mainsequence.ai/timeout-seconds/v1"
 """The ``_meta`` key under which an application tool declares how long it may run, in seconds."""
 
-type ApplicationConnector = Callable[[MCPApplication], Awaitable[MCPConnectionClient]]
+
+class ApplicationConnector(Protocol):
+    async def __call__(
+        self, application: MCPApplication, *, signal: ToolCancellationToken | None = None
+    ) -> MCPConnectionClient: ...
 
 
 class _ApplicationTokenAuth(httpx.Auth):
@@ -77,8 +88,14 @@ class _ApplicationTokenAuth(httpx.Auth):
 def application_connector(settings: TauSDKSettings) -> ApplicationConnector:
     """Open an MCP session to one application for the current turn."""
 
-    async def connect(application: MCPApplication) -> MCPConnectionClient:
-        access = await _turn_application_access(application.resource_release_uid)
+    async def connect(
+        application: MCPApplication, *, signal: ToolCancellationToken | None = None
+    ) -> MCPConnectionClient:
+        access = await _turn_application_access(
+            application.resource_release_uid,
+            ready_timeout_seconds=settings.mcp_application_ready_timeout_seconds,
+            cancelled=signal.is_cancelled if signal is not None else None,
+        )
         return await MCPConnectionClient(
             name=application.name,
             display_name=application.name,
@@ -118,6 +135,23 @@ def _failure(
 
     if isinstance(error, RequesterBindingError):
         return "Your access for this request ended.", {"failure": "access_ended"}
+    if isinstance(error, ApplicationReadinessTimeoutError):
+        return (
+            f"The {name} application did not become ready within "
+            f"{error.timeout_seconds:g} seconds. "
+            "It is still starting; try again shortly.",
+            {
+                "failure": "readiness_timeout",
+                "phase": "readiness",
+                "runtime_access_state": "waking",
+                "timeout_seconds": error.timeout_seconds,
+            },
+        )
+    if isinstance(error, ApplicationWakingError):
+        return (
+            f"The {name} application is still starting; try again shortly.",
+            {"failure": "not_ready", "phase": "readiness", "runtime_access_state": "waking"},
+        )
     if isinstance(error, BackendError):
         if isinstance(error, BackendTimeoutError) or error.backend_status in {408, 504}:
             details: dict[str, JSONValue] = {"failure": "timeout", "phase": "access"}
@@ -217,7 +251,7 @@ def _application_tools(
     async def open_session(signal: ToolCancellationToken | None) -> MCPConnectionClient:
         # Nothing has reached a tool while the session opens, so one more attempt is safe.
         try:
-            return await connect(application)
+            return await connect(application, signal=signal)
         except Exception as error:
             if not _retryable(error) or (signal is not None and signal.is_cancelled()):
                 raise
@@ -226,7 +260,7 @@ def _application_tools(
                 application=name,
                 error_type=type(error).__name__,
             )
-        return await connect(application)
+        return await connect(application, signal=signal)
 
     def failed(
         operation: str,

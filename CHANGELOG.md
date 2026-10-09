@@ -2,6 +2,13 @@
 
 ## 2.0.10 — 2026-10-09
 
+- **Declared applications wait while waking ([#87](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/87)).**
+  An access response with `state: waking` and no grant no longer fails immediately as
+  `access_unavailable`. Tau follows the platform's retry guidance until access is ready, for up
+  to `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` (default `120`) or the remaining turn time.
+  Cancellation and ended delegation stop the wait, refusals remain terminal, and a call is sent
+  only once access is ready. An exhausted wait reports `readiness_timeout`, distinct from the
+  tool's execution timeout. The same readiness handling applies when renewing an application token.
 - **Application access timeouts no longer become `access_unavailable`.** Platform transport
   timeouts retain their classification and time limit when application access is obtained or
   renewed. The tool reports `failure: timeout` with `phase: access`; HTTP 408/504 responses

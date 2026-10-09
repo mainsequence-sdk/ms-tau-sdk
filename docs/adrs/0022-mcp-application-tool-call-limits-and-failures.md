@@ -119,6 +119,25 @@ A failure after the tool call is sent is never retried, whatever its cause: the 
 whether the application started the work. A refusal, an ended access, a platform failure to provide
 the address and token, and a cancelled turn are not retried.
 
+### Amendment: readiness before MCP (#87)
+
+A successful platform access response with `runtime_access.state: waking` and `access: null` is
+temporary readiness, not a failure to obtain permission. Application access acquisition and token
+renewal follow `retry_after_ms` until a grant is ready. Missing or invalid guidance defaults to
+two seconds, with a 100 ms minimum to prevent busy polling. The readiness budget is
+`TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` (default 120 seconds), measured from access acquisition;
+the remaining turn deadline and cancellation also bound the wait, including in-flight access
+requests. No cache lock is held across readiness delays, and every poll keeps the original
+delegation while obtaining the current lease proof. An ended turn never falls back to Agent access.
+
+Only `waking` is polled. Permission denial, ended delegation and terminal unavailability remain
+terminal. An expired readiness wait reports `readiness_timeout`, `phase: readiness`,
+`runtime_access_state: waking` and its `timeout_seconds`; it is not a tool execution timeout.
+Diagnostics log `runtime.application_access.waiting` with retry guidance, then
+`runtime.application_access.ready` on success, without credentials. MCP starts only after access is
+ready, and the tool's declared execution limit then applies. This amendment does not add retries
+for a sent tool call or change the existing one-renewal-on-401 behavior.
+
 ### 5. Scope
 
 Sections 2 to 4 apply to application tool calls. The Main Sequence MCP keeps
