@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.9 — 2026-10-09
 
 - **Turn logs name the session's Agent
   ([#85](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/85)).** Every log line of a turn
