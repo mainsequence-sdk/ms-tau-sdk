@@ -85,12 +85,14 @@ The tool result tells the model what happened, without internals:
 | --- | --- |
 | The tool did not answer within its limit | The `<name>` tool `<tool>` did not answer within `<N>` seconds. |
 | Listing the tools did not finish within its limit | The `<name>` application did not answer within `<N>` seconds. |
-| A server or gateway error status (5xx) | The `<name>` application answered with a server error (`<status>`). |
+| The application or gateway reports a timeout (408, 504) | The `<name>` application or its gateway reported a timeout (`<status>`). |
+| Another server or gateway error status (5xx) | The `<name>` application answered with a server error (`<status>`). |
 | The application refused the call (401 after one token renewal, 403) | The `<name>` application refused this call (`<status>`). |
 | Another error status (4xx) | The `<name>` application answered with an error (`<status>`). |
 | The connection could not be made | The `<name>` application could not be reached. |
 | The person's access ended | Your access for this request ended. (unchanged) |
 | The platform refused the application's address and token (403, 404) | The `<name>` application is not available for this call. (unchanged) |
+| Obtaining or renewing the application's access timed out | Main Sequence timed out while providing access to the `<name>` application. |
 | The platform could not provide them for another reason | Main Sequence could not provide access to the `<name>` application. |
 | Any other failure | The `<name>` application could not complete this call. |
 
@@ -98,6 +100,12 @@ The result's details carry the kind of failure (`failure`) and, when there is on
 (`status`) or the time limit that applied (`timeout_seconds`); the `runtime.mcp_application.failed`
 log event carries the same and the error type. Neither carries a URL, a token, an exception message
 or a response body.
+
+Access resolution preserves transport timeout classification while discarding the exception chain
+that holds credentials. These failures carry `failure: timeout`, `phase: access` and the platform
+request's actual `timeout_seconds`. HTTP 408/504 responses carry `failure: timeout` and `status`,
+without substituting the tool's configured limit for the unknown server limit. Other platform
+failures remain `access_unavailable`; the existing retry boundaries still apply.
 
 ### 4. One retry, only before the call is sent
 
@@ -110,6 +118,25 @@ The second outcome is the one reported.
 A failure after the tool call is sent is never retried, whatever its cause: the SDK cannot tell
 whether the application started the work. A refusal, an ended access, a platform failure to provide
 the address and token, and a cancelled turn are not retried.
+
+### Amendment: readiness before MCP (#87)
+
+A successful platform access response with `runtime_access.state: waking` and `access: null` is
+temporary readiness, not a failure to obtain permission. Application access acquisition and token
+renewal follow `retry_after_ms` until a grant is ready. Missing or invalid guidance defaults to
+two seconds, with a 100 ms minimum to prevent busy polling. The readiness budget is
+`TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` (default 120 seconds), measured from access acquisition;
+the remaining turn deadline and cancellation also bound the wait, including in-flight access
+requests. No cache lock is held across readiness delays, and every poll keeps the original
+delegation while obtaining the current lease proof. An ended turn never falls back to Agent access.
+
+Only `waking` is polled. Permission denial, ended delegation and terminal unavailability remain
+terminal. An expired readiness wait reports `readiness_timeout`, `phase: readiness`,
+`runtime_access_state: waking` and its `timeout_seconds`; it is not a tool execution timeout.
+Diagnostics log `runtime.application_access.waiting` with retry guidance, then
+`runtime.application_access.ready` on success, without credentials. MCP starts only after access is
+ready, and the tool's declared execution limit then applies. This amendment does not add retries
+for a sent tool call or change the existing one-renewal-on-401 behavior.
 
 ### 5. Scope
 
@@ -138,7 +165,7 @@ to it.
 - A tool can run for as long as its author declares, up to the turn's limit; the person waits that
   long.
 - The gateway in front of an application has its own limit. A declared time longer than that ends at
-  the gateway and is reported as the gateway's answer, for example a server error (504). An
+  the gateway and is reported as the gateway's answer, for example a gateway timeout (504). An
   application that declares long times needs a gateway that allows them.
 - Applications written with other MCP libraries set `_meta` in their own way.
 - With section 1, a failed Main Sequence MCP connection fails its calls instead of leaving them

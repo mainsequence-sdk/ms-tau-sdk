@@ -126,7 +126,9 @@ same `failure`, `status` and `timeout_seconds`, with the application, tool and e
 | --- | --- |
 | The `<name>` tool `<tool>` did not answer within `<N>` seconds. | The tool needs longer than its limit. The application declares a longer one in the tool's `_meta`, or the Agent raises `TAU_MCP_TOOL_TIMEOUT_SECONDS` for tools that declare none; see [Application tool time limits](../guides/application-tool-time-limits.md). |
 | The `<name>` application did not answer within `<N>` seconds. | Opening the session timed out twice. Check that the application is running and answers its MCP handshake within `MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS`. |
-| The `<name>` application answered with a server error (`<status>`). | The application or its gateway failed. A 504 after a long call means the gateway's own limit is shorter than the tool's; check the application's logs and gateway. |
+| The `<name>` application did not become ready within `<N>` seconds. | Access remained `waking` until `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` expired. Check startup health and the `runtime.application_access.waiting` logs. Increasing the tool's execution timeout does not change readiness waiting. |
+| The `<name>` application or its gateway reported a timeout (`<status>`). | HTTP 408/504 indicates a server-side timeout. Check the application's logs and gateway limit. |
+| The `<name>` application answered with a server error (`<status>`). | The application or its gateway failed; check the application's logs and gateway. |
 | The `<name>` application refused this call (`<status>`). | The caller lacks access on the application; see [An application refuses the Agent's own calls](#an-application-refuses-the-agents-own-calls). |
 | The `<name>` application could not be reached. | No connection could be made twice. Check that the release is deployed and its address resolves. |
 | Main Sequence could not provide access to the `<name>` application. | The platform did not answer the request for the application's address and token; check platform status. |

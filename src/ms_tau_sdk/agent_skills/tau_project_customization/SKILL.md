@@ -91,6 +91,11 @@ the application's tool, not in the Agent. A tool that declares nothing gets
 `harness_agent.spec.env_vars`, the process environment, or
 `TauSDKSettings(mcp_tool_timeout_seconds=...)`. No call outlives its turn.
 
+Before MCP opens, an application's access may be `waking`. Tau waits according to the platform's
+retry guidance for up to `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` (default `120`) or the remaining
+turn time. This startup budget is separate from the tool's execution limit; an expired readiness
+wait reports `readiness_timeout`. Cancellation, ended delegation and terminal refusals stop the wait.
+
 ## Invariants extensions must not replace
 
 Extensions may change effective agent capabilities, but they must not replace or bypass:

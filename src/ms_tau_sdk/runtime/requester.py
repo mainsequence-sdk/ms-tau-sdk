@@ -16,6 +16,7 @@ credential or an application token to the tool, and a turn's delegation ends wit
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Mapping
@@ -30,7 +31,13 @@ import structlog
 from ms_tau_sdk.backend.auth import AccessToken, _jwt_expiry
 from ms_tau_sdk.backend.client import LeaseProof, answer_without_request_credentials
 from ms_tau_sdk.backend.models import ReleaseRuntimeAccess
-from ms_tau_sdk.errors import BackendError, TauSDKError
+from ms_tau_sdk.errors import (
+    ApplicationReadinessTimeoutError,
+    ApplicationWakingError,
+    BackendError,
+    BackendTimeoutError,
+    TauSDKError,
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -276,8 +283,12 @@ class TurnRequesterBinding:
                 )
             except BackendError as error:
                 # A transport failure keeps the request, and its credentials, as its cause, so
-                # only the message, status and answer are carried on.
-                failure = BackendError(str(error), status_code=error.backend_status)
+                # only safe metadata is carried on, including a timeout's classification.
+                failure = (
+                    BackendTimeoutError(str(error), timeout_seconds=error.timeout_seconds)
+                    if isinstance(error, BackendTimeoutError)
+                    else BackendError(str(error), status_code=error.backend_status)
+                )
                 failure.detail = error.detail
             if failure is not None:
                 if delegate and failure.backend_status == 403:
@@ -565,7 +576,12 @@ def _current_turn_binding() -> TurnRequesterBinding | None:
     return _TURN_BINDING.get()
 
 
-async def _turn_application_access(release_uid: str) -> _TurnApplicationAccess:
+async def _turn_application_access(
+    release_uid: str,
+    *,
+    ready_timeout_seconds: float = 120,
+    cancelled: Callable[[], bool] | None = None,
+) -> _TurnApplicationAccess:
     """SDK-private: the current turn's access to one application.
 
     The token acts for the person the turn serves, when it serves one, and is the Agent's own
@@ -575,12 +591,75 @@ async def _turn_application_access(release_uid: str) -> _TurnApplicationAccess:
     binding = _TURN_BINDING.get()
     if binding is None:
         raise RuntimeError("Application tools run only inside a turn")
+    if not binding.active:
+        raise RequesterBindingError("The turn ended while obtaining application access.")
     uid = _canonical_uid(release_uid)
     delegate = binding.serving
-    access = await binding._release_access_for(uid, refresh=False, delegate=delegate)
+
+    async def resolve(*, refresh: bool) -> _ReleaseAccess:
+        # Capture delegation once, including for renewal; an ended turn never falls back to the
+        # Agent's own access. Each poll reacquires the binding lock and current lease proof.
+        started = asyncio.get_running_loop().time()
+        deadline = asyncio.timeout(None)
+        waiting = False
+        try:
+            async with deadline:
+                while True:
+                    if not binding.active:
+                        raise RequesterBindingError(
+                            "The turn ended while obtaining application access."
+                        )
+                    try:
+                        access = await binding._release_access_for(
+                            uid, refresh=refresh, delegate=delegate
+                        )
+                    except ApplicationWakingError as error:
+                        if not waiting:
+                            waiting = True
+                            deadline.reschedule(started + ready_timeout_seconds)
+                        logger.info(
+                            "runtime.application_access.waiting",
+                            resource_release_uid=uid,
+                            runtime_access_state="waking",
+                            retry_after_seconds=error.retry_after_seconds,
+                        )
+                        await asyncio.sleep(error.retry_after_seconds)
+                    else:
+                        if waiting:
+                            logger.info(
+                                "runtime.application_access.ready", resource_release_uid=uid
+                            )
+                        return access
+        except TimeoutError:
+            if not deadline.expired():
+                raise
+        # No transport error or credential-bearing exception is retained as the cause.
+        raise ApplicationReadinessTimeoutError(timeout_seconds=ready_timeout_seconds)
+
+    async def obtain(*, refresh: bool) -> _ReleaseAccess:
+        # ToolCancellationToken exposes only is_cancelled(). Poll it while both the readiness
+        # delay and the platform request are pending, and join cancelled work before returning.
+        task = asyncio.create_task(resolve(refresh=refresh))
+        try:
+            while True:
+                if not binding.active:
+                    raise RequesterBindingError(
+                        "The turn ended while obtaining application access."
+                    )
+                if cancelled is not None and cancelled():
+                    raise asyncio.CancelledError
+                if task.done():
+                    return task.result()
+                await asyncio.wait({task}, timeout=0.1)
+        finally:
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
+    access = await obtain(refresh=False)
 
     async def renew() -> str:
-        return (await binding._release_access_for(uid, refresh=True, delegate=delegate)).token.value
+        return (await obtain(refresh=True)).token.value
 
     return _TurnApplicationAccess(rpc_url=access.rpc_url, token=access.token.value, renew=renew)
 
@@ -656,6 +735,17 @@ def _token_access(answer: ReleaseRuntimeAccess) -> _ReleaseAccess:
     grant = answer.access
     if grant is None:
         state = answer.runtime_access.get("state")
+        if state == "waking":
+            retry_ms = answer.runtime_access.get("retry_after_ms")
+            delay = 2.0
+            if isinstance(retry_ms, int | float) and not isinstance(retry_ms, bool):
+                try:
+                    seconds = float(retry_ms) / 1000
+                except OverflowError:
+                    seconds = float("inf")
+                if math.isfinite(seconds) and seconds >= 0:
+                    delay = max(seconds, 0.1)
+            raise ApplicationWakingError(retry_after_seconds=delay)
         raise BackendError(
             f"Release {answer.resource_release_uid} is not ready to be called"
             + (f" (runtime access: {state})" if isinstance(state, str) else ""),

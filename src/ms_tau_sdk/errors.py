@@ -37,6 +37,30 @@ class BackendConflictError(BackendError):
     status_code = 409
 
 
+class BackendTimeoutError(BackendError):
+    """A platform request timed out; keep its limit without retaining the request."""
+
+    def __init__(self, message: str, *, timeout_seconds: float | None = None) -> None:
+        super().__init__(message)
+        self.timeout_seconds = timeout_seconds
+
+
+class ApplicationWakingError(BackendError):
+    """The platform accepted access resolution but the application is still starting."""
+
+    def __init__(self, *, retry_after_seconds: float) -> None:
+        super().__init__("Application is waking", detail={"runtime_access_state": "waking"})
+        self.retry_after_seconds = retry_after_seconds
+
+
+class ApplicationReadinessTimeoutError(BackendError):
+    """An application's bounded readiness wait ended before access became ready."""
+
+    def __init__(self, *, timeout_seconds: float) -> None:
+        super().__init__("Application did not become ready")
+        self.timeout_seconds = timeout_seconds
+
+
 class LeaseLostError(TauSDKError):
     code = "runtime_lease_lost"
     status_code = 409

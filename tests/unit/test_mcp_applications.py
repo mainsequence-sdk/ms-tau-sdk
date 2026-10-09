@@ -12,14 +12,14 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import SecretStr
 from structlog.testing import capture_logs
 
-from ms_tau_sdk.backend.client import LeaseProof
+from ms_tau_sdk.backend.client import LeaseProof, MainSequenceClient
 from ms_tau_sdk.backend.models import (
     MCPApplication,
     ReleaseAccessGrant,
     ReleaseRuntimeAccess,
     TauRuntimeBootstrap,
 )
-from ms_tau_sdk.errors import BackendError, ConfigurationError
+from ms_tau_sdk.errors import BackendError, BackendTimeoutError, ConfigurationError
 from ms_tau_sdk.runtime.requester import (
     Requester,
     RequesterBindingError,
@@ -61,7 +61,7 @@ def _platform() -> AsyncMock:
 
 
 @contextmanager
-def _turn(platform: AsyncMock, requester: Requester | None) -> Iterator[None]:
+def _turn(platform: AsyncMock, requester: Requester | None) -> Iterator[TurnRequesterBinding]:
     binding = TurnRequesterBinding(
         session_uid="session-1",
         requester=requester,
@@ -71,7 +71,7 @@ def _turn(platform: AsyncMock, requester: Requester | None) -> Iterator[None]:
     )
     token = bind_turn_requester(binding)
     try:
-        yield
+        yield binding
     finally:
         unbind_turn_requester(binding, token)
 
@@ -163,7 +163,7 @@ async def test_list_tools_asks_the_application_as_the_person_and_closes_the_sess
 
     result = await _tools(connect)["orders__list_tools"].execute("call-1", {})
 
-    connect.assert_awaited_once_with(ORDERS)
+    connect.assert_awaited_once_with(ORDERS, signal=None)
     client.aclose.assert_awaited_once_with()
     assert "orders__call_tool" in result.text
     assert json.loads(result.text.split("\n", 1)[1]) == [
@@ -201,7 +201,7 @@ async def test_call_tool_reads_the_tool_list_and_calls_one_tool_by_name(person):
         "call-1", {"tool": "orders.list", "arguments": {"limit": 5}}
     )
 
-    connect.assert_awaited_once_with(ORDERS)
+    connect.assert_awaited_once_with(ORDERS, signal=None)
     client.call_tool.assert_awaited_once_with(
         "orders.list", {"limit": 5}, timeout_seconds=TOOL_TIMEOUT
     )
@@ -310,6 +310,19 @@ OPEN_FAILURES = [
 
 CALL_FAILURES = [
     (
+        TimeoutError(f"failed with {TOKEN}"),
+        "The orders tool orders.list did not answer within 60 seconds.",
+        {"failure": "timeout", "timeout_seconds": TOOL_TIMEOUT},
+    ),
+    *[
+        (
+            _status_error(status),
+            f"The orders application or its gateway reported a timeout ({status}).",
+            {"failure": "timeout", "status": status},
+        )
+        for status in (408, 504)
+    ],
+    (
         _timeout_error(),
         "The orders tool orders.list did not answer within 60 seconds.",
         {"failure": "timeout", "timeout_seconds": TOOL_TIMEOUT},
@@ -400,7 +413,7 @@ async def test_a_failure_after_the_call_is_sent_says_what_happened(person, error
 
     _assert_failure(result, message, {**failure, "mcp_tool": "orders.list"}, logs, "call_tool")
     # A call that was sent is never sent again.
-    connect.assert_awaited_once_with(ORDERS)
+    connect.assert_awaited_once_with(ORDERS, signal=None)
     client.call_tool.assert_awaited_once()
     client.aclose.assert_awaited_once_with()
 
@@ -413,10 +426,11 @@ async def test_a_failure_after_the_call_is_sent_says_what_happened(person, error
         httpx.ConnectTimeout("slow"),
         httpx.RemoteProtocolError("dropped"),
         _timeout_error(),
+        _status_error(408),
         _status_error(502),
         _status_error(503),
     ],
-    ids=["connect", "connect_timeout", "dropped", "timeout", "502", "503"],
+    ids=["connect", "connect_timeout", "dropped", "timeout", "408", "502", "503"],
 )
 @pytest.mark.parametrize("operation", ["orders__list_tools", "orders__call_tool"])
 async def test_opening_the_session_is_tried_once_more_and_the_second_answer_counts(
@@ -461,7 +475,7 @@ async def test_a_refusal_or_other_failure_while_opening_is_not_retried(person, e
     result = await _tools(connect)["orders__call_tool"].execute("call-1", {"tool": "orders.list"})
 
     assert result.details["is_error"] is True
-    connect.assert_awaited_once_with(ORDERS)
+    connect.assert_awaited_once_with(ORDERS, signal=None)
 
 
 @pytest.mark.asyncio
@@ -475,7 +489,7 @@ async def test_a_cancelled_call_is_not_retried(person):
     )
 
     assert result.text == "The orders application answered with a server error (502)."
-    connect.assert_awaited_once_with(ORDERS)
+    connect.assert_awaited_once_with(ORDERS, signal=signal)
 
 
 @pytest.mark.asyncio
@@ -636,6 +650,90 @@ async def test_each_turn_obtains_its_own_application_access():
 # The real MCP client library, talking HTTP to an application that answers in plain JSON.
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("renew", [False, True], ids=["initial_access", "renewal"])
+@pytest.mark.parametrize(
+    "failure",
+    [httpx.ReadTimeout, httpx.ConnectTimeout, httpx.WriteTimeout, httpx.PoolTimeout, 408, 504],
+)
+async def test_platform_timeouts_reach_the_tool_result_without_becoming_access_unavailable(
+    mcp_server, renew, failure
+):
+    settings = TauSDKSettings(_env_file=None, backend_url="https://platform.test/")
+    requests = []
+    access = _platform().resolve_release_runtime_access.return_value
+
+    def platform_answer(request):
+        requests.append(request)
+        if renew and len(requests) == 1:
+            return httpx.Response(
+                200,
+                json=access.model_dump(mode="json")
+                | {
+                    "access": {
+                        "mode": "token",
+                        "token": TOKEN,
+                        "rpc_url": "https://orders.apps.test/",
+                    }
+                },
+            )
+        if isinstance(failure, int):
+            return httpx.Response(failure, text=f"private response {TOKEN}")
+        raise failure(f"private error {TOKEN}", request=request)
+
+    # Construct the platform client before the fixture installs the MCP HTTP transport.
+    async with httpx.AsyncClient(
+        base_url=settings.backend_url,
+        timeout=OPEN_TIMEOUT,
+        transport=httpx.MockTransport(platform_answer),
+    ) as http:
+        auth = Mock()
+        auth.headers = AsyncMock(return_value={"Authorization": f"Bearer {TOKEN}"})
+        platform = MainSequenceClient(settings, auth, client=http)
+
+        async def refused(_message):
+            return httpx.Response(401)
+
+        received = mcp_server(tools=[ORDERS_LIST], on_call=refused)
+        with _turn(platform, Requester(uid="person-1")), capture_logs() as logs:
+            result = await _finishes(
+                _connected_tools()["orders__call_tool"].execute("call-1", {"tool": "orders.list"})
+            )
+
+    assert (
+        result.text == "Main Sequence timed out while providing access to the orders application."
+    )
+    assert result.details == {
+        "application": "orders",
+        "mcp_tool": "orders.list",
+        "is_error": True,
+        "failure": "timeout",
+        "phase": "access",
+        **({"status": failure} if isinstance(failure, int) else {"timeout_seconds": OPEN_TIMEOUT}),
+    }
+    assert len(requests) == (2 if renew else 1)
+    assert received.count("tools/call") == (1 if renew else 0)
+    assert TOKEN not in result.text + json.dumps(result.details) + json.dumps(logs, default=str)
+
+
+@pytest.mark.asyncio
+async def test_sanitizing_an_access_timeout_preserves_its_limit_without_its_request(person):
+    error = BackendTimeoutError("Backend request timed out", timeout_seconds=12)
+    error.__cause__ = httpx.ReadTimeout(
+        TOKEN,
+        request=httpx.Request("POST", "https://platform.test/", headers={"Authorization": TOKEN}),
+    )
+    person.resolve_release_runtime_access.side_effect = error
+
+    with pytest.raises(BackendTimeoutError) as raised:
+        await _turn_application_access(RELEASE_UID)
+
+    assert raised.value.timeout_seconds == 12
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert TOKEN not in str(raised.value)
+
+
 def _connected_tools(**settings):
     resolved = TauSDKSettings(
         _env_file=None,
@@ -773,3 +871,250 @@ async def test_a_gateway_502_while_the_session_opens_is_retried_once(person, mcp
     assert result.text == "done"
     assert received.count("initialize") == 2
     assert received.count("tools/call") == 1
+
+
+def _waking(retry_after_ms=100):
+    return ReleaseRuntimeAccess(
+        resource_release_uid=RELEASE_UID,
+        access=None,
+        runtime_access={"state": "waking", "can_request": False, "retry_after_ms": retry_after_ms},
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("serving", [True, False])
+@pytest.mark.parametrize("operation", ["orders__call_tool", "orders__list_tools"])
+async def test_waking_applications_wait_for_access_before_opening_mcp_and_keep_tool_limits(
+    mcp_server, serving, operation
+):
+    platform = _platform()
+    ready = platform.resolve_release_runtime_access.return_value
+    answers = iter([_waking(100), _waking(150), ready])
+    attempts = []
+    received = mcp_server(
+        tools=[{**ORDERS_LIST, "_meta": {TIMEOUT_META_KEY: 1}}], on_call=_slow(0.15)
+    )
+
+    async def access(*_args, **_kwargs):
+        assert (
+            received == []
+        )  # Not even initialize may reach the application before access is ready.
+        attempts.append(time.monotonic())
+        return next(answers)
+
+    platform.resolve_release_runtime_access.side_effect = access
+    with _turn(platform, Requester(uid="person-1") if serving else None), capture_logs() as logs:
+        result = await _finishes(
+            _connected_tools(
+                mcp_tool_timeout_seconds=0.05, mcp_application_ready_timeout_seconds=2
+            )[operation].execute("call-1", {"tool": "orders.list"})
+        )
+
+    assert result.details["is_error"] is False
+    assert attempts[1] - attempts[0] >= 0.09
+    assert attempts[2] - attempts[1] >= 0.14
+    assert received.count("initialize") == 1
+    assert received.count("tools/call") == (1 if operation.endswith("call_tool") else 0)
+    assert [call.kwargs for call in platform.resolve_release_runtime_access.await_args_list] == [
+        {"proof": LEASE if serving else None}
+    ] * 3
+    waiting = [log for log in logs if log["event"] == "runtime.application_access.waiting"]
+    assert [log["retry_after_seconds"] for log in waiting] == [0.1, 0.15]
+    assert len([log for log in logs if log["event"] == "runtime.application_access.ready"]) == 1
+    assert TOKEN not in json.dumps(logs, default=str)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("pending_request", [False, True])
+async def test_readiness_deadline_bounds_both_the_delay_and_later_access_requests(
+    person, mcp_server, pending_request
+):
+    received = mcp_server(tools=[ORDERS_LIST], on_call=_slow(0))
+    request_cancelled = asyncio.Event()
+
+    async def access(*_args, **_kwargs):
+        if not pending_request or person.resolve_release_runtime_access.await_count == 1:
+            return _waking(100 if pending_request else 2000)
+        try:
+            await asyncio.Event().wait()
+        finally:
+            request_cancelled.set()
+
+    person.resolve_release_runtime_access.side_effect = access
+    started = time.monotonic()
+    result = await _finishes(
+        _connected_tools(mcp_application_ready_timeout_seconds=0.2)["orders__call_tool"].execute(
+            "call-1", {"tool": "orders.list"}
+        )
+    )
+
+    assert 0.18 <= time.monotonic() - started < 1
+    assert result.details == {
+        "application": "orders",
+        "mcp_tool": "orders.list",
+        "is_error": True,
+        "failure": "readiness_timeout",
+        "phase": "readiness",
+        "runtime_access_state": "waking",
+        "timeout_seconds": 0.2,
+    }
+    assert result.text == (
+        "The orders application did not become ready within 0.2 seconds. "
+        "It is still starting; try again shortly."
+    )
+    assert received == []
+    assert person.resolve_release_runtime_access.await_count == (2 if pending_request else 1)
+    assert request_cancelled.is_set() == pending_request
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["signal", "task", "turn_deadline", "binding_ended"])
+@pytest.mark.parametrize("pending_request", [False, True])
+async def test_readiness_wait_cancels_without_an_mcp_call_or_fallback_access(
+    mcp_server, reason, pending_request
+):
+    platform = _platform()
+    received = mcp_server(tools=[ORDERS_LIST], on_call=_slow(0))
+    waiting = asyncio.Event()
+    request_cancelled = asyncio.Event()
+    cancelled = False
+    signal = Mock()
+    signal.is_cancelled.side_effect = lambda: cancelled
+
+    async def access(*_args, **_kwargs):
+        if not pending_request:
+            waiting.set()
+            return _waking(2000)
+        if platform.resolve_release_runtime_access.await_count == 1:
+            return _waking(100)
+        waiting.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            request_cancelled.set()
+
+    platform.resolve_release_runtime_access.side_effect = access
+    with _turn(platform, Requester(uid="person-1")) as binding:
+
+        async def call():
+            # The runtime bounds the whole turn this way. Its shorter deadline takes precedence.
+            async with asyncio.timeout(0.15 if reason == "turn_deadline" else 2):
+                return await _connected_tools(mcp_application_ready_timeout_seconds=10)[
+                    "orders__call_tool"
+                ].execute("call-1", {"tool": "orders.list"}, signal)
+
+        task = asyncio.create_task(call())
+        await _finishes(waiting.wait())
+        if reason == "signal":
+            cancelled = True
+        elif reason == "task":
+            task.cancel()
+        elif reason == "binding_ended":
+            binding.close()
+
+        if reason == "binding_ended":
+            result = await _finishes(task)
+            assert result.details["failure"] == "access_ended"
+        else:
+            with pytest.raises(
+                TimeoutError if reason == "turn_deadline" else asyncio.CancelledError
+            ):
+                await _finishes(task)
+
+    assert received == []
+    assert platform.resolve_release_runtime_access.await_count == (2 if pending_request else 1)
+    assert all(
+        call.kwargs == {"proof": LEASE}
+        for call in platform.resolve_release_runtime_access.await_args_list
+    )
+    assert request_cancelled.is_set() == pending_request
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("answer", "failure"),
+    [
+        (BackendError("not shared", status_code=403), "not_available"),
+        (BackendError("not found", status_code=404), "not_available"),
+        (
+            BackendError("ended", status_code=403, detail={"code": "requester_binding_invalid"}),
+            "access_ended",
+        ),
+        (
+            ReleaseRuntimeAccess(
+                resource_release_uid=RELEASE_UID, runtime_access={"state": "unavailable"}
+            ),
+            "access_unavailable",
+        ),
+    ],
+)
+async def test_waking_does_not_retry_a_later_terminal_access_failure(
+    person, mcp_server, answer, failure
+):
+    person.resolve_release_runtime_access.side_effect = [
+        _waking(),
+        answer,
+        _platform().resolve_release_runtime_access.return_value,
+    ]
+    received = mcp_server(tools=[ORDERS_LIST], on_call=_slow(0))
+
+    result = await _finishes(
+        _connected_tools()["orders__call_tool"].execute("call-1", {"tool": "orders.list"})
+    )
+
+    assert result.details["failure"] == failure
+    assert person.resolve_release_runtime_access.await_count == 2
+    assert all(
+        call.kwargs == {"proof": LEASE}
+        for call in person.resolve_release_runtime_access.await_args_list
+    )
+    assert received == []
+
+
+@pytest.mark.asyncio
+async def test_readiness_timeout_during_token_renewal_does_not_replay_the_sent_tool(
+    person, mcp_server
+):
+    ready = person.resolve_release_runtime_access.return_value
+    person.resolve_release_runtime_access.side_effect = [ready, _waking(2000), ready]
+
+    async def refuse(_message):
+        return httpx.Response(401)
+
+    received = mcp_server(tools=[ORDERS_LIST], on_call=refuse)
+    result = await _finishes(
+        _connected_tools(mcp_application_ready_timeout_seconds=0.05)["orders__call_tool"].execute(
+            "call-1", {"tool": "orders.list"}
+        )
+    )
+
+    assert result.details["failure"] == "readiness_timeout"
+    assert person.resolve_release_runtime_access.await_count == 2
+    assert received.count("initialize") == 1
+    assert received.count("tools/call") == 1
+
+
+@pytest.mark.parametrize(
+    ("hint", "seconds"),
+    [
+        (2000, 2),
+        (100, 0.1),
+        (1, 0.1),
+        (60_000, 60),
+        (None, 2),
+        (0, 0.1),
+        (-1, 2),
+        (True, 2),
+        ("2000", 2),
+        (float("nan"), 2),
+        (float("inf"), 2),
+    ],
+)
+def test_waking_retry_guidance_is_validated_without_exposing_the_access_payload(hint, seconds):
+    from ms_tau_sdk.errors import ApplicationWakingError
+    from ms_tau_sdk.runtime.requester import _token_access
+
+    with pytest.raises(ApplicationWakingError) as raised:
+        _token_access(_waking(hint))
+    assert raised.value.retry_after_seconds == seconds
+    assert raised.value.detail == {"runtime_access_state": "waking"}

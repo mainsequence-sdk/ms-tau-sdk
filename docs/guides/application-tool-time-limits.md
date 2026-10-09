@@ -76,14 +76,35 @@ app = create_app(TauSDKSettings(mcp_tool_timeout_seconds=120))
 
 Like the other process settings, it applies to every session in the process.
 
+## Wait for an application that is starting
+
+Before opening MCP, Tau asks the platform for application access. A successful answer with
+`runtime_access.state: waking` and `access: null` means the application is still starting.
+Tau waits for `retry_after_ms` before asking again, under the same turn and delegation. Missing
+or invalid retry guidance means two seconds; guidance below 100 ms is bounded to 100 ms to avoid
+busy polling. A delay beyond the readiness deadline ends at the deadline instead of polling early.
+
+`TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` bounds this readiness wait (default `120`, a finite
+positive number). Set it in the Agent's workflow environment or with
+`TauSDKSettings(mcp_application_ready_timeout_seconds=...)`. The remaining turn deadline still
+applies, and cancellation stops a pending delay or access request. The wait releases the access
+cache lock between polls. Access denial, ended delegation and terminal states are not retried.
+
+Once ready, Tau opens MCP, reads the tool's declared time limit and sends the call. Increasing a
+tool's execution limit does not extend startup readiness. Token renewal uses the same bounded
+wait; a failed renewal does not restart the tool call. A readiness wait that expires returns
+`failure: readiness_timeout`, `phase: readiness`, `runtime_access_state: waking` and the wait's
+`timeout_seconds`. Logs distinguish `runtime.application_access.waiting` and
+`runtime.application_access.ready` without including access tokens or URLs.
+
 ## What else bounds a call
 
 - **The turn.** A call never outlives its turn: when `MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS`
   (900 seconds by default) runs out, the call ends with the turn. A limit longer than the turn has
   no effect.
 - **The gateway.** The gateway in front of the application has its own limit. A call that runs
-  past it ends at the gateway, and the model reads the gateway's answer, for example a server
-  error (504). An application that declares long limits needs a gateway that allows them.
+  past it ends at the gateway, and the model reads the gateway's answer, for example a gateway
+  timeout (504). An application that declares long limits needs a gateway that allows them.
 - **Opening the session.** Before the call, the Agent connects to the application, makes the MCP
   handshake and reads the tool list. The connection waits
   `MAINSEQUENCE_TAU_BACKEND_CONNECT_TIMEOUT_SECONDS` (10 seconds by default), and the handshake and
@@ -101,18 +122,26 @@ bodies:
 | --- | --- |
 | The tool did not answer within its limit | The `<name>` tool `<tool>` did not answer within `<N>` seconds. |
 | Opening the session did not finish within its limit | The `<name>` application did not answer within `<N>` seconds. |
-| A server or gateway error status (5xx) | The `<name>` application answered with a server error (`<status>`). |
+| Application access remains `waking` past its readiness limit | The `<name>` application did not become ready within `<N>` seconds. It is still starting; try again shortly. |
+| The application or gateway reports a timeout (408, 504) | The `<name>` application or its gateway reported a timeout (`<status>`). |
+| Another server or gateway error status (5xx) | The `<name>` application answered with a server error (`<status>`). |
 | The application refused the call (401 after one token renewal, 403) | The `<name>` application refused this call (`<status>`). |
 | Another error status (4xx) | The `<name>` application answered with an error (`<status>`). |
 | The connection could not be made | The `<name>` application could not be reached. |
 | The person's access ended | Your access for this request ended. |
 | The platform refused the application's address and token (403, 404) | The `<name>` application is not available for this call. |
+| Obtaining or renewing the application's access timed out | Main Sequence timed out while providing access to the `<name>` application. |
 | The platform could not provide them for another reason | Main Sequence could not provide access to the `<name>` application. |
 | Any other failure | The `<name>` application could not complete this call. |
 
 The result's details carry `failure` (for example `timeout` or `server_error`) and, when there is
 one, `status` or `timeout_seconds`. The `runtime.mcp_application.failed` log event carries the same
 fields and the error type.
+
+An access timeout also carries `phase: access`, to distinguish it from waiting for the tool's
+answer. Transport timeouts carry the platform request's actual `timeout_seconds`; HTTP 408/504
+responses carry `status` instead, because the server's limit is unknown. A genuine access failure
+still reports `access_unavailable`. No credentials or exception chains are included in a result.
 
 ## Retries
 
