@@ -1217,6 +1217,7 @@ class SessionRuntimeManager:
                 provider=provider_runtime.provider,
                 provider_name=provider_runtime.name,
                 model=provider_runtime.model,
+                agent_uid=session.agent_uid,
                 mcp_client=mcp_client,
                 runtime_config_sha256=str(session_extra.get("runtime_config_sha256", "")),
                 provider_control_schema=bootstrap.provider_control.schema_version,
@@ -1331,6 +1332,7 @@ class SessionRuntimeManager:
         resumes the session for. It is named only when the turn is marked active.
         """
 
+        agent_uid = await self._session_agent_uid(session_uid)
         agent_run_uid = str(uuid.uuid4())
         resolved_turn_uid = turn_uid or str(uuid.uuid4())
         with bound_contextvars(
@@ -1338,7 +1340,7 @@ class SessionRuntimeManager:
             agent_session_uid=session_uid,
             agent_run_uid=agent_run_uid,
             turn_uid=resolved_turn_uid,
-            agent_uid="ms-tau-sdk",
+            agent_uid=agent_uid,
         ):
             async for event in self._prompt_with_context(
                 session_uid,
@@ -1349,6 +1351,18 @@ class SessionRuntimeManager:
                 caller_delivery=caller_delivery,
             ):
                 yield event
+
+    async def _session_agent_uid(self, session_uid: str) -> str:
+        """Name the Agent a session belongs to, which every log line of its turns carries.
+
+        A loaded session already knows its Agent; before the first load the platform is asked.
+        """
+
+        runtime = self._runtimes.get(session_uid)
+        if runtime is not None and runtime.agent_uid is not None:
+            return runtime.agent_uid
+        card = await self.backend.get_agent_card(session_uid)
+        return card.agent_uid
 
     async def _prompt_with_context(
         self,

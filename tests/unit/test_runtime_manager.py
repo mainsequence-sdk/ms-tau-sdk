@@ -4,12 +4,17 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from structlog.contextvars import merge_contextvars
+from structlog.testing import capture_logs
 from tau_agent.session import SessionInfoEntry
 from tau_agent.tools import AgentTool
 from tau_coding.resources import ResourceDiagnostic
 from tau_coding.skills import Skill
 
+from ms_tau_sdk.backend.client import MainSequenceClient
+from ms_tau_sdk.backend.local import LocalDevelopmentBackend
 from ms_tau_sdk.backend.models import (
+    AgentCardEnvelope,
     AgentSession,
     ProviderControl,
     ProviderCredential,
@@ -22,7 +27,12 @@ from ms_tau_sdk.backend.models import (
     TauRuntimeBootstrap,
     TauTurnCommit,
 )
-from ms_tau_sdk.errors import BackendConflictError, ConfigurationError, LocalModeUnsupportedError
+from ms_tau_sdk.errors import (
+    BackendConflictError,
+    BackendError,
+    ConfigurationError,
+    LocalModeUnsupportedError,
+)
 from ms_tau_sdk.runtime.extensions import validate_tool_catalog
 from ms_tau_sdk.runtime.manager import RUNTIME_CAPABILITIES, SessionRuntimeManager
 from ms_tau_sdk.runtime.session import ActiveSessionRuntime
@@ -1005,6 +1015,112 @@ async def test_turn_commit_blocks_done_but_snapshot_upload_does_not(tmp_path):
 
     release_snapshot.set()
     manager._runtimes.clear()
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_every_log_line_of_a_turn_names_the_agent_of_its_loaded_session(tmp_path):
+    class SettlingCodingSession:
+        is_running = False
+
+        async def prompt(self, _content):
+            yield {"type": "text_delta", "delta": "ok"}
+            yield {"type": "agent_settled"}
+
+        def cancel(self):
+            return None
+
+    backend = AsyncMock()
+    manager = SessionRuntimeManager(settings=_settings(tmp_path), backend=backend, providers=Mock())
+    manager._runtimes["session-1"] = ActiveSessionRuntime(
+        session_uid="session-1",
+        holder_id=manager.holder_id,
+        coding_session=SettlingCodingSession(),
+        storage=SimpleNamespace(
+            lease_token="lease",
+            begin_turn=AsyncMock(),
+            commit_turn=AsyncMock(
+                side_effect=lambda **kwargs: TauTurnCommit(
+                    turn_uid=kwargs["turn_uid"],
+                    next_sequence=0,
+                    committed_at=datetime.now(UTC),
+                )
+            ),
+            entries_at_sequence=AsyncMock(return_value=[]),
+            flush=AsyncMock(),
+            invalidate_lease=Mock(),
+        ),
+        provider=object(),
+        provider_name="test-provider",
+        model="test-model",
+        agent_uid="agent-of-session-1",
+        runtime_config_sha256="sha256:runtime",
+    )
+
+    with capture_logs(processors=[merge_contextvars]) as lines:
+        async for _event in manager.prompt("session-1", "hello"):
+            pass
+
+    assert {"agent.run.accepted", "agent.run.started", "agent.turn.started"} <= {
+        line["event"] for line in lines
+    }
+    assert {line.get("agent_uid") for line in lines} == {"agent-of-session-1"}
+    backend.get_agent_card.assert_not_awaited()
+    manager._runtimes.clear()
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_turn_names_the_agent_the_platform_reports_before_its_session_loads(tmp_path):
+    manager, backend, _providers = _manager_dependencies(tmp_path, [])
+    backend.get_agent_card.return_value = AgentCardEnvelope(
+        agent_session_uid="session-1",
+        agent_uid="agent-of-session-1",
+    )
+    backend.bootstrap_tau_runtime.side_effect = BackendError("bootstrap failed")
+
+    with capture_logs(processors=[merge_contextvars]) as lines, pytest.raises(BackendError):
+        async for _event in manager.prompt("session-1", "hello"):
+            pass
+
+    assert {"agent.run.accepted", "runtime.session.load.started"} <= {
+        line["event"] for line in lines
+    }
+    assert {line.get("agent_uid") for line in lines} == {"agent-of-session-1"}
+    backend.get_agent_card.assert_awaited_once_with("session-1")
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_local_turn_names_the_workspace_agent(tmp_path):
+    settings = TauSDKSettings(
+        _env_file=None,
+        workspace=tmp_path,
+        local_state_root=tmp_path / "state",
+        backend_url="http://backend.test",
+        auth_mode="jwt",
+        local_mode=True,
+        access_token="mainsequence-access-token",
+        refresh_token="mainsequence-refresh-token",
+        startup_dependencies_enabled=False,
+    )
+    services = Mock(spec=MainSequenceClient)
+    services.auth = Mock()
+    services.hydrate_local_provider_credential = AsyncMock(
+        side_effect=BackendError("no credential")
+    )
+    manager = SessionRuntimeManager(
+        settings=settings,
+        backend=LocalDevelopmentBackend(settings, services),
+        providers=Mock(),
+    )
+
+    with capture_logs(processors=[merge_contextvars]) as lines, pytest.raises(BackendError):
+        async for _event in manager.prompt(settings.local_session_uid(None), "hello"):
+            pass
+
+    assert "agent.run.accepted" in {line["event"] for line in lines}
+    assert {line.get("agent_uid") for line in lines} == {settings.local_agent_uid}
     await manager.aclose()
 
 

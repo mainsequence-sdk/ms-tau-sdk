@@ -1455,6 +1455,10 @@ class _HostedPlatform:
             self.housekeeping.append(request)
         if request.method == "GET" and path == session:
             return httpx.Response(200, json=self._session())
+        if request.method == "GET" and path == f"{session}agent-card/":
+            return httpx.Response(
+                200, json={"agent_session_uid": SESSION_UID, "agent_uid": "agent-1"}
+            )
         if path == f"{session}tau-runtime/bootstrap/":
             return httpx.Response(200, json=self._bootstrap(body["holder_id"]))
         if path == f"{session}tau-runtime-activity/":

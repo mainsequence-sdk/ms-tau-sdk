@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Turn logs name the session's Agent
+  ([#85](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/85)).** Every log line of a turn
+  carried `agent_uid` `"ms-tau-sdk"`, so no hosted Agent's turns appeared in its logs on the
+  platform. A turn now carries the Agent the session belongs to: the one the platform names when
+  the session loads, or, before the session has loaded, the one its Agent card names (one extra
+  request, only then). Local turns carry the workspace's local Agent,
+  `local-agent-<workspace digest>`.
+
 ## 2.0.8 — 2026-10-08
 
 - **A thinking level the model cannot run no longer stops the turn
