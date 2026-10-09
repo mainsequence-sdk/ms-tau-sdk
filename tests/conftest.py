@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import base64
+import json
 import time
-from collections.abc import AsyncIterator, Callable, Iterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -73,6 +74,62 @@ def isolated_tau_state_root(monkeypatch, tmp_path_factory) -> None:
         "MAINSEQUENCE_TAU_STATE_ROOT",
         str(tmp_path_factory.mktemp("tau-state")),
     )
+
+
+type MCPCallAnswer = Callable[[dict[str, Any]], Awaitable[httpx.Response]]
+type MCPOpenAnswer = Callable[[str, list[str]], httpx.Response | None]
+
+
+@pytest.fixture
+def mcp_server(monkeypatch) -> Callable[..., list[str]]:
+    """Serve the SDK's MCP connections from a stateless MCP server that answers in plain JSON.
+
+    The real MCP client library talks to it over HTTP, so a status or a delay reaches the SDK the
+    way a gateway's would. ``on_call`` answers each ``tools/call``; ``on_open``, given the method
+    and the methods received so far, may replace the answer to a request that opens the session.
+    The returned list records each method the server receives.
+    """
+
+    real_client = httpx.AsyncClient
+
+    def serve(
+        *,
+        tools: Sequence[dict[str, Any]] = (),
+        on_call: MCPCallAnswer,
+        on_open: MCPOpenAnswer | None = None,
+    ) -> list[str]:
+        received: list[str] = []
+
+        async def handler(request: httpx.Request) -> httpx.Response:
+            message = json.loads(request.content)
+            method = message.get("method", "")
+            received.append(method)
+            if "id" not in message:
+                return httpx.Response(202)
+            if method == "tools/call":
+                return await on_call(message)
+            if on_open is not None and (answer := on_open(method, received)) is not None:
+                return answer
+            if method == "initialize":
+                result: dict[str, Any] = {
+                    "protocolVersion": message["params"]["protocolVersion"],
+                    "capabilities": {"tools": {}},
+                    "serverInfo": {"name": "fake", "version": "1"},
+                }
+            else:
+                result = {"tools": list(tools)}
+            return httpx.Response(
+                200, json={"jsonrpc": "2.0", "id": message["id"], "result": result}
+            )
+
+        monkeypatch.setattr(
+            httpx,
+            "AsyncClient",
+            lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+        )
+        return received
+
+    return serve
 
 
 @pytest.fixture

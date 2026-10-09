@@ -245,6 +245,31 @@ async def test_mcp_connect_unwraps_transport_error_from_cancelled_task_group():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", [403, 502, 503])
+async def test_an_error_status_on_a_call_ends_that_call_with_its_status(mcp_server, status):
+    async def refuse(_message):
+        return httpx.Response(status, text="gateway error")
+
+    mcp_server(tools=[{"name": "agent.list", "inputSchema": {"type": "object"}}], on_call=refuse)
+    auth = AsyncMock()
+    auth.headers.return_value = {}
+    client = await MainSequenceMCPClient.connect(settings=_settings(), auth=auth)
+
+    call = asyncio.ensure_future(client.call_tool("agent.list", {}))
+    done, _ = await asyncio.wait({call}, timeout=2)
+    if call not in done:
+        call.cancel()
+        await asyncio.gather(call, return_exceptions=True)
+        pytest.fail("the call was still waiting after 2 seconds")
+
+    with pytest.raises(httpx.HTTPStatusError) as raised:
+        call.result()
+    assert raised.value.response.status_code == status
+    with pytest.raises(httpx.HTTPStatusError):
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_mcp_tools_and_resources_are_exposed_to_tau():
     resource_uri = "mainsequence://platform/skills/code-repository-design"
     client = AsyncMock()

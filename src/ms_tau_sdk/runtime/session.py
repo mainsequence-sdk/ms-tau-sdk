@@ -30,6 +30,8 @@ class ActiveSessionRuntime:
     provider: object
     provider_name: str = ""
     model: str = ""
+    # The Agent the session belongs to, as the platform named it when the session loaded.
+    agent_uid: str | None = None
     mcp_client: MainSequenceMCPClient | None = None
     lease_renew_task: asyncio.Task[None] | None = None
     persistence_task: asyncio.Task[object] | None = None

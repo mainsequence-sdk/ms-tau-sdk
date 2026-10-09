@@ -242,6 +242,12 @@ class TauSDKSettings(BaseSettings):
         ge=1,
         validation_alias="MAINSEQUENCE_TAU_MCP_READ_CONCURRENCY",
     )
+    # How long an application tool may run when its tool declares no time limit (ADR 0022).
+    mcp_tool_timeout_seconds: float = Field(
+        default=60.0,
+        gt=0,
+        validation_alias="TAU_MCP_TOOL_TIMEOUT_SECONDS",
+    )
     backend_max_response_bytes: int = Field(
         default=10 * 1024 * 1024,
         gt=0,

@@ -81,6 +81,16 @@ in the system prompt because a tool named `read` exists. Extensions must not reg
 this mode.
 Excluding coding tools does not sandbox extension Python code.
 
+## Application tool time limits
+
+A declared application's tool sets how long it may run, in seconds, in its MCP `_meta` under
+`mainsequence.ai/timeout-seconds/v1`; with the MCP Python SDK that is
+`@mcp.tool(meta={"mainsequence.ai/timeout-seconds/v1": 300})` in the application. Set the limit on
+the application's tool, not in the Agent. A tool that declares nothing gets
+`TAU_MCP_TOOL_TIMEOUT_SECONDS` (default `60`); set it like the tool composition settings above, in
+`harness_agent.spec.env_vars`, the process environment, or
+`TauSDKSettings(mcp_tool_timeout_seconds=...)`. No call outlives its turn.
+
 ## Invariants extensions must not replace
 
 Extensions may change effective agent capabilities, but they must not replace or bypass:

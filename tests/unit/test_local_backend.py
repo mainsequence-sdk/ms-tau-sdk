@@ -96,6 +96,7 @@ async def test_local_backend_lazily_persists_session_history_and_not_credentials
     backend = LocalDevelopmentBackend(settings, services)
 
     first = await backend.bootstrap_tau_runtime(session_uid, _bootstrap("holder-1"))
+    assert first.session.agent_uid == settings.local_agent_uid
     appended = await backend.append_entries(
         session_uid,
         SessionEntryBatchAppendRequest(
