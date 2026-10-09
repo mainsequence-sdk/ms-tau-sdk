@@ -19,6 +19,7 @@ from tau_coding.oauth import account_id_from_access_token
 from ms_tau_sdk.errors import (
     BackendConflictError,
     BackendError,
+    BackendTimeoutError,
     LocalModeUnsupportedError,
     SessionNotFoundError,
 )
@@ -372,6 +373,20 @@ class MainSequenceClient:
                 if transport_attempt >= attempts:
                     break
                 await asyncio.sleep(0.25 * (2 ** (transport_attempt - 1)))
+        if isinstance(last_error, httpx.TimeoutException):
+            timeout_phase = (
+                "connect"
+                if isinstance(last_error, httpx.ConnectTimeout)
+                else "write"
+                if isinstance(last_error, httpx.WriteTimeout)
+                else "pool"
+                if isinstance(last_error, httpx.PoolTimeout)
+                else "read"
+            )
+            raise BackendTimeoutError(
+                "Backend request timed out",
+                timeout_seconds=getattr(self._client.timeout, timeout_phase),
+            ) from last_error
         raise BackendError(f"Backend transport failed: {last_error}") from last_error
 
     @staticmethod

@@ -35,7 +35,7 @@ from tau_agent.types import JSONValue
 
 from ms_tau_sdk.backend.mcp import MCPConnectionClient
 from ms_tau_sdk.backend.models import MCPApplication
-from ms_tau_sdk.errors import BackendError, ConfigurationError
+from ms_tau_sdk.errors import BackendError, BackendTimeoutError, ConfigurationError
 from ms_tau_sdk.runtime.requester import (
     RequesterBindingError,
     _turn_application_access,
@@ -102,7 +102,9 @@ def application_connector(settings: TauSDKSettings) -> ApplicationConnector:
 def _timed_out(error: BaseException) -> bool:
     if isinstance(error, McpError):
         return error.error.code == httpx.codes.REQUEST_TIMEOUT
-    return isinstance(error, httpx.TimeoutException) and not isinstance(error, httpx.ConnectTimeout)
+    return isinstance(error, TimeoutError) or (
+        isinstance(error, httpx.TimeoutException) and not isinstance(error, httpx.ConnectTimeout)
+    )
 
 
 def _failure(
@@ -117,6 +119,16 @@ def _failure(
     if isinstance(error, RequesterBindingError):
         return "Your access for this request ended.", {"failure": "access_ended"}
     if isinstance(error, BackendError):
+        if isinstance(error, BackendTimeoutError) or error.backend_status in {408, 504}:
+            details: dict[str, JSONValue] = {"failure": "timeout", "phase": "access"}
+            if isinstance(error, BackendTimeoutError) and error.timeout_seconds is not None:
+                details["timeout_seconds"] = error.timeout_seconds
+            if error.backend_status is not None:
+                details["status"] = error.backend_status
+            return (
+                f"Main Sequence timed out while providing access to the {name} application.",
+                details,
+            )
         if error.backend_status in {403, 404}:
             return (
                 f"The {name} application is not available for this call.",
@@ -134,6 +146,9 @@ def _failure(
         )
     if isinstance(error, httpx.HTTPStatusError):
         status = error.response.status_code
+        if status in {408, 504}:
+            text = f"The {name} application or its gateway reported a timeout ({status})."
+            return text, {"failure": "timeout", "status": status}
         if status >= 500:
             text = f"The {name} application answered with a server error ({status})."
             return text, {"failure": "server_error", "status": status}
@@ -151,7 +166,7 @@ def _retryable(error: BaseException) -> bool:
     """Whether opening the session failed in a way that a second attempt may not repeat."""
 
     if isinstance(error, httpx.HTTPStatusError):
-        return error.response.status_code >= 500
+        return error.response.status_code == 408 or error.response.status_code >= 500
     return isinstance(error, httpx.TransportError) or _timed_out(error)
 
 

@@ -12,14 +12,14 @@ from mcp.server.fastmcp import FastMCP
 from pydantic import SecretStr
 from structlog.testing import capture_logs
 
-from ms_tau_sdk.backend.client import LeaseProof
+from ms_tau_sdk.backend.client import LeaseProof, MainSequenceClient
 from ms_tau_sdk.backend.models import (
     MCPApplication,
     ReleaseAccessGrant,
     ReleaseRuntimeAccess,
     TauRuntimeBootstrap,
 )
-from ms_tau_sdk.errors import BackendError, ConfigurationError
+from ms_tau_sdk.errors import BackendError, BackendTimeoutError, ConfigurationError
 from ms_tau_sdk.runtime.requester import (
     Requester,
     RequesterBindingError,
@@ -310,6 +310,19 @@ OPEN_FAILURES = [
 
 CALL_FAILURES = [
     (
+        TimeoutError(f"failed with {TOKEN}"),
+        "The orders tool orders.list did not answer within 60 seconds.",
+        {"failure": "timeout", "timeout_seconds": TOOL_TIMEOUT},
+    ),
+    *[
+        (
+            _status_error(status),
+            f"The orders application or its gateway reported a timeout ({status}).",
+            {"failure": "timeout", "status": status},
+        )
+        for status in (408, 504)
+    ],
+    (
         _timeout_error(),
         "The orders tool orders.list did not answer within 60 seconds.",
         {"failure": "timeout", "timeout_seconds": TOOL_TIMEOUT},
@@ -413,10 +426,11 @@ async def test_a_failure_after_the_call_is_sent_says_what_happened(person, error
         httpx.ConnectTimeout("slow"),
         httpx.RemoteProtocolError("dropped"),
         _timeout_error(),
+        _status_error(408),
         _status_error(502),
         _status_error(503),
     ],
-    ids=["connect", "connect_timeout", "dropped", "timeout", "502", "503"],
+    ids=["connect", "connect_timeout", "dropped", "timeout", "408", "502", "503"],
 )
 @pytest.mark.parametrize("operation", ["orders__list_tools", "orders__call_tool"])
 async def test_opening_the_session_is_tried_once_more_and_the_second_answer_counts(
@@ -634,6 +648,90 @@ async def test_each_turn_obtains_its_own_application_access():
 
 
 # The real MCP client library, talking HTTP to an application that answers in plain JSON.
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("renew", [False, True], ids=["initial_access", "renewal"])
+@pytest.mark.parametrize(
+    "failure",
+    [httpx.ReadTimeout, httpx.ConnectTimeout, httpx.WriteTimeout, httpx.PoolTimeout, 408, 504],
+)
+async def test_platform_timeouts_reach_the_tool_result_without_becoming_access_unavailable(
+    mcp_server, renew, failure
+):
+    settings = TauSDKSettings(_env_file=None, backend_url="https://platform.test/")
+    requests = []
+    access = _platform().resolve_release_runtime_access.return_value
+
+    def platform_answer(request):
+        requests.append(request)
+        if renew and len(requests) == 1:
+            return httpx.Response(
+                200,
+                json=access.model_dump(mode="json")
+                | {
+                    "access": {
+                        "mode": "token",
+                        "token": TOKEN,
+                        "rpc_url": "https://orders.apps.test/",
+                    }
+                },
+            )
+        if isinstance(failure, int):
+            return httpx.Response(failure, text=f"private response {TOKEN}")
+        raise failure(f"private error {TOKEN}", request=request)
+
+    # Construct the platform client before the fixture installs the MCP HTTP transport.
+    async with httpx.AsyncClient(
+        base_url=settings.backend_url,
+        timeout=OPEN_TIMEOUT,
+        transport=httpx.MockTransport(platform_answer),
+    ) as http:
+        auth = Mock()
+        auth.headers = AsyncMock(return_value={"Authorization": f"Bearer {TOKEN}"})
+        platform = MainSequenceClient(settings, auth, client=http)
+
+        async def refused(_message):
+            return httpx.Response(401)
+
+        received = mcp_server(tools=[ORDERS_LIST], on_call=refused)
+        with _turn(platform, Requester(uid="person-1")), capture_logs() as logs:
+            result = await _finishes(
+                _connected_tools()["orders__call_tool"].execute("call-1", {"tool": "orders.list"})
+            )
+
+    assert (
+        result.text == "Main Sequence timed out while providing access to the orders application."
+    )
+    assert result.details == {
+        "application": "orders",
+        "mcp_tool": "orders.list",
+        "is_error": True,
+        "failure": "timeout",
+        "phase": "access",
+        **({"status": failure} if isinstance(failure, int) else {"timeout_seconds": OPEN_TIMEOUT}),
+    }
+    assert len(requests) == (2 if renew else 1)
+    assert received.count("tools/call") == (1 if renew else 0)
+    assert TOKEN not in result.text + json.dumps(result.details) + json.dumps(logs, default=str)
+
+
+@pytest.mark.asyncio
+async def test_sanitizing_an_access_timeout_preserves_its_limit_without_its_request(person):
+    error = BackendTimeoutError("Backend request timed out", timeout_seconds=12)
+    error.__cause__ = httpx.ReadTimeout(
+        TOKEN,
+        request=httpx.Request("POST", "https://platform.test/", headers={"Authorization": TOKEN}),
+    )
+    person.resolve_release_runtime_access.side_effect = error
+
+    with pytest.raises(BackendTimeoutError) as raised:
+        await _turn_application_access(RELEASE_UID)
+
+    assert raised.value.timeout_seconds == 12
+    assert raised.value.__cause__ is None
+    assert raised.value.__context__ is None
+    assert TOKEN not in str(raised.value)
 
 
 def _connected_tools(**settings):

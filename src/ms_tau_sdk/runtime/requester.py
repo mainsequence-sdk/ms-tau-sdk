@@ -30,7 +30,7 @@ import structlog
 from ms_tau_sdk.backend.auth import AccessToken, _jwt_expiry
 from ms_tau_sdk.backend.client import LeaseProof, answer_without_request_credentials
 from ms_tau_sdk.backend.models import ReleaseRuntimeAccess
-from ms_tau_sdk.errors import BackendError, TauSDKError
+from ms_tau_sdk.errors import BackendError, BackendTimeoutError, TauSDKError
 
 logger = structlog.get_logger(__name__)
 
@@ -276,8 +276,12 @@ class TurnRequesterBinding:
                 )
             except BackendError as error:
                 # A transport failure keeps the request, and its credentials, as its cause, so
-                # only the message, status and answer are carried on.
-                failure = BackendError(str(error), status_code=error.backend_status)
+                # only safe metadata is carried on, including a timeout's classification.
+                failure = (
+                    BackendTimeoutError(str(error), timeout_seconds=error.timeout_seconds)
+                    if isinstance(error, BackendTimeoutError)
+                    else BackendError(str(error), status_code=error.backend_status)
+                )
                 failure.detail = error.detail
             if failure is not None:
                 if delegate and failure.backend_status == 403:

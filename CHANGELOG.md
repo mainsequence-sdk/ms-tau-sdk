@@ -2,6 +2,11 @@
 
 ## 2.0.9 — 2026-10-09
 
+- **Application access timeouts no longer become `access_unavailable`.** Platform transport
+  timeouts retain their classification and time limit when application access is obtained or
+  renewed. The tool reports `failure: timeout` with `phase: access`; HTTP 408/504 responses
+  also report a timeout with their status, without claiming the tool's configured limit elapsed.
+  Other access failures retain their classification. Tool calls are never replayed after failure.
 - **Turn logs name the session's Agent
   ([#85](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/85)).** Every log line of a turn
   carried `agent_uid` `"ms-tau-sdk"`, so no hosted Agent's turns appeared in its logs on the

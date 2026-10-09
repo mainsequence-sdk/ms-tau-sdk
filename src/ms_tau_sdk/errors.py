@@ -37,6 +37,14 @@ class BackendConflictError(BackendError):
     status_code = 409
 
 
+class BackendTimeoutError(BackendError):
+    """A platform request timed out; keep its limit without retaining the request."""
+
+    def __init__(self, message: str, *, timeout_seconds: float | None = None) -> None:
+        super().__init__(message)
+        self.timeout_seconds = timeout_seconds
+
+
 class LeaseLostError(TauSDKError):
     code = "runtime_lease_lost"
     status_code = 409
