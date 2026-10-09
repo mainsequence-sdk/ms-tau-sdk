@@ -1,7 +1,8 @@
 # Settings and Credentials
 
 Settings are case-sensitive. SDK-specific names generally use `MAINSEQUENCE_TAU_*`; the two tool
-composition settings use `TAU_*` so managed workflow environment validation accepts them.
+composition settings and `TAU_MCP_TOOL_TIMEOUT_SECONDS` use `TAU_*` so managed workflow environment
+validation accepts them.
 Established Main Sequence connection and credential names remain unprefixed by the SDK product name.
 
 ## Managed authenticated startup
@@ -183,12 +184,13 @@ independent of `TAU_LOCAL_STATE_ROOT`, which only holds the local-mode database 
 | Environment variable | Default |
 | --- | --- |
 | `MAINSEQUENCE_TAU_BACKEND_CONNECT_TIMEOUT_SECONDS` | `10` |
-| `MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` | `60` |
+| `MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` | `60`; also each request that opens a declared application's MCP session, but not the tool call itself |
 | `MAINSEQUENCE_TAU_BACKEND_WRITE_TIMEOUT_SECONDS` | `60` |
 | `MAINSEQUENCE_TAU_BACKEND_POOL_TIMEOUT_SECONDS` | `10` |
 | `MAINSEQUENCE_TAU_PROVIDER_TIMEOUT_SECONDS` | `60`; HTTP timeout for model-provider calls, which bounds time-to-first-token on providers that send nothing before it |
 | `MAINSEQUENCE_TAU_BACKEND_MAX_RESPONSE_BYTES` | `10485760` |
 | `MAINSEQUENCE_TAU_MCP_READ_CONCURRENCY` | `8` |
+| `TAU_MCP_TOOL_TIMEOUT_SECONDS` | `60`; how long a declared application's tool may run when the tool declares no limit of its own; see [Application tool time limits](../guides/application-tool-time-limits.md) |
 | `MAINSEQUENCE_TAU_SESSION_ENTRY_BATCH_MAX_ENTRIES` | `100` |
 | `MAINSEQUENCE_TAU_SESSION_ENTRY_BATCH_MAX_BYTES` | `8388608` |
 | `MAINSEQUENCE_TAU_SESSION_LEASE_TTL_SECONDS` | `90` |

@@ -9,6 +9,24 @@
   the session loads, or, before the session has loaded, the one its Agent card names (one extra
   request, only then). Local turns carry the workspace's local Agent,
   `local-agent-<workspace digest>`.
+- **Application tool calls get their own time limits, and failures say what happened
+  ([#84](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/84), ADR 0022).**
+  - A call that met an error status from the application or its gateway, such as 403, 502 or 503,
+    waited until the turn's 15-minute limit. It now ends at once with that status. The Main
+    Sequence MCP connection had the same defect and is fixed too.
+  - Each application tool declares how long it may run in its MCP `_meta` under
+    `mainsequence.ai/timeout-seconds/v1`, for example
+    `@mcp.tool(meta={"mainsequence.ai/timeout-seconds/v1": 300})`. A tool that declares nothing
+    gets the new `TAU_MCP_TOOL_TIMEOUT_SECONDS` (default `60`).
+    `MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` no longer limits the call itself. To find the
+    limit, `<name>__call_tool` now reads the application's tool list before each call.
+  - The model reads what failed, for example "The orders tool rebuild_report did not answer
+    within 300 seconds." or "The orders application answered with a server error (502).", instead
+    of "could not be reached" for every failure. Details and the
+    `runtime.mcp_application.failed` log event carry `failure`, `status` and `timeout_seconds`.
+  - Opening the application's session is tried once more when it fails on the connection, a
+    time-out or a server error. A call that was sent is never sent again.
+  - See [Application tool time limits](docs/guides/application-tool-time-limits.md).
 
 ## 2.0.8 — 2026-10-08
 

@@ -159,6 +159,16 @@ closes the session when the call ends. Without a person, the Agent's workload ne
 on the application. A name must match `^[a-z][a-z0-9_]{0,39}$` and must not be `mainsequence`; an
 invalid or repeated name fails the session load. Local mode has no declared applications.
 
+Each tool may declare how long it runs, in seconds, in its `_meta` under
+`mainsequence.ai/timeout-seconds/v1`. `<name>__call_tool` reads the application's tool list in the
+session it opens, then waits for the call that long, or `TAU_MCP_TOOL_TIMEOUT_SECONDS`
+(default `60`) when the tool declares nothing; the turn's own limit still applies. Opening the
+session waits `MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` for each request. A failure reaches
+the model in plain words that name the time-out, status or refusal, never the error's own text.
+When opening the session fails on the connection, a time-out or a server error, it is opened once
+more; a call that was sent is never sent again. See
+[Application tool time limits](../guides/application-tool-time-limits.md).
+
 A delegated call uses the person's ordinary permissions, including administrative ones; any other
 call uses the Agent's own, and each operation decides what it needs. For configuration, write
 risk, revocation, and the distinction between requester and workload authority, see the

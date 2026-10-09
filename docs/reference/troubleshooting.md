@@ -117,6 +117,20 @@ application grants no access: the Agent's workload needs its own grants on the a
 release and Environment, given in the workflow's `access` declaration or by a person who manages
 them. The application itself decides what each call may do.
 
+## An application tool times out or fails
+
+The tool result names what happened; the `runtime.mcp_application.failed` log event carries the
+same `failure`, `status` and `timeout_seconds`, with the application, tool and error type.
+
+| The model reads | Check and recovery |
+| --- | --- |
+| The `<name>` tool `<tool>` did not answer within `<N>` seconds. | The tool needs longer than its limit. The application declares a longer one in the tool's `_meta`, or the Agent raises `TAU_MCP_TOOL_TIMEOUT_SECONDS` for tools that declare none; see [Application tool time limits](../guides/application-tool-time-limits.md). |
+| The `<name>` application did not answer within `<N>` seconds. | Opening the session timed out twice. Check that the application is running and answers its MCP handshake within `MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS`. |
+| The `<name>` application answered with a server error (`<status>`). | The application or its gateway failed. A 504 after a long call means the gateway's own limit is shorter than the tool's; check the application's logs and gateway. |
+| The `<name>` application refused this call (`<status>`). | The caller lacks access on the application; see [An application refuses the Agent's own calls](#an-application-refuses-the-agents-own-calls). |
+| The `<name>` application could not be reached. | No connection could be made twice. Check that the release is deployed and its address resolves. |
+| Main Sequence could not provide access to the `<name>` application. | The platform did not answer the request for the application's address and token; check platform status. |
+
 ## Conversation or Task access is denied
 
 A `404` can mean that a conversation or Task is not visible to the caller; it does not prove it was

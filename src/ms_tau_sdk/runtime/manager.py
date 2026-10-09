@@ -1152,6 +1152,8 @@ class SessionRuntimeManager:
                     create_mcp_application_tools(
                         bootstrap.mcp_applications,
                         connect=application_connector(self.settings),
+                        tool_timeout_seconds=self.settings.mcp_tool_timeout_seconds,
+                        open_timeout_seconds=self.settings.backend_read_timeout_seconds,
                     )
                 )
             tools.extend(create_task_control_tools())

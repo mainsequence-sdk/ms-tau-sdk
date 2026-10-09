@@ -7,7 +7,7 @@ import contextvars
 from collections.abc import AsyncGenerator
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Literal, Self
+from typing import Any, Literal, Self
 
 import httpx
 from mcp import ClientSession, types
@@ -52,6 +52,7 @@ class _CallToolCommand:
     name: str
     arguments: dict[str, object]
     meta: dict[str, object] | None
+    timeout_seconds: float | None
     log_context: dict[str, object]
     result: asyncio.Future[types.CallToolResult]
 
@@ -99,10 +100,8 @@ class MCPConnectionClient:
         timeout: httpx.Timeout,
         read_timeout_seconds: float,
         read_concurrency: int,
-        read_catalog: bool = True,
     ) -> None:
         self.name = name
-        self._read_catalog = read_catalog
         self.display_name = display_name
         self.url = url
         self._http_auth = auth
@@ -113,6 +112,9 @@ class MCPConnectionClient:
         self._owner_task: asyncio.Task[None] | None = None
         self._ready: asyncio.Future[None] | None = None
         self._failure: Exception | None = None
+        # The results of the calls already handed to the session, so that a failed connection
+        # ends them as well as the calls still queued.
+        self._in_flight: set[asyncio.Future[Any]] = set()
         self.tools: tuple[types.Tool, ...] = ()
         self.resources: tuple[types.Resource, ...] = ()
         self._parallel_tool_names: frozenset[str] = frozenset()
@@ -198,8 +200,6 @@ class MCPConnectionClient:
         session: ClientSession,
         initialized: types.InitializeResult | None,
     ) -> None:
-        if not self._read_catalog:
-            return
         # Read only what the server offers; a server without resources answers "not found".
         capabilities = initialized.capabilities if initialized is not None else None
         offers_tools = capabilities is None or capabilities.tools is not None
@@ -219,14 +219,23 @@ class MCPConnectionClient:
         read_slots = asyncio.Semaphore(self._read_concurrency)
 
         async def execute(command: _CallToolCommand | _ReadResourceCommand) -> None:
+            self._in_flight.add(command.result)
             try:
                 with bound_contextvars(**command.log_context):
                     if isinstance(command, _CallToolCommand):
-                        tool_result = await session.call_tool(
-                            command.name,
-                            command.arguments,
-                            meta=command.meta,
-                        )
+                        if command.timeout_seconds is None:
+                            tool_result = await session.call_tool(
+                                command.name,
+                                command.arguments,
+                                meta=command.meta,
+                            )
+                        else:
+                            tool_result = await session.call_tool(
+                                command.name,
+                                command.arguments,
+                                read_timeout_seconds=timedelta(seconds=command.timeout_seconds),
+                                meta=command.meta,
+                            )
                         if not command.result.done():
                             command.result.set_result(tool_result)
                     else:
@@ -236,6 +245,11 @@ class MCPConnectionClient:
             except Exception as error:
                 if not command.result.done():
                     command.result.set_exception(error)
+            finally:
+                # A transport failure cancels the session's work before its cause is known; the
+                # owner task then ends this call with that cause.
+                if command.result.done():
+                    self._in_flight.discard(command.result)
 
         async def execute_read(
             command: _CallToolCommand | _ReadResourceCommand,
@@ -271,6 +285,10 @@ class MCPConnectionClient:
                 await asyncio.gather(*tuple(active_reads), return_exceptions=True)
 
     def _fail_pending_commands(self, error: Exception) -> None:
+        for result in self._in_flight:
+            if not result.done():
+                result.set_exception(error)
+        self._in_flight.clear()
         if self._commands is None:
             return
         while not self._commands.empty():
@@ -293,7 +311,10 @@ class MCPConnectionClient:
         arguments: dict[str, object],
         *,
         meta: dict[str, object] | None = None,
+        timeout_seconds: float | None = None,
     ) -> types.CallToolResult:
+        """Call one tool; ``timeout_seconds`` replaces the session's wait for its answer."""
+
         commands = self._require_commands()
         result: asyncio.Future[types.CallToolResult] = asyncio.get_running_loop().create_future()
         commands.put_nowait(
@@ -301,6 +322,7 @@ class MCPConnectionClient:
                 name=name,
                 arguments=arguments,
                 meta=meta,
+                timeout_seconds=timeout_seconds,
                 log_context=dict(get_contextvars()),
                 result=result,
             )

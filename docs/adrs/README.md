@@ -24,6 +24,8 @@ These records are the normative decisions for Main Sequence TAU SDK:
 - [ADR 0019: Verified request identity and session ownership](./0019-verified-request-identity-and-session-ownership.md)
 - [ADR 0021: MCP connections on the person's identity](./0021-mcp-connections-on-the-persons-identity.md)
   (Accepted; implemented in the SDK, takes effect with the platform's cutover)
+- [ADR 0022: Time limits and failures of MCP application tool calls](./0022-mcp-application-tool-call-limits-and-failures.md)
+  (Accepted; implemented)
 
 [ADR 56](./adr-56-main-sequence-tau-sdk-workspace-bound-library-deployment.md) is the accepted
 transition record and implementation ledger. Decisions of the retired deployment project do not
