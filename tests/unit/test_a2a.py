@@ -1,7 +1,7 @@
 import asyncio
 import base64
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
@@ -33,6 +33,8 @@ from ms_tau_sdk.backend.models import (
 )
 from ms_tau_sdk.errors import BackendError
 from ms_tau_sdk.runtime.events import translate_tau_event
+from ms_tau_sdk.runtime.manager import SessionRuntimeManager
+from ms_tau_sdk.runtime.session import ActiveSessionRuntime
 from ms_tau_sdk.settings import TauSDKSettings
 
 
@@ -1165,3 +1167,137 @@ async def test_message_routes_reject_invalid_caller_identity_before_any_turn(hea
     assert rpc.json()["error"]["data"] == {"code": expected["code"]}
     assert manager.provenances == []
     client.create_task.assert_not_awaited()
+
+
+class _UnansweredCodingSession:
+    """A Tau session whose turn never answers, so only a time limit ends it."""
+
+    is_running = False
+
+    def __init__(self) -> None:
+        self.cancelled = 0
+
+    async def append_custom_entry(self, _namespace, _data) -> None:
+        return None
+
+    async def prompt(self, _content):
+        await asyncio.Event().wait()
+        yield {"type": "agent_settled"}
+
+    def cancel(self) -> None:
+        self.cancelled += 1
+
+
+def _loaded_runtime_manager(config: TauSDKSettings, coding_session) -> SessionRuntimeManager:
+    manager = SessionRuntimeManager(settings=config, backend=AsyncMock(), providers=Mock())
+    manager._runtimes["session-1"] = ActiveSessionRuntime(
+        session_uid="session-1",
+        holder_id=manager.holder_id,
+        coding_session=coding_session,
+        storage=SimpleNamespace(lease_token="lease", begin_turn=AsyncMock()),
+        provider=object(),
+        agent_uid="agent-1",
+    )
+    return manager
+
+
+async def _held_message_response(
+    manager: object,
+    config: TauSDKSettings,
+    *,
+    transport: str,
+    client: AsyncMock | None = None,
+) -> httpx.Response:
+    """Send one Message-mode request over REST or JSON-RPC and return the HTTP response."""
+
+    if client is None:
+        client, _task = _direct_message_client()
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[backend] = lambda: client
+    app.dependency_overrides[runtime_manager] = lambda: manager
+    app.dependency_overrides[settings] = lambda: config
+    body = {
+        "message": {
+            "messageId": "message-1",
+            "role": "ROLE_USER",
+            "contextId": "session-1",
+            "parts": [{"text": "Answer this."}],
+        },
+        "configuration": {"responseKind": "message"},
+    }
+    headers = {"A2A-Extensions": RESPONSE_KIND_EXTENSION_URI, **USER_CALLER_HEADERS}
+    # An unhandled error must reach the client as the HTTP answer it would get, not as a raise.
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as http:
+        if transport == "rest":
+            return await http.post(f"{REST_BASE}/message:send", headers=headers, json=body)
+        return await http.post(
+            "/api/a2a/rpc",
+            headers=headers,
+            json={"jsonrpc": "2.0", "id": "rpc-1", "method": "message/send", "params": body},
+        )
+
+
+def _message_limit_error(limit_seconds: str) -> tuple[str, list[dict[str, object]]]:
+    return (
+        f"The Agent did not answer the Message within {limit_seconds} seconds. "
+        "Use Task mode for longer work.",
+        [
+            {
+                "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                "reason": "MESSAGE_RESPONSE_LIMIT_EXCEEDED",
+                "domain": "mainsequence.ai",
+                "metadata": {"limitSeconds": limit_seconds},
+            }
+        ],
+    )
+
+
+def _assert_message_limit_answer(response: httpx.Response, transport: str, limit: str) -> None:
+    message, details = _message_limit_error(limit)
+    if transport == "rest":
+        assert response.status_code == 504
+        assert response.headers["content-type"] == "application/a2a+json"
+        assert response.json() == {
+            "error": {
+                "code": 504,
+                "status": "DEADLINE_EXCEEDED",
+                "message": message,
+                "details": details,
+            }
+        }
+    else:
+        assert response.status_code == 200
+        assert response.json() == {
+            "jsonrpc": "2.0",
+            "id": "rpc-1",
+            "error": {"code": -32000, "message": message, "data": details},
+        }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["rest", "json_rpc"])
+async def test_a_message_whose_turn_times_out_is_answered_with_a_typed_deadline_error(
+    tmp_path, transport
+):
+    config = TauSDKSettings(
+        _env_file=None,
+        runtime_credential_id="credential-id",
+        workspace=tmp_path,
+        startup_dependencies_enabled=False,
+        turn_timeout_seconds=1,
+    )
+    coding_session = _UnansweredCodingSession()
+    manager = _loaded_runtime_manager(config, coding_session)
+    try:
+        response = await _held_message_response(manager, config, transport=transport)
+    finally:
+        manager._runtimes.clear()
+        await manager.aclose()
+
+    _assert_message_limit_answer(response, transport, "1")
+    # The turn's own time limit stopped the turn.
+    assert coding_session.cancelled == 1

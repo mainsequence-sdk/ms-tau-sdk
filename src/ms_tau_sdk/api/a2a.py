@@ -382,6 +382,62 @@ def _unsupported_operation_json_rpc_error(
     }
 
 
+class _MessageLimitExceeded(Exception):
+    """A Message-mode request reached its time limit before the Agent answered."""
+
+    def __init__(self, limit_seconds: float) -> None:
+        super().__init__(f"The Message time limit of {limit_seconds} seconds expired")
+        self.limit_seconds = limit_seconds
+
+
+def _seconds_text(value: float) -> str:
+    return str(int(value)) if float(value).is_integer() else str(value)
+
+
+def _message_limit_text(limit_seconds: float) -> str:
+    return (
+        f"The Agent did not answer the Message within {_seconds_text(limit_seconds)} seconds. "
+        "Use Task mode for longer work."
+    )
+
+
+def _message_limit_error_info(limit_seconds: float) -> dict[str, Any]:
+    return {
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "reason": "MESSAGE_RESPONSE_LIMIT_EXCEEDED",
+        "domain": "mainsequence.ai",
+        # ErrorInfo metadata values are strings.
+        "metadata": {"limitSeconds": _seconds_text(limit_seconds)},
+    }
+
+
+def _message_limit_rest_error(limit_seconds: float) -> JSONResponse:
+    return JSONResponse(
+        status_code=504,
+        media_type="application/a2a+json",
+        content={
+            "error": {
+                "code": 504,
+                "status": "DEADLINE_EXCEEDED",
+                "message": _message_limit_text(limit_seconds),
+                "details": [_message_limit_error_info(limit_seconds)],
+            }
+        },
+    )
+
+
+def _message_limit_json_rpc_error(request_id: object, limit_seconds: float) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": {
+            "code": -32000,
+            "message": _message_limit_text(limit_seconds),
+            "data": [_message_limit_error_info(limit_seconds)],
+        },
+    }
+
+
 def _without_push_notification_capability(
     agent_card: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
@@ -2289,6 +2345,25 @@ async def message_send(
     ] = None,
 ) -> dict[str, Any]:
     try:
+        return await _message_send(body, client, manager, config, request, a2a_extensions)
+    except _MessageLimitExceeded as error:
+        return _message_limit_rest_error(error.limit_seconds)  # type: ignore[return-value]
+
+
+async def _message_send(
+    body: dict[str, Any],
+    client: MainSequenceClient,
+    manager: SessionRuntimeManager,
+    config: TauSDKSettings,
+    request: Request,
+    a2a_extensions: str | None,
+) -> dict[str, Any]:
+    """Answer one ``message:send``, for REST and JSON-RPC alike.
+
+    A Message-mode request that reaches its time limit raises ``_MessageLimitExceeded``, which
+    each transport answers in its own form.
+    """
+    try:
         provenance = _a2a_turn_provenance(config, request)
     except CallerIdentityError as error:
         return _caller_identity_rejection(request, error)  # type: ignore[return-value]
@@ -2431,15 +2506,25 @@ async def message_send(
         replay = await client.begin_local_conversation_message(message_to_protocol(message))
         if replay is not None:
             return {"message": replay}
-    result = await _execute_message(
-        manager,
-        context_id=str(message["contextId"]),
-        prompt=prompt,
-        output_contract=output_contract,
-        max_output_bytes=config.max_turn_output_bytes,
-        provenance=provenance,
-        caller_assertion=request_caller_assertion(request),
-    )
+    try:
+        result = await _execute_message(
+            manager,
+            context_id=str(message["contextId"]),
+            prompt=prompt,
+            output_contract=output_contract,
+            max_output_bytes=config.max_turn_output_bytes,
+            provenance=provenance,
+            caller_assertion=request_caller_assertion(request),
+        )
+    except TimeoutError as error:
+        # The turn reached its time limit and was stopped. The caller learns which limit.
+        logger.warning(
+            "a2a.message.limit_exceeded",
+            message="A Message-mode request reached its time limit before the Agent answered",
+            context_id=str(message["contextId"]),
+            limit_seconds=config.turn_timeout_seconds,
+        )
+        raise _MessageLimitExceeded(config.turn_timeout_seconds) from error
     if config.local_mode:
         result = await client.complete_local_conversation_message(
             str(message["contextId"]),
@@ -2703,14 +2788,17 @@ async def json_rpc(
 
     try:
         if method in {"SendMessage", "message/send"}:
-            result = await message_send(
-                params,
-                client,
-                manager,
-                config,
-                request,
-                a2a_extensions,
-            )
+            try:
+                result = await _message_send(
+                    params,
+                    client,
+                    manager,
+                    config,
+                    request,
+                    a2a_extensions,
+                )
+            except _MessageLimitExceeded as error:
+                return _message_limit_json_rpc_error(request_id, error.limit_seconds)
         elif method in {"SendStreamingMessage", "message/stream"}:
             _response_kind(
                 params,

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **A direct Message that runs out of time gets a typed answer
+  ([#94](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/94)).** A `message:send` answered
+  with a Message, or JSON-RPC `message/send`, whose turn reached
+  `MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS` got a plain-text HTTP 500 "Internal Server Error". It now
+  gets HTTP 504 `application/a2a+json` with status `DEADLINE_EXCEEDED` and an `ErrorInfo` with
+  reason `MESSAGE_RESPONSE_LIMIT_EXCEEDED`, domain `mainsequence.ai` and `metadata.limitSeconds`,
+  the limit that expired. JSON-RPC returns the same `ErrorInfo` in a JSON-RPC error (`-32000`).
+  The turn is stopped as before; its work is neither rolled back nor replayed. Use Task mode for
+  longer work.
+
 ## 2.0.11 — 2026-10-11
 
 - **Every MCP connection honors per-call response deadlines

@@ -35,6 +35,10 @@ history. This boundary is the model channel only: code in the runtime host holds
 credential and can still call the operation
 ([issue #65](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/65)).
 
+Amended 2026-10-11 for [#94](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/94): a direct
+A2A Message that reaches its time limit is answered with a typed HTTP 504 `DEADLINE_EXCEEDED`
+error, and JSON-RPC with the same `ErrorInfo`, instead of an untyped HTTP 500 (decision 11).
+
 ## Context
 
 The project identity changed, but its useful transport and execution behavior remains necessary.
@@ -79,6 +83,14 @@ The SDK adopts the following contracts:
 10. A hosted runtime authenticates every inbound request with the platform's signed assertion and
     lets only a session's owner, an Organization admin, or the Agent that delegated to it address
     that session. ADR 0019 holds the contract.
+11. A direct A2A Message, `message:send` answered with a Message and JSON-RPC `message/send` in
+    Message mode, runs its turn while the request waits. When the turn reaches its time limit
+    before the Agent answers, the runtime stops the turn and answers HTTP 504 with media type
+    `application/a2a+json`: the google.rpc error envelope with status `DEADLINE_EXCEEDED` and one
+    `ErrorInfo` with reason `MESSAGE_RESPONSE_LIMIT_EXCEEDED`, domain `mainsequence.ai` and
+    `metadata.limitSeconds`, the limit that expired, as a string. JSON-RPC answers a JSON-RPC
+    error (`-32000`) with the same `ErrorInfo` in `data`. The work the turn already did is neither
+    rolled back nor replayed; longer work uses Task mode.
 
 External HTTP field names that are part of an existing service contract remain wire details; they
 do not define local SDK runtime roles or deployment modes.

@@ -234,6 +234,15 @@ the unregistered local process, push notifications, or `resume_caller`. For loca
 use polling. Incoming local calls do not need managed-gateway `X-Caller-*` headers. If a public
 Message or Task route returns this error, the running SDK is stale.
 
+## A direct Message answers 504 `DEADLINE_EXCEEDED`
+
+The Agent did not answer the Message within its time limit, and the runtime stopped the turn. The
+`ErrorInfo` with reason `MESSAGE_RESPONSE_LIMIT_EXCEEDED` names the limit that expired in
+`metadata.limitSeconds`; see the [runtime contract](./runtime-contract.md#direct-message-time-limit).
+Send work that may take longer in Task mode (`configuration.responseKind: "task"`) and follow the
+Task. Do not send the same Message again to wait longer: the stopped turn's tool calls are not
+rolled back, so a new Message runs the work again.
+
 ## An A2A Task remains submitted or working
 
 Check `a2a_task_recovery` and `a2a_task_policy` in `/health`, then inspect the Task in Tau Board.

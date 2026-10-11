@@ -198,6 +198,36 @@ detaches the stream; the turn runs to its durable end and stays visible through 
 history. Only `POST /api/chat/session/cancel` stops it. A local session runs one turn at a time,
 and `POST /api/chat` for a session with a running turn returns 409 `session_busy`.
 
+### Direct Message time limit
+
+A direct Message, `message:send` answered with a Message and JSON-RPC `message/send` in Message
+mode, runs its turn while the request waits. When the turn reaches
+`MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS`, the runtime stops it and answers HTTP 504 with media type
+`application/a2a+json`:
+
+```json
+{
+  "error": {
+    "code": 504,
+    "status": "DEADLINE_EXCEEDED",
+    "message": "The Agent did not answer the Message within 900 seconds. Use Task mode for longer work.",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "reason": "MESSAGE_RESPONSE_LIMIT_EXCEEDED",
+        "domain": "mainsequence.ai",
+        "metadata": {"limitSeconds": "900"}
+      }
+    ]
+  }
+}
+```
+
+`limitSeconds` is the limit that expired, as a string. JSON-RPC `message/send` answers a JSON-RPC
+error with code `-32000`, the same message, and the same `ErrorInfo` list in `data`. Work the turn
+already did, such as tool calls, is not rolled back and is never replayed. Work that may take
+longer uses Task mode (`configuration.responseKind: "task"`).
+
 ### Managed AgentTask execution
 
 The platform owns the durable AgentTask state machine and route contract. A managed runtime lists the
