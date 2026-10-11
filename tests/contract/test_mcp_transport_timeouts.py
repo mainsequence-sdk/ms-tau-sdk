@@ -222,11 +222,12 @@ async def test_only_the_tool_response_read_uses_the_per_call_lifetime(http_mcp_s
         message = json.loads(request.content)
         observed[message["method"]] = dict(request.extensions["timeout"])
 
-    monkeypatch.setattr(
-        httpx,
-        "AsyncClient",
-        lambda **kwargs: real_client(event_hooks={"request": [record_timeout]}, **kwargs),
-    )
+    def observing_client(**kwargs):
+        hooks = kwargs.setdefault("event_hooks", {})
+        hooks.setdefault("request", []).append(record_timeout)
+        return real_client(**kwargs)
+
+    monkeypatch.setattr(httpx, "AsyncClient", observing_client)
     client = await _connect(http_mcp_server)
     try:
         await client.call_tool("example.read", {}, timeout_seconds=0.8)

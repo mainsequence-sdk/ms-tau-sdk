@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import math
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
@@ -14,9 +14,9 @@ from typing import Any, Literal, Self, cast
 import anyio
 import httpx
 from anyio.abc import ObjectSendStream
-from anyio.streams.memory import MemoryObjectSendStream
+from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from mcp import ClientSession, types
-from mcp.client.streamable_http import streamable_http_client
+from mcp.client.streamable_http import RequestContext, StreamableHTTPTransport
 from mcp.shared.message import SessionMessage
 from pydantic import AnyUrl
 from structlog.contextvars import bound_contextvars, get_contextvars
@@ -106,53 +106,85 @@ class _ToolCallWriteStream(ObjectSendStream[SessionMessage]):
         await self._stream.aclose()
 
 
-class _ToolCallHTTPClient:
-    """Give each call's HTTP response a cancellation scope inside MCP's transport task.
+class _ToolCallTransport(StreamableHTTPTransport):
+    """Give each call's POST a cancellation scope inside MCP's transport task.
 
     Cancelling that task directly cancels MCP's whole task group. A local scope releases the
     response socket when its call ends while leaving other requests and the connection alive.
     """
 
-    def __init__(self, client: httpx.AsyncClient, calls: dict[types.RequestId, _ToolCall]) -> None:
-        self._client = client
+    def __init__(self, url: str, calls: dict[types.RequestId, _ToolCall]) -> None:
+        super().__init__(url)
         self._calls = calls
 
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self._client, name)
-
-    @asynccontextmanager
-    async def stream(
-        self, method: str, url: httpx.URL | str, **kwargs: Any
-    ) -> AsyncIterator[httpx.Response]:
-        message = kwargs.get("json", {})
+    async def _handle_post_request(self, ctx: RequestContext) -> None:
+        message = ctx.session_message.message.root
         call = (
-            self._calls.get(message.get("id"))
-            if method == "POST" and message.get("method") == "tools/call"
+            self._calls.get(message.id)
+            if isinstance(message, types.JSONRPCRequest) and message.method == "tools/call"
             else None
         )
         if call is None:
-            async with self._client.stream(method, url, **kwargs) as response:
-                yield response
+            await super()._handle_post_request(ctx)
             return
 
-        timeout = httpx.Timeout(self._client.timeout)
-        timeout.read = None
-        yielded = False
         try:
             with anyio.CancelScope() as http_cancel_scope:
                 call.http_cancel_scope = http_cancel_scope
                 if call.finished:
                     http_cancel_scope.cancel()
-                async with self._client.stream(method, url, timeout=timeout, **kwargs) as response:
-                    yielded = True
-                    yield response
-            if not yielded:
-                # Its finite response deadline already ended the call. Let MCP finish this
-                # cancelled POST without interpreting it as a failure of the whole connection.
-                yield httpx.Response(202)
+                await super()._handle_post_request(ctx)
         finally:
             if call.request_id is not None:
                 self._calls.pop(call.request_id, None)
+
+
+@asynccontextmanager
+async def streamable_http_client(
+    url: str,
+    *,
+    http_client: httpx.AsyncClient,
+    calls: dict[types.RequestId, _ToolCall],
+    terminate_on_close: bool = False,
+) -> AsyncIterator[
+    tuple[
+        MemoryObjectReceiveStream[SessionMessage | Exception],
+        MemoryObjectSendStream[SessionMessage],
+        Callable[[], str | None],
+    ]
+]:
+    """Use MCP's HTTP readers/writer with call-scoped POST cancellation.
+
+    The upstream factory constructs its transport internally without an injection point.
+    Preserve its stream/task-group lifecycle while selecting our transport specialization.
+    """
+    read_writer, read_stream = anyio.create_memory_object_stream[SessionMessage | Exception](0)
+    write_stream, write_reader = anyio.create_memory_object_stream[SessionMessage](0)
+    transport = _ToolCallTransport(url, calls)
+    async with anyio.create_task_group() as task_group:
+        try:
+
+            def start_get_stream() -> None:
+                task_group.start_soon(transport.handle_get_stream, http_client, read_writer)
+
+            task_group.start_soon(
+                transport.post_writer,
+                http_client,
+                write_reader,
+                read_writer,
+                write_stream,
+                start_get_stream,
+                task_group,
+            )
+            try:
+                yield read_stream, write_stream, transport.get_session_id
+            finally:
+                if terminate_on_close:
+                    await transport.terminate_session(http_client)
+                task_group.cancel_scope.cancel()
+        finally:
+            await read_writer.aclose()
+            await write_stream.aclose()
 
 
 def _validate_response_timeout(seconds: float) -> None:
@@ -271,12 +303,12 @@ class MCPConnectionClient:
             async with httpx.AsyncClient(
                 timeout=self._http_timeout,
                 auth=self._http_auth,
+                event_hooks={"request": [self._prepare_tool_request]},
             ) as http_client:
                 async with streamable_http_client(
                     self.url,
-                    http_client=cast(
-                        httpx.AsyncClient, _ToolCallHTTPClient(http_client, self._http_calls)
-                    ),
+                    http_client=http_client,
+                    calls=self._http_calls,
                     terminate_on_close=False,
                 ) as (read_stream, write_stream, _get_session_id):
                     async with ClientSession(
@@ -316,6 +348,19 @@ class MCPConnectionClient:
                 failure or RuntimeError(f"{self.display_name} MCP client closed")
             )
             self._http_calls.clear()
+
+    async def _prepare_tool_request(self, request: httpx.Request) -> None:
+        if request.method != "POST":
+            return
+        message = types.JSONRPCMessage.model_validate_json(request.content).root
+        if (
+            isinstance(message, types.JSONRPCRequest)
+            and message.method == "tools/call"
+            and message.id in self._http_calls
+        ):
+            # Only this response read follows the finite call deadline. Keep the request's
+            # connect/write/pool limits, without mutating the shared HTTP client defaults.
+            request.extensions["timeout"] = {**request.extensions["timeout"], "read": None}
 
     async def _read_server_catalog(
         self,
