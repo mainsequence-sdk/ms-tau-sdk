@@ -29,7 +29,9 @@ caller from `request.state.user` (`uid`, `team_uids`, `is_organization_admin`) a
 `request.state.user_uid`. The launcher reads the declaration from the application object it serves:
 serve the application `create_app` returns rather than mounting it inside another one, and do not
 install a second request-identity integration on it. See the
-[runtime contract](./runtime-contract.md#request-identity).
+[runtime contract](./runtime-contract.md#request-identity). `team_uids` identifies Team membership;
+it does not state whether the caller is a Team writer. See
+[Teams and membership](./security-model.md#teams-and-membership).
 
 ## `TauSDKSettings`
 

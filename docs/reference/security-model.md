@@ -83,6 +83,33 @@ Two rules cap every grant:
 Everyone who can use the Agent benefits from its grants. Give an Agent that serves many people only
 access that all of them may have.
 
+## Teams and membership
+
+With the matching platform Team-membership change, ordinary Team membership shows who
+can view or control the Team. Each member can view it; a writer can edit it. Only Organization
+admins add, remove or change members. Member rows show `can_edit` and `is_protected`.
+
+- Every current Organization admin is a protected writer member of every ordinary Team and
+  cannot be removed or downgraded. Removing the admin role keeps existing memberships and
+  writer access, while ending that protection.
+- A Team's creator is added as a writer once, at creation. An Organization admin can later
+  downgrade or remove that creator. Being its creator gives no continuing Team access, and
+  subsequent Team updates do not add the creator back.
+- Managing an Agent that created a Team does not grant Team access to the Agent's managers.
+  The person or workload must have its own membership. A separate grant to a person or
+  another Team does not confer ordinary-Team control.
+- All members receive the resources shared with their Team at the shared level. Writer status
+  controls the Team itself; it does not raise the level granted on those resources.
+- The built-in Full directory keeps its existing computed people membership and read-only
+  behavior. Access to it can reveal Team directory entries without granting edit access.
+
+Existing ordinary Teams gain their missing current Organization admins and creators as writers
+when that platform change is applied. Other existing members stay readers until an admin changes
+their membership. This policy is a platform behavior change; it does not add an SDK method or
+change the shape of `team_uids`. Team UIDs in a verified caller identify membership, not whether
+the caller is a writer. Ask an Organization admin to review the Team's member list when access
+is missing. Platform operators retain their separate operational access.
+
 ## Acting for the person (`acts_for_requester`)
 
 An Agent can be enabled to act with the ordinary permissions of its requester. Every call the Agent
