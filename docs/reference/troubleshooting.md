@@ -117,13 +117,21 @@ application grants no access: the Agent's workload needs its own grants on the a
 release and Environment, given in the workflow's `access` declaration or by a person who manages
 them. The application itself decides what each call may do.
 
-## A platform MCP tool needs a longer response deadline
+## A platform MCP tool call times out
 
-Use `await client.call_tool(tool_name, arguments, timeout_seconds=420)` to allow a long-running
-response. The override must be finite and positive; omitted overrides use the MCP session's
-default (`MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` for the platform client). The override
-applies to response headers, JSON bodies and SSE data, without also raising the backend HTTP read
-setting. HTTP connect, write and pool limits and the server's own gateway limits still apply.
+Each Main Sequence MCP tool waits for the time limit the platform declares for it in the tool's
+`_meta` under `mainsequence.ai/timeout-seconds/v1`; a tool that declares none waits
+`MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS`. The platform's limit is the longest the
+operation can take: no client setting extends it. A direct `a2a.send_message` waits for the
+platform's limit for that call, and the platform gives the target Agent 90 seconds to answer a
+direct Message. Send work that may take longer with `response_kind: "task"` and follow the Task.
+
+Code that calls the platform client itself can pass `timeout_seconds` to
+`await client.call_tool(tool_name, arguments, timeout_seconds=N)`, a finite positive number of
+seconds. It sets how long this runtime waits for the answer, for response headers, JSON bodies and
+SSE data, without changing the backend HTTP read setting. It never makes the platform run the
+operation longer, so a value above the platform's limit has no effect. HTTP connect, write and
+pool limits still apply.
 
 An expired deadline or caller cancellation closes the local response but does not establish the
 remote operation's outcome. Read back its status through the supported API before deciding what
@@ -233,6 +241,19 @@ only for `/internal/a2a` backend delivery hooks, platform discovery of
 the unregistered local process, push notifications, or `resume_caller`. For local Task completion,
 use polling. Incoming local calls do not need managed-gateway `X-Caller-*` headers. If a public
 Message or Task route returns this error, the running SDK is stale.
+
+## A direct Message answers 504 `DEADLINE_EXCEEDED`
+
+The Agent did not answer the Message within its time limit, and the runtime stopped the turn. The
+`ErrorInfo` with reason `MESSAGE_RESPONSE_LIMIT_EXCEEDED` names the limit that expired in
+`metadata.limitSeconds`: the platform gives a direct Message 90 seconds, and
+`MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS` ends it earlier when it is shorter. See the
+[runtime contract](./runtime-contract.md#direct-message-time-limit).
+
+No client or runtime setting extends the platform's limit. Send work that may take longer in Task
+mode (`configuration.responseKind: "task"`, or `response_kind: "task"` with `a2a.send_message`)
+and follow the Task. Do not send the same Message again to wait longer: the stopped turn's tool
+calls are not rolled back, so a new Message runs the work again.
 
 ## An A2A Task remains submitted or working
 

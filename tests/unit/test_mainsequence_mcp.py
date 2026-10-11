@@ -11,6 +11,7 @@ from mcp import types
 from starlette.applications import Starlette
 from starlette.responses import StreamingResponse
 from starlette.routing import Route
+from structlog.testing import capture_logs
 
 from ms_tau_sdk.backend.client import LeaseProof
 from ms_tau_sdk.backend.mcp import (
@@ -30,6 +31,7 @@ from ms_tau_sdk.tools.mainsequence_mcp import (
     create_mainsequence_mcp_tools,
     mainsequence_mcp_resource_prompt,
 )
+from ms_tau_sdk.tools.mcp_connection import TIMEOUT_META_KEY
 
 
 def _settings() -> TauSDKSettings:
@@ -766,3 +768,77 @@ async def test_local_mode_calls_carry_no_private_metadata():
 
     assert result.text == "ran"
     client.call_tool.assert_awaited_once_with("job.run", {})
+
+
+def _send_message_tool(**meta: object) -> types.Tool:
+    return types.Tool(
+        name="a2a.send_message",
+        inputSchema={"type": "object", "properties": {"message": {"type": "string"}}},
+        _meta=meta or None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_platform_tool_waits_for_the_time_limit_the_platform_declares():
+    # The platform's own limit for the call, not MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS.
+    client = _platform(_send_message_tool(**{TIMEOUT_META_KEY: 125}))
+    tool = create_mainsequence_mcp_tools(client)[0]
+
+    await tool.execute("call-1", {"message": "hi", "response_kind": "message"})
+
+    client.call_tool.assert_awaited_once_with(
+        "a2a.send_message",
+        {"message": "hi", "response_kind": "message"},
+        timeout_seconds=125.0,
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_hosted_platform_call_carries_its_envelope_and_its_declared_time_limit():
+    client = _platform(_send_message_tool(**{TIMEOUT_META_KEY: 2.5}))
+    tool = create_mainsequence_mcp_tools(client, session_uid=SESSION_UID)[0]
+
+    with _turn(_binding(requester=None)):
+        await tool.execute("call-1", {"message": "hi", "response_kind": "message"})
+
+    client.call_tool.assert_awaited_once_with(
+        "a2a.send_message",
+        {"message": "hi", "response_kind": "message"},
+        meta={CALLER_SESSION_PROOF_META_KEY: _session_proof()},
+        timeout_seconds=2.5,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "meta",
+    [
+        {},
+        {"mainsequence.ai/other/v1": 5},
+        *({TIMEOUT_META_KEY: value} for value in (0, -5, "90", True, float("nan"), float("inf"))),
+    ],
+    ids=["none", "other_meta", "zero", "negative", "text", "bool", "nan", "inf"],
+)
+async def test_a_platform_tool_without_a_valid_declared_limit_keeps_the_session_default(meta):
+    client = _platform(_send_message_tool(**meta))
+
+    with capture_logs() as logs:
+        tool = create_mainsequence_mcp_tools(client)[0]
+        await tool.execute("call-1", {"message": "hi", "response_kind": "message"})
+
+    client.call_tool.assert_awaited_once_with(
+        "a2a.send_message", {"message": "hi", "response_kind": "message"}
+    )
+    invalid = [log for log in logs if log["event"] == "runtime.mcp.invalid_timeout"]
+    assert invalid == (
+        [
+            {
+                "event": "runtime.mcp.invalid_timeout",
+                "log_level": "warning",
+                "connection": "mainsequence",
+                "mcp_tool": "a2a.send_message",
+            }
+        ]
+        if TIMEOUT_META_KEY in meta
+        else []
+    )

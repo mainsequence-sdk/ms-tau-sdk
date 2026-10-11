@@ -1,5 +1,38 @@
 # Changelog
 
+## 2.0.12 — 2026-10-11
+
+- **A direct Message that runs out of time gets a typed answer
+  ([#94](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/94)).** A `message:send` answered
+  with a Message, or JSON-RPC `message/send`, whose turn reached
+  `MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS` got a plain-text HTTP 500 "Internal Server Error". It now
+  gets HTTP 504 `application/a2a+json` with status `DEADLINE_EXCEEDED` and an `ErrorInfo` with
+  reason `MESSAGE_RESPONSE_LIMIT_EXCEEDED`, domain `mainsequence.ai` and `metadata.limitSeconds`,
+  the limit that expired. JSON-RPC returns the same `ErrorInfo` in a JSON-RPC error (`-32000`).
+  The turn is stopped as before; its work is neither rolled back nor replayed. Use Task mode for
+  longer work.
+- **A direct Message has the platform's 90-second limit.** The platform gives a direct A2A
+  Message one strict limit, 90 seconds, and passes it to the runtime it hosts in
+  `MAINSEQUENCE_A2A_MESSAGE_LIMIT_SECONDS`, a platform-set variable that users do not set. The
+  runtime enforces it for every caller, from when it receives the request and over the whole
+  request, including output-contract repair turns: the turn is stopped and the request gets the
+  504 above with the platform's limit. A shorter `MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS` still ends
+  the turn first; no setting extends the platform's limit. A Task-mode `message:send` with
+  `returnImmediately: false` waits at most until the same limit and returns the Task, which keeps
+  running. Streams, chat, caller delivery, Task dispatch and Task turns are unchanged. Without the
+  variable, as in local mode (which refuses it), a direct Message has only the turn limit.
+- **Platform MCP tools wait for the limit the platform declares
+  ([#93](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/93), ADR 0022 amendment).** Every
+  Main Sequence MCP tool call waited `MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` (60 seconds by
+  default), so an `a2a.send_message` in Message mode whose target answered after 60 seconds was
+  abandoned by the calling Agent while the platform still waited and completed the send. A
+  platform tool whose `_meta` declares its limit under `mainsequence.ai/timeout-seconds/v1`, the
+  key application tools use, is now waited for that long. A tool that declares nothing, or an
+  invalid value, keeps the session default; an invalid value is logged as
+  `runtime.mcp.invalid_timeout`. `MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` now covers only
+  ordinary backend reads and platform tools without a declared limit: it has no effect on a Message
+  or any platform limit and can only shorten a wait.
+
 ## 2.0.11 — 2026-10-11
 
 - **Every MCP connection honors per-call response deadlines

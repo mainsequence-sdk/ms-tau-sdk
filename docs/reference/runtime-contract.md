@@ -156,6 +156,14 @@ and never replay the operation. They do not imply remote cancellation or prove i
 Cancelled queued calls are skipped. A standalone call has no implicit runtime turn limit; a call
 inside a turn still ends when the turn ends. See ADR 0022's per-call deadline amendment.
 
+The platform declares the time limit of each of its MCP tools in the tool's `_meta` under
+`mainsequence.ai/timeout-seconds/v1`, the key an application tool uses. A Main Sequence MCP tool
+the model calls waits that long for its answer; a tool that declares nothing, or a value that is
+not a finite number greater than zero, waits the session default,
+`MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS`. A direct `a2a.send_message` therefore waits as
+long as the platform does for the target Agent's answer. A deadline only sets how long the runtime
+waits; it never extends the platform's own limit for the operation.
+
 ### Declared application MCP endpoints
 
 Declaring an application in the Agent's workflow file registers its MCP endpoint; it grants no
@@ -197,6 +205,50 @@ terminal frame cancels the turn. A local turn outlives its request (ADR 0018). A
 detaches the stream; the turn runs to its durable end and stays visible through the local chat
 history. Only `POST /api/chat/session/cancel` stops it. A local session runs one turn at a time,
 and `POST /api/chat` for a session with a running turn returns 409 `session_busy`.
+
+### Direct Message time limit
+
+A direct Message, `message:send` answered with a Message and JSON-RPC `message/send` in Message
+mode, runs its turn while the request waits. The platform gives a direct Message 90 seconds, and
+it passes that limit to the runtime it hosts in `MAINSEQUENCE_A2A_MESSAGE_LIMIT_SECONDS`. The
+limit runs from when the runtime receives the request and covers the whole request, including
+output-contract repair turns. A turn also ends at `MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS` when
+that comes first. No client or runtime setting extends the platform's limit. Without the
+variable, as in local mode, a direct Message ends only at the turn limit.
+
+When either limit expires, the runtime stops the turn, the way it stops any turn that reaches its
+time limit, and answers HTTP 504 with media type `application/a2a+json`. A request that has used
+the whole platform limit before its turn could start starts no turn and gets the same answer:
+
+```json
+{
+  "error": {
+    "code": 504,
+    "status": "DEADLINE_EXCEEDED",
+    "message": "The Agent did not answer the Message within 90 seconds. Use Task mode for longer work.",
+    "details": [
+      {
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "reason": "MESSAGE_RESPONSE_LIMIT_EXCEEDED",
+        "domain": "mainsequence.ai",
+        "metadata": {"limitSeconds": "90"}
+      }
+    ]
+  }
+}
+```
+
+`limitSeconds` is the limit that expired, as a string. JSON-RPC `message/send` answers a JSON-RPC
+error with code `-32000`, the same message, and the same `ErrorInfo` list in `data`. Work the turn
+already did, such as tool calls, is not rolled back and is never replayed. Work that may take
+longer uses Task mode (`configuration.responseKind: "task"`).
+
+The platform's limit also ends the server wait of a Task-mode `message:send` with
+`returnImmediately: false`: it waits for at most `MAINSEQUENCE_TAU_A2A_TASK_WAIT_TIMEOUT_SECONDS`
+and never past the platform's limit, then returns the Task as it stands while the Task keeps
+running. `message:stream`, which is always a Task, `/api/chat`, caller delivery, Task dispatch and
+Task turns have no platform Message limit; `MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS` bounds their
+turns.
 
 ### Managed AgentTask execution
 
@@ -288,9 +340,10 @@ belongs to the backend dispatch system and must expire stale attempts, bound red
 ambiguous outcomes, and terminalize exhausted recovery. The SDK does not run a competing managed
 dispatcher.
 
-`configuration.returnImmediately=false` uses a bounded server wait. Reaching that bound returns
-the latest non-terminal Task handle and leaves execution running. Caller disconnect and transport
-timeout never imply Task cancellation.
+`configuration.returnImmediately=false` uses a bounded server wait:
+`MAINSEQUENCE_TAU_A2A_TASK_WAIT_TIMEOUT_SECONDS`, never past the platform's Message limit when the
+platform sets one. Reaching that bound returns the latest non-terminal Task handle and leaves
+execution running. Caller disconnect and transport timeout never imply Task cancellation.
 
 ### Task conversation, result, and execution correlation
 

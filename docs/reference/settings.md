@@ -71,6 +71,25 @@ read from the project `.env`; the platform's values in the environment take prec
 Do not set them for local development. Local mode refuses to start when they make the runtime
 hosted.
 
+## Platform Message limit
+
+The platform also sets this variable when it hosts the runtime. It is a characteristic of the
+platform, not a user setting, and no other setting extends it.
+
+| Environment variable | Meaning |
+| --- | --- |
+| `MAINSEQUENCE_A2A_MESSAGE_LIMIT_SECONDS` | The platform's limit, in seconds, for a direct A2A Message, a `message:send` answered with a Message. The platform gives a direct Message 90 seconds. An empty value is the same as unset; any other value must be a finite number greater than zero. |
+
+The limit runs from when the runtime receives the request. It covers the whole request, including
+output-contract repair turns. When it expires, the runtime stops the turn and answers HTTP 504
+`DEADLINE_EXCEEDED`; work that needs longer uses Task mode. The same limit ends the wait of a
+Task-mode `message:send` with `returnImmediately: false`, and the Task keeps running. It does not
+apply to `message:stream`, `/api/chat`, caller delivery, Task dispatch or Task turns. See the
+[runtime contract](./runtime-contract.md#direct-message-time-limit).
+
+Without it, as in local mode, a direct Message has no platform limit and ends only at
+`MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS`. Local mode refuses to start when it is set.
+
 ## Authenticated local development
 
 | Environment variable | Meaning |
@@ -184,7 +203,7 @@ independent of `TAU_LOCAL_STATE_ROOT`, which only holds the local-mode database 
 | Environment variable | Default |
 | --- | --- |
 | `MAINSEQUENCE_TAU_BACKEND_CONNECT_TIMEOUT_SECONDS` | `10` |
-| `MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` | `60`; finite positive backend HTTP read limit, MCP initialization/catalog/resource limit and default platform MCP response deadline; a per-call override replaces the tool's response deadline |
+| `MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` | `60`; finite and positive. How long the runtime waits to read the answer to its ordinary backend requests: platform API calls, MCP initialization, catalog and resource reads, and a platform MCP tool that declares no time limit of its own. It is not the limit of a Message or of any platform operation and has no effect on them: a lower value only makes the runtime stop waiting sooner, and a higher one never extends a platform limit. A platform tool that declares its limit, such as `a2a.send_message`, waits for that limit instead |
 | `MAINSEQUENCE_TAU_BACKEND_WRITE_TIMEOUT_SECONDS` | `60` |
 | `MAINSEQUENCE_TAU_BACKEND_POOL_TIMEOUT_SECONDS` | `10` |
 | `MAINSEQUENCE_TAU_PROVIDER_TIMEOUT_SECONDS` | `60`; HTTP timeout for model-provider calls, which bounds time-to-first-token on providers that send nothing before it |
@@ -198,7 +217,7 @@ independent of `TAU_LOCAL_STATE_ROOT`, which only holds the local-mode database 
 | `MAINSEQUENCE_TAU_SESSION_LEASE_RENEW_SECONDS` | `30` |
 | `MAINSEQUENCE_TAU_SESSION_IDLE_TTL_SECONDS` | `900` |
 | `MAINSEQUENCE_TAU_SESSION_EVICTION_INTERVAL_SECONDS` | `30` |
-| `MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS` | `900` |
+| `MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS` | `900`; how long one turn may run. It bounds Task, stream and chat turns. On a runtime the platform hosts, a direct Message is bounded by the platform's Message limit, 90 seconds, and by this setting only when it is shorter; a longer value does not extend the platform's limit |
 | `MAINSEQUENCE_TAU_SHUTDOWN_GRACE_SECONDS` | `30` |
 | `MAINSEQUENCE_TAU_MAX_TURN_OUTPUT_BYTES` | `4194304` |
 
@@ -208,9 +227,13 @@ Every SDK MCP connection accepts `call_tool(..., timeout_seconds=N)` with a fini
 response deadline. It starts when the queued call reaches the MCP session. A longer override
 allows delayed headers, JSON bodies and SSE responses without also raising the backend HTTP read
 setting; HTTP connect, write and pool limits still apply. Omitted overrides use the session's
-default response deadline. Expiration and caller cancellation release the call's local HTTP
-response and never automatically replay the remote operation. The runtime's actual turn deadline
-still bounds a call made within that turn; a standalone platform MCP call has no implicit turn.
+default response deadline. The tools the model calls pass the limit their tool declares in `_meta`
+under `mainsequence.ai/timeout-seconds/v1`: the platform declares one for each of its own tools,
+and an application for its tools. A deadline only sets how long the runtime waits for the answer;
+it never extends the platform's own limit for the operation. Expiration and caller cancellation
+release the call's local HTTP response and never automatically replay the remote operation. The
+runtime's actual turn deadline still bounds a call made within that turn; a standalone platform
+MCP call has no implicit turn.
 
 ## A2A assets and streaming
 
@@ -223,7 +246,7 @@ still bounds a call made within that turn; a standalone platform MCP call has no
 | `MAINSEQUENCE_TAU_A2A_TASK_OUTPUT_FLUSH_INTERVAL_MS` | `200` |
 | `MAINSEQUENCE_TAU_A2A_TASK_OUTPUT_FLUSH_BYTES` | `8192` |
 | `MAINSEQUENCE_TAU_A2A_TASK_EVENT_POLL_SECONDS` | `0.5` |
-| `MAINSEQUENCE_TAU_A2A_TASK_WAIT_TIMEOUT_SECONDS` | `30`; bounds request waiting but does not cancel the Task |
+| `MAINSEQUENCE_TAU_A2A_TASK_WAIT_TIMEOUT_SECONDS` | `30`; bounds the wait of a Task-mode `message:send` with `returnImmediately: false`, never past the platform's Message limit; ending the wait does not cancel the Task |
 
 The local reconciler is the recovery owner for SQLite-backed Tasks. It safely schedules unclaimed
 `submitted` work, expires stale attempts after their session lease is no longer active, and marks

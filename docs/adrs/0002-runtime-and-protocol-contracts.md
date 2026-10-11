@@ -35,6 +35,15 @@ history. This boundary is the model channel only: code in the runtime host holds
 credential and can still call the operation
 ([issue #65](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/65)).
 
+Amended 2026-10-11 for [#94](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/94): a direct
+A2A Message that reaches its time limit is answered with a typed HTTP 504 `DEADLINE_EXCEEDED`
+error, and JSON-RPC with the same `ErrorInfo`, instead of an untyped HTTP 500 (decision 11).
+
+Amended 2026-10-11: the platform gives a direct A2A Message one strict limit, 90 seconds, and
+passes it to the runtime it hosts in `MAINSEQUENCE_A2A_MESSAGE_LIMIT_SECONDS`. The runtime enforces
+it for every caller on the whole Message request and caps the Task-mode wait with it
+(decision 12).
+
 ## Context
 
 The project identity changed, but its useful transport and execution behavior remains necessary.
@@ -79,6 +88,25 @@ The SDK adopts the following contracts:
 10. A hosted runtime authenticates every inbound request with the platform's signed assertion and
     lets only a session's owner, an Organization admin, or the Agent that delegated to it address
     that session. ADR 0019 holds the contract.
+11. A direct A2A Message, `message:send` answered with a Message and JSON-RPC `message/send` in
+    Message mode, runs its turn while the request waits. When the turn reaches its time limit
+    before the Agent answers, the runtime stops the turn and answers HTTP 504 with media type
+    `application/a2a+json`: the google.rpc error envelope with status `DEADLINE_EXCEEDED` and one
+    `ErrorInfo` with reason `MESSAGE_RESPONSE_LIMIT_EXCEEDED`, domain `mainsequence.ai` and
+    `metadata.limitSeconds`, the limit that expired, as a string. JSON-RPC answers a JSON-RPC
+    error (`-32000`) with the same `ErrorInfo` in `data`. The work the turn already did is neither
+    rolled back nor replayed; longer work uses Task mode.
+12. The platform owns the limit of a direct A2A Message: 90 seconds, one value for every caller,
+    which no client or runtime setting extends. It sets `MAINSEQUENCE_A2A_MESSAGE_LIMIT_SECONDS`
+    when it hosts the runtime; users do not set it, and local mode refuses it. The limit runs from
+    when the runtime receives the request and covers the whole request, including output-contract
+    repair turns. A turn ends at that limit or at `MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS`,
+    whichever comes first, and the answer is the error of decision 11 with the limit that
+    expired. A request that has used the whole limit before its turn could start starts no turn.
+    The server wait of a Task-mode `message:send` with `returnImmediately: false` ends at the same
+    limit and returns the Task, which keeps running. `message:stream`, chat, caller delivery,
+    Task dispatch and Task turns have no platform Message limit. Without the variable a direct
+    Message has only the turn limit.
 
 External HTTP field names that are part of an existing service contract remain wire details; they
 do not define local SDK runtime roles or deployment modes.

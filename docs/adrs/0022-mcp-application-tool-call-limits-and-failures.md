@@ -9,6 +9,10 @@ Issue: [#84](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/84)
 Amended 2026-10-11 for [#90](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/90): finite
 per-call response deadlines apply to every SDK MCP connection.
 
+Amended 2026-10-11 for [#93](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/93): each Main
+Sequence MCP tool waits for the time limit the platform declares for it, under the same `_meta`
+key as an application tool.
+
 Amends:
 
 - [ADR 0021: MCP connections on the person's identity](./0021-mcp-connections-on-the-persons-identity.md),
@@ -144,9 +148,10 @@ for a sent tool call or change the existing one-renewal-on-401 behavior.
 
 ### 5. Scope
 
-Sections 2 to 4 apply to application tool calls. The Main Sequence MCP uses
-`MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` as its default response deadline and keeps its
-current failure handling; section 1 and the per-call deadline amendment below apply to every
+Sections 2 to 4 apply to application tool calls. The Main Sequence MCP keeps its current failure
+handling. Its tools wait for the limit the platform declares for each of them (amendment for #93
+below); a tool that declares none uses `MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` as its
+default response deadline. Section 1 and the per-call deadline amendment below apply to every
 connection.
 
 ### Amendment: per-call response deadlines on every connection (#90)
@@ -180,6 +185,25 @@ independent deadlines, caller cancellation leaves the connection usable, cancell
 are skipped, and initialization/catalog calls retain their HTTP read limits. `MockTransport`
 delays alone cannot validate socket read timeouts.
 
+### Amendment: the platform's declared limits for its own tools (#93)
+
+A Main Sequence MCP tool declares its time limit the way an application tool does: in `tools/list`
+the platform puts the limit of a call to that tool, in seconds, in the tool's `_meta` under
+`mainsequence.ai/timeout-seconds/v1`. The runtime reads it with the same reader and validation as
+an application tool's limit, now shared by every connection, and uses it as the per-call response
+deadline of that tool. A tool that declares nothing, or a value that is not a finite number
+greater than zero, keeps the session default, `MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS`; an
+invalid value is logged as `runtime.mcp.invalid_timeout` with the connection and tool names. The
+runtime reads the limit when it builds a session's tools from the catalog.
+
+Before this, every platform tool call took the session default. A direct `a2a.send_message`,
+which the platform holds open until the target Agent answers, was abandoned by the calling Agent
+at the backend read timeout (60 seconds) while the platform was still waiting, and the answer
+never reached the model. The call now waits as long as the platform's own limit for it. A
+declared limit only sets how long the runtime waits; it never extends the platform's limit, and a
+call made inside a turn still ends with the turn. Failure handling is unchanged, and an expired
+call is never replayed.
+
 ## Rejected alternatives
 
 - **Time limits in the Agent's settings or workflow file.** The tool's author knows how long a tool
@@ -210,9 +234,8 @@ delays alone cannot validate socket read timeouts.
 
 ## Not in scope
 
-Reopening the Main Sequence MCP connection after it fails; declared time limits and plain failure
-words for the Main Sequence MCP's tools; progress notifications that extend a wait; retrying a call
-after it was sent.
+Reopening the Main Sequence MCP connection after it fails; plain failure words for the Main
+Sequence MCP's tools; progress notifications that extend a wait; retrying a call after it was sent.
 
 ## Implementation and acceptance
 

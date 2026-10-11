@@ -54,6 +54,11 @@ For a deployed Agent, use the projected `a2a.send_message` MCP operation. The pl
 resolves the target `AgentSession`, waits for its runtime to become ready, and dispatches the
 message. For asynchronous work, use the returned Task handle with `a2a.wait_task`.
 
+The platform gives a direct Message (`response_kind: "message"`) 90 seconds, and no setting
+extends that limit. A target that has not answered by then stops its turn, and the send fails
+because of the limit. Send work that may take longer with `response_kind: "task"`, and do not
+resend a Message that ran out of time: the work it already did is not rolled back.
+
 For local Tau development, start `ms-tau` and wait for its local `/ready` result. The public A2A
 REST and JSON-RPC surfaces support Message and Task execution against the workspace-local SQLite
 store, including streaming, list/get/cancel/subscribe, and continuation. An A2A protocol Task does

@@ -29,6 +29,7 @@ CALLER_ASSERTION_JWKS_URL_ENV = "MAINSEQUENCE_CALLER_ASSERTION_JWKS_URL"
 RESOURCE_RELEASE_UID_ENV = "APP_NAME"
 FASTAPI_PUBLIC_BASE_URL_ENV = "FASTAPI_PUBLIC_BASE_URL"
 ORGANIZATION_ENVIRONMENT_UID_ENV = "MAINSEQUENCE_ORGANIZATION_ENVIRONMENT_UID"
+A2A_MESSAGE_LIMIT_ENV = "MAINSEQUENCE_A2A_MESSAGE_LIMIT_SECONDS"
 HOSTED_SIGNAL_ENVS = (
     RESOURCE_RELEASE_UID_ENV,
     FASTAPI_PUBLIC_BASE_URL_ENV,
@@ -137,6 +138,14 @@ class TauSDKSettings(BaseSettings):
     organization_environment_uid: str | None = Field(
         default=None,
         validation_alias=ORGANIZATION_ENVIRONMENT_UID_ENV,
+    )
+    # The platform's limit for a direct A2A Message, which holds its request open until the Agent
+    # answers. The platform sets it when it hosts the runtime; unset means no platform limit.
+    a2a_message_limit_seconds: float | None = Field(
+        default=None,
+        gt=0,
+        allow_inf_nan=False,
+        validation_alias=A2A_MESSAGE_LIMIT_ENV,
     )
     local_mode: bool = Field(default=False, validation_alias="TAU_LOCAL_MODE")
     exclude_base_tools: bool = Field(default=False, validation_alias="TAU_EXCLUDE_BASE_TOOLS")
@@ -404,6 +413,12 @@ class TauSDKSettings(BaseSettings):
         # name a mode exactly.
         return None if value == "" else value
 
+    @field_validator("a2a_message_limit_seconds", mode="before")
+    @classmethod
+    def ignore_empty_message_limit(cls, value: object) -> object:
+        # Only an empty value counts as unset. Any other value must be a number of seconds.
+        return None if value == "" else value
+
     @field_validator("local_state_root", "state_root")
     @classmethod
     def normalize_state_roots(cls, value: Path) -> Path:
@@ -426,6 +441,11 @@ class TauSDKSettings(BaseSettings):
                     "TAU_LOCAL_MODE cannot run with hosted caller authentication. Unset "
                     f"{CALLER_AUTH_MODE_ENV}=assertion and {', '.join(HOSTED_SIGNAL_ENVS)}: "
                     "the platform sets them only when it hosts the runtime"
+                )
+            if self.a2a_message_limit_seconds is not None:
+                raise ValueError(
+                    "TAU_LOCAL_MODE has no platform Message limit. Unset "
+                    f"{A2A_MESSAGE_LIMIT_ENV}: the platform sets it only when it hosts the runtime"
                 )
             if self.host == "0.0.0.0" and "host" not in self.model_fields_set:
                 self.host = "127.0.0.1"

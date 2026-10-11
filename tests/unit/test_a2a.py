@@ -1,11 +1,12 @@
 import asyncio
 import base64
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
 from fastapi import FastAPI, HTTPException
+from structlog.testing import capture_logs
 from tau_agent.events import MessageEndEvent, MessageUpdateEvent
 from tau_agent.messages import AssistantMessage, StopReason
 from tau_agent.provider_events import TextDeltaEvent
@@ -33,6 +34,8 @@ from ms_tau_sdk.backend.models import (
 )
 from ms_tau_sdk.errors import BackendError
 from ms_tau_sdk.runtime.events import translate_tau_event
+from ms_tau_sdk.runtime.manager import SessionRuntimeManager
+from ms_tau_sdk.runtime.session import ActiveSessionRuntime
 from ms_tau_sdk.settings import TauSDKSettings
 
 
@@ -1165,3 +1168,327 @@ async def test_message_routes_reject_invalid_caller_identity_before_any_turn(hea
     assert rpc.json()["error"]["data"] == {"code": expected["code"]}
     assert manager.provenances == []
     client.create_task.assert_not_awaited()
+
+
+class _UnansweredCodingSession:
+    """A Tau session whose turn never answers, so only a time limit ends it."""
+
+    is_running = False
+
+    def __init__(self) -> None:
+        self.cancelled = 0
+
+    async def append_custom_entry(self, _namespace, _data) -> None:
+        return None
+
+    async def prompt(self, _content):
+        await asyncio.Event().wait()
+        yield {"type": "agent_settled"}
+
+    def cancel(self) -> None:
+        self.cancelled += 1
+
+
+def _loaded_runtime_manager(config: TauSDKSettings, coding_session) -> SessionRuntimeManager:
+    manager = SessionRuntimeManager(settings=config, backend=AsyncMock(), providers=Mock())
+    manager._runtimes["session-1"] = ActiveSessionRuntime(
+        session_uid="session-1",
+        holder_id=manager.holder_id,
+        coding_session=coding_session,
+        storage=SimpleNamespace(lease_token="lease", begin_turn=AsyncMock()),
+        provider=object(),
+        agent_uid="agent-1",
+    )
+    return manager
+
+
+async def _held_message_response(
+    manager: object,
+    config: TauSDKSettings,
+    *,
+    transport: str,
+    client: AsyncMock | None = None,
+    configuration: dict[str, object] | None = None,
+    **body_fields: object,
+) -> httpx.Response:
+    """Send one ``message:send`` over REST or JSON-RPC and return the HTTP response.
+
+    It asks for a Message unless ``configuration`` says otherwise.
+    """
+
+    if client is None:
+        client, _task = _direct_message_client()
+    app = FastAPI()
+    app.include_router(router)
+    app.dependency_overrides[backend] = lambda: client
+    app.dependency_overrides[runtime_manager] = lambda: manager
+    app.dependency_overrides[settings] = lambda: config
+    body = {
+        "message": {
+            "messageId": "message-1",
+            "role": "ROLE_USER",
+            "contextId": "session-1",
+            "parts": [{"text": "Answer this."}],
+        },
+        "configuration": {"responseKind": "message", **(configuration or {})},
+        **body_fields,
+    }
+    headers = {"A2A-Extensions": RESPONSE_KIND_EXTENSION_URI, **USER_CALLER_HEADERS}
+    # An unhandled error must reach the client as the HTTP answer it would get, not as a raise.
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
+        base_url="http://test",
+    ) as http:
+        if transport == "rest":
+            return await http.post(f"{REST_BASE}/message:send", headers=headers, json=body)
+        return await http.post(
+            "/api/a2a/rpc",
+            headers=headers,
+            json={"jsonrpc": "2.0", "id": "rpc-1", "method": "message/send", "params": body},
+        )
+
+
+def _message_limit_error(limit_seconds: str) -> tuple[str, list[dict[str, object]]]:
+    return (
+        f"The Agent did not answer the Message within {limit_seconds} seconds. "
+        "Use Task mode for longer work.",
+        [
+            {
+                "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+                "reason": "MESSAGE_RESPONSE_LIMIT_EXCEEDED",
+                "domain": "mainsequence.ai",
+                "metadata": {"limitSeconds": limit_seconds},
+            }
+        ],
+    )
+
+
+def _assert_message_limit_answer(response: httpx.Response, transport: str, limit: str) -> None:
+    message, details = _message_limit_error(limit)
+    if transport == "rest":
+        assert response.status_code == 504
+        assert response.headers["content-type"] == "application/a2a+json"
+        assert response.json() == {
+            "error": {
+                "code": 504,
+                "status": "DEADLINE_EXCEEDED",
+                "message": message,
+                "details": details,
+            }
+        }
+    else:
+        assert response.status_code == 200
+        assert response.json() == {
+            "jsonrpc": "2.0",
+            "id": "rpc-1",
+            "error": {"code": -32000, "message": message, "data": details},
+        }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["rest", "json_rpc"])
+async def test_a_message_whose_turn_times_out_is_answered_with_a_typed_deadline_error(
+    tmp_path, transport
+):
+    config = TauSDKSettings(
+        _env_file=None,
+        runtime_credential_id="credential-id",
+        workspace=tmp_path,
+        startup_dependencies_enabled=False,
+        turn_timeout_seconds=1,
+    )
+    coding_session = _UnansweredCodingSession()
+    manager = _loaded_runtime_manager(config, coding_session)
+    try:
+        response = await _held_message_response(manager, config, transport=transport)
+    finally:
+        manager._runtimes.clear()
+        await manager.aclose()
+
+    _assert_message_limit_answer(response, transport, "1")
+    # The turn's own time limit stopped the turn.
+    assert coding_session.cancelled == 1
+
+
+def _platform_limited_settings(tmp_path, limit_seconds: float, **values) -> TauSDKSettings:
+    """Settings of a runtime the platform hosts with a Message limit."""
+
+    return TauSDKSettings(
+        _env_file=None,
+        runtime_credential_id="credential-id",
+        workspace=tmp_path,
+        startup_dependencies_enabled=False,
+        a2a_message_limit_seconds=limit_seconds,
+        **values,
+    )
+
+
+class _DeadlineRecordingManager(_TauEventManager):
+    """Answers each turn with the next text and records the deadline each turn was given."""
+
+    def __init__(self, *answers: str) -> None:
+        super().__init__()
+        self.answers = list(answers)
+        self.deadlines: list[float | None] = []
+
+    async def prompt(
+        self,
+        _context_id: str,
+        _prompt: str,
+        *,
+        provenance=None,
+        turn_uid=None,
+        caller_assertion=None,
+        deadline=None,
+    ):
+        self.provenances.append(provenance)
+        self.deadlines.append(deadline)
+        final = _assistant_message(self.answers.pop(0))
+        for event in (
+            MessageEndEvent(message=final),
+            SessionAgentEndEvent(messages=[final], will_retry=False),
+        ):
+            yield translate_tau_event(event)
+
+    def create_a2a_task_execution(self, _task_uid, coroutine, *, name):
+        # The Task is accepted but never runs here, so it stays where it is.
+        del name
+        coroutine.close()
+        return None, False
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transport", ["rest", "json_rpc"])
+async def test_a_message_not_answered_within_the_platform_limit_stops_at_that_limit(
+    tmp_path, transport
+):
+    config = _platform_limited_settings(tmp_path, 0.2)
+    coding_session = _UnansweredCodingSession()
+    manager = _loaded_runtime_manager(config, coding_session)
+    try:
+        with capture_logs() as logs:
+            response = await _held_message_response(manager, config, transport=transport)
+    finally:
+        manager._runtimes.clear()
+        await manager.aclose()
+
+    _assert_message_limit_answer(response, transport, "0.2")
+    # The platform's limit stops the turn the way the turn's own limit does.
+    assert coding_session.cancelled == 1
+    turn_ends = [log for log in logs if log["event"] == "agent.turn.failed"]
+    assert [log["terminal_status"] for log in turn_ends] == ["timed_out"]
+    limit_logs = [log for log in logs if log["event"] == "a2a.message.limit_exceeded"]
+    assert [log["limit_seconds"] for log in limit_logs] == [0.2]
+
+
+@pytest.mark.asyncio
+async def test_a_shorter_turn_limit_ends_the_message_first_and_is_the_limit_reported(tmp_path):
+    config = _platform_limited_settings(tmp_path, 5, turn_timeout_seconds=1)
+    coding_session = _UnansweredCodingSession()
+    manager = _loaded_runtime_manager(config, coding_session)
+    try:
+        response = await _held_message_response(manager, config, transport="rest")
+    finally:
+        manager._runtimes.clear()
+        await manager.aclose()
+
+    _assert_message_limit_answer(response, "rest", "1")
+    assert coding_session.cancelled == 1
+
+
+@pytest.mark.asyncio
+async def test_the_platform_limit_bounds_the_whole_message_including_its_repair_turns(tmp_path):
+    config = _platform_limited_settings(tmp_path, 90)
+    manager = _DeadlineRecordingManager("Not JSON yet.", '{"rows": 2}')
+    loop = asyncio.get_running_loop()
+    sent_at = loop.time()
+
+    response = await _held_message_response(
+        manager,
+        config,
+        transport="rest",
+        configuration={"acceptedOutputModes": ["application/json"]},
+        jsonRepair={"attempts": 1},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["message"]["parts"] == [
+        {"data": {"rows": 2}, "mediaType": "application/json"}
+    ]
+    first, repair = manager.deadlines
+    # Both turns must end by one deadline, 90 seconds after the request arrived.
+    assert first is not None
+    assert first == repair
+    assert sent_at + 90 <= first <= loop.time() + 90
+
+
+@pytest.mark.asyncio
+async def test_a_message_that_used_up_the_platform_limit_before_its_turn_starts_no_turn(
+    tmp_path,
+):
+    config = _platform_limited_settings(tmp_path, 0.05)
+    client, _task = _direct_message_client()
+
+    async def slow_agent_card(_context_id):
+        await asyncio.sleep(0.1)
+        return AgentCardEnvelope(
+            agent_session_uid="session-1", agent_uid="agent-1", agent_card=None
+        )
+
+    client.get_agent_card.side_effect = slow_agent_card
+    manager = _DeadlineRecordingManager("Too late.")
+
+    response = await _held_message_response(manager, config, transport="rest", client=client)
+
+    _assert_message_limit_answer(response, "rest", "0.05")
+    assert manager.deadlines == []
+
+
+@pytest.mark.asyncio
+async def test_without_a_platform_limit_a_message_turn_gets_no_deadline():
+    manager = _DeadlineRecordingManager("The direct answer.")
+
+    response = await _held_message_response(
+        manager, TauSDKSettings(_env_file=None), transport="rest"
+    )
+
+    assert response.status_code == 200
+    assert manager.deadlines == [None]
+
+
+@pytest.mark.asyncio
+async def test_a_task_mode_wait_ends_at_the_platform_limit_and_leaves_the_task_running(tmp_path):
+    # The configured wait (30 seconds by default) is longer than the platform's limit.
+    config = _platform_limited_settings(tmp_path, 0.2, a2a_task_event_poll_interval_seconds=0.05)
+    client, task = _direct_message_client()
+    client.get_agent_card.return_value = AgentCardEnvelope(
+        agent_session_uid="session-1",
+        agent_uid="agent-1",
+        agent_card={
+            "capabilities": {
+                "extensions": [
+                    {
+                        "uri": RESPONSE_KIND_EXTENSION_URI,
+                        "params": {"supportedResponseKinds": ["message", "task"]},
+                    }
+                ]
+            }
+        },
+    )
+    working = task.model_copy(update={"status": "working"})
+    client.get_task_snapshot.return_value = AgentTaskSnapshot(task=working, event_cursor=0)
+    loop = asyncio.get_running_loop()
+    sent_at = loop.time()
+
+    response = await _held_message_response(
+        _DeadlineRecordingManager(),
+        config,
+        transport="rest",
+        client=client,
+        configuration={"responseKind": "task", "returnImmediately": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["task"]["status"]["state"] == "TASK_STATE_WORKING"
+    assert loop.time() - sent_at < config.a2a_task_wait_timeout_seconds
+    client.cancel_task.assert_not_awaited()
