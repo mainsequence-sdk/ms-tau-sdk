@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.12 — 2026-10-11
 
 - **A direct Message that runs out of time gets a typed answer
   ([#94](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/94)).** A `message:send` answered
