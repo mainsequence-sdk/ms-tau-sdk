@@ -4,14 +4,20 @@ from __future__ import annotations
 
 import asyncio
 import contextvars
-from collections.abc import AsyncGenerator
+import math
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import Any, Literal, Self
+from typing import Any, Literal, Self, cast
 
+import anyio
 import httpx
+from anyio.abc import ObjectSendStream
+from anyio.streams.memory import MemoryObjectSendStream
 from mcp import ClientSession, types
 from mcp.client.streamable_http import streamable_http_client
+from mcp.shared.message import SessionMessage
 from pydantic import AnyUrl
 from structlog.contextvars import bound_contextvars, get_contextvars
 
@@ -45,6 +51,113 @@ class _RuntimeCredentialHTTPXAuth(httpx.Auth):
         if response.status_code == 401:
             request.headers.update(await self.runtime_auth.headers(force=True))
             yield request
+
+
+@dataclass
+class _ToolCall:
+    cancel_scope: anyio.CancelScope
+    request_id: types.RequestId | None = None
+    http_cancel_scope: anyio.CancelScope | None = None
+    finished: bool = False
+
+    def cancel_if_abandoned(self, result: asyncio.Future[Any]) -> None:
+        if result.cancelled():
+            self.cancel_scope.cancel()
+
+    def finish(self) -> None:
+        self.finished = True
+        if self.http_cancel_scope is not None:
+            self.http_cancel_scope.cancel()
+
+
+_tool_call: contextvars.ContextVar[_ToolCall | None] = contextvars.ContextVar(
+    "mcp_tool_call", default=None
+)
+
+
+class _ToolCallWriteStream(ObjectSendStream[SessionMessage]):
+    """Associate the session's request ID with its call before the transport sends it.
+
+    MCP's HTTP writer runs in another task, so the calling task's context does not reach its
+    requests. Keep this association local to the connection, without adding anything to the wire.
+    """
+
+    def __init__(
+        self,
+        stream: MemoryObjectSendStream[SessionMessage],
+        calls: dict[types.RequestId, _ToolCall],
+    ) -> None:
+        self._stream = stream
+        self._calls = calls
+
+    async def send(self, item: SessionMessage) -> None:
+        message = item.message.root
+        call = _tool_call.get()
+        if (
+            call is not None
+            and isinstance(message, types.JSONRPCRequest)
+            and message.method == "tools/call"
+        ):
+            call.request_id = message.id
+            self._calls[message.id] = call
+        await self._stream.send(item)
+
+    async def aclose(self) -> None:
+        await self._stream.aclose()
+
+
+class _ToolCallHTTPClient:
+    """Give each call's HTTP response a cancellation scope inside MCP's transport task.
+
+    Cancelling that task directly cancels MCP's whole task group. A local scope releases the
+    response socket when its call ends while leaving other requests and the connection alive.
+    """
+
+    def __init__(self, client: httpx.AsyncClient, calls: dict[types.RequestId, _ToolCall]) -> None:
+        self._client = client
+        self._calls = calls
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._client, name)
+
+    @asynccontextmanager
+    async def stream(
+        self, method: str, url: httpx.URL | str, **kwargs: Any
+    ) -> AsyncIterator[httpx.Response]:
+        message = kwargs.get("json", {})
+        call = (
+            self._calls.get(message.get("id"))
+            if method == "POST" and message.get("method") == "tools/call"
+            else None
+        )
+        if call is None:
+            async with self._client.stream(method, url, **kwargs) as response:
+                yield response
+            return
+
+        timeout = httpx.Timeout(self._client.timeout)
+        timeout.read = None
+        yielded = False
+        try:
+            with anyio.CancelScope() as http_cancel_scope:
+                call.http_cancel_scope = http_cancel_scope
+                if call.finished:
+                    http_cancel_scope.cancel()
+                async with self._client.stream(method, url, timeout=timeout, **kwargs) as response:
+                    yielded = True
+                    yield response
+            if not yielded:
+                # Its finite response deadline already ended the call. Let MCP finish this
+                # cancelled POST without interpreting it as a failure of the whole connection.
+                yield httpx.Response(202)
+        finally:
+            if call.request_id is not None:
+                self._calls.pop(call.request_id, None)
+
+
+def _validate_response_timeout(seconds: float) -> None:
+    if isinstance(seconds, bool) or not math.isfinite(seconds) or seconds <= 0:
+        raise ValueError("MCP response timeout must be finite and greater than zero")
 
 
 @dataclass(frozen=True)
@@ -101,6 +214,7 @@ class MCPConnectionClient:
         read_timeout_seconds: float,
         read_concurrency: int,
     ) -> None:
+        _validate_response_timeout(read_timeout_seconds)
         self.name = name
         self.display_name = display_name
         self.url = url
@@ -115,6 +229,7 @@ class MCPConnectionClient:
         # The results of the calls already handed to the session, so that a failed connection
         # ends them as well as the calls still queued.
         self._in_flight: set[asyncio.Future[Any]] = set()
+        self._http_calls: dict[types.RequestId, _ToolCall] = {}
         self.tools: tuple[types.Tool, ...] = ()
         self.resources: tuple[types.Resource, ...] = ()
         self._parallel_tool_names: frozenset[str] = frozenset()
@@ -159,12 +274,18 @@ class MCPConnectionClient:
             ) as http_client:
                 async with streamable_http_client(
                     self.url,
-                    http_client=http_client,
+                    http_client=cast(
+                        httpx.AsyncClient, _ToolCallHTTPClient(http_client, self._http_calls)
+                    ),
                     terminate_on_close=False,
                 ) as (read_stream, write_stream, _get_session_id):
                     async with ClientSession(
                         read_stream,
-                        write_stream,
+                        # MCP annotates this as a memory stream, but uses only send/aclose.
+                        cast(
+                            MemoryObjectSendStream[SessionMessage],
+                            _ToolCallWriteStream(write_stream, self._http_calls),
+                        ),
                         read_timeout_seconds=timedelta(seconds=self._read_timeout_seconds),
                     ) as session:
                         with bound_contextvars(**initial_log_context):
@@ -194,6 +315,7 @@ class MCPConnectionClient:
             self._fail_pending_commands(
                 failure or RuntimeError(f"{self.display_name} MCP client closed")
             )
+            self._http_calls.clear()
 
     async def _read_server_catalog(
         self,
@@ -219,25 +341,38 @@ class MCPConnectionClient:
         read_slots = asyncio.Semaphore(self._read_concurrency)
 
         async def execute(command: _CallToolCommand | _ReadResourceCommand) -> None:
+            if command.result.cancelled():
+                return
             self._in_flight.add(command.result)
             try:
                 with bound_contextvars(**command.log_context):
                     if isinstance(command, _CallToolCommand):
-                        if command.timeout_seconds is None:
-                            tool_result = await session.call_tool(
-                                command.name,
-                                command.arguments,
-                                meta=command.meta,
-                            )
-                        else:
-                            tool_result = await session.call_tool(
-                                command.name,
-                                command.arguments,
-                                read_timeout_seconds=timedelta(seconds=command.timeout_seconds),
-                                meta=command.meta,
-                            )
-                        if not command.result.done():
-                            command.result.set_result(tool_result)
+                        with anyio.CancelScope() as cancel_scope:
+                            call = _ToolCall(cancel_scope)
+                            token = _tool_call.set(call)
+                            command.result.add_done_callback(call.cancel_if_abandoned)
+                            try:
+                                if command.timeout_seconds is None:
+                                    tool_result = await session.call_tool(
+                                        command.name,
+                                        command.arguments,
+                                        meta=command.meta,
+                                    )
+                                else:
+                                    tool_result = await session.call_tool(
+                                        command.name,
+                                        command.arguments,
+                                        read_timeout_seconds=timedelta(
+                                            seconds=command.timeout_seconds
+                                        ),
+                                        meta=command.meta,
+                                    )
+                                if not command.result.done():
+                                    command.result.set_result(tool_result)
+                            finally:
+                                command.result.remove_done_callback(call.cancel_if_abandoned)
+                                _tool_call.reset(token)
+                                call.finish()
                     else:
                         resource_result = await session.read_resource(AnyUrl(command.uri))
                         if not command.result.done():
@@ -313,8 +448,16 @@ class MCPConnectionClient:
         meta: dict[str, object] | None = None,
         timeout_seconds: float | None = None,
     ) -> types.CallToolResult:
-        """Call one tool; ``timeout_seconds`` replaces the session's wait for its answer."""
+        """Wait for one tool's answer within its finite, positive per-call response deadline.
 
+        The deadline starts when the queued call reaches the MCP session and replaces the
+        session's default response wait. HTTP read inactivity does not shorten it; connect,
+        write and pool limits still apply. Timeout or cancellation never replays the call and
+        does not establish whether its remote work completed.
+        """
+
+        if timeout_seconds is not None:
+            _validate_response_timeout(timeout_seconds)
         commands = self._require_commands()
         result: asyncio.Future[types.CallToolResult] = asyncio.get_running_loop().create_future()
         commands.put_nowait(

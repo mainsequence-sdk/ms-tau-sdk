@@ -184,7 +184,7 @@ independent of `TAU_LOCAL_STATE_ROOT`, which only holds the local-mode database 
 | Environment variable | Default |
 | --- | --- |
 | `MAINSEQUENCE_TAU_BACKEND_CONNECT_TIMEOUT_SECONDS` | `10` |
-| `MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` | `60`; also each request that opens a declared application's MCP session, but not the tool call itself |
+| `MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` | `60`; finite positive backend HTTP read limit, MCP initialization/catalog/resource limit and default platform MCP response deadline; a per-call override replaces the tool's response deadline |
 | `MAINSEQUENCE_TAU_BACKEND_WRITE_TIMEOUT_SECONDS` | `60` |
 | `MAINSEQUENCE_TAU_BACKEND_POOL_TIMEOUT_SECONDS` | `10` |
 | `MAINSEQUENCE_TAU_PROVIDER_TIMEOUT_SECONDS` | `60`; HTTP timeout for model-provider calls, which bounds time-to-first-token on providers that send nothing before it |
@@ -203,6 +203,14 @@ independent of `TAU_LOCAL_STATE_ROOT`, which only holds the local-mode database 
 | `MAINSEQUENCE_TAU_MAX_TURN_OUTPUT_BYTES` | `4194304` |
 
 The lease-renew interval must be lower than the lease TTL.
+
+Every SDK MCP connection accepts `call_tool(..., timeout_seconds=N)` with a finite, positive
+response deadline. It starts when the queued call reaches the MCP session. A longer override
+allows delayed headers, JSON bodies and SSE responses without also raising the backend HTTP read
+setting; HTTP connect, write and pool limits still apply. Omitted overrides use the session's
+default response deadline. Expiration and caller cancellation release the call's local HTTP
+response and never automatically replay the remote operation. The runtime's actual turn deadline
+still bounds a call made within that turn; a standalone platform MCP call has no implicit turn.
 
 ## A2A assets and streaming
 

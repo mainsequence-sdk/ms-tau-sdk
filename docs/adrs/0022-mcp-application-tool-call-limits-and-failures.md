@@ -6,6 +6,9 @@ Date: 2026-10-09
 
 Issue: [#84](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/84)
 
+Amended 2026-10-11 for [#90](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/90): finite
+per-call response deadlines apply to every SDK MCP connection.
+
 Amends:
 
 - [ADR 0021: MCP connections on the person's identity](./0021-mcp-connections-on-the-persons-identity.md),
@@ -71,8 +74,9 @@ an invalid value is logged with the application and tool names. A tool that is n
 called with the default, and the application answers whether it exists. The turn's own limit still
 applies: a call that outlives its turn ends with the turn.
 
-The limit is the MCP session's wait for that one request. The HTTP client's read wait on an
-application connection is the turn's limit, so it never cuts a call short.
+The limit is the MCP session's wait for that one request. Its HTTP response read shares the call's
+lifetime, so a shorter HTTP inactivity limit never cuts it short. When the call ends, its HTTP
+response is closed within its own cancellation scope; other calls keep running.
 `MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` keeps bounding the runtime's calls to the platform
 and the steps that open an application session: the connection, the MCP handshake and the tool
 list.
@@ -140,9 +144,41 @@ for a sent tool call or change the existing one-renewal-on-401 behavior.
 
 ### 5. Scope
 
-Sections 2 to 4 apply to application tool calls. The Main Sequence MCP keeps
-`MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` and its current failure handling; section 1 applies
-to it.
+Sections 2 to 4 apply to application tool calls. The Main Sequence MCP uses
+`MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` as its default response deadline and keeps its
+current failure handling; section 1 and the per-call deadline amendment below apply to every
+connection.
+
+### Amendment: per-call response deadlines on every connection (#90)
+
+`MCPConnectionClient.call_tool(..., timeout_seconds=N)` and `MainSequenceMCPClient.call_tool`
+honor a finite, positive per-call response deadline. Omitting it uses the session's default.
+Invalid overrides are rejected before queueing a call, and the default response deadline is also
+finite and positive. The deadline starts when the queued call reaches the MCP session; queueing,
+connection establishment, and catalog loading are separate from that response wait.
+
+The transport applies this policy to each `tools/call` response, including delayed headers, JSON
+bodies, and SSE data. It retains HTTP connect, write and pool limits, and leaves the HTTP read
+limits on initialization, catalog and resource requests. It changes neither the shared client's
+timeout nor the message's metadata. A connection-local association between the JSON-RPC request
+ID and its call carries the cancellation lifetime across MCP's separate writer task.
+
+Expiration or caller cancellation closes that call's local HTTP response without cancelling the
+connection's task group or another call. A cancelled queued call is never sent. Closing a client
+releases its transport. A response timeout does not imply remote cancellation or establish whether
+the remote operation succeeded; the SDK never automatically replays it. Authentication renewal
+and genuine connection-failure handling retain their existing policies.
+
+A standalone platform MCP call can wait longer than the configured runtime turn limit. A call
+made inside a runtime turn still ends when that turn's actual deadline or cancellation ends it.
+No tool name, application, model, or platform change is part of this general transport contract.
+
+Acceptance uses a real HTTP server: response headers, JSON bodies and SSE data delayed past a
+short configured backend read limit succeed within a longer call deadline; omitted and explicit
+deadlines expire, release their sockets and send exactly once. Concurrent read calls keep their
+independent deadlines, caller cancellation leaves the connection usable, cancelled queued writes
+are skipped, and initialization/catalog calls retain their HTTP read limits. `MockTransport`
+delays alone cannot validate socket read timeouts.
 
 ## Rejected alternatives
 

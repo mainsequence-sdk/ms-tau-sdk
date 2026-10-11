@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.11 — 2026-10-11
+
+- **Every MCP connection honors per-call response deadlines
+  ([#90](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/90), ADR 0022 amendment).**
+  `call_tool(..., timeout_seconds=N)` can wait for delayed headers, JSON bodies and SSE data
+  beyond the backend HTTP read limit. The finite, positive override replaces the session's
+  default response wait without changing shared HTTP settings or another call's deadline.
+  Expiration and caller cancellation close that call's local response, keep the connection
+  usable, and never replay its remote operation; cancelled queued calls are skipped.
+  Initialization/catalog/resource read limits and HTTP connect/write/pool limits remain bounded.
+  A standalone platform call has no implicit runtime turn limit. Real HTTP regression tests
+  cover these behaviors for platform and generic MCP connections.
+
 ## 2.0.10 — 2026-10-09
 
 - **Declared applications wait while waking ([#87](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/87)).**

@@ -101,11 +101,11 @@ def application_connector(settings: TauSDKSettings) -> ApplicationConnector:
             display_name=application.name,
             url=f"{str(access.rpc_url).rstrip('/')}/mcp",
             auth=_ApplicationTokenAuth(access),
-            # The session's wait bounds each request: the backend read timeout while the session
-            # opens, the tool's own limit for the call. The HTTP read wait never cuts a call short.
+            # The connection applies the tool's response deadline to its call; these HTTP limits
+            # also bound initialization and catalog requests.
             timeout=httpx.Timeout(
                 connect=settings.backend_connect_timeout_seconds,
-                read=settings.turn_timeout_seconds,
+                read=settings.backend_read_timeout_seconds,
                 write=settings.backend_write_timeout_seconds,
                 pool=settings.backend_pool_timeout_seconds,
             ),
