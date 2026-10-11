@@ -117,6 +117,19 @@ application grants no access: the Agent's workload needs its own grants on the a
 release and Environment, given in the workflow's `access` declaration or by a person who manages
 them. The application itself decides what each call may do.
 
+## A platform MCP tool needs a longer response deadline
+
+Use `await client.call_tool(tool_name, arguments, timeout_seconds=420)` to allow a long-running
+response. The override must be finite and positive; omitted overrides use the MCP session's
+default (`MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` for the platform client). The override
+applies to response headers, JSON bodies and SSE data, without also raising the backend HTTP read
+setting. HTTP connect, write and pool limits and the server's own gateway limits still apply.
+
+An expired deadline or caller cancellation closes the local response but does not establish the
+remote operation's outcome. Read back its status through the supported API before deciding what
+to do next; the SDK never automatically resends a timed-out call. A standalone call has no implicit
+runtime turn limit, while the actual deadline of a running turn still bounds its calls.
+
 ## An application tool times out or fails
 
 The tool result names what happened; the `runtime.mcp_application.failed` log event carries the
