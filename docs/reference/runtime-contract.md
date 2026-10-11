@@ -141,6 +141,21 @@ section 9, and ADR 0021).
 The assertion, the lease token, the runtime credential and application tokens never appear in a
 log line, a persisted entry, model context, a tool result, the UI stream or history.
 
+### MCP per-call response deadlines
+
+Every SDK MCP connection, including `MainSequenceMCPClient`, accepts
+`call_tool(..., timeout_seconds=N)` with a finite, positive response deadline. It replaces the
+session's default wait when the queued call reaches that session. The HTTP response read follows
+that call's lifetime, so delayed headers, JSON bodies and SSE data can arrive past the backend
+read limit. Connect, write and pool limits, and initialization/catalog/resource read limits still
+apply. Concurrent calls keep their own response deadlines without changing shared HTTP settings
+or private metadata.
+
+Expiration and caller cancellation release the local HTTP response, leave other calls running,
+and never replay the operation. They do not imply remote cancellation or prove its outcome.
+Cancelled queued calls are skipped. A standalone call has no implicit runtime turn limit; a call
+inside a turn still ends when the turn ends. See ADR 0022's per-call deadline amendment.
+
 ### Declared application MCP endpoints
 
 Declaring an application in the Agent's workflow file registers its MCP endpoint; it grants no

@@ -220,6 +220,7 @@ class TauSDKSettings(BaseSettings):
     backend_read_timeout_seconds: float = Field(
         default=60.0,
         gt=0,
+        allow_inf_nan=False,
         validation_alias="MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS",
     )
     backend_write_timeout_seconds: float = Field(
