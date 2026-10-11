@@ -71,6 +71,25 @@ read from the project `.env`; the platform's values in the environment take prec
 Do not set them for local development. Local mode refuses to start when they make the runtime
 hosted.
 
+## Platform Message limit
+
+The platform also sets this variable when it hosts the runtime. It is a characteristic of the
+platform, not a user setting, and no other setting extends it.
+
+| Environment variable | Meaning |
+| --- | --- |
+| `MAINSEQUENCE_A2A_MESSAGE_LIMIT_SECONDS` | The platform's limit, in seconds, for a direct A2A Message, a `message:send` answered with a Message. The platform gives a direct Message 90 seconds. An empty value is the same as unset; any other value must be a finite number greater than zero. |
+
+The limit runs from when the runtime receives the request. It covers the whole request, including
+output-contract repair turns. When it expires, the runtime stops the turn and answers HTTP 504
+`DEADLINE_EXCEEDED`; work that needs longer uses Task mode. The same limit ends the wait of a
+Task-mode `message:send` with `returnImmediately: false`, and the Task keeps running. It does not
+apply to `message:stream`, `/api/chat`, caller delivery, Task dispatch or Task turns. See the
+[runtime contract](./runtime-contract.md#direct-message-time-limit).
+
+Without it, as in local mode, a direct Message has no platform limit and ends only at
+`MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS`. Local mode refuses to start when it is set.
+
 ## Authenticated local development
 
 | Environment variable | Meaning |
@@ -198,7 +217,7 @@ independent of `TAU_LOCAL_STATE_ROOT`, which only holds the local-mode database 
 | `MAINSEQUENCE_TAU_SESSION_LEASE_RENEW_SECONDS` | `30` |
 | `MAINSEQUENCE_TAU_SESSION_IDLE_TTL_SECONDS` | `900` |
 | `MAINSEQUENCE_TAU_SESSION_EVICTION_INTERVAL_SECONDS` | `30` |
-| `MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS` | `900` |
+| `MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS` | `900`; how long one turn may run. It bounds Task, stream and chat turns. On a runtime the platform hosts, a direct Message is bounded by the platform's Message limit, 90 seconds, and by this setting only when it is shorter; a longer value does not extend the platform's limit |
 | `MAINSEQUENCE_TAU_SHUTDOWN_GRACE_SECONDS` | `30` |
 | `MAINSEQUENCE_TAU_MAX_TURN_OUTPUT_BYTES` | `4194304` |
 
@@ -223,7 +242,7 @@ still bounds a call made within that turn; a standalone platform MCP call has no
 | `MAINSEQUENCE_TAU_A2A_TASK_OUTPUT_FLUSH_INTERVAL_MS` | `200` |
 | `MAINSEQUENCE_TAU_A2A_TASK_OUTPUT_FLUSH_BYTES` | `8192` |
 | `MAINSEQUENCE_TAU_A2A_TASK_EVENT_POLL_SECONDS` | `0.5` |
-| `MAINSEQUENCE_TAU_A2A_TASK_WAIT_TIMEOUT_SECONDS` | `30`; bounds request waiting but does not cancel the Task |
+| `MAINSEQUENCE_TAU_A2A_TASK_WAIT_TIMEOUT_SECONDS` | `30`; bounds the wait of a Task-mode `message:send` with `returnImmediately: false`, never past the platform's Message limit; ending the wait does not cancel the Task |
 
 The local reconciler is the recovery owner for SQLite-backed Tasks. It safely schedules unclaimed
 `submitted` work, expires stale attempts after their session lease is no longer active, and marks

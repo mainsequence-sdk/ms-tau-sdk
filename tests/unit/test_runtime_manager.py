@@ -1203,3 +1203,73 @@ async def test_declared_applications_register_their_mcp_tools_in_a_hosted_sessio
         "task_request_authorization",
     ]
     await manager.aclose()
+
+
+class _UnansweredCodingSession:
+    """A Tau session whose turn never answers, so only a time limit ends it."""
+
+    is_running = False
+
+    def __init__(self) -> None:
+        self.cancelled = 0
+
+    async def prompt(self, _content):
+        await asyncio.Event().wait()
+        yield {"type": "agent_settled"}
+
+    def cancel(self) -> None:
+        self.cancelled += 1
+
+
+def _manager_running(tmp_path, coding_session) -> SessionRuntimeManager:
+    manager = SessionRuntimeManager(
+        settings=_settings(tmp_path), backend=AsyncMock(), providers=Mock()
+    )
+    manager._runtimes["session-1"] = ActiveSessionRuntime(
+        session_uid="session-1",
+        holder_id=manager.holder_id,
+        coding_session=coding_session,
+        storage=SimpleNamespace(lease_token="lease", begin_turn=AsyncMock()),
+        provider=object(),
+        agent_uid="agent-1",
+    )
+    return manager
+
+
+@pytest.mark.asyncio
+async def test_a_turn_ends_at_the_deadline_of_the_request_that_waits_for_it(tmp_path):
+    coding_session = _UnansweredCodingSession()
+    manager = _manager_running(tmp_path, coding_session)
+    # The turn's own limit, MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS, is 900 seconds.
+    deadline = asyncio.get_running_loop().time() + 0.1
+
+    with capture_logs() as lines, pytest.raises(TimeoutError):
+        async for _event in manager.prompt("session-1", "hello", deadline=deadline):
+            pass
+
+    assert coding_session.cancelled == 1
+    assert [line["terminal_status"] for line in lines if line["event"] == "agent.turn.failed"] == [
+        "timed_out"
+    ]
+    manager._runtimes.clear()
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_turn_ended_together_with_its_request_still_reports_its_time_limit(tmp_path):
+    coding_session = _UnansweredCodingSession()
+    manager = _manager_running(tmp_path, coding_session)
+    deadline = asyncio.get_running_loop().time() + 0.1
+
+    # The request's own timer for the same deadline cancels the turn in the same step.
+    with capture_logs() as lines, pytest.raises(TimeoutError):
+        async with asyncio.timeout_at(deadline):
+            async for _event in manager.prompt("session-1", "hello", deadline=deadline):
+                pass
+
+    assert coding_session.cancelled == 1
+    assert [line["terminal_status"] for line in lines if line["event"] == "agent.turn.failed"] == [
+        "timed_out"
+    ]
+    manager._runtimes.clear()
+    await manager.aclose()

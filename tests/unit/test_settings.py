@@ -64,6 +64,32 @@ def test_a2a_terminalization_and_local_recovery_settings(monkeypatch, tmp_path):
     assert configured.local_a2a_task_max_recovery_attempts == 4
 
 
+def test_the_platform_message_limit_comes_only_from_the_platform_variable(monkeypatch, tmp_path):
+    assert TauSDKSettings(_env_file=None, workspace=tmp_path).a2a_message_limit_seconds is None
+
+    monkeypatch.setenv("MAINSEQUENCE_A2A_MESSAGE_LIMIT_SECONDS", "90")
+    assert TauSDKSettings(_env_file=None, workspace=tmp_path).a2a_message_limit_seconds == 90
+
+    # An empty value is the same as unset.
+    monkeypatch.setenv("MAINSEQUENCE_A2A_MESSAGE_LIMIT_SECONDS", "")
+    assert TauSDKSettings(_env_file=None, workspace=tmp_path).a2a_message_limit_seconds is None
+
+
+@pytest.mark.parametrize("value", ["0", "-90", "ninety", "inf", "nan"])
+def test_an_invalid_platform_message_limit_is_a_settings_error(monkeypatch, tmp_path, value):
+    monkeypatch.setenv("MAINSEQUENCE_A2A_MESSAGE_LIMIT_SECONDS", value)
+
+    with pytest.raises(ValidationError, match="MAINSEQUENCE_A2A_MESSAGE_LIMIT_SECONDS"):
+        TauSDKSettings(_env_file=None, workspace=tmp_path)
+
+
+def test_local_mode_has_no_platform_message_limit(monkeypatch, tmp_path):
+    monkeypatch.setenv("MAINSEQUENCE_A2A_MESSAGE_LIMIT_SECONDS", "90")
+
+    with pytest.raises(ValueError, match="TAU_LOCAL_MODE has no platform Message limit"):
+        TauSDKSettings(_env_file=None, workspace=tmp_path, auth_mode="jwt", local_mode=True)
+
+
 def test_settings_use_canonical_mainsequence_endpoint(monkeypatch):
     monkeypatch.setenv("MAINSEQUENCE_ENDPOINT", "https://development.example.test/")
 

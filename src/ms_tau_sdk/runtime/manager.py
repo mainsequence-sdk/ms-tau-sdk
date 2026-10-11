@@ -1325,6 +1325,7 @@ class SessionRuntimeManager:
         turn_uid: str | None = None,
         caller_assertion: CallerAssertion | None = None,
         caller_delivery: CallerDelivery | None = None,
+        deadline: float | None = None,
     ) -> AsyncIterator[TauRuntimeEvent]:
         """Run one turn in a session.
 
@@ -1332,6 +1333,9 @@ class SessionRuntimeManager:
         request that starts the turn. It is presented only when the turn is marked active.
         ``caller_delivery`` is, instead, the caller delivery that a turn the platform starts
         resumes the session for. It is named only when the turn is marked active.
+        ``deadline`` is the event-loop time by which the request that waits for the turn must be
+        answered. The turn then ends at that deadline or at its own time limit, whichever comes
+        first, and either one stops it the same way.
         """
 
         agent_uid = await self._session_agent_uid(session_uid)
@@ -1351,6 +1355,7 @@ class SessionRuntimeManager:
                 platform_event=platform_event,
                 caller_assertion=caller_assertion,
                 caller_delivery=caller_delivery,
+                deadline=deadline,
             ):
                 yield event
 
@@ -1375,6 +1380,7 @@ class SessionRuntimeManager:
         platform_event: PlatformEvent | None = None,
         caller_assertion: CallerAssertion | None = None,
         caller_delivery: CallerDelivery | None = None,
+        deadline: float | None = None,
     ) -> AsyncIterator[TauRuntimeEvent]:
         live_turn = self._open_live_turn(session_uid, content, provenance)
         try:
@@ -1385,6 +1391,7 @@ class SessionRuntimeManager:
                 platform_event=platform_event,
                 caller_assertion=caller_assertion,
                 caller_delivery=caller_delivery,
+                deadline=deadline,
             ):
                 if live_turn is not None:
                     live_turn.observe(event)
@@ -1518,6 +1525,7 @@ class SessionRuntimeManager:
         platform_event: PlatformEvent | None = None,
         caller_assertion: CallerAssertion | None = None,
         caller_delivery: CallerDelivery | None = None,
+        deadline: float | None = None,
     ) -> AsyncIterator[TauRuntimeEvent]:
         logger.info(
             "agent.run.accepted",
@@ -1612,10 +1620,12 @@ class SessionRuntimeManager:
             model=runtime.model,
             is_streaming=True,
         )
+        limit_at = asyncio.get_running_loop().time() + self.settings.turn_timeout_seconds
+        turn_limit = asyncio.timeout_at(limit_at if deadline is None else min(limit_at, deadline))
         requester_token = bind_turn_requester(requester_binding)
         try:
             try:
-                async with asyncio.timeout(self.settings.turn_timeout_seconds):
+                async with turn_limit:
                     async for event in runtime.prompt(
                         content,
                         provenance=provenance,
@@ -1640,7 +1650,13 @@ class SessionRuntimeManager:
                 runtime.cancel(force=True)
                 raise
         except asyncio.CancelledError:
-            if not output_complete:
+            if turn_limit.expired():
+                # The request's own timer for the same deadline cancelled the turn in the same
+                # step, so the turn's limit could not report itself. It still expired.
+                terminal_status = "timed_out"
+                error_type = "TimeoutError"
+                runtime.cancel(force=True)
+            elif not output_complete:
                 terminal_status = "cancelled"
                 error_type = "CancelledError"
             raise

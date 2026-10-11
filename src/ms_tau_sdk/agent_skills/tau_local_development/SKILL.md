@@ -35,9 +35,9 @@ The SDK looks for the CLI in `MAINSEQUENCE_CLI`, then beside the Python interpre
 CLI. Do not add token lines to `.env`. A pair found there still works, but it is deprecated and
 startup logs a warning. `mainsequence refresh-token` run in that directory removes the lines.
 
-Do not set `APP_NAME`, `FASTAPI_PUBLIC_BASE_URL`, `MAINSEQUENCE_CALLER_AUTH_MODE=assertion`, or the
-`MAINSEQUENCE_CALLER_ASSERTION_*` variables. The platform sets them when it hosts a runtime, and
-local mode refuses to start with them.
+Do not set `APP_NAME`, `FASTAPI_PUBLIC_BASE_URL`, `MAINSEQUENCE_CALLER_AUTH_MODE=assertion`, the
+`MAINSEQUENCE_CALLER_ASSERTION_*` variables or `MAINSEQUENCE_A2A_MESSAGE_LIMIT_SECONDS`. The
+platform sets them when it hosts a runtime, and local mode refuses to start with them.
 
 Set `MAINSEQUENCE_ENDPOINT` only for a non-default platform endpoint. The CLI session must be for
 the same endpoint. Local mode binds to `127.0.0.1:8787` by default. Treat an explicit public bind
@@ -117,6 +117,11 @@ To request a Task from `message:send`, send the response-kind extension header
 `configuration.responseKind: "task"`. Omit that selection for the default completed Message
 response. `message:stream` is always Task-oriented and does not accept `responseKind` or
 `returnImmediately`.
+
+Local mode has no platform Message limit: a direct Message ends only at
+`MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS`. A hosted Agent answers a direct Message within the
+platform's 90 seconds or with HTTP 504 `DEADLINE_EXCEEDED`, so design work that may take longer as
+a Task.
 
 Task terminality is derived only from its A2A state. `completed`, `failed`, `canceled`, and
 `rejected` are terminal; `input_required` and `auth_required` are resumable. A normal execution

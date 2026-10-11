@@ -390,6 +390,16 @@ class _MessageLimitExceeded(Exception):
         self.limit_seconds = limit_seconds
 
 
+def _message_limit_exceeded(context_id: str, limit_seconds: float) -> _MessageLimitExceeded:
+    logger.warning(
+        "a2a.message.limit_exceeded",
+        message="A Message-mode request reached its time limit before the Agent answered",
+        context_id=context_id,
+        limit_seconds=limit_seconds,
+    )
+    return _MessageLimitExceeded(limit_seconds)
+
+
 def _seconds_text(value: float) -> str:
     return str(int(value)) if float(value).is_integer() else str(value)
 
@@ -800,6 +810,7 @@ async def _collect_turn(
     provenance: TurnProvenance,
     turn_uid: str | None = None,
     caller_assertion: CallerAssertion | None = None,
+    deadline: float | None = None,
 ) -> str:
     accumulator = _TurnAccumulator(max_output_bytes=max_output_bytes)
     prompt_options: dict[str, Any] = {"provenance": provenance}
@@ -807,6 +818,8 @@ async def _collect_turn(
         prompt_options["turn_uid"] = turn_uid
     if caller_assertion is not None:
         prompt_options["caller_assertion"] = caller_assertion
+    if deadline is not None:
+        prompt_options["deadline"] = deadline
     async for event in manager.prompt(context_id, prompt, **prompt_options):
         accumulator.consume(event)
     context = active_task_execution()
@@ -835,6 +848,7 @@ async def _collect_validated_turn(
     provenance: TurnProvenance,
     turn_uid: str | None = None,
     caller_assertion: CallerAssertion | None = None,
+    deadline: float | None = None,
 ) -> str:
     text = await _collect_turn(
         manager,
@@ -844,6 +858,7 @@ async def _collect_validated_turn(
         provenance=provenance,
         turn_uid=turn_uid,
         caller_assertion=caller_assertion,
+        deadline=deadline,
     )
     if not contract.enabled:
         return text
@@ -874,6 +889,7 @@ async def _collect_validated_turn(
                 max_output_bytes=max_output_bytes,
                 provenance=provenance,
                 caller_assertion=caller_assertion,
+                deadline=deadline,
             )
     raise AssertionError("strict JSON repair loop did not terminate")
 
@@ -1002,6 +1018,16 @@ async def _wait_for_task_return_state(
         await asyncio.sleep(min(poll_interval_seconds, remaining))
         current = (await client.get_task_snapshot(current.uid)).task
     return current
+
+
+def _task_wait_seconds(config: TauSDKSettings, deadline: float | None) -> float:
+    """How long a request waits for its Task: the configured wait, ended by the platform's
+    Message limit when the platform sets one. Either way the Task keeps running."""
+
+    if deadline is None:
+        return config.a2a_task_wait_timeout_seconds
+    remaining = deadline - asyncio.get_running_loop().time()
+    return min(config.a2a_task_wait_timeout_seconds, remaining)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1677,6 +1703,7 @@ async def _execute_message(
     max_output_bytes: int,
     provenance: TurnProvenance,
     caller_assertion: CallerAssertion | None = None,
+    deadline: float | None = None,
 ) -> dict[str, Any]:
     text = await _collect_validated_turn(
         manager,
@@ -1686,6 +1713,7 @@ async def _execute_message(
         max_output_bytes=max_output_bytes,
         provenance=provenance,
         caller_assertion=caller_assertion,
+        deadline=deadline,
     )
     message = _agent_message(
         context_id=context_id,
@@ -2360,9 +2388,16 @@ async def _message_send(
 ) -> dict[str, Any]:
     """Answer one ``message:send``, for REST and JSON-RPC alike.
 
-    A Message-mode request that reaches its time limit raises ``_MessageLimitExceeded``, which
-    each transport answers in its own form.
+    When the platform sets a Message limit, it runs from the moment the request arrives. It
+    bounds a Message-mode request as a whole, including output-contract repair turns, and it ends
+    the wait of a Task-mode request that does not return immediately. A Message-mode request that
+    reaches its limit, or its turn's own limit, raises ``_MessageLimitExceeded``, which each
+    transport answers in its own form.
     """
+    platform_limit = config.a2a_message_limit_seconds
+    deadline = (
+        None if platform_limit is None else asyncio.get_running_loop().time() + platform_limit
+    )
     try:
         provenance = _a2a_turn_provenance(config, request)
     except CallerIdentityError as error:
@@ -2437,7 +2472,7 @@ async def _message_send(
             client,
             task,
             poll_interval_seconds=config.a2a_task_event_poll_interval_seconds,
-            wait_timeout_seconds=config.a2a_task_wait_timeout_seconds,
+            wait_timeout_seconds=_task_wait_seconds(config, deadline),
         )
         task = await _task_with_history(client, task, history_length=history_length)
         return {"task": _task_payload(task, history_length=history_length)}
@@ -2472,7 +2507,7 @@ async def _message_send(
                 client,
                 task,
                 poll_interval_seconds=config.a2a_task_event_poll_interval_seconds,
-                wait_timeout_seconds=config.a2a_task_wait_timeout_seconds,
+                wait_timeout_seconds=_task_wait_seconds(config, deadline),
             )
             task = await _task_with_history(client, task, history_length=history_length)
             return {"task": _task_payload(task, history_length=history_length)}
@@ -2497,41 +2532,52 @@ async def _message_send(
                 client,
                 task,
                 poll_interval_seconds=config.a2a_task_event_poll_interval_seconds,
-                wait_timeout_seconds=config.a2a_task_wait_timeout_seconds,
+                wait_timeout_seconds=_task_wait_seconds(config, deadline),
             )
         task = await _task_with_history(client, task, history_length=history_length)
         return {"task": _task_payload(task, history_length=history_length)}
     request_message_id = str(message["messageId"])
+    context_id = str(message["contextId"])
     if config.local_mode:
         replay = await client.begin_local_conversation_message(message_to_protocol(message))
         if replay is not None:
             return {"message": replay}
+    if (
+        platform_limit is not None
+        and deadline is not None
+        and asyncio.get_running_loop().time() >= deadline
+    ):
+        # The request used up the platform's limit before its turn could start, so none starts.
+        raise _message_limit_exceeded(context_id, platform_limit)
+    request_limit = asyncio.timeout_at(deadline)
     try:
-        result = await _execute_message(
-            manager,
-            context_id=str(message["contextId"]),
-            prompt=prompt,
-            output_contract=output_contract,
-            max_output_bytes=config.max_turn_output_bytes,
-            provenance=provenance,
-            caller_assertion=request_caller_assertion(request),
-        )
+        async with request_limit:
+            result = await _execute_message(
+                manager,
+                context_id=context_id,
+                prompt=prompt,
+                output_contract=output_contract,
+                max_output_bytes=config.max_turn_output_bytes,
+                provenance=provenance,
+                caller_assertion=request_caller_assertion(request),
+                deadline=deadline,
+            )
     except TimeoutError as error:
-        # The turn reached its time limit and was stopped. The caller learns which limit.
-        logger.warning(
-            "a2a.message.limit_exceeded",
-            message="A Message-mode request reached its time limit before the Agent answered",
-            context_id=str(message["contextId"]),
-            limit_seconds=config.turn_timeout_seconds,
-        )
-        raise _MessageLimitExceeded(config.turn_timeout_seconds) from error
+        # The platform's limit for the request or the turn's own limit expired, and the turn was
+        # stopped. The caller learns which limit.
+        raise _message_limit_exceeded(
+            context_id,
+            platform_limit
+            if platform_limit is not None and request_limit.expired()
+            else config.turn_timeout_seconds,
+        ) from error
     if config.local_mode:
         result = await client.complete_local_conversation_message(
-            str(message["contextId"]),
+            context_id,
             request_message_id,
             result,
         )
-    manager.mark_response_delivered(str(message["contextId"]))
+    manager.mark_response_delivered(context_id)
     return {"message": result}
 
 

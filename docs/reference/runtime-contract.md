@@ -201,22 +201,29 @@ and `POST /api/chat` for a session with a running turn returns 409 `session_busy
 ### Direct Message time limit
 
 A direct Message, `message:send` answered with a Message and JSON-RPC `message/send` in Message
-mode, runs its turn while the request waits. When the turn reaches
-`MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS`, the runtime stops it and answers HTTP 504 with media type
-`application/a2a+json`:
+mode, runs its turn while the request waits. The platform gives a direct Message 90 seconds, and
+it passes that limit to the runtime it hosts in `MAINSEQUENCE_A2A_MESSAGE_LIMIT_SECONDS`. The
+limit runs from when the runtime receives the request and covers the whole request, including
+output-contract repair turns. A turn also ends at `MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS` when
+that comes first. No client or runtime setting extends the platform's limit. Without the
+variable, as in local mode, a direct Message ends only at the turn limit.
+
+When either limit expires, the runtime stops the turn, the way it stops any turn that reaches its
+time limit, and answers HTTP 504 with media type `application/a2a+json`. A request that has used
+the whole platform limit before its turn could start starts no turn and gets the same answer:
 
 ```json
 {
   "error": {
     "code": 504,
     "status": "DEADLINE_EXCEEDED",
-    "message": "The Agent did not answer the Message within 900 seconds. Use Task mode for longer work.",
+    "message": "The Agent did not answer the Message within 90 seconds. Use Task mode for longer work.",
     "details": [
       {
         "@type": "type.googleapis.com/google.rpc.ErrorInfo",
         "reason": "MESSAGE_RESPONSE_LIMIT_EXCEEDED",
         "domain": "mainsequence.ai",
-        "metadata": {"limitSeconds": "900"}
+        "metadata": {"limitSeconds": "90"}
       }
     ]
   }
@@ -227,6 +234,13 @@ mode, runs its turn while the request waits. When the turn reaches
 error with code `-32000`, the same message, and the same `ErrorInfo` list in `data`. Work the turn
 already did, such as tool calls, is not rolled back and is never replayed. Work that may take
 longer uses Task mode (`configuration.responseKind: "task"`).
+
+The platform's limit also ends the server wait of a Task-mode `message:send` with
+`returnImmediately: false`: it waits for at most `MAINSEQUENCE_TAU_A2A_TASK_WAIT_TIMEOUT_SECONDS`
+and never past the platform's limit, then returns the Task as it stands while the Task keeps
+running. `message:stream`, which is always a Task, `/api/chat`, caller delivery, Task dispatch and
+Task turns have no platform Message limit; `MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS` bounds their
+turns.
 
 ### Managed AgentTask execution
 
@@ -318,9 +332,10 @@ belongs to the backend dispatch system and must expire stale attempts, bound red
 ambiguous outcomes, and terminalize exhausted recovery. The SDK does not run a competing managed
 dispatcher.
 
-`configuration.returnImmediately=false` uses a bounded server wait. Reaching that bound returns
-the latest non-terminal Task handle and leaves execution running. Caller disconnect and transport
-timeout never imply Task cancellation.
+`configuration.returnImmediately=false` uses a bounded server wait:
+`MAINSEQUENCE_TAU_A2A_TASK_WAIT_TIMEOUT_SECONDS`, never past the platform's Message limit when the
+platform sets one. Reaching that bound returns the latest non-terminal Task handle and leaves
+execution running. Caller disconnect and transport timeout never imply Task cancellation.
 
 ### Task conversation, result, and execution correlation
 

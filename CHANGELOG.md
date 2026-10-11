@@ -11,6 +11,16 @@
   the limit that expired. JSON-RPC returns the same `ErrorInfo` in a JSON-RPC error (`-32000`).
   The turn is stopped as before; its work is neither rolled back nor replayed. Use Task mode for
   longer work.
+- **A direct Message has the platform's 90-second limit.** The platform gives a direct A2A
+  Message one strict limit, 90 seconds, and passes it to the runtime it hosts in
+  `MAINSEQUENCE_A2A_MESSAGE_LIMIT_SECONDS`, a platform-set variable that users do not set. The
+  runtime enforces it for every caller, from when it receives the request and over the whole
+  request, including output-contract repair turns: the turn is stopped and the request gets the
+  504 above with the platform's limit. A shorter `MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS` still ends
+  the turn first; no setting extends the platform's limit. A Task-mode `message:send` with
+  `returnImmediately: false` waits at most until the same limit and returns the Task, which keeps
+  running. Streams, chat, caller delivery, Task dispatch and Task turns are unchanged. Without the
+  variable, as in local mode (which refuses it), a direct Message has only the turn limit.
 
 ## 2.0.11 — 2026-10-11
 

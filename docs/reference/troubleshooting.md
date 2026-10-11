@@ -238,10 +238,14 @@ Message or Task route returns this error, the running SDK is stale.
 
 The Agent did not answer the Message within its time limit, and the runtime stopped the turn. The
 `ErrorInfo` with reason `MESSAGE_RESPONSE_LIMIT_EXCEEDED` names the limit that expired in
-`metadata.limitSeconds`; see the [runtime contract](./runtime-contract.md#direct-message-time-limit).
-Send work that may take longer in Task mode (`configuration.responseKind: "task"`) and follow the
-Task. Do not send the same Message again to wait longer: the stopped turn's tool calls are not
-rolled back, so a new Message runs the work again.
+`metadata.limitSeconds`: the platform gives a direct Message 90 seconds, and
+`MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS` ends it earlier when it is shorter. See the
+[runtime contract](./runtime-contract.md#direct-message-time-limit).
+
+No client or runtime setting extends the platform's limit. Send work that may take longer in Task
+mode (`configuration.responseKind: "task"`, or `response_kind: "task"` with `a2a.send_message`)
+and follow the Task. Do not send the same Message again to wait longer: the stopped turn's tool
+calls are not rolled back, so a new Message runs the work again.
 
 ## An A2A Task remains submitted or working
 

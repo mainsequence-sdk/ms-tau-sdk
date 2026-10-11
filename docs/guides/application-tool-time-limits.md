@@ -101,7 +101,8 @@ wait; a failed renewal does not restart the tool call. A readiness wait that exp
 
 - **The turn.** A call never outlives its turn: when `MAINSEQUENCE_TAU_TURN_TIMEOUT_SECONDS`
   (900 seconds by default) runs out, the call ends with the turn. A limit longer than the turn has
-  no effect.
+  no effect. A turn that answers a direct Message on the platform also ends at the platform's
+  Message limit, 90 seconds; send work that needs a longer tool call as a Task.
 - **The gateway.** The gateway in front of the application has its own limit. A call that runs
   past it ends at the gateway, and the model reads the gateway's answer, for example a gateway
   timeout (504). An application that declares long limits needs a gateway that allows them.

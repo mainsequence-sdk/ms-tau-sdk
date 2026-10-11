@@ -13,7 +13,7 @@ semantic versioning for these supported surfaces:
   `TAU_EXCLUDE_BASE_TOOLS`, and `TAU_EXCLUDE_MAINSEQUENCE_MCP` settings, and the platform's
   hosting settings `MAINSEQUENCE_CALLER_AUTH_MODE`, `MAINSEQUENCE_CALLER_ASSERTION_ISSUER`,
   `MAINSEQUENCE_CALLER_ASSERTION_JWKS_URL`, `MAINSEQUENCE_ORGANIZATION_ENVIRONMENT_UID`,
-  `APP_NAME`, and `FASTAPI_PUBLIC_BASE_URL`;
+  `APP_NAME`, `FASTAPI_PUBLIC_BASE_URL`, and `MAINSEQUENCE_A2A_MESSAGE_LIMIT_SECONDS`;
 - the request-identity declaration `create_app` sets for the platform launcher;
 - documented health, readiness, chat, response, session, and A2A HTTP/wire behavior;
 - packaged Tau defaults and Tau-native project `.tau` precedence; and
