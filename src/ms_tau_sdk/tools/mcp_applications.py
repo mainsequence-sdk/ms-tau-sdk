@@ -17,7 +17,6 @@ opening the session is tried once more when it fails before the tool call is sen
 from __future__ import annotations
 
 import json
-import math
 import re
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from typing import Protocol
@@ -49,15 +48,13 @@ from ms_tau_sdk.runtime.requester import (
     _TurnApplicationAccess,
 )
 from ms_tau_sdk.settings import TauSDKSettings
-from ms_tau_sdk.tools.mcp_connection import mcp_tool_result
+from ms_tau_sdk.tools.mcp_connection import TIMEOUT_META_KEY as TIMEOUT_META_KEY
+from ms_tau_sdk.tools.mcp_connection import declared_timeout, mcp_tool_result
 
 logger = structlog.get_logger(__name__)
 
 _APPLICATION_NAME = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
 _RESERVED_NAMES = frozenset({"mainsequence"})
-
-TIMEOUT_META_KEY = "mainsequence.ai/timeout-seconds/v1"
-"""The ``_meta`` key under which an application tool declares how long it may run, in seconds."""
 
 
 class ApplicationConnector(Protocol):
@@ -204,25 +201,6 @@ def _retryable(error: BaseException) -> bool:
     return isinstance(error, httpx.TransportError) or _timed_out(error)
 
 
-def _declared_timeout(name: str, tool: types.Tool) -> float | None:
-    value = (tool.meta or {}).get(TIMEOUT_META_KEY)
-    if value is None:
-        return None
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, int | float)
-        or not math.isfinite(value)
-        or value <= 0
-    ):
-        logger.warning(
-            "runtime.mcp_application.invalid_timeout",
-            application=name,
-            mcp_tool=tool.name,
-        )
-        return None
-    return float(value)
-
-
 def _error(name: str, text: str, **details: JSONValue) -> AgentToolResult:
     return AgentToolResult(
         content=[TextContent(text=text)],
@@ -339,7 +317,11 @@ def _application_tools(
             try:
                 declared = next(
                     (
-                        _declared_timeout(name, tool)
+                        declared_timeout(
+                            tool,
+                            invalid_event="runtime.mcp_application.invalid_timeout",
+                            application=name,
+                        )
                         for tool in client.tools
                         if tool.name == tool_name
                     ),

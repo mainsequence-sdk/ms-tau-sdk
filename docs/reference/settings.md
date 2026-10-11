@@ -203,7 +203,7 @@ independent of `TAU_LOCAL_STATE_ROOT`, which only holds the local-mode database 
 | Environment variable | Default |
 | --- | --- |
 | `MAINSEQUENCE_TAU_BACKEND_CONNECT_TIMEOUT_SECONDS` | `10` |
-| `MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` | `60`; finite positive backend HTTP read limit, MCP initialization/catalog/resource limit and default platform MCP response deadline; a per-call override replaces the tool's response deadline |
+| `MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` | `60`; finite and positive. How long the runtime waits to read the answer to its ordinary backend requests: platform API calls, MCP initialization, catalog and resource reads, and a platform MCP tool that declares no time limit of its own. It is not the limit of a Message or of any platform operation and has no effect on them: a lower value only makes the runtime stop waiting sooner, and a higher one never extends a platform limit. A platform tool that declares its limit, such as `a2a.send_message`, waits for that limit instead |
 | `MAINSEQUENCE_TAU_BACKEND_WRITE_TIMEOUT_SECONDS` | `60` |
 | `MAINSEQUENCE_TAU_BACKEND_POOL_TIMEOUT_SECONDS` | `10` |
 | `MAINSEQUENCE_TAU_PROVIDER_TIMEOUT_SECONDS` | `60`; HTTP timeout for model-provider calls, which bounds time-to-first-token on providers that send nothing before it |
@@ -227,9 +227,13 @@ Every SDK MCP connection accepts `call_tool(..., timeout_seconds=N)` with a fini
 response deadline. It starts when the queued call reaches the MCP session. A longer override
 allows delayed headers, JSON bodies and SSE responses without also raising the backend HTTP read
 setting; HTTP connect, write and pool limits still apply. Omitted overrides use the session's
-default response deadline. Expiration and caller cancellation release the call's local HTTP
-response and never automatically replay the remote operation. The runtime's actual turn deadline
-still bounds a call made within that turn; a standalone platform MCP call has no implicit turn.
+default response deadline. The tools the model calls pass the limit their tool declares in `_meta`
+under `mainsequence.ai/timeout-seconds/v1`: the platform declares one for each of its own tools,
+and an application for its tools. A deadline only sets how long the runtime waits for the answer;
+it never extends the platform's own limit for the operation. Expiration and caller cancellation
+release the call's local HTTP response and never automatically replay the remote operation. The
+runtime's actual turn deadline still bounds a call made within that turn; a standalone platform
+MCP call has no implicit turn.
 
 ## A2A assets and streaming
 

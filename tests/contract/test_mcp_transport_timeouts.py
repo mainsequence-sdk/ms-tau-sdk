@@ -15,6 +15,8 @@ from pydantic import ValidationError
 
 from ms_tau_sdk.backend.mcp import MainSequenceMCPClient, MCPConnectionClient
 from ms_tau_sdk.settings import TauSDKSettings
+from ms_tau_sdk.tools.mainsequence_mcp import create_mainsequence_mcp_tools
+from ms_tau_sdk.tools.mcp_connection import TIMEOUT_META_KEY
 
 
 @dataclass
@@ -25,6 +27,8 @@ class _MCPServer:
     disconnected: dict[str, asyncio.Event] = field(default_factory=dict)
     handlers: set[asyncio.Task] = field(default_factory=set)
     delays: dict[str, float] = field(default_factory=dict)
+    # More tools to list, by name, each with the `_meta` it declares.
+    declared_tools: dict[str, dict] = field(default_factory=dict)
 
     @property
     def calls(self) -> list[dict]:
@@ -85,6 +89,10 @@ class _MCPServer:
                         }
                         for name, readonly in [("example.read", True), ("example.write", False)]
                     ]
+                    + [
+                        {"name": name, "inputSchema": {"type": "object"}, "_meta": meta}
+                        for name, meta in self.declared_tools.items()
+                    ]
                 }
             elif method == "tools/call":
                 result = {"content": [{"type": "text", "text": arguments.get("uid", "done")}]}
@@ -93,7 +101,8 @@ class _MCPServer:
             else:
                 result = {"resources": []}
             body = json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}).encode()
-            response_kind = arguments.get("response_kind", "headers")
+            # How the answer is delayed; `transport` frees `response_kind` for a2a.send_message.
+            response_kind = arguments.get("transport", arguments.get("response_kind", "headers"))
             content_type = "application/json"
             if response_kind == "sse":
                 body = b"event: message\ndata: " + body + b"\n\n"
@@ -198,6 +207,36 @@ async def test_per_call_deadline_allows_responses_beyond_the_http_read_limit(
             "example.test/proof": "private-call-metadata"
         }
         assert client._http_timeout.read == 0.1
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.parametrize("response_kind", ["headers", "body", "sse"])
+async def test_a_platform_tool_waits_for_the_limit_the_platform_declares_not_the_default(
+    http_mcp_server, response_kind
+):
+    # The session's default response wait, MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS, is 0.1
+    # seconds here; the platform declares a longer limit for a2a.send_message.
+    http_mcp_server.declared_tools["a2a.send_message"] = {TIMEOUT_META_KEY: 0.8}
+    client = await _connect(http_mcp_server)
+    try:
+        send = next(
+            tool
+            for tool in create_mainsequence_mcp_tools(client)
+            if tool.name == "mainsequence__a2a_send_message"
+        )
+        # The server answers after 0.3 seconds, past the default and within the declared limit.
+        result = await send.execute(
+            "call-1",
+            {
+                "uid": "the target's answer",
+                "delay": 0.3,
+                "response_kind": "message",
+                "transport": response_kind,
+            },
+        )
+        assert result.text == "the target's answer"
+        assert len(http_mcp_server.calls) == 1
     finally:
         await client.aclose()
 

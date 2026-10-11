@@ -21,6 +21,17 @@
   `returnImmediately: false` waits at most until the same limit and returns the Task, which keeps
   running. Streams, chat, caller delivery, Task dispatch and Task turns are unchanged. Without the
   variable, as in local mode (which refuses it), a direct Message has only the turn limit.
+- **Platform MCP tools wait for the limit the platform declares
+  ([#93](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/93), ADR 0022 amendment).** Every
+  Main Sequence MCP tool call waited `MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` (60 seconds by
+  default), so an `a2a.send_message` in Message mode whose target answered after 60 seconds was
+  abandoned by the calling Agent while the platform still waited and completed the send. A
+  platform tool whose `_meta` declares its limit under `mainsequence.ai/timeout-seconds/v1`, the
+  key application tools use, is now waited for that long. A tool that declares nothing, or an
+  invalid value, keeps the session default; an invalid value is logged as
+  `runtime.mcp.invalid_timeout`. `MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS` now covers only
+  ordinary backend reads and platform tools without a declared limit: it has no effect on a Message
+  or any platform limit and can only shorten a wait.
 
 ## 2.0.11 — 2026-10-11
 

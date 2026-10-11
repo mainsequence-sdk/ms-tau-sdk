@@ -156,6 +156,14 @@ and never replay the operation. They do not imply remote cancellation or prove i
 Cancelled queued calls are skipped. A standalone call has no implicit runtime turn limit; a call
 inside a turn still ends when the turn ends. See ADR 0022's per-call deadline amendment.
 
+The platform declares the time limit of each of its MCP tools in the tool's `_meta` under
+`mainsequence.ai/timeout-seconds/v1`, the key an application tool uses. A Main Sequence MCP tool
+the model calls waits that long for its answer; a tool that declares nothing, or a value that is
+not a finite number greater than zero, waits the session default,
+`MAINSEQUENCE_TAU_BACKEND_READ_TIMEOUT_SECONDS`. A direct `a2a.send_message` therefore waits as
+long as the platform does for the target Agent's answer. A deadline only sets how long the runtime
+waits; it never extends the platform's own limit for the operation.
+
 ### Declared application MCP endpoints
 
 Declaring an application in the Agent's workflow file registers its MCP endpoint; it grants no

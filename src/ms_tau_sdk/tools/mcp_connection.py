@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 from collections.abc import Callable, Mapping
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Literal, Protocol, cast
+from typing import Any, Literal, Protocol, cast
 
+import structlog
 from mcp import types
 from tau_agent.messages import ImageContent, TextContent
 from tau_agent.tools import (
@@ -19,7 +21,38 @@ from tau_agent.tools import (
 )
 from tau_agent.types import JSONValue
 
+logger = structlog.get_logger(__name__)
+
 _INVALID_TOOL_NAME = re.compile(r"[^A-Za-z0-9_-]")
+
+TIMEOUT_META_KEY = "mainsequence.ai/timeout-seconds/v1"
+"""The ``_meta`` key under which an MCP tool declares how long it may run, in seconds."""
+
+
+def declared_timeout(
+    tool: types.Tool,
+    *,
+    invalid_event: str,
+    **log_fields: JSONValue,
+) -> float | None:
+    """Return the time limit ``tool`` declares under ``TIMEOUT_META_KEY``, in seconds.
+
+    None when it declares none. A declaration that is not a finite number greater than zero
+    counts as none, and is logged as ``invalid_event`` with the tool's name and ``log_fields``.
+    """
+
+    value = (tool.meta or {}).get(TIMEOUT_META_KEY)
+    if value is None:
+        return None
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, int | float)
+        or not math.isfinite(value)
+        or value <= 0
+    ):
+        logger.warning(invalid_event, mcp_tool=tool.name, **log_fields)
+        return None
+    return float(value)
 
 
 class MCPConnection(Protocol):
@@ -34,6 +67,7 @@ class MCPConnection(Protocol):
         arguments: dict[str, object],
         *,
         meta: dict[str, object] | None = None,
+        timeout_seconds: float | None = None,
     ) -> types.CallToolResult: ...
 
     async def read_resource(self, uri: str) -> types.ReadResourceResult: ...
@@ -129,6 +163,11 @@ def _create_tool(
         and bool(getattr(annotations, "idempotentHint", False))
         else "sequential"
     )
+    # A tool that declares its time limit is waited for that long; any other tool gets the
+    # connection's default wait.
+    timeout_seconds = declared_timeout(
+        tool, invalid_event="runtime.mcp.invalid_timeout", connection=policy.prefix
+    )
 
     async def execute(
         tool_call_id: str,
@@ -145,14 +184,12 @@ def _create_tool(
         if policy.check_arguments is not None:
             policy.check_arguments(canonical_name, arguments)
         private_meta = policy.private_meta(tool) if policy.private_meta is not None else None
-        if private_meta is None:
-            result = await client.call_tool(canonical_name, dict(arguments))
-        else:
-            result = await client.call_tool(
-                canonical_name,
-                dict(arguments),
-                meta=dict(private_meta),
-            )
+        call_options: dict[str, Any] = {}
+        if private_meta is not None:
+            call_options["meta"] = dict(private_meta)
+        if timeout_seconds is not None:
+            call_options["timeout_seconds"] = timeout_seconds
+        result = await client.call_tool(canonical_name, dict(arguments), **call_options)
         return mcp_tool_result(
             canonical_name=canonical_name,
             result=result,

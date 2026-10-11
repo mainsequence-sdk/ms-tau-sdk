@@ -48,6 +48,9 @@ the tools that need more, or less, than the default; leave the others alone.
 The Agent reads the application's tool list each time it opens a session for a call, so a new limit
 applies to the next call after the application is deployed. Nothing changes in the Agent.
 
+The platform declares the limits of its own Main Sequence MCP tools under the same key, and the
+Agent waits for them the same way. Those limits are the platform's; no Agent setting extends them.
+
 ## Change an Agent's default
 
 `TAU_MCP_TOOL_TIMEOUT_SECONDS` sets the limit for every tool that declares none; it defaults to
