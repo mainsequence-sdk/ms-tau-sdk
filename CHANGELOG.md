@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.13 — 2026-10-12
 
 - **ms-tau-sdk installs the MCP Python SDK 2.x.** The `mcp` dependency moves from `mcp>=1.27,<2`
   to `mcp>=2.3,<3`, which brings `httpx2`, the HTTP client MCP 2.x uses. A repository that runs a
