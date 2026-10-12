@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from unittest.mock import AsyncMock
 
-import httpx
+import httpx2
 import pytest
-from mcp import McpError
+from mcp import MCPError, types
 from pydantic import ValidationError
 
 from ms_tau_sdk.backend.mcp import MainSequenceMCPClient, MCPConnectionClient
@@ -182,7 +183,7 @@ async def _connect(
         display_name="Example",
         url=f"{server.url}/mcp",
         auth=None,
-        timeout=httpx.Timeout(connect=1, read=http_timeout, write=1, pool=1),
+        timeout=httpx2.Timeout(connect=1, read=http_timeout, write=1, pool=1),
         read_timeout_seconds=default_timeout,
         read_concurrency=2,
     ).open()
@@ -255,7 +256,7 @@ async def test_standalone_platform_calls_can_outlive_the_configured_turn_limit(h
 
 async def test_only_the_tool_response_read_uses_the_per_call_lifetime(http_mcp_server, monkeypatch):
     observed: dict[str, dict] = {}
-    real_client = httpx.AsyncClient
+    real_client = httpx2.AsyncClient
 
     async def record_timeout(request):
         message = json.loads(request.content)
@@ -266,7 +267,7 @@ async def test_only_the_tool_response_read_uses_the_per_call_lifetime(http_mcp_s
         hooks.setdefault("request", []).append(record_timeout)
         return real_client(**kwargs)
 
-    monkeypatch.setattr(httpx, "AsyncClient", observing_client)
+    monkeypatch.setattr(httpx2, "AsyncClient", observing_client)
     client = await _connect(http_mcp_server)
     try:
         await client.call_tool("example.read", {}, timeout_seconds=0.8)
@@ -291,14 +292,16 @@ async def test_default_and_explicit_deadlines_expire_without_replay_and_release_
     client = await _connect(http_mcp_server)
     try:
         async with asyncio.timeout(1):
-            with pytest.raises(McpError) as error:
+            started = time.monotonic()
+            with pytest.raises(MCPError) as error:
                 await client.call_tool(
                     "example.write",
                     {"uid": "expires", "delay": 5, "response_kind": response_kind},
                     timeout_seconds=override,
                 )
-            assert error.value.error.code == 408
-            assert f"Waited {override or 0.1} seconds" in error.value.error.message
+            # MCP 2.x no longer names the deadline in its message; the wait shows which one ran.
+            assert time.monotonic() - started >= (override or 0.1)
+            assert error.value.code == types.REQUEST_TIMEOUT
             await http_mcp_server.disconnected["expires"].wait()
             # A response timeout does not poison the connection or replay the operation.
             result = await client.call_tool("example.write", {"uid": "next"})
@@ -320,7 +323,7 @@ async def test_concurrent_read_calls_keep_independent_deadlines(http_mcp_server)
             client.call_tool("example.read", {"uid": "long", "delay": 0.4}, timeout_seconds=0.8)
         )
         await http_mcp_server.wait_for_call("long")
-        with pytest.raises(McpError):
+        with pytest.raises(MCPError):
             await client.call_tool(
                 "example.read", {"uid": "short", "delay": 5}, timeout_seconds=0.15
             )
@@ -367,7 +370,7 @@ async def test_startup_keeps_its_short_http_read_limit(http_mcp_server, method):
     http_mcp_server.delays[method] = 0.3
     # Give the session more time than HTTPX, to prove the HTTP startup limit still applies.
     async with asyncio.timeout(1):
-        with pytest.raises(httpx.ReadTimeout):
+        with pytest.raises(httpx2.ReadTimeout):
             await _connect(http_mcp_server, "generic", default_timeout=0.8)
     assert http_mcp_server.calls == []
 

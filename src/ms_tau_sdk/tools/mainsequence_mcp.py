@@ -43,7 +43,7 @@ def _tau_tool_input_schema(
     *,
     local_user_semantics: bool = False,
 ) -> Mapping[str, JSONValue]:
-    schema = deepcopy(tool.inputSchema)
+    schema = deepcopy(tool.input_schema)
     if tool.name == A2A_SEND_TOOL:
         properties = schema.setdefault("properties", {})
         if isinstance(properties, dict):

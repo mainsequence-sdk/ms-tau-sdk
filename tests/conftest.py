@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import httpx2
 import jwt
 import pytest
 import respx
@@ -76,8 +77,8 @@ def isolated_tau_state_root(monkeypatch, tmp_path_factory) -> None:
     )
 
 
-type MCPCallAnswer = Callable[[dict[str, Any]], Awaitable[httpx.Response]]
-type MCPOpenAnswer = Callable[[str, list[str]], httpx.Response | None]
+type MCPCallAnswer = Callable[[dict[str, Any]], Awaitable[httpx2.Response]]
+type MCPOpenAnswer = Callable[[str, list[str]], httpx2.Response | None]
 
 
 @pytest.fixture
@@ -90,7 +91,7 @@ def mcp_server(monkeypatch) -> Callable[..., list[str]]:
     The returned list records each method the server receives.
     """
 
-    real_client = httpx.AsyncClient
+    real_client = httpx2.AsyncClient
 
     def serve(
         *,
@@ -100,12 +101,12 @@ def mcp_server(monkeypatch) -> Callable[..., list[str]]:
     ) -> list[str]:
         received: list[str] = []
 
-        async def handler(request: httpx.Request) -> httpx.Response:
+        async def handler(request: httpx2.Request) -> httpx2.Response:
             message = json.loads(request.content)
             method = message.get("method", "")
             received.append(method)
             if "id" not in message:
-                return httpx.Response(202)
+                return httpx2.Response(202)
             if method == "tools/call":
                 return await on_call(message)
             if on_open is not None and (answer := on_open(method, received)) is not None:
@@ -118,14 +119,14 @@ def mcp_server(monkeypatch) -> Callable[..., list[str]]:
                 }
             else:
                 result = {"tools": list(tools)}
-            return httpx.Response(
+            return httpx2.Response(
                 200, json={"jsonrpc": "2.0", "id": message["id"], "result": result}
             )
 
         monkeypatch.setattr(
-            httpx,
+            httpx2,
             "AsyncClient",
-            lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs),
+            lambda **kwargs: real_client(transport=httpx2.MockTransport(handler), **kwargs),
         )
         return received
 

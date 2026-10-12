@@ -124,24 +124,26 @@ def mcp_tool_result(
             content.append(
                 ImageContent(
                     data=block.data,
-                    mime_type=block.mimeType,
+                    mime_type=block.mime_type,
                 )
             )
         else:
-            content.append(TextContent(text=_json_text(block.model_dump(mode="json"))))
-    if not content and result.structuredContent is not None:
-        content.append(TextContent(text=_json_text(result.structuredContent)))
-    if not content and result.isError:
+            content.append(
+                TextContent(text=_json_text(block.model_dump(by_alias=True, mode="json")))
+            )
+    if not content and result.structured_content is not None:
+        content.append(TextContent(text=_json_text(result.structured_content)))
+    if not content and result.is_error:
         content.append(TextContent(text=f"{display_name} MCP tool {canonical_name} failed."))
 
     details: dict[str, JSONValue] = {
         "mcp_tool": canonical_name,
-        "is_error": result.isError,
+        "is_error": result.is_error,
     }
-    if result.structuredContent is not None:
+    if result.structured_content is not None:
         details["structured_content"] = cast(
             JSONValue,
-            result.structuredContent,
+            result.structured_content,
         )
     return AgentToolResult(content=content, details=details)
 
@@ -159,8 +161,8 @@ def _create_tool(
     execution_mode: Literal["sequential", "parallel"] = (
         "parallel"
         if annotations is not None
-        and bool(getattr(annotations, "readOnlyHint", False))
-        and bool(getattr(annotations, "idempotentHint", False))
+        and bool(getattr(annotations, "read_only_hint", False))
+        and bool(getattr(annotations, "idempotent_hint", False))
         else "sequential"
     )
     # A tool that declares its time limit is waited for that long; any other tool gets the
@@ -199,7 +201,7 @@ def _create_tool(
     parameters = (
         policy.input_schema(tool)
         if policy.input_schema is not None
-        else cast(Mapping[str, JSONValue], deepcopy(tool.inputSchema))
+        else cast(Mapping[str, JSONValue], deepcopy(tool.input_schema))
     )
     return AgentTool(
         name=tau_name,
@@ -241,7 +243,7 @@ def _create_resource_tool(client: MCPConnection, policy: MCPToolPolicy) -> Agent
             else:
                 content.append(
                     TextContent(
-                        text=_json_text(item.model_dump(mode="json")),
+                        text=_json_text(item.model_dump(by_alias=True, mode="json")),
                     )
                 )
         return AgentToolResult(

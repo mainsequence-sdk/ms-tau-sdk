@@ -2,7 +2,7 @@ import asyncio
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2
 import pytest
 from mcp import types
 from tau_agent.types import JSONValue
@@ -59,7 +59,7 @@ async def test_a_second_connection_uses_its_own_prefix_filter_and_client():
     ]
     # Only the platform's own policy hides the Environment argument.
     assert "organization_environment_uid" not in platform_tools[0].parameters["properties"]
-    assert application_tools[0].parameters == application.tools[0].inputSchema
+    assert application_tools[0].parameters == application.tools[0].input_schema
     assert application_tools[1].description == "Read one advertised Orders resource from MCP."
 
     await application_tools[0].execute("call-1", {"organization_environment_uid": "env"})
@@ -120,7 +120,7 @@ async def test_each_connection_client_opens_its_own_session_and_catalog():
     @asynccontextmanager
     async def fake_transport(url, **_kwargs):
         opened.append(url)
-        yield object(), object(), lambda: None
+        yield object(), object()
 
     class FakeClientSession:
         def __init__(self, *_args, **_kwargs):
@@ -157,7 +157,7 @@ async def test_each_connection_client_opens_its_own_session_and_catalog():
             display_name="Orders",
             url="http://apps.test/orders/mcp",
             auth=None,
-            timeout=httpx.Timeout(5.0),
+            timeout=httpx2.Timeout(5.0),
             read_timeout_seconds=5.0,
             read_concurrency=2,
         ).open()

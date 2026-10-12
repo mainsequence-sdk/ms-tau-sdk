@@ -6,9 +6,10 @@ from contextlib import asynccontextmanager, contextmanager
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
+import httpx2
 import pytest
-from mcp import McpError, types
-from mcp.server.fastmcp import FastMCP
+from mcp import MCPError, types
+from mcp.server.mcpserver import MCPServer
 from pydantic import SecretStr
 from structlog.testing import capture_logs
 
@@ -181,15 +182,15 @@ def _tool(name="orders.list", **meta):
     return types.Tool(name=name, inputSchema={}, _meta=meta or None)
 
 
-def _status_error(status: int) -> httpx.HTTPStatusError:
-    request = httpx.Request("POST", "https://orders.apps.test/mcp")
-    return httpx.HTTPStatusError(
-        f"failed with {TOKEN}", request=request, response=httpx.Response(status, request=request)
+def _status_error(status: int) -> httpx2.HTTPStatusError:
+    request = httpx2.Request("POST", "https://orders.apps.test/mcp")
+    return httpx2.HTTPStatusError(
+        f"failed with {TOKEN}", request=request, response=httpx2.Response(status, request=request)
     )
 
 
-def _timeout_error() -> McpError:
-    return McpError(types.ErrorData(code=httpx.codes.REQUEST_TIMEOUT, message=f"waited {TOKEN}"))
+def _timeout_error() -> MCPError:
+    return MCPError(types.REQUEST_TIMEOUT, f"waited {TOKEN}")
 
 
 @pytest.mark.asyncio
@@ -282,12 +283,12 @@ OPEN_FAILURES = [
         {"failure": "timeout", "timeout_seconds": OPEN_TIMEOUT},
     ),
     (
-        httpx.ConnectError(f"failed with {TOKEN}"),
+        httpx2.ConnectError(f"failed with {TOKEN}"),
         "The orders application could not be reached.",
         {"failure": "unreachable"},
     ),
     (
-        httpx.ConnectTimeout(f"failed with {TOKEN}"),
+        httpx2.ConnectTimeout(f"failed with {TOKEN}"),
         "The orders application could not be reached.",
         {"failure": "unreachable"},
     ),
@@ -328,7 +329,7 @@ CALL_FAILURES = [
         {"failure": "timeout", "timeout_seconds": TOOL_TIMEOUT},
     ),
     (
-        httpx.ReadTimeout(f"failed with {TOKEN}"),
+        httpx2.ReadTimeout(f"failed with {TOKEN}"),
         "The orders tool orders.list did not answer within 60 seconds.",
         {"failure": "timeout", "timeout_seconds": TOOL_TIMEOUT},
     ),
@@ -353,12 +354,12 @@ CALL_FAILURES = [
         {"failure": "error_status", "status": 422},
     ),
     (
-        McpError(types.ErrorData(code=-32603, message=f"failed with {TOKEN}")),
+        MCPError(-32603, f"failed with {TOKEN}"),
         "The orders application could not complete this call.",
         {"failure": "failed"},
     ),
     (
-        httpx.RemoteProtocolError(f"failed with {TOKEN}"),
+        httpx2.RemoteProtocolError(f"failed with {TOKEN}"),
         "The orders application could not complete this call.",
         {"failure": "failed"},
     ),
@@ -422,9 +423,9 @@ async def test_a_failure_after_the_call_is_sent_says_what_happened(person, error
 @pytest.mark.parametrize(
     "error",
     [
-        httpx.ConnectError("refused"),
-        httpx.ConnectTimeout("slow"),
-        httpx.RemoteProtocolError("dropped"),
+        httpx2.ConnectError("refused"),
+        httpx2.ConnectTimeout("slow"),
+        httpx2.RemoteProtocolError("dropped"),
         _timeout_error(),
         _status_error(408),
         _status_error(502),
@@ -536,11 +537,11 @@ async def test_the_application_token_is_sent_and_renewed_once_on_401():
     )
     seen: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         seen.append(request.headers["Authorization"])
-        return httpx.Response(401 if len(seen) == 1 else 200)
+        return httpx2.Response(401 if len(seen) == 1 else 200)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler), auth=auth) as http:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler), auth=auth) as http:
         response = await http.post("https://orders.apps.test/mcp", json={})
 
     assert response.status_code == 200
@@ -557,7 +558,7 @@ async def test_the_connector_opens_the_applications_mcp_endpoint_with_the_turns_
     @asynccontextmanager
     async def fake_transport(url, **_kwargs):
         opened.append(url)
-        yield object(), object(), lambda: None
+        yield object(), object()
 
     class FakeClientSession:
         def __init__(self, *_args, **_kwargs):
@@ -692,7 +693,7 @@ async def test_platform_timeouts_reach_the_tool_result_without_becoming_access_u
         platform = MainSequenceClient(settings, auth, client=http)
 
         async def refused(_message):
-            return httpx.Response(401)
+            return httpx2.Response(401)
 
         received = mcp_server(tools=[ORDERS_LIST], on_call=refused)
         with _turn(platform, Requester(uid="person-1")), capture_logs() as logs:
@@ -750,12 +751,12 @@ def _connected_tools(**settings):
     return {tool.name: tool for tool in tools}
 
 
-def _answer(message, text="done") -> httpx.Response:
+def _answer(message, text="done") -> httpx2.Response:
     result = {"content": [{"type": "text", "text": text}], "isError": False}
-    return httpx.Response(200, json={"jsonrpc": "2.0", "id": message["id"], "result": result})
+    return httpx2.Response(200, json={"jsonrpc": "2.0", "id": message["id"], "result": result})
 
 
-def _slow(seconds: float) -> Callable[[dict], Awaitable[httpx.Response]]:
+def _slow(seconds: float) -> Callable[[dict], Awaitable[httpx2.Response]]:
     async def answer(message):
         await asyncio.sleep(seconds)
         return _answer(message, f"done after {seconds}s")
@@ -791,7 +792,7 @@ async def test_an_error_status_on_the_call_ends_it_at_once_and_is_not_retried(
     person, mcp_server, status, message
 ):
     async def refuse(_message):
-        return httpx.Response(status, text="gateway error")
+        return httpx2.Response(status, text="gateway error")
 
     received = mcp_server(tools=[ORDERS_LIST], on_call=refuse)
     tools = _connected_tools(mcp_tool_timeout_seconds=5)
@@ -803,11 +804,29 @@ async def test_an_error_status_on_the_call_ends_it_at_once_and_is_not_retried(
 
 
 @pytest.mark.asyncio
+async def test_a_401_after_the_token_was_renewed_is_reported_as_refused(person, mcp_server):
+    # MCP 2.x turns an HTTP error into a JSON-RPC error without its status; the renewal keeps it.
+    async def refuse(_message):
+        return httpx2.Response(401)
+
+    received = mcp_server(tools=[ORDERS_LIST], on_call=refuse)
+
+    result = await _finishes(
+        _connected_tools()["orders__call_tool"].execute("call-1", {"tool": "orders.list"})
+    )
+
+    assert result.text == "The orders application refused this call (401)."
+    assert result.details["status"] == 401
+    assert person.resolve_release_runtime_access.await_count == 2
+    assert received.count("tools/call") == 2
+
+
+@pytest.mark.asyncio
 async def test_a_tool_runs_past_the_backend_read_timeout_within_its_declared_time(
     person, mcp_server
 ):
     # The application declares the limit in the MCP Python SDK's tool decorator.
-    application = FastMCP("orders")
+    application = MCPServer("orders")
 
     @application.tool(name="orders.list", meta={TIMEOUT_META_KEY: 2}, structured_output=False)
     async def orders_list() -> str:
@@ -859,7 +878,7 @@ async def test_a_gateway_502_while_the_session_opens_is_retried_once(person, mcp
 
     def first_fails(received_method, received):
         if received_method == method and received.count(method) == 1:
-            return httpx.Response(502, text="bad gateway")
+            return httpx2.Response(502, text="bad gateway")
         return None
 
     received = mcp_server(tools=[ORDERS_LIST], on_call=answer, on_open=first_fails)
@@ -1079,7 +1098,7 @@ async def test_readiness_timeout_during_token_renewal_does_not_replay_the_sent_t
     person.resolve_release_runtime_access.side_effect = [ready, _waking(2000), ready]
 
     async def refuse(_message):
-        return httpx.Response(401)
+        return httpx2.Response(401)
 
     received = mcp_server(tools=[ORDERS_LIST], on_call=refuse)
     result = await _finishes(
