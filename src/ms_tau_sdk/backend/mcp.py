@@ -5,20 +5,22 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import math
-from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
-from datetime import timedelta
+from types import TracebackType
 from typing import Any, Literal, Self, cast
 
 import anyio
-import httpx
-from anyio.abc import ObjectSendStream
-from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
+import httpx2
 from mcp import ClientSession, types
 from mcp.client.streamable_http import RequestContext, StreamableHTTPTransport
+from mcp.shared._context_streams import (
+    ContextReceiveStream,
+    ContextSendStream,
+    create_context_streams,
+)
 from mcp.shared.message import SessionMessage
-from pydantic import AnyUrl
 from structlog.contextvars import bound_contextvars, get_contextvars
 
 from ms_tau_sdk.settings import TauSDKSettings
@@ -36,7 +38,18 @@ def _actionable_cleanup_error(error: BaseException) -> Exception | None:
     return error if isinstance(error, Exception) else None
 
 
-class _RuntimeCredentialHTTPXAuth(httpx.Auth):
+def raise_for_renewed_401(response: httpx2.Response) -> None:
+    """End the call when a request still gets 401 after its credential was renewed.
+
+    MCP 2.x turns an HTTP error into a JSON-RPC error without its status. Raising here keeps the
+    status, as MCP 1.x's transport did, so callers can still say the call was refused.
+    """
+
+    if response.status_code == 401:
+        response.raise_for_status()
+
+
+class _RuntimeCredentialHTTPXAuth(httpx2.Auth):
     requires_request_body = True
 
     def __init__(self, runtime_auth: BackendAuth) -> None:
@@ -44,13 +57,13 @@ class _RuntimeCredentialHTTPXAuth(httpx.Auth):
 
     async def async_auth_flow(
         self,
-        request: httpx.Request,
-    ) -> AsyncGenerator[httpx.Request, httpx.Response]:
+        request: httpx2.Request,
+    ) -> AsyncGenerator[httpx2.Request, httpx2.Response]:
         request.headers.update(await self.runtime_auth.headers())
         response = yield request
         if response.status_code == 401:
             request.headers.update(await self.runtime_auth.headers(force=True))
-            yield request
+            raise_for_renewed_401((yield request))
 
 
 @dataclass
@@ -75,7 +88,7 @@ _tool_call: contextvars.ContextVar[_ToolCall | None] = contextvars.ContextVar(
 )
 
 
-class _ToolCallWriteStream(ObjectSendStream[SessionMessage]):
+class _ToolCallWriteStream:
     """Associate the session's request ID with its call before the transport sends it.
 
     MCP's HTTP writer runs in another task, so the calling task's context does not reach its
@@ -84,14 +97,14 @@ class _ToolCallWriteStream(ObjectSendStream[SessionMessage]):
 
     def __init__(
         self,
-        stream: MemoryObjectSendStream[SessionMessage],
+        stream: ContextSendStream[SessionMessage],
         calls: dict[types.RequestId, _ToolCall],
     ) -> None:
         self._stream = stream
         self._calls = calls
 
-    async def send(self, item: SessionMessage) -> None:
-        message = item.message.root
+    async def send(self, item: SessionMessage, /) -> None:
+        message = item.message
         call = _tool_call.get()
         if (
             call is not None
@@ -104,6 +117,18 @@ class _ToolCallWriteStream(ObjectSendStream[SessionMessage]):
 
     async def aclose(self) -> None:
         await self._stream.aclose()
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> bool | None:
+        await self.aclose()
+        return None
 
 
 class _ToolCallTransport(StreamableHTTPTransport):
@@ -118,7 +143,7 @@ class _ToolCallTransport(StreamableHTTPTransport):
         self._calls = calls
 
     async def _handle_post_request(self, ctx: RequestContext) -> None:
-        message = ctx.session_message.message.root
+        message = ctx.session_message.message
         call = (
             self._calls.get(message.id)
             if isinstance(message, types.JSONRPCRequest) and message.method == "tools/call"
@@ -143,14 +168,13 @@ class _ToolCallTransport(StreamableHTTPTransport):
 async def streamable_http_client(
     url: str,
     *,
-    http_client: httpx.AsyncClient,
+    http_client: httpx2.AsyncClient,
     calls: dict[types.RequestId, _ToolCall],
     terminate_on_close: bool = False,
 ) -> AsyncIterator[
     tuple[
-        MemoryObjectReceiveStream[SessionMessage | Exception],
-        MemoryObjectSendStream[SessionMessage],
-        Callable[[], str | None],
+        ContextReceiveStream[SessionMessage | Exception],
+        ContextSendStream[SessionMessage],
     ]
 ]:
     """Use MCP's HTTP readers/writer with call-scoped POST cancellation.
@@ -158,33 +182,35 @@ async def streamable_http_client(
     The upstream factory constructs its transport internally without an injection point.
     Preserve its stream/task-group lifecycle while selecting our transport specialization.
     """
-    read_writer, read_stream = anyio.create_memory_object_stream[SessionMessage | Exception](0)
-    write_stream, write_reader = anyio.create_memory_object_stream[SessionMessage](0)
+    read_writer, read_stream = create_context_streams[SessionMessage | Exception](0)
+    write_stream, write_reader = create_context_streams[SessionMessage](0)
     transport = _ToolCallTransport(url, calls)
-    async with anyio.create_task_group() as task_group:
+    async with (
+        read_writer,
+        read_stream,
+        write_stream,
+        write_reader,
+        anyio.create_task_group() as task_group,
+    ):
+
+        def start_get_stream() -> None:
+            task_group.start_soon(transport.handle_get_stream, http_client, read_writer)
+
+        task_group.start_soon(
+            transport.post_writer,
+            http_client,
+            write_reader,
+            read_writer,
+            write_stream,
+            start_get_stream,
+            task_group,
+        )
         try:
-
-            def start_get_stream() -> None:
-                task_group.start_soon(transport.handle_get_stream, http_client, read_writer)
-
-            task_group.start_soon(
-                transport.post_writer,
-                http_client,
-                write_reader,
-                read_writer,
-                write_stream,
-                start_get_stream,
-                task_group,
-            )
-            try:
-                yield read_stream, write_stream, transport.get_session_id
-            finally:
-                if terminate_on_close:
-                    await transport.terminate_session(http_client)
-                task_group.cancel_scope.cancel()
+            yield read_stream, write_stream
         finally:
-            await read_writer.aclose()
-            await write_stream.aclose()
+            if transport.session_id and terminate_on_close:
+                await transport.terminate_session(http_client)
+            task_group.cancel_scope.cancel()
 
 
 def _validate_response_timeout(seconds: float) -> None:
@@ -241,8 +267,8 @@ class MCPConnectionClient:
         name: str,
         display_name: str,
         url: str,
-        auth: httpx.Auth | None,
-        timeout: httpx.Timeout,
+        auth: httpx2.Auth | None,
+        timeout: httpx2.Timeout,
         read_timeout_seconds: float,
         read_concurrency: int,
     ) -> None:
@@ -300,25 +326,24 @@ class MCPConnectionClient:
     async def _run(self, initial_log_context: dict[str, object]) -> None:
         failure: Exception | None = None
         try:
-            async with httpx.AsyncClient(
+            async with httpx2.AsyncClient(
                 timeout=self._http_timeout,
                 auth=self._http_auth,
-                event_hooks={"request": [self._prepare_tool_request]},
+                event_hooks={
+                    "request": [self._prepare_tool_request],
+                    "response": [self._raise_for_error_status],
+                },
             ) as http_client:
                 async with streamable_http_client(
                     self.url,
                     http_client=http_client,
                     calls=self._http_calls,
                     terminate_on_close=False,
-                ) as (read_stream, write_stream, _get_session_id):
+                ) as (read_stream, write_stream):
                     async with ClientSession(
                         read_stream,
-                        # MCP annotates this as a memory stream, but uses only send/aclose.
-                        cast(
-                            MemoryObjectSendStream[SessionMessage],
-                            _ToolCallWriteStream(write_stream, self._http_calls),
-                        ),
-                        read_timeout_seconds=timedelta(seconds=self._read_timeout_seconds),
+                        _ToolCallWriteStream(write_stream, self._http_calls),
+                        read_timeout_seconds=self._read_timeout_seconds,
                     ) as session:
                         with bound_contextvars(**initial_log_context):
                             initialized = await session.initialize()
@@ -327,8 +352,8 @@ class MCPConnectionClient:
                                 tool.name
                                 for tool in self.tools
                                 if tool.annotations is not None
-                                and tool.annotations.readOnlyHint is True
-                                and tool.annotations.idempotentHint is True
+                                and tool.annotations.read_only_hint is True
+                                and tool.annotations.idempotent_hint is True
                             )
                         if self._ready is not None and not self._ready.done():
                             self._ready.set_result(None)
@@ -349,10 +374,10 @@ class MCPConnectionClient:
             )
             self._http_calls.clear()
 
-    async def _prepare_tool_request(self, request: httpx.Request) -> None:
+    async def _prepare_tool_request(self, request: httpx2.Request) -> None:
         if request.method != "POST":
             return
-        message = types.JSONRPCMessage.model_validate_json(request.content).root
+        message = types.jsonrpc_message_adapter.validate_json(request.content)
         if (
             isinstance(message, types.JSONRPCRequest)
             and message.method == "tools/call"
@@ -361,6 +386,13 @@ class MCPConnectionClient:
             # Only this response read follows the finite call deadline. Keep the request's
             # connect/write/pool limits, without mutating the shared HTTP client defaults.
             request.extensions["timeout"] = {**request.extensions["timeout"], "read": None}
+
+    async def _raise_for_error_status(self, response: httpx2.Response) -> None:
+        # MCP 2.x answers an HTTP error on a message POST with a JSON-RPC error that drops the
+        # status. Raise it, as MCP 1.x did, so a failure still says refused, server error or
+        # timeout. 401 is left to the credential's renewal, and 404 to MCP, as 1.x did.
+        if response.request.method == "POST" and response.status_code not in {401, 404}:
+            response.raise_for_status()
 
     async def _read_server_catalog(
         self,
@@ -396,21 +428,21 @@ class MCPConnectionClient:
                             call = _ToolCall(cancel_scope)
                             token = _tool_call.set(call)
                             command.result.add_done_callback(call.cancel_if_abandoned)
+                            # MCP types `_meta` as a TypedDict; the call's own keys pass through.
+                            meta = cast(types.RequestParamsMeta | None, command.meta)
                             try:
                                 if command.timeout_seconds is None:
                                     tool_result = await session.call_tool(
                                         command.name,
                                         command.arguments,
-                                        meta=command.meta,
+                                        meta=meta,
                                     )
                                 else:
                                     tool_result = await session.call_tool(
                                         command.name,
                                         command.arguments,
-                                        read_timeout_seconds=timedelta(
-                                            seconds=command.timeout_seconds
-                                        ),
-                                        meta=command.meta,
+                                        read_timeout_seconds=command.timeout_seconds,
+                                        meta=meta,
                                     )
                                 if not command.result.done():
                                     command.result.set_result(tool_result)
@@ -419,7 +451,7 @@ class MCPConnectionClient:
                                 _tool_call.reset(token)
                                 call.finish()
                     else:
-                        resource_result = await session.read_resource(AnyUrl(command.uri))
+                        resource_result = await session.read_resource(command.uri)
                         if not command.result.done():
                             command.result.set_result(resource_result)
             except Exception as error:
@@ -557,7 +589,7 @@ class MainSequenceMCPClient(MCPConnectionClient):
             display_name="Main Sequence",
             url=f"{settings.backend_url.rstrip('/')}/mcp",
             auth=_RuntimeCredentialHTTPXAuth(auth),
-            timeout=httpx.Timeout(
+            timeout=httpx2.Timeout(
                 connect=settings.backend_connect_timeout_seconds,
                 read=settings.backend_read_timeout_seconds,
                 write=settings.backend_write_timeout_seconds,

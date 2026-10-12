@@ -10,12 +10,12 @@ waits for the time limit its tool declares. A tool that declares none gets the A
 The application that serves the tool sets its limit, next to the tool's code. Put a positive
 number of seconds in the tool's `_meta` under `mainsequence.ai/timeout-seconds/v1`.
 
-With the MCP Python SDK, pass it to the tool decorator:
+With the MCP Python SDK 2.x, pass it to the tool decorator:
 
 ```python
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
-mcp = FastMCP("orders")
+mcp = MCPServer("orders")
 
 
 @mcp.tool(meta={"mainsequence.ai/timeout-seconds/v1": 300})

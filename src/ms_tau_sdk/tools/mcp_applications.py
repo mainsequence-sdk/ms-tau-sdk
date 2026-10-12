@@ -22,8 +22,9 @@ from collections.abc import AsyncGenerator, Mapping, Sequence
 from typing import Protocol
 
 import httpx
+import httpx2
 import structlog
-from mcp import McpError, types
+from mcp import MCPError, types
 from tau_agent.messages import TextContent
 from tau_agent.tools import (
     AgentTool,
@@ -33,7 +34,7 @@ from tau_agent.tools import (
 )
 from tau_agent.types import JSONValue
 
-from ms_tau_sdk.backend.mcp import MCPConnectionClient
+from ms_tau_sdk.backend.mcp import MCPConnectionClient, raise_for_renewed_401
 from ms_tau_sdk.backend.models import MCPApplication
 from ms_tau_sdk.errors import (
     ApplicationReadinessTimeoutError,
@@ -63,7 +64,7 @@ class ApplicationConnector(Protocol):
     ) -> MCPConnectionClient: ...
 
 
-class _ApplicationTokenAuth(httpx.Auth):
+class _ApplicationTokenAuth(httpx2.Auth):
     """Send the turn's application token; obtain a new one once when the application says 401."""
 
     def __init__(self, access: _TurnApplicationAccess) -> None:
@@ -72,14 +73,14 @@ class _ApplicationTokenAuth(httpx.Auth):
 
     async def async_auth_flow(
         self,
-        request: httpx.Request,
-    ) -> AsyncGenerator[httpx.Request, httpx.Response]:
+        request: httpx2.Request,
+    ) -> AsyncGenerator[httpx2.Request, httpx2.Response]:
         request.headers["Authorization"] = f"Bearer {self._token}"
         response = yield request
         if response.status_code == 401:
             self._token = await self._renew()
             request.headers["Authorization"] = f"Bearer {self._token}"
-            yield request
+            raise_for_renewed_401((yield request))
 
 
 def application_connector(settings: TauSDKSettings) -> ApplicationConnector:
@@ -100,7 +101,7 @@ def application_connector(settings: TauSDKSettings) -> ApplicationConnector:
             auth=_ApplicationTokenAuth(access),
             # The connection applies the tool's response deadline to its call; these HTTP limits
             # also bound initialization and catalog requests.
-            timeout=httpx.Timeout(
+            timeout=httpx2.Timeout(
                 connect=settings.backend_connect_timeout_seconds,
                 read=settings.backend_read_timeout_seconds,
                 write=settings.backend_write_timeout_seconds,
@@ -114,10 +115,11 @@ def application_connector(settings: TauSDKSettings) -> ApplicationConnector:
 
 
 def _timed_out(error: BaseException) -> bool:
-    if isinstance(error, McpError):
-        return error.error.code == httpx.codes.REQUEST_TIMEOUT
+    if isinstance(error, MCPError):
+        return error.code == types.REQUEST_TIMEOUT
     return isinstance(error, TimeoutError) or (
-        isinstance(error, httpx.TimeoutException) and not isinstance(error, httpx.ConnectTimeout)
+        isinstance(error, httpx.TimeoutException | httpx2.TimeoutException)
+        and not isinstance(error, httpx.ConnectTimeout | httpx2.ConnectTimeout)
     )
 
 
@@ -175,7 +177,7 @@ def _failure(
             f"{subject} did not answer within {timeout_seconds:g} seconds.",
             {"failure": "timeout", "timeout_seconds": timeout_seconds},
         )
-    if isinstance(error, httpx.HTTPStatusError):
+    if isinstance(error, httpx.HTTPStatusError | httpx2.HTTPStatusError):
         status = error.response.status_code
         if status in {408, 504}:
             text = f"The {name} application or its gateway reported a timeout ({status})."
@@ -188,7 +190,10 @@ def _failure(
             return text, {"failure": "refused", "status": status}
         text = f"The {name} application answered with an error ({status})."
         return text, {"failure": "error_status", "status": status}
-    if isinstance(error, httpx.ConnectError | httpx.ConnectTimeout):
+    if isinstance(
+        error,
+        httpx.ConnectError | httpx.ConnectTimeout | httpx2.ConnectError | httpx2.ConnectTimeout,
+    ):
         return f"The {name} application could not be reached.", {"failure": "unreachable"}
     return f"The {name} application could not complete this call.", {"failure": "failed"}
 
@@ -196,9 +201,9 @@ def _failure(
 def _retryable(error: BaseException) -> bool:
     """Whether opening the session failed in a way that a second attempt may not repeat."""
 
-    if isinstance(error, httpx.HTTPStatusError):
+    if isinstance(error, httpx.HTTPStatusError | httpx2.HTTPStatusError):
         return error.response.status_code == 408 or error.response.status_code >= 500
-    return isinstance(error, httpx.TransportError) or _timed_out(error)
+    return isinstance(error, httpx.TransportError | httpx2.TransportError) or _timed_out(error)
 
 
 def _error(name: str, text: str, **details: JSONValue) -> AgentToolResult:
@@ -209,11 +214,11 @@ def _error(name: str, text: str, **details: JSONValue) -> AgentToolResult:
 
 
 def _tool_entry(tool: types.Tool) -> dict[str, JSONValue]:
-    entry: dict[str, JSONValue] = {"name": tool.name, "inputSchema": dict(tool.inputSchema)}
+    entry: dict[str, JSONValue] = {"name": tool.name, "inputSchema": dict(tool.input_schema)}
     if tool.description:
         entry["description"] = tool.description
-    if tool.annotations is not None and tool.annotations.readOnlyHint is not None:
-        entry["readOnly"] = tool.annotations.readOnlyHint
+    if tool.annotations is not None and tool.annotations.read_only_hint is not None:
+        entry["readOnly"] = tool.annotations.read_only_hint
     return entry
 
 

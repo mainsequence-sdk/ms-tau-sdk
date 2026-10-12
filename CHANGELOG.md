@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **ms-tau-sdk installs the MCP Python SDK 2.x.** The `mcp` dependency moves from `mcp>=1.27,<2`
+  to `mcp>=2.3,<3`, which brings `httpx2`, the HTTP client MCP 2.x uses. A repository that runs a
+  Harness Agent and also serves an application MCP with `mainsequence[mcp]`, which requires MCP 2.x
+  for the MCP Skills extension, could not lock both packages; it now can. Agent behaviour does not
+  change: platform and application MCP calls keep their time limits, cancellation, the one token
+  renewal on 401, and the same failure texts and details, including the refused, server-error and
+  timeout statuses that MCP 2.x no longer reports by itself. A project that pins `mcp<2` itself,
+  or uses the MCP 1.x API in its own code (`FastMCP`, `McpError`, camelCase fields), must move to
+  MCP 2.x. The time-limits guide shows `MCPServer`, MCP 2.x's name for `FastMCP`.
+
 ## 2.0.12 — 2026-10-11
 
 - **A direct Message that runs out of time gets a typed answer

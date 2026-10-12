@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import anyio
 import httpx
+import httpx2
 import pytest
 from mcp import types
 from starlette.applications import Starlette
@@ -51,12 +52,12 @@ async def test_mcp_http_auth_reuses_runtime_auth_and_refreshes_once():
     ]
     seen: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         seen.append(request.headers["Authorization"])
-        return httpx.Response(401 if len(seen) == 1 else 200)
+        return httpx2.Response(401 if len(seen) == 1 else 200)
 
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(handler),
+    async with httpx2.AsyncClient(
+        transport=httpx2.MockTransport(handler),
         auth=_RuntimeCredentialHTTPXAuth(runtime_auth),
     ) as client:
         response = await client.post("http://backend.test/mcp", json={})
@@ -122,7 +123,7 @@ async def test_mcp_transport_does_not_leak_cancel_scope_into_streaming_response(
         async with anyio.create_task_group() as task_group:
             transport_tasks.append(asyncio.current_task())
             try:
-                yield object(), object(), lambda: None
+                yield object(), object()
             finally:
                 transport_exit_tasks.append(asyncio.current_task())
                 task_group.cancel_scope.cancel()
@@ -214,16 +215,16 @@ async def test_mcp_connect_closes_partial_transport_on_failure():
 
 @pytest.mark.asyncio
 async def test_mcp_connect_unwraps_transport_error_from_cancelled_task_group():
-    request = httpx.Request("POST", "http://backend.test/mcp")
-    response = httpx.Response(421, request=request)
-    transport_error = httpx.HTTPStatusError(
+    request = httpx2.Request("POST", "http://backend.test/mcp")
+    response = httpx2.Response(421, request=request)
+    transport_error = httpx2.HTTPStatusError(
         "Invalid Host header",
         request=request,
         response=response,
     )
 
     with (
-        pytest.raises(httpx.HTTPStatusError, match="Invalid Host header"),
+        pytest.raises(httpx2.HTTPStatusError, match="Invalid Host header"),
         patch.object(
             MainSequenceMCPClient,
             "_connect",
@@ -250,7 +251,7 @@ async def test_mcp_connect_unwraps_transport_error_from_cancelled_task_group():
 @pytest.mark.parametrize("status", [403, 502, 503])
 async def test_an_error_status_on_a_call_ends_that_call_with_its_status(mcp_server, status):
     async def refuse(_message):
-        return httpx.Response(status, text="gateway error")
+        return httpx2.Response(status, text="gateway error")
 
     mcp_server(tools=[{"name": "agent.list", "inputSchema": {"type": "object"}}], on_call=refuse)
     auth = AsyncMock()
@@ -264,10 +265,10 @@ async def test_an_error_status_on_a_call_ends_that_call_with_its_status(mcp_serv
         await asyncio.gather(call, return_exceptions=True)
         pytest.fail("the call was still waiting after 2 seconds")
 
-    with pytest.raises(httpx.HTTPStatusError) as raised:
+    with pytest.raises(httpx2.HTTPStatusError) as raised:
         call.result()
     assert raised.value.response.status_code == status
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(httpx2.HTTPStatusError):
         await client.aclose()
 
 
