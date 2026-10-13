@@ -139,5 +139,3 @@ run commands. `TAU_EXCLUDE_BASE_TOOLS` removes them. The Security and access gui
 5. In the same change, update the [runtime contract](../reference/runtime-contract.md), the
    [Security and access guide](../reference/security-model.md), the packaged project customization
    skill and the changelog.
-6. Open: issue #98's check of a deployed Agent in a normal chat, inspecting the successful remote
-   reads in the session's tool results.
