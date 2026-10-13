@@ -169,11 +169,15 @@ waits; it never extends the platform's own limit for the operation.
 Declaring an application in the Agent's workflow file registers its MCP endpoint; it grants no
 access. The platform resolves each declared application in the Agent's Environment and returns it
 in the startup data as an `mcp_applications` entry with `name` and `resource_release_uid`; no UID
-or URL is configured in the project. For each entry the runtime offers two tools:
+or URL is configured in the project. For each entry the runtime offers four tools:
 
 - `<name>__list_tools` returns the application's tools: name, description, input schema and
-  whether it only reads; and
-- `<name>__call_tool` takes `tool` and `arguments` and calls that tool.
+  whether it only reads. It also says when the application publishes skills or resources;
+- `<name>__call_tool` takes `tool` and `arguments` and calls that tool;
+- `<name>__list_resources` returns the skills the application publishes, each with the URI of its
+  `SKILL.md`, its name, its description and its files with their sizes, and the other resources it
+  advertises; and
+- `<name>__read_resource` takes the `uri` of one of them and returns its content.
 
 For each call the runtime obtains the application's RPC URL and a token through
 `resolve-runtime-access`: for the person the turn serves, or the Agent's own when it serves nobody.
@@ -181,6 +185,20 @@ It opens an MCP session to `<rpc_url>/mcp` with that token, renews the token onc
 closes the session when the call ends. Without a person, the Agent's workload needs its own grants
 on the application. A name must match `^[a-z][a-z0-9_]{0,39}$` and must not be `mainsequence`; an
 invalid or repeated name fails the session load. Local mode has no declared applications.
+
+The session first asks `server/discover` on MCP protocol revision `2026-07-28`, where an
+application declares the MCP Skills extension (`io.modelcontextprotocol/skills`). An application
+that answers that question with an error or an HTTP client error status, or does not answer it
+within ten seconds, is opened with `initialize`, as before. Skills are listed with `skills/list`
+only when the application declares the extension; without it, skill files are ordinary resources.
+`<name>__read_resource` reads only what the application lists. A file of a listed skill must be
+named in the skill's file list, and its bytes must have the listed size and SHA-256 digest;
+otherwise none of its content is returned and the result's `failure` is `unverified`. A skill the
+application generates (`"dynamic"`) lists no files: only its `SKILL.md` is read, unchecked. Any
+other URI must be in the application's resource list. Each read names the application, and the
+skill for a skill file; binary content is not shown, only its type. A published skill is never
+added to the project's skills and none of its frontmatter, such as `allowed-tools`, is applied
+(ADR 0023).
 
 Each tool may declare how long it runs, in seconds, in its `_meta` under
 `mainsequence.ai/timeout-seconds/v1`. `<name>__call_tool` reads the application's tool list in the

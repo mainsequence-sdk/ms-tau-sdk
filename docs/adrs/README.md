@@ -26,6 +26,8 @@ These records are the normative decisions for Main Sequence TAU SDK:
   (Accepted; implemented in the SDK, takes effect with the platform's cutover)
 - [ADR 0022: Time limits and failures of MCP application tool calls](./0022-mcp-application-tool-call-limits-and-failures.md)
   (Accepted; implemented)
+- [ADR 0023: Skills and resources of declared applications](./0023-skills-and-resources-of-declared-applications.md)
+  (Accepted; implemented)
 
 [ADR 56](./adr-56-main-sequence-tau-sdk-workspace-bound-library-deployment.md) is the accepted
 transition record and implementation ledger. Decisions of the retired deployment project do not

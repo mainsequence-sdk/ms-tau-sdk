@@ -247,9 +247,17 @@ and, for a delegated call, the person as the requester.
 - Knowing the person does not let the application act as the person elsewhere: it cannot reuse the
   assertion against the platform or forward it.
 - Every route of the application works this way, including an MCP endpoint it serves.
-- Each declared application supplies `<name>__list_tools` and `<name>__call_tool`. They carry the
-  person's delegation while the turn serves a person, and run as the Agent otherwise. Declaring an
-  application grants no access: without a person, the Agent's workload needs its own grants on it.
+- Each declared application supplies `<name>__list_tools`, `<name>__call_tool`,
+  `<name>__list_resources` and `<name>__read_resource`. They carry the person's delegation while
+  the turn serves a person, and run as the Agent otherwise. Declaring an application grants no
+  access: without a person, the Agent's workload needs its own grants on it.
+- Skills an application publishes are instructions the application wrote, and the Agent reads
+  them as the application's content, labelled with its name. They never become the project's
+  skills and grant nothing: fields such as `allowed-tools` are ignored. Declaring the application
+  is your decision to let the Agent read them, as it reads the application's answers. With the
+  coding tools (`bash` among them), a model that follows a skill can run commands on the runtime;
+  set `TAU_EXCLUDE_BASE_TOOLS` when that must not happen. A skill file is returned only when its
+  bytes match the skill's list of files.
 - The SDK's Main Sequence MCP tools follow the same rule: every call names the turn's session, and
   carries the person's delegation while the turn serves a person.
 
@@ -265,4 +273,5 @@ and, for a delegated call, the person as the requester.
   carries one, and against the caller otherwise.
 - Do not retry a refused delegated call as the Agent.
 - Return business results to the model, never tokens, proofs or raw responses.
+- Declare only applications whose published skills you would let the Agent follow.
 - Review extensions: they run with the Agent's credentials.

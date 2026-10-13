@@ -9,11 +9,12 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from types import TracebackType
-from typing import Any, Literal, Self, cast
+from typing import Annotated, Any, Literal, Self, cast
 
 import anyio
 import httpx2
 from mcp import ClientSession, types
+from mcp.client._probe import negotiate_auto
 from mcp.client.streamable_http import RequestContext, StreamableHTTPTransport
 from mcp.shared._context_streams import (
     ContextReceiveStream,
@@ -21,6 +22,7 @@ from mcp.shared._context_streams import (
     create_context_streams,
 )
 from mcp.shared.message import SessionMessage
+from pydantic import BaseModel, Field, model_validator
 from structlog.contextvars import bound_contextvars, get_contextvars
 
 from ms_tau_sdk.settings import TauSDKSettings
@@ -218,6 +220,73 @@ def _validate_response_timeout(seconds: float) -> None:
         raise ValueError("MCP response timeout must be finite and greater than zero")
 
 
+SKILLS_EXTENSION = "io.modelcontextprotocol/skills"
+"""The MCP Skills extension (SEP-2640). A server declares it only on protocol 2026-07-28."""
+
+
+class SkillFile(BaseModel):
+    """One file of a published skill: its URI, and the size and SHA-256 digest of its bytes."""
+
+    uri: str
+    digest: Annotated[str, Field(pattern=r"^sha256:[0-9a-f]{64}$")]
+    size: Annotated[int, Field(ge=0)]
+
+
+class Skill(BaseModel):
+    """One skill a server publishes: the URI of its ``SKILL.md``, its frontmatter and its files.
+
+    ``resources`` lists every file of the skill, or is ``"dynamic"`` when the server generates the
+    skill's content and publishes no digests.
+    """
+
+    uri: Annotated[str, Field(pattern=r"/SKILL\.md$")]
+    frontmatter: dict[str, Any]
+    resources: list[SkillFile] | Literal["dynamic"]
+
+    @model_validator(mode="after")
+    def _named_and_described(self) -> Self:
+        for field in ("name", "description"):
+            if not isinstance(self.frontmatter.get(field), str):
+                raise ValueError(f"the frontmatter of skill {self.uri} has no {field}")
+        return self
+
+
+class _ListSkillsRequest(types.PaginatedRequest[Literal["skills/list"]]):
+    method: Literal["skills/list"] = "skills/list"
+
+
+class _ListSkillsResult(types.PaginatedResult, types.CacheableResult):
+    skills: list[Skill]
+
+
+async def _list_skills(session: ClientSession) -> tuple[Skill, ...]:
+    """Read every page of ``skills/list``; a skill listed twice counts once."""
+
+    skills: dict[str, Skill] = {}
+    cursor: str | None = None
+    cursors: set[str] = set()
+    while True:
+        page = await session.send_request(
+            _ListSkillsRequest(
+                params=types.PaginatedRequestParams(cursor=cursor) if cursor is not None else None
+            ),
+            _ListSkillsResult,
+        )
+        for skill in page.skills:
+            skills.setdefault(skill.uri, skill)
+        cursor = page.next_cursor
+        if cursor is None:
+            return tuple(skills.values())
+        if cursor in cursors:
+            raise ValueError("the server repeated a skills/list cursor")
+        cursors.add(cursor)
+
+
+def _sends(request: httpx2.Request, method: str) -> bool:
+    message = types.jsonrpc_message_adapter.validate_json(request.content)
+    return isinstance(message, types.JSONRPCRequest) and message.method == method
+
+
 @dataclass(frozen=True)
 class _CallToolCommand:
     name: str
@@ -236,11 +305,17 @@ class _ReadResourceCommand:
 
 
 @dataclass(frozen=True)
+class _ListSkillsCommand:
+    log_context: dict[str, object]
+    result: asyncio.Future[tuple[Skill, ...]]
+
+
+@dataclass(frozen=True)
 class _CloseCommand:
     reason: Literal["client_close"] = "client_close"
 
 
-type _MCPCommand = _CallToolCommand | _ReadResourceCommand | _CloseCommand
+type _MCPCommand = _CallToolCommand | _ReadResourceCommand | _ListSkillsCommand | _CloseCommand
 
 ENVIRONMENT_SCOPED_AGENT_TOOLS = frozenset({"agent.list", "agent.search"})
 ENVIRONMENT_UID_ARGUMENT = "organization_environment_uid"
@@ -258,7 +333,9 @@ class MCPConnectionClient:
     """One remote MCP server over Streamable HTTP.
 
     Each client owns its own MCP session, tool catalog and resources; nothing is shared between
-    connections.
+    connections. With ``mode="legacy"`` the session opens with the ``initialize`` handshake. With
+    ``mode="auto"``, MCP's own default, it first asks protocol 2026-07-28's ``server/discover``,
+    where a server declares its extensions, and opens an older server with ``initialize``.
     """
 
     def __init__(
@@ -271,6 +348,7 @@ class MCPConnectionClient:
         timeout: httpx2.Timeout,
         read_timeout_seconds: float,
         read_concurrency: int,
+        mode: Literal["legacy", "auto"] = "legacy",
     ) -> None:
         _validate_response_timeout(read_timeout_seconds)
         self.name = name
@@ -280,6 +358,7 @@ class MCPConnectionClient:
         self._http_timeout = timeout
         self._read_timeout_seconds = read_timeout_seconds
         self._read_concurrency = read_concurrency
+        self._mode = mode
         self._commands: asyncio.Queue[_MCPCommand] | None = None
         self._owner_task: asyncio.Task[None] | None = None
         self._ready: asyncio.Future[None] | None = None
@@ -290,6 +369,7 @@ class MCPConnectionClient:
         self._http_calls: dict[types.RequestId, _ToolCall] = {}
         self.tools: tuple[types.Tool, ...] = ()
         self.resources: tuple[types.Resource, ...] = ()
+        self.extensions: dict[str, dict[str, Any]] = {}
         self._parallel_tool_names: frozenset[str] = frozenset()
         self._closed = False
 
@@ -346,8 +426,7 @@ class MCPConnectionClient:
                         read_timeout_seconds=self._read_timeout_seconds,
                     ) as session:
                         with bound_contextvars(**initial_log_context):
-                            initialized = await session.initialize()
-                            await self._read_server_catalog(session, initialized)
+                            await self._read_server_catalog(session, await self._negotiate(session))
                             self._parallel_tool_names = frozenset(
                                 tool.name
                                 for tool in self.tools
@@ -391,16 +470,27 @@ class MCPConnectionClient:
         # MCP 2.x answers an HTTP error on a message POST with a JSON-RPC error that drops the
         # status. Raise it, as MCP 1.x did, so a failure still says refused, server error or
         # timeout. 401 is left to the credential's renewal, and 404 to MCP, as 1.x did.
-        if response.request.method == "POST" and response.status_code not in {401, 404}:
-            response.raise_for_status()
+        if response.request.method != "POST" or response.status_code in {401, 404}:
+            return
+        # An older server can refuse the `server/discover` probe with a client error. MCP then
+        # opens the session with `initialize` instead.
+        if response.is_client_error and _sends(response.request, "server/discover"):
+            return
+        response.raise_for_status()
+
+    async def _negotiate(self, session: ClientSession) -> types.ServerCapabilities | None:
+        if self._mode == "auto":
+            await negotiate_auto(session)
+            return session.server_capabilities
+        initialized = await session.initialize()
+        return initialized.capabilities if initialized is not None else None
 
     async def _read_server_catalog(
         self,
         session: ClientSession,
-        initialized: types.InitializeResult | None,
+        capabilities: types.ServerCapabilities | None,
     ) -> None:
         # Read only what the server offers; a server without resources answers "not found".
-        capabilities = initialized.capabilities if initialized is not None else None
         offers_tools = capabilities is None or capabilities.tools is not None
         offers_resources = capabilities is None or capabilities.resources is not None
         tools_result, resources_result = await asyncio.gather(
@@ -409,6 +499,7 @@ class MCPConnectionClient:
         )
         self.tools = tuple(tools_result.tools)
         self.resources = tuple(resources_result.resources)
+        self.extensions = dict(capabilities.extensions or {}) if capabilities is not None else {}
 
     async def _serve(self, session: ClientSession) -> None:
         commands = self._commands
@@ -417,7 +508,9 @@ class MCPConnectionClient:
         active_reads: set[asyncio.Task[None]] = set()
         read_slots = asyncio.Semaphore(self._read_concurrency)
 
-        async def execute(command: _CallToolCommand | _ReadResourceCommand) -> None:
+        async def execute(
+            command: _CallToolCommand | _ReadResourceCommand | _ListSkillsCommand,
+        ) -> None:
             if command.result.cancelled():
                 return
             self._in_flight.add(command.result)
@@ -450,10 +543,14 @@ class MCPConnectionClient:
                                 command.result.remove_done_callback(call.cancel_if_abandoned)
                                 _tool_call.reset(token)
                                 call.finish()
-                    else:
+                    elif isinstance(command, _ReadResourceCommand):
                         resource_result = await session.read_resource(command.uri)
                         if not command.result.done():
                             command.result.set_result(resource_result)
+                    else:
+                        skills = await _list_skills(session)
+                        if not command.result.done():
+                            command.result.set_result(skills)
             except Exception as error:
                 if not command.result.done():
                     command.result.set_exception(error)
@@ -464,7 +561,7 @@ class MCPConnectionClient:
                     self._in_flight.discard(command.result)
 
         async def execute_read(
-            command: _CallToolCommand | _ReadResourceCommand,
+            command: _CallToolCommand | _ReadResourceCommand | _ListSkillsCommand,
         ) -> None:
             async with read_slots:
                 await execute(command)
@@ -479,7 +576,9 @@ class MCPConnectionClient:
                 if isinstance(command, _CloseCommand):
                     await drain_reads()
                     return
-                is_parallel_read = isinstance(command, _ReadResourceCommand) or (
+                is_parallel_read = isinstance(
+                    command, _ReadResourceCommand | _ListSkillsCommand
+                ) or (
                     isinstance(command, _CallToolCommand)
                     and command.name in self._parallel_tool_names
                 )
@@ -561,6 +660,19 @@ class MCPConnectionClient:
                 result=result,
             )
         )
+        return await result
+
+    async def list_skills(self) -> tuple[Skill, ...]:
+        """Every skill the server publishes; none when it does not declare ``SKILLS_EXTENSION``.
+
+        Only a server that declares the extension is asked, as the extension requires.
+        """
+
+        if SKILLS_EXTENSION not in self.extensions:
+            return ()
+        commands = self._require_commands()
+        result: asyncio.Future[tuple[Skill, ...]] = asyncio.get_running_loop().create_future()
+        commands.put_nowait(_ListSkillsCommand(log_context=dict(get_contextvars()), result=result))
         return await result
 
     async def aclose(self) -> None:
