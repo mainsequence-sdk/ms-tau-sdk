@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- **Tau reads skills nested in folders
+  ([#99](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/99)).** Tau read only the skill
+  folders directly in `.tau/skills` and `.agents/skills`, so a skill one folder deeper, such as
+  `.agents/skills/mcp_tools/<skill>/SKILL.md`, the folder an application publishes with the
+  mainsequence SDK's skills publisher, was skipped without a diagnostic. A folder there without a
+  `SKILL.md` now groups skills, at any depth, and its skills are read, listed in the system prompt,
+  reloaded and opened by the skill-scoped `read` like the others. This includes the managed
+  development skills in `.agents/skills/ms_tau_sdk` and `.agents/skills/mainsequence`. A skill
+  name found twice in the same folder keeps the first in path order, with Tau's duplicate diagnostic; a folder inside
+  a skill is not a skill, and a linked group folder is not followed.
+
 ## 2.0.14 — 2026-10-13
 
 - **An Agent reads the skills and resources its declared applications publish

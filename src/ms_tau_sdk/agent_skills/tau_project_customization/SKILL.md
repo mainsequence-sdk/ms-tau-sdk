@@ -26,8 +26,13 @@ second SDK-specific prompt override or companion append file. Other resources fo
 version pinned by the installed SDK.
 
 `.agents/skills/ms_tau_sdk/` is different: it contains managed development instructions for coding
-agents working on the repository. It is not loaded as the runtime's `.tau` behavior and must not be
-used as application configuration.
+agents working on the repository. It is not the runtime's `.tau` behavior and must not be used as
+application configuration.
+
+Tau reads skills in `.tau/skills/` and `.agents/skills/` at any depth: a folder without a
+`SKILL.md` groups skills, such as `.agents/skills/mcp_tools/<skill>/SKILL.md`, the folder an
+application can publish with the mainsequence SDK's skills publisher. The managed skills in
+`.agents/skills/ms_tau_sdk/` are read too.
 
 ## Extension ownership
 
@@ -74,7 +79,7 @@ Task controls requires an actual Task context and is specified by ADR 0015.
 The A2A Task controls are `task_request_input` and `task_request_authorization`. They remain
 available in every mode for the agent's own Task; extensions must not register those names.
 Register project tools under `.tau/extensions/` and verify the effective catalog after loading.
-With base tools excluded, the skill-scoped `read` keeps `.tau/skills/` available: it opens a
+With base tools excluded, the skill-scoped `read` keeps the project skills available: it opens a
 discovered skill's `SKILL.md` and the files in its directory, such as `references/*.md`, and
 rejects every other path, including symlinks that resolve outside the skill. Tau lists the skills
 in the system prompt because a tool named `read` exists. Extensions must not register `read` in

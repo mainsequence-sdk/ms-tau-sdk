@@ -31,6 +31,14 @@ Tau discovers project-owned resources from the workspace, including:
 Project resources participate in Tau diagnostics and reload. Extension session-start, tool hooks,
 and session-shutdown callbacks use Tau's normal lifecycle.
 
+## Project skills
+
+Tau reads skills from `.tau/skills/` and `.agents/skills/`. A folder holding a `SKILL.md` is a
+skill; a folder without one groups skills, at any depth, such as
+`.agents/skills/mcp_tools/<skill>/SKILL.md`. A folder inside a skill is not a skill, and a linked
+group folder is not followed. When two skills in the same one of these folders share a name, the
+first in path order is kept and Tau reports the other.
+
 ## Ownership and trust
 
 The SDK enables and trusts the selected project's Tau resources because the project already owns
@@ -70,7 +78,7 @@ the process environment for local `ms-tau`; Python applications can set the matc
 skill-scoped `read`, and the two Task controls. If only one is enabled, the other built-in source
 remains. A project prompt or Agent Card skill description does not remove tools.
 
-With base tools excluded, project skills in `.tau/skills/` stay available. The skill-scoped `read`
+With base tools excluded, project skills stay available. The skill-scoped `read`
 opens a discovered skill's `SKILL.md` and the files in its directory, such as `references/*.md`,
 and rejects every other path, including symlinks that resolve outside the skill. Because a tool
 named `read` exists, Tau still lists the skills in the system prompt. A project extension cannot
