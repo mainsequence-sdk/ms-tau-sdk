@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.14 — 2026-10-13
 
 - **An Agent reads the skills and resources its declared applications publish
   ([#98](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/98), ADR 0023).** An application
