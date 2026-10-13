@@ -225,8 +225,9 @@ Treat file contents, command output, tool results, and application responses ret
 Agent as information the model can see. Conversation history and chat streams may expose that
 information to people who can read the session. Task outputs and deliberately persisted Task
 Messages have their own visibility rules; `Task.history` is not a copy of every tool call or Tau
-entry. See [A2A Task history](./public-api.md#a2a-task-history). Do not put credentials in result
-details or rely on a hidden UI field to keep them outside the model or persisted conversation.
+entry. See [Task history](./runtime-contract.md#task-conversation-result-and-execution-correlation).
+Do not put credentials in result details or rely on a hidden UI field to keep them outside the
+model or persisted conversation.
 
 The SDK keeps its own credentials out of that path. The runtime credential, access tokens, lease
 and session proofs, application tokens and caller assertions are never tool arguments or results,

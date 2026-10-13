@@ -8,6 +8,8 @@ from ms_tau_sdk import current_requester, platform_client
 from ms_tau_sdk import RUNTIME_HEALTH_ABI_VERSION, register_deployment_readiness_hook
 ```
 
+HTTP routes and wire behavior are in the [runtime contract](./runtime-contract.md).
+
 ## `create_app`
 
 ```python
@@ -206,67 +208,3 @@ metadata, so a project can correlate Python composition with the serving process
 ## Command
 
 `ms-tau` resolves `TauSDKSettings`, builds the same application with `create_app`, and runs Uvicorn.
-
-## A2A Task history
-
-The HTTP application projects durable Task communication as the optional A2A `Task.history`
-array. This is Message history only: requester Messages and deliberately persisted responder/status
-Messages. Artifacts, Tau entries, Task events, logs, prompts, and tool traffic are not history.
-
-`configuration.historyLength` applies to REST/JSON-RPC Message send and stream operations;
-`historyLength` applies to Task get and list. Omission requests the SDK's bounded default tail of
-100 Messages, zero performs no history-tail read and omits `history`, and a positive integer returns
-at most that many latest Messages ordered oldest-to-newest. Values above 100 are capped; booleans,
-negative values, and non-integers are rejected.
-
-The public A2A v1 projection uses `ROLE_USER` and `ROLE_AGENT`. The SDK translates those roles to
-its persistence binding at ingress and back at egress without changing Message identity, Parts,
-metadata, extension URI order, or Task references. Status settlement accepts only a complete
-responder Message or no Message; the pre-cutover `{code, message}` status object is not supported.
-
-## Local chat sessions
-
-Local mode records every `POST /api/chat` session and serves it back after a UI reload or a Tau
-restart:
-
-```text
-GET /api/local/v1/chat-sessions?limit=50&cursor=<opaque>
-GET /api/local/v1/chat-sessions/{sessionUid}/history
-GET /api/local/v1/agent
-```
-
-The list returns the authenticated local process user's sessions, newest activity first, each with
-its canonical `sessionUid` (the value of `X-Agent-Session-Uid`), title, message count, latest-text
-preview, creation and activity times, and whether a turn is `working`. The history returns the
-envelope of the platform's `GET /api/v1/agent-sessions/{uid}/history/`: `version`, `session`,
-`messages`, and `inProgressMessage`. Messages carry user text, assistant text, reasoning, and tool
-calls with their arguments, results, and `isError`. A turn still running is returned in
-`inProgressMessage` with session status `running`. Continue a session by sending its `sessionUid`
-to `POST /api/chat`.
-
-`GET /api/local/v1/agent` returns `{name, displayName, description}` from the workspace's
-`.agents/agent_card.json`, or nulls without a readable card. All three routes return 409 in managed
-mode, where the platform owns sessions and history.
-
-A local chat turn keeps running when its client disconnects; stop it with
-`POST /api/chat/session/cancel`. While a session has a running turn, `POST /api/chat` for it returns
-409 `session_busy`.
-
-## Local direct A2A conversation history
-
-Local mode exposes an SDK-owned extension for direct `message:send` conversations:
-
-```text
-GET /api/local/v1/conversations?limit=50&cursor=<opaque>
-GET /api/local/v1/conversations/{contextId}/messages?limit=100&beforeSequence=<n>
-```
-
-The first route lists the authenticated local process user's workspace conversations with stable
-canonical context IDs, deterministic titles, message counts, latest-text previews, activity times,
-and bounded cursor pagination. The second returns persisted public requester/responder Messages
-oldest-to-newest within the selected tail. Reuse the listed `contextId` in
-`POST /api/a2a/v1/message:send` to continue after a UI or Tau restart.
-
-This extension is not an A2A v1 method and is unavailable in managed mode. Its Messages are not
-derived from Tau entries and never include system instructions, reasoning, tool activity, events,
-or logs. A2A Task conversations remain under `Task.history`.

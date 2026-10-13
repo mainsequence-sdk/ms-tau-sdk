@@ -1,14 +1,19 @@
 # Testing and Release Gates
 
-Run the local quality suite with:
+The [quality workflow](../../.github/workflows/quality.yml) is the gate set. Its local equivalent:
 
 ```bash
-uv sync --frozen
-uv run ruff format --check src tests
-uv run ruff check src tests
+uv sync --frozen --extra tau-board
+uv run ruff format --check src tests scripts packages/tau-board/src packages/tau-board/tests
+uv run ruff check src tests scripts packages/tau-board
 uv run mypy
-uv run pytest
+uv run mypy --strict packages/tau-board/src/ms_tau_board
+node --check packages/tau-board/src/ms_tau_board/static/app.js
+uv run pytest --cov=ms_tau_sdk --cov-branch
+uv run pytest packages/tau-board/tests -q
 ```
+
+The distribution, clean-install, and consumer-fixture gates are the remaining workflow steps.
 
 The suites are divided by responsibility:
 
@@ -25,9 +30,8 @@ clean environment, construct the public API without source-path leakage, run `ms
 workspace, synchronize the SDK skill namespace, call health/version, and verify graceful shutdown.
 
 The quality workflow runs those gates for every pull request and development/main push. The
-separate [Python release process](./releasing.md) emits dependency metadata, checksums, provenance,
-and an attested candidate bundle; only an exact version tag can enter the protected PyPI publication
-job.
+[Python release process](./releasing.md) builds, inspects, and clean-installs the distributions
+again before it publishes them.
 
 The project fixture has its own `pyproject.toml` and `uv.lock`. CI synchronizes it separately and
 imports its three-line ASGI shim to prevent accidental reliance on repository-only integration code.

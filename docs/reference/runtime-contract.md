@@ -35,9 +35,10 @@ inference remain remote. When MCP is enabled, its side effects are real platform
 The executable operation contract covers:
 
 - `/health`, `/ready`, and `/version`;
-- `/api/chat`, mock chat, session model, and cancellation;
+- `/api/chat`, mock chat, session model, the model-provider catalog, and cancellation;
 - local chat session discovery, platform-shaped chat history, and the local Agent identity;
 - local direct A2A conversation discovery and bounded Message hydration;
+- Tau Board's local Agent inspection and project-tool workbench;
 - A2A message send/stream, task list/get/cancel/subscribe, push-notification compatibility routes,
   and JSON-RPC; and
 - controlled internal dispatch and caller-delivery availability routes.
@@ -224,6 +225,49 @@ detaches the stream; the turn runs to its durable end and stays visible through 
 history. Only `POST /api/chat/session/cancel` stops it. A local session runs one turn at a time,
 and `POST /api/chat` for a session with a running turn returns 409 `session_busy`.
 
+### Local chat sessions
+
+Local mode records every `POST /api/chat` session and serves it back after a UI reload or a Tau
+restart:
+
+```text
+GET /api/local/v1/chat-sessions?limit=50&cursor=<opaque>
+GET /api/local/v1/chat-sessions/{sessionUid}/history
+GET /api/local/v1/agent
+```
+
+The list returns the authenticated local process user's sessions, newest activity first, each with
+its canonical `sessionUid` (the value of `X-Agent-Session-Uid`), title, message count, latest-text
+preview, creation and activity times, and whether a turn is `working`. The history returns the
+envelope of the platform's `GET /api/v1/agent-sessions/{uid}/history/`: `version`, `session`,
+`messages`, and `inProgressMessage`. Messages carry user text, assistant text, reasoning, and tool
+calls with their arguments, results, and `isError`. A turn still running is returned in
+`inProgressMessage` with session status `running`. Continue a session by sending its `sessionUid`
+to `POST /api/chat`.
+
+`GET /api/local/v1/agent` returns `{name, displayName, description}` from the workspace's
+`.agents/agent_card.json`, or nulls without a readable card. All three routes return 409 in managed
+mode, where the platform owns sessions and history.
+
+### Local direct A2A conversations
+
+Local mode exposes an SDK-owned extension for direct `message:send` conversations:
+
+```text
+GET /api/local/v1/conversations?limit=50&cursor=<opaque>
+GET /api/local/v1/conversations/{contextId}/messages?limit=100&beforeSequence=<n>
+```
+
+The first route lists the authenticated local process user's workspace conversations with stable
+canonical context IDs, deterministic titles, message counts, latest-text previews, activity times,
+and bounded cursor pagination. The second returns persisted public requester/responder Messages
+oldest-to-newest within the selected tail. Reuse the listed `contextId` in
+`POST /api/a2a/v1/message:send` to continue after a UI or Tau restart.
+
+This extension is not an A2A v1 method and is unavailable in managed mode. Its Messages are not
+derived from Tau entries and never include system instructions, reasoning, tool activity, events,
+or logs. A2A Task conversations remain under `Task.history`.
+
 ### Direct Message time limit
 
 A direct Message, `message:send` answered with a Message and JSON-RPC `message/send` in Message
@@ -295,7 +339,7 @@ the platform.
 ### Deployment readiness
 
 Managed deployments expose the platform-owned `GET /ms-health-deployment`
-endpoint through Pod Deployment Orchestrator. Projects do not create or
+endpoint through the platform launcher. Projects do not create or
 scaffold that route. `ms-tau-sdk` automatically publishes the Tau readiness
 predicate consumed by the launcher: ASGI startup must be complete, the runtime
 manager must be ready and not draining, and an optional project readiness hook
@@ -319,6 +363,7 @@ platform probes use the launcher's endpoint.
 | Mock chat | Supported. |
 | Chat session list/history | Supported through `/api/local/v1/chat-sessions`; history uses the platform's projected-history shape, with text, reasoning, tool calls, and the running turn in `inProgressMessage`, for the authenticated process principal's sessions only. |
 | Local Agent identity | Supported through `/api/local/v1/agent`, from the workspace's `.agents/agent_card.json`. |
+| Agent inspection and project-tool workbench | Local mode only, under `/api/local/v1/sessions/{sessionUid}/`; managed mode returns 409. |
 | A2A Message send | Supported with a workspace-local context identity. |
 | Direct Message conversation list/history | Supported through `/api/local/v1/conversations`; returns only the authenticated process principal's public requester/responder projection. |
 | A2A Task send/stream/list/get/cancel/subscribe/continue | Supported through local SQLite. |
@@ -368,14 +413,23 @@ execution running. Caller disconnect and transport timeout never imply Task canc
 A Task has four separate durable projections: ordered Message history, current/final Artifacts,
 Tau execution entries, and technical Task events/logs. Public `Task.history` contains only complete
 A2A Messages. A completed Artifact is not duplicated as a responder Message, and streaming
-Artifact revisions are not additional Messages. `historyLength` reads a bounded latest tail and
-returns it oldest-to-newest; zero skips the history read entirely.
+Artifact revisions are not additional Messages. Artifacts, Tau entries, Task events, logs,
+prompts, and tool traffic are not history.
+
+`configuration.historyLength` applies to REST/JSON-RPC Message send and stream operations;
+`historyLength` applies to Task get and list. Omission requests the SDK's bounded default tail of
+100 Messages, zero performs no history-tail read and omits `history`, and a positive integer returns
+at most that many latest Messages ordered oldest-to-newest. Values above 100 are capped; booleans,
+negative values, and non-integers are rejected.
 
 The Main Sequence storage binding persists requester/responder direction and maps it to public A2A
-v1 `ROLE_USER`/`ROLE_AGENT` only at the protocol boundary. Status Messages have stable identities,
+v1 `ROLE_USER`/`ROLE_AGENT` only at the protocol boundary, without changing Message identity,
+Parts, metadata, extension URI order, or Task references. Status Messages have stable identities,
 non-empty Parts, matching Task/context IDs, and URI-array extensions whose payload is stored under
 Message metadata. A status event references that durable Message; stream projection reloads the
-coherent Task instead of trusting an embedded event copy.
+coherent Task instead of trusting an embedded event copy. Status settlement accepts only a
+complete responder Message or no Message; the pre-cutover `{code, message}` status object is not
+supported.
 
 Before an attempt starts, Tau allocates its immutable turn UID. Attempt start reserves that turn
 on the Session and captures `entry_start_sequence`; every accepted entry carries the same UID.
