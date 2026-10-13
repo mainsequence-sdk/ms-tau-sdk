@@ -42,10 +42,10 @@ Acting for a person depends on the Agent's administrator configuration and on th
 permissions. An SDK upgrade does not add permissions. See the
 [Security and access guide](./security-model.md#availability).
 
-The delegation envelope and declared-application MCP connections are documented under
-**Unreleased** in the [changelog](../../CHANGELOG.md#unreleased). They ship in one cutover with the
-matching platform change, with no transition: this release works only with that platform, and
-earlier releases stop acting for people once it is deployed.
+Declared-application MCP connections first shipped in [2.0.6](../../CHANGELOG.md#206--2026-10-07).
+The delegation envelope shipped in [2.0.7](../../CHANGELOG.md#207--2026-10-08), in one cutover with
+the matching platform change and with no transition: 2.0.7 and later releases work only with that
+platform, and earlier releases no longer act for people.
 
 ## Branch and Release Standard
 

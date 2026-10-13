@@ -13,8 +13,7 @@ clarify the documentation's availability boundary. Steps 1 to 3 are SDK source s
 platform requirements below must also be met before the complete requester/delegation behavior
 is available. This clarification makes no new architecture or release decision.
 
-Status: Accepted — implemented in the SDK (steps 1 to 4); it takes effect with the platform's
-cutover
+Status: Accepted — implemented
 
 Date: 2026-10-07
 
@@ -181,10 +180,10 @@ The SDK depends on the platform to:
 
 ## Rollout status
 
-The SDK changes are listed under **Unreleased** in the [changelog](../../CHANGELOG.md#unreleased).
-They ship in one cutover with the platform's: neither side keeps the other's previous behavior
-alive, and no released SDK version is served alongside. Released 2.0.6 does not send the envelope,
-so once the platform changes it no longer acts for people; it is upgraded in the same cutover.
+Steps 1 to 3 shipped in [2.0.6](../../CHANGELOG.md#206--2026-10-07). Step 4 shipped in
+[2.0.7](../../CHANGELOG.md#207--2026-10-08), in one cutover with the platform's: neither side
+keeps the other's previous behavior alive, and no earlier SDK release is served alongside.
+Releases before 2.0.7 do not send the envelope, so they no longer act for people.
 
 ## Consequences
 

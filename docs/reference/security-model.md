@@ -7,12 +7,12 @@ access rules, not a guarantee that arbitrary project code is isolated from the r
 
 ## Availability
 
-This guide covers the current SDK development documentation. The delegation envelope and the
-application MCP connections in [ADR 0021](../adrs/0021-mcp-connections-on-the-persons-identity.md)
-are listed under **Unreleased** in the [changelog](../../CHANGELOG.md#unreleased). They take effect
-together with the matching platform change, deployed in one cutover: this SDK works only with that
-platform, and earlier SDK releases stop acting for people once it is deployed. Check the deployed
-platform and your installed SDK before relying on them.
+This guide covers the current SDK development documentation. The application MCP connections in
+[ADR 0021](../adrs/0021-mcp-connections-on-the-persons-identity.md) first shipped in
+[2.0.6](../../CHANGELOG.md#206--2026-10-07). The delegation envelope shipped in
+[2.0.7](../../CHANGELOG.md#207--2026-10-08), in one cutover with the matching platform change:
+2.0.7 and later SDK releases work only with that platform, and earlier SDK releases no longer act
+for people. Check your installed SDK before relying on these features.
 
 ## Who is who
 

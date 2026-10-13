@@ -22,7 +22,7 @@ These records are the normative decisions for Main Sequence TAU SDK:
 - [ADR 0018: Reload-safe local chat sessions](./0018-reload-safe-local-chat-sessions.md)
 - [ADR 0019: Verified request identity and session ownership](./0019-verified-request-identity-and-session-ownership.md)
 - [ADR 0021: MCP connections on the person's identity](./0021-mcp-connections-on-the-persons-identity.md)
-  (Accepted; implemented in the SDK, takes effect with the platform's cutover)
+  (Accepted; implemented)
 - [ADR 0022: Time limits and failures of MCP application tool calls](./0022-mcp-application-tool-call-limits-and-failures.md)
   (Accepted; implemented)
 - [ADR 0023: Skills and resources of declared applications](./0023-skills-and-resources-of-declared-applications.md)
