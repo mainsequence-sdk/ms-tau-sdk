@@ -165,3 +165,67 @@ def setup(tau):
     with pytest.raises(ConfigurationError, match="cannot replace reserved SDK tools: read"):
         await runtime.reload()
     await session.aclose()
+
+
+def _skill(folder: Path, description: str) -> None:
+    folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_text(
+        f"---\nname: {folder.name}\ndescription: {description}\n---\n{description} body.\n",
+        encoding="utf-8",
+    )
+
+
+async def test_tau_reads_skills_nested_in_group_folders(tmp_path):
+    workspace = _workspace(tmp_path)
+    group = workspace / ".agents/skills/mcp_tools"
+    _skill(group / "alpaca-demo", "Grouped skill")
+    (group / "alpaca-demo/references").mkdir()
+    (group / "alpaca-demo/references/orders.md").write_text("Use limit orders.")
+    _skill(group / "alpaca-demo/references/inner", "A skill inside a skill is not read")
+    (group / "README.md").write_text("Not a skill.")
+    _skill(workspace / ".agents/skills/billing/refunds/refund-review", "Deeper group")
+    _skill(workspace / ".agents/skills/flat-skill", "Flat skill")
+    _skill(workspace / ".tau/skills/team/pg-guide", "Duplicate name in a .tau group")
+    _skill(workspace / ".agents/skills/other-tools/alpaca-demo", "Duplicate name in a group")
+    outside = tmp_path / "outside"
+    _skill(outside / "linked-skill", "Behind a linked group")
+    (workspace / ".agents/skills/linked").symlink_to(outside)
+    (group / "alpaca-demo/references/escape.md").symlink_to(tmp_path / "outside.txt")
+    (tmp_path / "outside.txt").write_text("credential", encoding="utf-8")
+
+    session = await _load_session(workspace, tmp_path / "state")
+
+    assert {skill.name: skill.path for skill in session.skills} == {
+        "alpaca-demo": group / "alpaca-demo/SKILL.md",
+        "flat-skill": workspace / ".agents/skills/flat-skill/SKILL.md",
+        "pg-guide": workspace / ".tau/skills/pg-guide/SKILL.md",
+        "refund-review": workspace / ".agents/skills/billing/refunds/refund-review/SKILL.md",
+    }
+    assert {
+        (diagnostic.name, diagnostic.message)
+        for diagnostic in session.resource_diagnostics
+        if diagnostic.kind == "skill"
+    } == {
+        ("pg-guide", f"Duplicate skill name ignored in {workspace / '.tau/skills'}"),
+        ("alpaca-demo", f"Duplicate skill name ignored in {workspace / '.agents/skills'}"),
+    }
+    assert "<name>alpaca-demo</name>" in session.system_prompt
+    read = next(tool for tool in session.tools if tool.name == "read")
+    result = await read.execute(
+        "call-1", {"path": ".agents/skills/mcp_tools/alpaca-demo/references/orders.md"}
+    )
+    assert "Use limit orders." in result.content[0].text
+    for path in (
+        ".agents/skills/mcp_tools/README.md",
+        ".agents/skills/mcp_tools/alpaca-demo/../../../../app.py",
+        ".agents/skills/mcp_tools/alpaca-demo/references/escape.md",
+        ".agents/skills/linked/linked-skill/SKILL.md",
+    ):
+        with pytest.raises(ToolInputError, match="outside the available skills"):
+            await read.execute("call-2", {"path": path})
+
+    _skill(group / "new-skill", "Added before reload")
+    await session.reload()
+    assert "new-skill" in {skill.name for skill in session.skills}
+    assert "<name>new-skill</name>" in session.system_prompt
+    await session.aclose()
