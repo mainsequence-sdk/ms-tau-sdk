@@ -7,12 +7,12 @@ access rules, not a guarantee that arbitrary project code is isolated from the r
 
 ## Availability
 
-This guide covers the current SDK development documentation. The delegation envelope and the
-application MCP connections in [ADR 0021](../adrs/0021-mcp-connections-on-the-persons-identity.md)
-are listed under **Unreleased** in the [changelog](../../CHANGELOG.md#unreleased). They take effect
-together with the matching platform change, deployed in one cutover: this SDK works only with that
-platform, and earlier SDK releases stop acting for people once it is deployed. Check the deployed
-platform and your installed SDK before relying on them.
+This guide covers the current SDK development documentation. The application MCP connections in
+[ADR 0021](../adrs/0021-mcp-connections-on-the-persons-identity.md) first shipped in
+[2.0.6](../../CHANGELOG.md#206--2026-10-07). The delegation envelope shipped in
+[2.0.7](../../CHANGELOG.md#207--2026-10-08), in one cutover with the matching platform change:
+2.0.7 and later SDK releases work only with that platform, and earlier SDK releases no longer act
+for people. Check your installed SDK before relying on these features.
 
 ## Who is who
 
@@ -82,6 +82,33 @@ Two rules cap every grant:
 
 Everyone who can use the Agent benefits from its grants. Give an Agent that serves many people only
 access that all of them may have.
+
+## Teams and membership
+
+With the matching platform Team-membership change, ordinary Team membership shows who
+can view or control the Team. Each member can view it; a writer can edit it. Only Organization
+admins add, remove or change members. Member rows show `can_edit` and `is_protected`.
+
+- Every current Organization admin is a protected writer member of every ordinary Team and
+  cannot be removed or downgraded. Removing the admin role keeps existing memberships and
+  writer access, while ending that protection.
+- A Team's creator is added as a writer once, at creation. An Organization admin can later
+  downgrade or remove that creator. Being its creator gives no continuing Team access, and
+  subsequent Team updates do not add the creator back.
+- Managing an Agent that created a Team does not grant Team access to the Agent's managers.
+  The person or workload must have its own membership. A separate grant to a person or
+  another Team does not confer ordinary-Team control.
+- All members receive the resources shared with their Team at the shared level. Writer status
+  controls the Team itself; it does not raise the level granted on those resources.
+- The built-in Full directory keeps its existing computed people membership and read-only
+  behavior. Access to it can reveal Team directory entries without granting edit access.
+
+Existing ordinary Teams gain their missing current Organization admins and creators as writers
+when that platform change is applied. Other existing members stay readers until an admin changes
+their membership. This policy is a platform behavior change; it does not add an SDK method or
+change the shape of `team_uids`. Team UIDs in a verified caller identify membership, not whether
+the caller is a writer. Ask an Organization admin to review the Team's member list when access
+is missing. Platform operators retain their separate operational access.
 
 ## Acting for the person (`acts_for_requester`)
 
@@ -198,8 +225,9 @@ Treat file contents, command output, tool results, and application responses ret
 Agent as information the model can see. Conversation history and chat streams may expose that
 information to people who can read the session. Task outputs and deliberately persisted Task
 Messages have their own visibility rules; `Task.history` is not a copy of every tool call or Tau
-entry. See [A2A Task history](./public-api.md#a2a-task-history). Do not put credentials in result
-details or rely on a hidden UI field to keep them outside the model or persisted conversation.
+entry. See [Task history](./runtime-contract.md#task-conversation-result-and-execution-correlation).
+Do not put credentials in result details or rely on a hidden UI field to keep them outside the
+model or persisted conversation.
 
 The SDK keeps its own credentials out of that path. The runtime credential, access tokens, lease
 and session proofs, application tokens and caller assertions are never tool arguments or results,
@@ -247,9 +275,17 @@ and, for a delegated call, the person as the requester.
 - Knowing the person does not let the application act as the person elsewhere: it cannot reuse the
   assertion against the platform or forward it.
 - Every route of the application works this way, including an MCP endpoint it serves.
-- Each declared application supplies `<name>__list_tools` and `<name>__call_tool`. They carry the
-  person's delegation while the turn serves a person, and run as the Agent otherwise. Declaring an
-  application grants no access: without a person, the Agent's workload needs its own grants on it.
+- Each declared application supplies `<name>__list_tools`, `<name>__call_tool`,
+  `<name>__list_resources` and `<name>__read_resource`. They carry the person's delegation while
+  the turn serves a person, and run as the Agent otherwise. Declaring an application grants no
+  access: without a person, the Agent's workload needs its own grants on it.
+- Skills an application publishes are instructions the application wrote, and the Agent reads
+  them as the application's content, labelled with its name. They never become the project's
+  skills and grant nothing: fields such as `allowed-tools` are ignored. Declaring the application
+  is your decision to let the Agent read them, as it reads the application's answers. With the
+  coding tools (`bash` among them), a model that follows a skill can run commands on the runtime;
+  set `TAU_EXCLUDE_BASE_TOOLS` when that must not happen. A skill file is returned only when its
+  bytes match the skill's list of files.
 - The SDK's Main Sequence MCP tools follow the same rule: every call names the turn's session, and
   carries the person's delegation while the turn serves a person.
 
@@ -265,4 +301,5 @@ and, for a delegated call, the person as the requester.
   carries one, and against the caller otherwise.
 - Do not retry a refused delegated call as the Agent.
 - Return business results to the model, never tokens, proofs or raw responses.
+- Declare only applications whose published skills you would let the Agent follow.
 - Review extensions: they run with the Agent's credentials.

@@ -1,21 +1,29 @@
-"""MCP endpoints of the applications an Agent declares (ADR 0021, section 4).
+"""MCP endpoints of the applications an Agent declares (ADR 0021, section 4; ADR 0023).
 
 Declaring an application registers its MCP; it grants no access. The platform resolves each
 declared application in the Agent's Environment and hands the runtime its name and release at
-startup. Each application gets two tools, ``<name>__list_tools`` and ``<name>__call_tool``. Both run
-inside the turn: the SDK obtains the application's address and a short-lived token, opens an MCP
-session for the call, and closes it afterwards. The token carries the delegation of the person the
-turn serves, when it serves one, and is the Agent's own otherwise; the application decides what the
-call may do. No session, token or catalog is shared between turns or people, and nothing is read
-when the session loads, because no turn is running then.
+startup. Each application gets four tools: ``<name>__list_tools`` and ``<name>__call_tool`` for its
+tools, and ``<name>__list_resources`` and ``<name>__read_resource`` for the skills and resources it
+publishes. They run inside the turn: the SDK obtains the application's address and a short-lived
+token, opens an MCP session for the call, and closes it afterwards. The token carries the
+delegation of the person the turn serves, when it serves one, and is the Agent's own otherwise; the
+application decides what the call may do. No session, token or catalog is shared between turns or
+people, and nothing is read when the session loads, because no turn is running then.
 
 Each tool declares how long it may run in its ``_meta`` (ADR 0022); a tool that declares nothing
 gets ``TAU_MCP_TOOL_TIMEOUT_SECONDS``. A failure reaches the model in plain words, and
 opening the session is tried once more when it fails before the tool call is sent.
+
+A file of a skill the application lists (MCP Skills extension) reaches the model only when its
+bytes match the size and SHA-256 digest the listing gives. Published skills are the application's
+content: the SDK never adds them to the project's skills and grants nothing they ask for.
 """
 
 from __future__ import annotations
 
+import base64
+import binascii
+import hashlib
 import json
 import re
 from collections.abc import AsyncGenerator, Mapping, Sequence
@@ -34,7 +42,13 @@ from tau_agent.tools import (
 )
 from tau_agent.types import JSONValue
 
-from ms_tau_sdk.backend.mcp import MCPConnectionClient, raise_for_renewed_401
+from ms_tau_sdk.backend.mcp import (
+    SKILLS_EXTENSION,
+    MCPConnectionClient,
+    Skill,
+    SkillFile,
+    raise_for_renewed_401,
+)
 from ms_tau_sdk.backend.models import MCPApplication
 from ms_tau_sdk.errors import (
     ApplicationReadinessTimeoutError,
@@ -109,6 +123,8 @@ def application_connector(settings: TauSDKSettings) -> ApplicationConnector:
             ),
             read_timeout_seconds=settings.backend_read_timeout_seconds,
             read_concurrency=settings.mcp_read_concurrency,
+            # An application declares the Skills extension only on the newer protocol revision.
+            mode="auto",
         ).open()
 
     return connect
@@ -222,6 +238,71 @@ def _tool_entry(tool: types.Tool) -> dict[str, JSONValue]:
     return entry
 
 
+def _owner(skills: Sequence[Skill], uri: str) -> Skill | None:
+    """The listed skill whose directory holds ``uri``; the innermost one when skills nest."""
+
+    owners = [skill for skill in skills if uri.startswith(skill.uri.removesuffix("SKILL.md"))]
+    return max(owners, key=lambda skill: len(skill.uri), default=None)
+
+
+def _listed_by_skill(skills: Sequence[Skill], uri: str) -> bool:
+    """Whether ``uri`` is read as a file of a listed skill rather than as a plain resource.
+
+    A skill with a file list owns its whole directory. A generated (``"dynamic"``) skill lists no
+    files, so only its ``SKILL.md`` is its own.
+    """
+
+    owner = _owner(skills, uri)
+    return owner is not None and (owner.resources != "dynamic" or uri == owner.uri)
+
+
+def _skill_entry(skill: Skill) -> dict[str, JSONValue]:
+    entry: dict[str, JSONValue] = {
+        "uri": skill.uri,
+        "name": skill.frontmatter["name"],
+        "description": skill.frontmatter["description"],
+    }
+    if skill.resources != "dynamic":
+        entry["files"] = [{"uri": file.uri, "size": file.size} for file in skill.resources]
+    return entry
+
+
+def _resource_entry(resource: types.Resource) -> dict[str, JSONValue]:
+    entry: dict[str, JSONValue] = {"uri": str(resource.uri), "name": resource.name}
+    if resource.description:
+        entry["description"] = resource.description
+    if resource.mime_type:
+        entry["mimeType"] = resource.mime_type
+    return entry
+
+
+def _matches(
+    contents: Sequence[types.TextResourceContents | types.BlobResourceContents],
+    listed: SkillFile,
+) -> bool:
+    """Whether a read returned exactly one content, with the bytes the skill lists."""
+
+    if len(contents) != 1:
+        return False
+    content = contents[0]
+    if isinstance(content, types.TextResourceContents):
+        data = content.text.encode()
+    else:
+        try:
+            data = base64.b64decode(content.blob, validate=True)
+        except binascii.Error:
+            return False
+    return (
+        len(data) == listed.size and f"sha256:{hashlib.sha256(data).hexdigest()}" == listed.digest
+    )
+
+
+def _content_text(content: types.TextResourceContents | types.BlobResourceContents) -> str:
+    if isinstance(content, types.TextResourceContents):
+        return content.text
+    return f"(Binary content of type {content.mime_type or 'unknown'}; not shown.)"
+
+
 def _application_tools(
     application: MCPApplication,
     *,
@@ -286,19 +367,156 @@ def _application_tools(
             client = await open_session(signal)
             try:
                 tools = client.tools
+                publishes_skills = SKILLS_EXTENSION in client.extensions
+                publishes_resources = bool(client.resources)
             finally:
                 await client.aclose()
         except Exception as error:
             return failed("list_tools", error)
         entries = [_tool_entry(tool) for tool in tools]
+        published = ""
+        if publishes_skills:
+            published = (
+                " It also publishes skills, instructions for using its tools: list them with "
+                f"{name}__list_resources."
+            )
+        elif publishes_resources:
+            published = f" It also publishes resources: list them with {name}__list_resources."
         return AgentToolResult(
             content=[
                 TextContent(
-                    text=f"Tools of the {name} application. Call one with {name}__call_tool.\n"
+                    text=f"Tools of the {name} application. Call one with {name}__call_tool."
+                    + published
+                    + "\n"
                     + json.dumps(entries, indent=2, sort_keys=True, default=str)
                 )
             ],
             details={"application": name, "is_error": False, "tools": [t.name for t in tools]},
+        )
+
+    async def list_resources(
+        tool_call_id: str,
+        arguments: Mapping[str, JSONValue],
+        signal: ToolCancellationToken | None = None,
+        on_update: ToolUpdateCallback | None = None,
+    ) -> AgentToolResult:
+        del tool_call_id, arguments, on_update
+        if signal is not None and signal.is_cancelled():
+            return _error(name, f"Listing the {name} resources was cancelled.", cancelled=True)
+        try:
+            client = await open_session(signal)
+            try:
+                skills = await client.list_skills()
+                resources = client.resources
+            finally:
+                await client.aclose()
+        except Exception as error:
+            return failed("list_resources", error)
+        listing: dict[str, list[dict[str, JSONValue]]] = {
+            "skills": [_skill_entry(skill) for skill in skills],
+            "resources": [
+                _resource_entry(resource)
+                for resource in resources
+                if not _listed_by_skill(skills, str(resource.uri))
+            ],
+        }
+        if listing["skills"] or listing["resources"]:
+            text = (
+                f"Skills and resources the {name} application publishes. A skill is the "
+                f"application's instructions for using its tools. Read a skill file or a resource "
+                f"with {name}__read_resource.\n"
+                + json.dumps(listing, indent=2, sort_keys=True, default=str)
+            )
+        else:
+            text = f"The {name} application publishes no skills or resources."
+        return AgentToolResult(
+            content=[TextContent(text=text)],
+            details={
+                "application": name,
+                "is_error": False,
+                "skills": [skill.uri for skill in skills],
+                "resources": [entry["uri"] for entry in listing["resources"]],
+            },
+        )
+
+    async def read_resource(
+        tool_call_id: str,
+        arguments: Mapping[str, JSONValue],
+        signal: ToolCancellationToken | None = None,
+        on_update: ToolUpdateCallback | None = None,
+    ) -> AgentToolResult:
+        del tool_call_id, on_update
+        uri = arguments.get("uri")
+        if not isinstance(uri, str) or not uri:
+            return _error(name, f"Name the {name} skill file or resource to read in `uri`.")
+        if signal is not None and signal.is_cancelled():
+            return _error(name, f"Reading the {name} resource was cancelled.", cancelled=True)
+        result: types.ReadResourceResult | None = None
+        owner: Skill | None = None
+        listed: SkillFile | None = None
+        try:
+            client = await open_session(signal)
+            try:
+                # Only what the application lists is read: a file of a listed skill, which must
+                # match the skill's list, or an advertised resource.
+                owner = _owner(await client.list_skills(), uri)
+                if owner is not None and owner.resources != "dynamic":
+                    listed = next((file for file in owner.resources if file.uri == uri), None)
+                    readable = listed is not None
+                else:
+                    readable = (owner is not None and uri == owner.uri) or any(
+                        str(resource.uri) == uri for resource in client.resources
+                    )
+                if readable:
+                    result = await client.read_resource(uri)
+            finally:
+                await client.aclose()
+        except Exception as error:
+            return failed("read_resource", error)
+        if result is None:
+            if owner is not None and owner.resources != "dynamic":
+                return _error(
+                    name,
+                    f"{uri} is not a file of the {name} skill {owner.frontmatter['name']} as the "
+                    f"application lists it. List its files with {name}__list_resources.",
+                    uri=uri,
+                    failure="not_listed",
+                )
+            return _error(
+                name,
+                f"The {name} application does not publish {uri}. List what it publishes with "
+                f"{name}__list_resources.",
+                uri=uri,
+                failure="not_published",
+            )
+        contents = result.contents
+        if listed is not None:
+            contents = [content for content in contents if str(content.uri) == uri]
+            if not _matches(contents, listed):
+                logger.warning(
+                    "runtime.mcp_application.failed",
+                    application=name,
+                    operation="read_resource",
+                    failure="unverified",
+                )
+                return _error(
+                    name,
+                    f"The {name} application served {uri} with other content than its skill "
+                    f"lists, so it is not shown. List the skill again with {name}__list_resources.",
+                    uri=uri,
+                    failure="unverified",
+                )
+        origin = f"From the {name} application: {uri}"
+        details: dict[str, JSONValue] = {"application": name, "is_error": False, "uri": uri}
+        if owner is not None:
+            origin += f", a file of its skill {owner.frontmatter['name']}"
+            details |= {"skill": owner.uri, "verified": listed is not None}
+        return AgentToolResult(
+            content=[
+                TextContent(text=f"{origin}.\n\n"),
+                *(TextContent(text=_content_text(content)) for content in contents),
+            ],
+            details=details,
         )
 
     async def call_tool(
@@ -381,6 +599,38 @@ def _application_tools(
             execute_fn=call_tool,
             execution_mode="sequential",
         ),
+        AgentTool(
+            name=f"{name}__list_resources",
+            label=f"List {name} skills and resources",
+            description=(
+                f"List the skills and resources the {name} application publishes. A skill is the "
+                "application's instructions for using its tools; each lists its files."
+            ),
+            parameters={"type": "object", "properties": {}, "additionalProperties": False},
+            execute_fn=list_resources,
+            execution_mode="parallel",
+        ),
+        AgentTool(
+            name=f"{name}__read_resource",
+            label=f"Read a {name} skill file or resource",
+            description=(
+                f"Read one skill file or resource the {name} application publishes, by its URI. "
+                f"Use {name}__list_resources first to see what it publishes."
+            ),
+            parameters={
+                "type": "object",
+                "properties": {
+                    "uri": {
+                        "type": "string",
+                        "description": f"The URI of a {name} skill file or resource.",
+                    },
+                },
+                "required": ["uri"],
+                "additionalProperties": False,
+            },
+            execute_fn=read_resource,
+            execution_mode="parallel",
+        ),
     ]
 
 
@@ -391,7 +641,7 @@ def create_mcp_application_tools(
     tool_timeout_seconds: float,
     open_timeout_seconds: float,
 ) -> list[AgentTool]:
-    """Two tools for each declared application, in declaration order.
+    """Four tools for each declared application, in declaration order.
 
     ``tool_timeout_seconds`` bounds a call to a tool that declares no limit of its own;
     ``open_timeout_seconds`` is the wait for each request that opens the session.

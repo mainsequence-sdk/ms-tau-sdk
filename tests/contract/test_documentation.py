@@ -9,13 +9,7 @@ MARKDOWN_LINK = re.compile(r"\[[^]]+\]\(([^)]+)\)")
 
 def _active_documents() -> list[Path]:
     documents = [REPOSITORY_ROOT / "README.md", REPOSITORY_ROOT / "CHANGELOG.md"]
-    for path in (REPOSITORY_ROOT / "docs").rglob("*.md"):
-        relative = path.relative_to(REPOSITORY_ROOT / "docs")
-        if relative.parts[0] == "migration":
-            continue
-        if path.name.startswith("adr-56-"):
-            continue
-        documents.append(path)
+    documents.extend((REPOSITORY_ROOT / "docs").rglob("*.md"))
     return documents
 
 
@@ -60,4 +54,5 @@ def test_active_adr_index_lists_the_complete_sdk_decision_set() -> None:
         "0019-verified-request-identity-and-session-ownership.md",
         "0021-mcp-connections-on-the-persons-identity.md",
         "0022-mcp-application-tool-call-limits-and-failures.md",
+        "0023-skills-and-resources-of-declared-applications.md",
     }

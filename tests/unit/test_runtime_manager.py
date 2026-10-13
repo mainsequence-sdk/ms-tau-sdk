@@ -1199,6 +1199,8 @@ async def test_declared_applications_register_their_mcp_tools_in_a_hosted_sessio
     assert [tool.name for tool in load_coding_session.await_args.args[0].tools] == [
         "orders__list_tools",
         "orders__call_tool",
+        "orders__list_resources",
+        "orders__read_resource",
         "task_request_input",
         "task_request_authorization",
     ]

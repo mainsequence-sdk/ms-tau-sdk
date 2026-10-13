@@ -2,7 +2,11 @@
 
 Main Sequence TAU SDK maintainers own this repository's Python package, public construction API,
 command, packaged resources, version-matched development skills, documented settings, tested wire
-contracts, CI, and Python release artifacts.
+contracts, CI, and Python release artifacts. At runtime the SDK owns application construction and
+lifecycle, authenticated Main Sequence clients, provider evidence validation, durable and local Tau
+execution, persistence, transports, protocol tools, diagnostics, and shutdown. Tau owns the agent
+loop, project resource resolution, extension lifecycle, provider interfaces, and the optional core
+coding tools.
 
 Consuming-project owners choose and lock the SDK version, provide the project workspace and Python
 environment, own `.tau` configuration and extensions, and build or deploy their own project

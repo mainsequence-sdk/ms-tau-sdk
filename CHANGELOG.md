@@ -1,5 +1,23 @@
 # Changelog
 
+## 2.0.14 — 2026-10-13
+
+- **An Agent reads the skills and resources its declared applications publish
+  ([#98](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/98), ADR 0023).** An application
+  that published skills through the MCP Skills extension, as the mainsequence SDK's skills
+  publisher does, reached its Agent only through `<name>__list_tools` and `<name>__call_tool`: the
+  Agent could not discover or read the skills. Each declared application now also gets
+  `<name>__list_resources`, which lists its skills, each with its files, and its other resources,
+  and `<name>__read_resource`, which reads one of them by URI. `<name>__list_tools` says when the
+  application publishes them. An application's session first asks MCP's `server/discover` on
+  protocol `2026-07-28`, where the extension is declared, and opens an application that does not
+  answer it with `initialize`, as before; the platform's own MCP is unchanged. Only what the
+  application lists is read, and a skill file is returned only when its bytes match the size and
+  SHA-256 digest of the skill's list. Every read names the application. Published skills never
+  become the project's skills and grant nothing; with the coding tools, a model that follows one
+  can run commands, which the [Security and access guide](docs/reference/security-model.md#calling-other-applications)
+  now states.
+
 ## 2.0.13 — 2026-10-12
 
 - **ms-tau-sdk installs the MCP Python SDK 2.x.** The `mcp` dependency moves from `mcp>=1.27,<2`

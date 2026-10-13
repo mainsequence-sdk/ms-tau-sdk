@@ -106,12 +106,6 @@ and call the platform or another platform application with `platform_client()`, 
 person's delegation by default while the turn serves one; neither exposes a proof or a token. See
 the [public API](docs/reference/public-api.md#current_requester-and-platform_client).
 
-Job-hosted batch execution is an [accepted design](docs/adrs/0015-job-hosted-batch-execution.md)
-with implementation pending. It will run this SDK's configured Tau composition for one assignment
-inside a project Job, close it, and exit without starting Uvicorn. The Job continues to own its
-status and logs. See the [batch guide](docs/guides/job-hosted-batch-execution.md) for the target
-Python integration; the current release does not expose that batch API.
-
 ## Local development without platform sessions
 
 Local mode runs the same workspace Tau runtime without registering an Agent or AgentSession. The
@@ -272,8 +266,8 @@ Kubernetes manifest, runtime image, executor bundle, or container-publication pi
 consuming project owns its dependency lock, deployable artifact, system dependencies, project
 code, prompts, skills, hooks, and extensions.
 
-The project identity and migration are defined by
-[ADR 56](./docs/adrs/adr-56-main-sequence-tau-sdk-workspace-bound-library-deployment.md). See the
+The project identity is defined by
+[ADR 0001](./docs/adrs/0001-workspace-bound-python-sdk.md). See the
 [quickstart](./docs/getting-started/quickstart.md), [documentation index](./docs/README.md), and
 [release guide](./docs/reference/releasing.md) for the complete contracts.
 
@@ -282,11 +276,11 @@ The project identity and migration are defined by
 The repository uses Python 3.13 and `uv`:
 
 ```bash
-uv sync --frozen
+uv sync --frozen --extra tau-board
 uv run pytest
-uv run ruff check .
-uv run mypy
 ```
+
+[Testing and release gates](docs/reference/testing.md) lists every check CI runs.
 
 Releases are immutable, and a merge to `main` is the release. Merging `development` into `main`
 builds and verifies the wheel and source distribution of the version `pyproject.toml` declares,

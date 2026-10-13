@@ -7,7 +7,6 @@ These records are the normative decisions for Main Sequence TAU SDK:
 - [ADR 0003: Tau-native project configuration](./0003-tau-native-project-configuration.md)
 - [ADR 0004: Minimal bundled tool boundary](./0004-minimal-bundled-tool-boundary.md)
 - [ADR 0005: Authenticated local development mode](./0005-authenticated-local-development-mode.md)
-  (Accepted; SDK implementation in progress)
 - [ADR 0006: SDK-owned agent development skills](./0006-sdk-owned-agent-development-skills.md)
 - [ADR 0007: Retire agent-targeted sessionless responses](./0007-retire-agent-targeted-sessionless-responses.md)
 - [ADR 0008: Tau Board as a separate local development companion](./0008-tau-board-local-development-companion.md)
@@ -23,10 +22,8 @@ These records are the normative decisions for Main Sequence TAU SDK:
 - [ADR 0018: Reload-safe local chat sessions](./0018-reload-safe-local-chat-sessions.md)
 - [ADR 0019: Verified request identity and session ownership](./0019-verified-request-identity-and-session-ownership.md)
 - [ADR 0021: MCP connections on the person's identity](./0021-mcp-connections-on-the-persons-identity.md)
-  (Accepted; implemented in the SDK, takes effect with the platform's cutover)
+  (Accepted; implemented)
 - [ADR 0022: Time limits and failures of MCP application tool calls](./0022-mcp-application-tool-call-limits-and-failures.md)
   (Accepted; implemented)
-
-[ADR 56](./adr-56-main-sequence-tau-sdk-workspace-bound-library-deployment.md) is the accepted
-transition record and implementation ledger. Decisions of the retired deployment project do not
-govern this project.
+- [ADR 0023: Skills and resources of declared applications](./0023-skills-and-resources-of-declared-applications.md)
+  (Accepted; implemented)

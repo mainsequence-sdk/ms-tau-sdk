@@ -96,6 +96,16 @@ retry guidance for up to `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` (default `1
 turn time. This startup budget is separate from the tool's execution limit; an expired readiness
 wait reports `readiness_timeout`. Cancellation, ended delegation and terminal refusals stop the wait.
 
+## Skills that applications publish
+
+A declared application can publish Agent Skills through the MCP Skills extension, as the
+mainsequence SDK's skills publisher does. The Agent lists them with `<name>__list_resources` and
+reads one file with `<name>__read_resource`; a skill file is returned only when its bytes match the
+size and SHA-256 digest the skill lists. Published skills stay the application's: they are not
+project skills under `.tau/skills/`, and fields such as `allowed-tools` grant nothing. With the
+coding tools, a model that follows a published skill can run commands; set
+`TAU_EXCLUDE_BASE_TOOLS=true` when that must not happen.
+
 ## Invariants extensions must not replace
 
 Extensions may change effective agent capabilities, but they must not replace or bypass:
@@ -167,8 +177,6 @@ Rules for tools that act for the requester:
 - A delegated call uses the person's ordinary permissions, including administrative ones; any other
   call uses the Agent's own. Each operation decides what it needs. Never infer write permission
   from view access.
-- This needs the platform's matching change, deployed in the same cutover; check the deployed
-  platform and the installed SDK before depending on it.
 - Return to the model only business results, such as rows, numbers, and names. Never return the
   response object, its headers, a token, a proof, or a raw error body.
 - Keep nothing for another turn or another person. The delegation ends with the turn, and a task
