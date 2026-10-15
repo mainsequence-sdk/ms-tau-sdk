@@ -1,5 +1,10 @@
 # ADR 0019: Verified Request Identity and Session Ownership
 
+Amended 2026-10-15 for [issue #103](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/103),
+second change: the platform signs no team list any more, so the runtime drops it. The verified
+caller and the turn's requester have no `team_uids`, and the verifier refuses a caller assertion
+that lists teams (sections 3, 5, 9 and 10).
+
 Amended 2026-10-15 for [issue #103](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/103):
 the platform is replacing the caller assertion's team list, which grows with the Organization, with
 a membership check. The verifier accepts a caller assertion with or without `team_uids`, which is
@@ -107,7 +112,7 @@ thumbprint of the signing key.
 | | Caller assertion | Platform assertion |
 | --- | --- | --- |
 | `typ` | `mainsequence-caller-assertion+jwt` | `mainsequence-platform-assertion+jwt` |
-| Claims, exactly | `iss`, `aud`, `sub`, `resource_release_uid`, `organization_environment_uid`, `is_organization_admin`, `iat`, `nbf`, `exp`, and the deprecated `team_uids` while the platform still sends it | `iss`, `aud`, `resource_release_uid`, `organization_environment_uid`, `iat`, `nbf`, `exp` |
+| Claims, exactly | `iss`, `aud`, `sub`, `resource_release_uid`, `organization_environment_uid`, `is_organization_admin`, `iat`, `nbf`, `exp` | `iss`, `aud`, `resource_release_uid`, `organization_environment_uid`, `iat`, `nbf`, `exp` |
 
 In both:
 
@@ -119,8 +124,8 @@ In both:
   lies between `nbf` and `exp`. There is no clock leeway.
 
 In a caller assertion, `sub` is a canonical lowercase User UID: a person, or the runtime principal
-of a calling workload, and `is_organization_admin` is a boolean. `team_uids`, when present, is a
-sorted list of unique canonical UIDs; `null` and any other value are refused (section 10).
+of a calling workload, and `is_organization_admin` is a boolean. An assertion that lists
+`team_uids` is refused: the platform signs no team list (section 10).
 
 The verifier fetches the key set from `MAINSEQUENCE_CALLER_ASSERTION_JWKS_URL` when it first needs
 it, without following redirects, with the backend connect, read, write and pool timeouts and the
@@ -153,7 +158,7 @@ routes and need a caller assertion like any other.
 ### 5. Handlers receive the verified caller
 
 For an admitted request the middleware sets `request.state.user` to the verified caller (`uid`,
-`is_organization_admin`, `in_teams()` of section 10, and the deprecated `team_uids`),
+`is_organization_admin`, and `in_teams()` of section 10),
 `request.state.user_uid`, `request.state.auth_outcome`
 (`authenticated`), `request.state.resource_release_uid` and
 `request.state.organization_environment_uid`. A platform assertion has no caller, so `user` and
@@ -270,15 +275,12 @@ the person who asked for the turn that delegated the work with `resume_caller`, 
 own the session, or null. Local mode and a runtime that is not hosted name no delivery.
 
 **The turn's requester.** `current_requester()` returns, inside a turn, an immutable object with
-`uid`, `in_teams()` and the deprecated `team_uids`, or None. The platform's answer to the transition that marks the turn active
+`uid` and `in_teams()`, or None. The platform's answer to the transition that marks the turn active
 names that person in `requester_user_uid`, or null, for every kind of turn: a chat or A2A Message
 turn, a Task attempt the platform dispatches or the request runs itself, and a turn that resumes a
 caller delivery. That answer is the only source, whoever called: the runtime never takes a person
 from an assertion claim, a dispatch or a Task answer. `in_teams()` answers while the person is the
-verified caller of the request the turn runs in, and raises otherwise (section 10). The deprecated
-`team_uids` come from the team list the verified caller assertion of the request carried when its
-caller is that person, and are empty otherwise; when that assertion carried none, reading them
-raises. Local mode, a runtime that is not hosted, and code outside a turn have None.
+verified caller of the request the turn runs in, and raises otherwise (section 10). Local mode, a runtime that is not hosted, and code outside a turn have None.
 
 The turn binds its requester for its own duration and ends the binding when it ends. Detached SDK
 work never inherits it, and a task a tool leaves running sees no requester after the turn.
@@ -363,12 +365,9 @@ assertion's caller, and only when application code calls `in_teams()`.
   that request ended, also in a task that copied its context, `in_teams()` raises `TauSDKError`.
   Once the request's assertion has expired, a question that kept answers do not answer raises
   `TauSDKError`.
-- `in_teams()` asks only the platform or the answers it keeps, never the assertion, so an
-  application behaves the same whether or not the assertion still carries a team list.
-- `team_uids` on the verified caller and on the requester is deprecated and warns when read. It
-  raises a `TauSDKError` that names `in_teams()` when the assertion carried no list; it never
-  answers an empty list for that. `signed_team_uids` holds the list the assertion carried, or
-  `None`.
+- `in_teams()` asks only the platform or the answers it keeps, never the assertion.
+- The verified caller and the requester have no `team_uids`. Earlier releases read a deprecated
+  list from the assertion; the platform no longer signs one.
 
 ## Consequences
 
@@ -394,8 +393,7 @@ assertion's caller, and only when application code calls `in_teams()`.
 - `in_teams()` costs one platform call per 100 teams that kept answers do not answer. An answer
   reused across requests is the membership when it was asked, for at most the lifetime the
   application chose; a fresh check asks again.
-- `dataclasses.asdict()` and the repr of the verified caller and of the requester name the
-  deprecated list `signed_team_uids`.
+- A runtime on this release refuses every caller of a platform that still signs team lists.
 
 ## Verification
 
@@ -437,7 +435,7 @@ release and Environment; 1,000 and 10,000 teams asked for the caller and for a r
 caller, in calls of at most 100; the 10,000-answer bound; the refusal of a requester who is not the
 caller; failed calls raising; the end of a request, also in a task that copied it; an expired
 assertion; the argument and setting checks; the deprecated lists; and the platform call's path,
-query, credential, assertion and refusals. `tests/unit/test_caller_assertions.py` accepts a caller
-assertion without `team_uids` and refuses a `null` list, and the hosted turn end to end in
+query, credential, assertion and refusals. `tests/unit/test_caller_assertions.py` refuses a caller
+assertion that lists teams, empty or `null` lists included, and the hosted turn end to end in
 `tests/unit/test_requester_identity.py` asks for its requester's teams with `in_teams()` from a
 project tool.

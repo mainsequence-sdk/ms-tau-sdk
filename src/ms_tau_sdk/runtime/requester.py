@@ -31,7 +31,7 @@ import structlog
 from ms_tau_sdk.backend.auth import AccessToken, _jwt_expiry
 from ms_tau_sdk.backend.client import LeaseProof, answer_without_request_credentials
 from ms_tau_sdk.backend.models import ReleaseRuntimeAccess
-from ms_tau_sdk.backend.team_memberships import deprecated_team_uids, member_team_uids
+from ms_tau_sdk.backend.team_memberships import member_team_uids
 from ms_tau_sdk.errors import (
     ApplicationReadinessTimeoutError,
     ApplicationWakingError,
@@ -52,34 +52,15 @@ type Delegation = Literal["auto", "none", "required"]
 _DELEGATIONS: tuple[Delegation, ...] = ("auto", "none", "required")
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, slots=True)
 class Requester:
     """The verified person whose request the current turn serves.
 
     ``in_teams()`` asks the platform which teams the person belongs to while the person is the
-    verified caller of the request the turn runs in, and raises otherwise. ``team_uids`` is the
-    deprecated list the caller's assertion carried: empty when the turn does not know the person's
-    teams, and ``signed_team_uids`` is None when the assertion carried no list (#103).
+    verified caller of the request the turn runs in, and raises otherwise (#103).
     """
 
     uid: str
-    signed_team_uids: tuple[str, ...] | None
-
-    def __init__(self, uid: str, team_uids: tuple[str, ...] | None = ()) -> None:
-        object.__setattr__(self, "uid", uid)
-        object.__setattr__(
-            self, "signed_team_uids", None if team_uids is None else tuple(team_uids)
-        )
-
-    @property
-    def team_uids(self) -> tuple[str, ...]:
-        """Deprecated: the team UIDs the caller's assertion carried. Use ``in_teams()``.
-
-        Warns when read, and raises ``TauSDKError`` when the assertion carried no team list; it
-        never answers an empty list for that.
-        """
-
-        return deprecated_team_uids(self.signed_team_uids)
 
     async def in_teams(
         self,

@@ -162,8 +162,7 @@ async def test_the_caller_learns_which_of_the_given_teams_it_belongs_to(
 ):
     platform = _Platform()
     app = _app(served_platform_keys, tmp_path, platform)
-    # The proof still signs a team list, which in_teams() never reads.
-    raw = served_platform_keys.caller_assertion(team_uids=[TEAM_B])
+    raw = served_platform_keys.caller_assertion()
 
     async with asgi_client(app) as http:
         response = await http.post(
@@ -178,21 +177,21 @@ async def test_the_caller_learns_which_of_the_given_teams_it_belongs_to(
     assert platform.calls == [(OWNER_UID, sorted([TEAM_A, TEAM_B]), raw)]
 
 
-async def test_a_proof_without_a_team_list_is_enough(served_platform_keys, tmp_path, asgi_client):
+async def test_a_proof_that_lists_teams_is_refused_before_any_handler(
+    served_platform_keys, tmp_path, asgi_client
+):
     platform = _Platform()
     app = _app(served_platform_keys, tmp_path, platform)
-    claims = served_platform_keys.caller_claims()
-    del claims["team_uids"]
 
     async with asgi_client(app) as http:
         response = await http.post(
             "/in-teams",
             json={"questions": [{"teams": [TEAM_A, TEAM_B]}]},
-            headers={ASSERTION_HEADER: served_platform_keys.sign(claims)},
+            headers={ASSERTION_HEADER: served_platform_keys.caller_assertion(team_uids=[TEAM_B])},
         )
 
-    assert response.status_code == 200, response.text
-    assert response.json() == {"answers": [[TEAM_A]]}
+    assert response.status_code == 401
+    assert platform.calls == []
 
 
 async def test_within_a_request_the_same_question_is_asked_once(
@@ -523,16 +522,12 @@ def test_the_lifetime_is_a_non_negative_finite_number(platform_keys, tmp_path, m
         platform_keys.hosted_settings(tmp_path)
 
 
-def test_the_requesters_team_list_is_deprecated():
-    with pytest.warns(DeprecationWarning, match="in_teams"):
-        assert Requester(uid=OWNER_UID, team_uids=(TEAM_A,)).team_uids == (TEAM_A,)
-    # A requester the turn knows only from the platform's record keeps an empty list.
-    with pytest.warns(DeprecationWarning, match="in_teams"):
-        assert Requester(uid=OWNER_UID).team_uids == ()
-    # A requester whose caller assertion carried no list has no list to read.
-    with pytest.warns(DeprecationWarning, match="in_teams"):
-        with pytest.raises(TauSDKError, match=r"in_teams\(\)"):
-            Requester(uid=OWNER_UID, team_uids=None).team_uids  # noqa: B018
+def test_the_caller_and_the_requester_carry_no_team_list():
+    # The deprecated team_uids is removed (#103): in_teams() is the only membership check.
+    for identity in (THE_CALLER, Requester(uid=OWNER_UID)):
+        assert not hasattr(identity, "team_uids")
+    with pytest.raises(TypeError):
+        Requester(uid=OWNER_UID, team_uids=(TEAM_A,))  # type: ignore[call-arg]
 
 
 class _RuntimeAuth:

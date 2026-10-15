@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **`team_uids` is removed; the verifier refuses caller assertions that list teams
+  ([#103](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/103), ADR 0019).** The platform no
+  longer signs a team list in the caller assertion, so the runtime drops it. `in_teams()` is the
+  only membership check, and it is unchanged.
+  - `VerifiedCaller` and `Requester` have no `team_uids` and no `signed_team_uids`.
+    `VerifiedCaller(uid, is_organization_admin=False)` and `Requester(uid)` are their constructors.
+  - A caller assertion that carries `team_uids`, an empty or `null` list included, is refused with
+    401.
+  - A runtime on this release refuses every caller of a platform that still signs team lists.
+
 ## 2.0.16 — 2026-10-15
 
 - **The Tau skills say when and how a tool checks the person's teams

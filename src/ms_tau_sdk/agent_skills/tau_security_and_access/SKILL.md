@@ -230,9 +230,7 @@ if person is None or REPORTS_TEAM_UID not in await person.in_teams([REPORTS_TEAM
   `0`: only within its request); set it in `harness_agent.spec.env_vars`. `max_age_seconds=0`
   always asks the platform: use it before a write that must see a removal at once.
 - A check the platform cannot answer raises `BackendError`; it never answers "not a member".
-- `team_uids` on the requester is deprecated and warns when read. It is empty when the turn does
-  not know the person's teams, and raises when the caller's assertion carried no team list, as
-  every assertion will once the platform stops signing them. Use `in_teams()`.
+- The requester carries no team list; `in_teams()` is the only membership check.
 
 ## What never reaches the model
 

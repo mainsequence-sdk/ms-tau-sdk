@@ -5,8 +5,8 @@ The platform signs two kinds of short-lived JWS with one Ed25519 key set and sen
 
 - a caller assertion, for a request a person or a workload sends to the runtime through the
   platform. It names the caller (``sub``) and whether the caller administers the Organization
-  (``is_organization_admin``). While the platform still signs it, it also carries the caller's
-  teams (``team_uids``), which is deprecated: ``in_teams()`` asks the platform instead (#103);
+  (``is_organization_admin``), and no teams: ``in_teams()`` asks the platform (#103), and an
+  assertion that lists teams is refused;
 - a platform assertion, for the platform's own background calls. It names no caller.
 
 Both are bound to this runtime's release (``aud``, ``resource_release_uid``) and Organization
@@ -33,7 +33,7 @@ import httpx
 import jwt
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
-from ms_tau_sdk.backend.team_memberships import deprecated_team_uids, member_team_uids
+from ms_tau_sdk.backend.team_memberships import member_team_uids
 from ms_tau_sdk.errors import ConfigurationError
 from ms_tau_sdk.settings import (
     CALLER_ASSERTION_ISSUER_ENV,
@@ -83,40 +83,15 @@ class AssertionKeysUnavailableError(Exception):
     """The platform's verification keys could not be obtained."""
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, slots=True)
 class VerifiedCaller:
     """The caller that a verified caller assertion names.
 
-    ``in_teams()`` asks the platform which teams the caller belongs to. ``team_uids`` is the
-    deprecated list earlier assertions carried; ``signed_team_uids`` is None when the assertion
-    carried none (#103).
+    ``in_teams()`` asks the platform which teams the caller belongs to (#103).
     """
 
     uid: str
-    is_organization_admin: bool
-    signed_team_uids: tuple[str, ...] | None
-
-    def __init__(
-        self,
-        uid: str,
-        team_uids: tuple[str, ...] | None = None,
-        is_organization_admin: bool = False,
-    ) -> None:
-        object.__setattr__(self, "uid", uid)
-        object.__setattr__(self, "is_organization_admin", is_organization_admin)
-        object.__setattr__(
-            self, "signed_team_uids", None if team_uids is None else tuple(team_uids)
-        )
-
-    @property
-    def team_uids(self) -> tuple[str, ...]:
-        """Deprecated: the team UIDs the caller's assertion carried. Use ``in_teams()``.
-
-        Warns when read, and raises ``TauSDKError`` when the assertion carried no team list; it
-        never answers an empty list for that.
-        """
-
-        return deprecated_team_uids(self.signed_team_uids)
+    is_organization_admin: bool = False
 
     async def in_teams(
         self,
@@ -253,28 +228,10 @@ def _fresh_until(cache_control: str | None, now: float) -> float | None:
 
 def _verified_caller(payload: Mapping[str, Any]) -> VerifiedCaller:
     uid = payload["sub"]
-    # The deprecated team list, checked while the platform still signs it (#103).
-    team_uids = payload.get("team_uids")
     is_organization_admin = payload["is_organization_admin"]
-    if (
-        not _is_canonical_uid(uid)
-        or (
-            team_uids is not None
-            and (
-                not isinstance(team_uids, list)
-                or not all(_is_canonical_uid(team_uid) for team_uid in team_uids)
-                or team_uids != sorted(set(team_uids))
-            )
-        )
-        or ("team_uids" in payload and team_uids is None)
-        or type(is_organization_admin) is not bool
-    ):
+    if not _is_canonical_uid(uid) or type(is_organization_admin) is not bool:
         raise InvalidAssertionError("The caller assertion does not name a valid caller")
-    return VerifiedCaller(
-        uid=uid,
-        team_uids=None if team_uids is None else tuple(team_uids),
-        is_organization_admin=is_organization_admin,
-    )
+    return VerifiedCaller(uid=uid, is_organization_admin=is_organization_admin)
 
 
 class AssertionVerifier:
@@ -382,9 +339,7 @@ class AssertionVerifier:
             )
         except (jwt.PyJWTError, TypeError, ValueError) as error:
             raise InvalidAssertionError(f"The {kind} assertion did not verify") from error
-        # A caller assertion may still carry the deprecated team list (#103).
-        optional = {"team_uids"} if kind == "caller" else set()
-        if set(payload) - optional != claims:
+        if set(payload) != claims:
             raise InvalidAssertionError(f"The {kind} assertion does not have the exact claim set")
         if (
             payload["iss"] != self.issuer
