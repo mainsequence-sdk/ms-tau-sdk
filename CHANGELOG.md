@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.16 — 2026-10-15
+
+- **The Tau skills say when and how a tool checks the person's teams
+  ([#103](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/103)).** `tau_security_and_access`
+  has a section "Checking the person's teams". A delegated call already reaches what the person's
+  teams share, so a tool rarely checks teams itself; a tool whose own policy names teams asks with
+  `in_teams()`. That answers only while the person is the request's verified caller, and an error
+  is never a membership answer. `tau_project_customization` points to the section.
+
 ## 2.0.15 — 2026-10-15
 
 - **Team membership on demand; the caller assertion's team list is deprecated
