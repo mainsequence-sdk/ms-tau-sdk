@@ -71,6 +71,12 @@ read from the project `.env`; the platform's values in the environment take prec
 Do not set them for local development. Local mode refuses to start when they make the runtime
 hosted.
 
+`TAU_TEAM_MEMBERSHIP_CACHE_SECONDS` is the application's own setting: how long, in seconds, a
+hosted runtime may reuse an answer of `in_teams()` across requests. It is finite and not negative.
+The default, `0`, reuses an answer only within its request. Set it in
+`harness_agent.spec.env_vars`, or in `TauSDKSettings.team_membership_cache_seconds`. See
+[Team membership](./runtime-contract.md#team-membership).
+
 ## Platform Message limit
 
 The platform also sets this variable when it hosts the runtime. It is a characteristic of the

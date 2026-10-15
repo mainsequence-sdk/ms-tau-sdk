@@ -70,12 +70,35 @@ In hosted mode every request carries one platform-signed assertion in
 - The runtime never falls back to `X-User-UID` or any other header.
 - `OPTIONS` passes without an assertion. The launcher answers `/ms-health-deployment` and
   `/__mainsequence/healthz` itself.
-- Handlers read the verified caller from `request.state.user` (`uid`, `team_uids`,
-  `is_organization_admin`) and `request.state.user_uid`. On a platform assertion both are `None`.
+- Handlers read the verified caller from `request.state.user` (`uid`, `is_organization_admin`,
+  and `in_teams()`, see [Team membership](#team-membership)) and `request.state.user_uid`. On a
+  platform assertion both are `None`.
 - A user turn is stamped with the verified `sub`. An Agent turn keeps its provenance from the
   gateway's `X-Caller-*` headers, and `X-Caller-Kind` stays required on chat and A2A messages.
 
 Outside hosted mode nothing is verified and every route behaves as before.
+
+### Team membership
+
+`await request.state.user.in_teams(team_uids, *, max_age_seconds=None)` returns which of
+`team_uids` the verified caller is an active member of, as a `frozenset` of canonical team UIDs. A
+turn's requester has the same method while it is the verified caller of the request the turn runs
+in. The runtime asks the platform with its own credential and the request's caller assertion, in
+calls of at most 100 teams, and only when application code calls it.
+
+- Within one request, the same question is asked once.
+- Across requests, an answer is reused while it is younger than `TAU_TEAM_MEMBERSHIP_CACHE_SECONDS`
+  (default `0`: no reuse), or than `max_age_seconds` when the call gives one.
+- `max_age_seconds=0` always asks the platform and stores the new answer. Use it before acting on a
+  membership that must be current, for example before a write.
+- Answers are kept per release and Organization Environment, then person and team, at most 10,000
+  per process.
+- A call that fails raises `BackendError`; it never answers "not a member". Outside a hosted
+  request with a verified caller, after that request ended, or once its assertion expired before a
+  call it needs, `in_teams()` raises `TauSDKError`.
+
+`team_uids` on the verified caller and on the requester is deprecated and warns when read. It
+raises when the assertion carried no team list. Use `in_teams()`.
 
 ### Session ownership
 

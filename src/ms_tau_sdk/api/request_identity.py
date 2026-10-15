@@ -41,6 +41,12 @@ from ms_tau_sdk.backend.assertions import (
 )
 from ms_tau_sdk.backend.client import MainSequenceClient
 from ms_tau_sdk.backend.models import AgentSession, DirectoryUser
+from ms_tau_sdk.backend.team_memberships import (
+    TeamMembershipCache,
+    TeamMembershipScope,
+    bind_team_membership_scope,
+    unbind_team_membership_scope,
+)
 from ms_tau_sdk.errors import SessionNotFoundError, TauSDKError
 from ms_tau_sdk.logging import bind_request_identity_log_fields
 from ms_tau_sdk.runtime.provenance import CallerIdentityError
@@ -255,6 +261,12 @@ def required_assertion(scope: Scope) -> AssertionKind:
     return "platform" if internal else "caller"
 
 
+def _backend_of(scope: Scope) -> MainSequenceClient | None:
+    """Return the application's platform client once its lifespan has created it."""
+
+    return getattr(getattr(scope.get("app"), "state", None), "backend", None)
+
+
 def _assertion(scope: Scope) -> str:
     values = [
         value for name, value in scope.get("headers", ()) if name.lower() == _ASSERTION_HEADER_NAME
@@ -268,11 +280,24 @@ def _assertion(scope: Scope) -> str:
 
 
 class RequestIdentityMiddleware:
-    """Admit a hosted runtime's requests only with the platform's signed assertion."""
+    """Admit a hosted runtime's requests only with the platform's signed assertion.
 
-    def __init__(self, app: ASGIApp, *, verifier: AssertionVerifier) -> None:
+    It also gives each request with a verified caller what ``in_teams()`` needs: the deployment
+    the verifier trusts, the request's caller assertion, and the process's cache of answers, which
+    an answer may be reused from for ``team_membership_cache_seconds``.
+    """
+
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        verifier: AssertionVerifier,
+        team_membership_cache_seconds: float = 0,
+    ) -> None:
         self.app = app
         self.verifier = verifier
+        self.team_membership_cache_seconds = team_membership_cache_seconds
+        self.team_memberships = TeamMembershipCache()
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] not in {"http", "websocket"}:
@@ -304,17 +329,29 @@ class RequestIdentityMiddleware:
             organization_environment_uid=self.verifier.organization_environment_uid,
         )
         bind_request_identity_log_fields(scope, user_uid=user_uid, auth_outcome="authenticated")
+        membership: TeamMembershipScope | None = None
         if caller is not None:
-            scope[_CALLER_ASSERTION_SCOPE_KEY] = CallerAssertion(
+            caller_assertion = CallerAssertion(
                 caller=caller,
                 expires_at=verified.expires_at,
                 token=token,
             )
+            scope[_CALLER_ASSERTION_SCOPE_KEY] = caller_assertion
+            membership = TeamMembershipScope(
+                release_uid=self.verifier.resource_release_uid,
+                environment_uid=self.verifier.organization_environment_uid,
+                cache=self.team_memberships,
+                cache_seconds=self.team_membership_cache_seconds,
+                assertion=caller_assertion,
+                client=_backend_of(scope),
+            )
         caller_token = _current_caller.set(caller)
         lookups_token = _workload_lookups.set({})
+        membership_token = bind_team_membership_scope(membership)
         try:
             await self.app(scope, receive, send)
         finally:
+            unbind_team_membership_scope(membership, membership_token)
             _workload_lookups.reset(lookups_token)
             _current_caller.reset(caller_token)
             scope.pop(_CALLER_ASSERTION_SCOPE_KEY, None)
@@ -363,6 +400,7 @@ def install_request_identity(app: FastAPI, settings: TauSDKSettings) -> None:
         app.add_middleware(
             RequestIdentityMiddleware,
             verifier=AssertionVerifier.from_settings(settings),
+            team_membership_cache_seconds=settings.team_membership_cache_seconds,
         )
     setattr(
         app.state,

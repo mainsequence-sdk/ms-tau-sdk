@@ -84,6 +84,8 @@ from ms_tau_sdk.settings import TauSDKSettings
 # The person the `platform_keys` fixture signs caller assertions for unless told otherwise.
 OWNER_UID = "2b7f1c48-3d1e-4a5b-9c6d-0e1f2a3b4c5d"
 TEAM_UID = "7e6d5c4b-3a29-4180-9f7e-6d5c4b3a2918"
+# A team the owner does not belong to.
+FOREIGN_TEAM_UID = "3f2e1d0c-9b8a-4766-8554-433221100fed"
 OTHER_UID = "5d4c3b2a-1f0e-4d9c-8b7a-6f5e4d3c2b1a"
 # The workload User of a calling Agent.
 AGENT_USER_UID = "c0ffee00-1234-4abc-8def-0123456789ab"
@@ -493,6 +495,13 @@ async def test_a_task_a_job_asked_for_serves_nobody(platform_keys, tmp_path, cal
     ("named", "caller", "expected"),
     [
         pytest.param(OWNER_UID, THE_CALLER, Requester(uid=OWNER_UID, team_uids=(TEAM_UID,))),
+        # A caller whose assertion carried no team list passes on none: its teams are unknown,
+        # not empty (#103).
+        pytest.param(
+            OWNER_UID,
+            VerifiedCaller(uid=OWNER_UID, is_organization_admin=False),
+            Requester(uid=OWNER_UID, team_uids=None),
+        ),
         pytest.param(OTHER_UID, THE_CALLER, Requester(uid=OTHER_UID)),
         pytest.param(
             OWNER_UID,
@@ -1411,13 +1420,14 @@ from ms_tau_sdk import current_requester, platform_client
 async def probe(tool_call_id, arguments, signal=None, on_update=None):
     del tool_call_id, arguments, signal, on_update
     requester = current_requester()
+    teams = await requester.in_teams(["{FOREIGN_TEAM_UID}", "{TEAM_UID}"])
     client = platform_client()
     platform = await client.request("GET", "/api/v1/requester-probe/")
     release = await client.call_release(
         "{RELEASE_UID}", "GET", "/answers", params={{"q": "revenue"}}
     )
     text = (
-        f"requester={{requester.uid}} teams={{','.join(requester.team_uids)}} "
+        f"requester={{requester.uid}} teams={{','.join(sorted(teams))}} "
         f"platform={{platform.json()['answer']}} release={{release.json()['answer']}}"
     )
     return AgentToolResult(content=[TextContent(text=text)], details={{"rows": 2}})
@@ -1444,6 +1454,7 @@ class _HostedPlatform:
         self.activity: list[httpx.Request] = []
         self.housekeeping: list[httpx.Request] = []
         self.requester_bound: list[httpx.Request] = []
+        self.memberships: list[httpx.Request] = []
         self.persisted: list[Any] = []
         self.revision = 1
 
@@ -1481,6 +1492,14 @@ class _HostedPlatform:
         if path == "/api/v1/requester-probe/":
             self.requester_bound.append(request)
             return httpx.Response(200, json={"answer": "platform-rows"})
+        if request.method == "GET" and path == f"/api/v1/users/{OWNER_UID}/team-memberships/":
+            # The owner belongs to TEAM_UID only.
+            self.memberships.append(request)
+            asked = request.url.params["team_uid__in"].split(",")
+            return httpx.Response(
+                200,
+                json={"user_uid": OWNER_UID, "team_uids": [t for t in asked if t == TEAM_UID]},
+            )
         if path == f"/api/v1/resource-releases/{RELEASE_UID}/resolve-runtime-access/":
             self.requester_bound.append(request)
             access = _release_access(self.release_token)
@@ -1675,7 +1694,10 @@ async def test_a_hosted_turn_acts_for_its_requester_and_exposes_no_secret(
         runtime=manager,
     )
     app = create_app(config, services_factory=lambda _settings: services)
-    raw = platform_keys.caller_assertion(team_uids=[TEAM_UID])
+    # The proof names the person only; the tool asks the platform for the person's teams (#103).
+    claims = platform_keys.caller_claims()
+    del claims["team_uids"]
+    raw = platform_keys.sign(claims)
 
     with respx.mock(assert_all_called=False) as router:
         router.get(platform_keys.jwks_url).mock(side_effect=platform_keys.respond)
@@ -1717,6 +1739,14 @@ async def test_a_hosted_turn_acts_for_its_requester_and_exposes_no_secret(
             "x-mainsequence-lease-holder": manager.holder_id,
             "x-mainsequence-lease-token": LEASE_TOKEN,
         }
+    # The tool asked which of its teams the person belongs to once, with the runtime's own
+    # credential and the request's assertion, and without the delegation.
+    [membership] = platform.memberships
+    assert membership.url.params["team_uid__in"] == ",".join(sorted([TEAM_UID, FOREIGN_TEAM_UID]))
+    assert _secret_headers(membership) == {
+        "authorization": f"Bearer {RUNTIME_ACCESS_TOKEN}",
+        "x-mainsequence-caller-assertion": raw,
+    }
     [application_call] = application_requests
     assert str(application_call.url) == "https://analyst-data.test/rpc/answers?q=revenue"
     assert _secret_headers(application_call) == {"authorization": f"Bearer {release_token}"}

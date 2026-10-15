@@ -80,6 +80,7 @@ from .routes import (
     model_provider_credentials,
     resource_release_runtime_access,
     user,
+    user_team_memberships,
 )
 
 T = TypeVar("T")
@@ -426,6 +427,33 @@ class MainSequenceClient:
 
         data = await self._request("GET", user(user_uid), idempotent=True)
         return DirectoryUser.model_validate(data)
+
+    async def team_memberships(
+        self, user_uid: str, team_uids: list[str], *, caller_assertion: str
+    ) -> set[str]:
+        """Return which of ``team_uids`` the person ``user_uid`` is an active member of (#103).
+
+        ``caller_assertion`` is the verified assertion of the request that asks, sent only with
+        this call; ``user_uid`` must be the person it names. The platform answers at most 100
+        teams per call and leaves out the ones it does not count.
+        """
+
+        query = urlencode({"team_uid__in": ",".join(team_uids)})
+        try:
+            data = await self._request(
+                "GET",
+                f"{user_team_memberships(user_uid)}?{query}",
+                idempotent=True,
+                headers={ASSERTION_HEADER: caller_assertion},
+            )
+        except SessionNotFoundError as error:
+            raise BackendError(
+                "The platform has no team membership check for this person.", status_code=404
+            ) from error
+        answered = data.get("team_uids") if isinstance(data, dict) else None
+        if not isinstance(answered, list) or not all(isinstance(uid, str) for uid in answered):
+            raise BackendError("The platform's team membership answer is invalid.")
+        return set(answered) & set(team_uids)
 
     async def list_model_providers(
         self, *, organization_environment_uid: str | None = None

@@ -105,9 +105,8 @@ admins add, remove or change members. Member rows show `can_edit` and `is_protec
 
 Existing ordinary Teams gain their missing current Organization admins and creators as writers
 when that platform change is applied. Other existing members stay readers until an admin changes
-their membership. This policy is a platform behavior change; it does not add an SDK method or
-change the shape of `team_uids`. Team UIDs in a verified caller identify membership, not whether
-the caller is a writer. Ask an Organization admin to review the Team's member list when access
+their membership. This policy is a platform behavior change; it does not add an SDK method.
+`in_teams()` answers membership, not whether the caller is a writer. Ask an Organization admin to review the Team's member list when access
 is missing. Platform operators retain their separate operational access.
 
 ## Acting for the person (`acts_for_requester`)

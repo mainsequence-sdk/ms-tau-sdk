@@ -97,3 +97,7 @@ def resource_release_runtime_access(release_uid: str) -> str:
 
 def user(user_uid: str) -> str:
     return f"{USERS}{user_uid}/"
+
+
+def user_team_memberships(user_uid: str) -> str:
+    return f"{USERS}{user_uid}/team-memberships/"

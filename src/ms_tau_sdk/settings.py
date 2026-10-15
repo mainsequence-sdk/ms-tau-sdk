@@ -147,6 +147,14 @@ class TauSDKSettings(BaseSettings):
         allow_inf_nan=False,
         validation_alias=A2A_MESSAGE_LIMIT_ENV,
     )
+    # How long a team membership answer may be reused across requests (ADR-0019, #103). The
+    # application chooses; 0 reuses an answer only within the same request.
+    team_membership_cache_seconds: float = Field(
+        default=0,
+        ge=0,
+        allow_inf_nan=False,
+        validation_alias="TAU_TEAM_MEMBERSHIP_CACHE_SECONDS",
+    )
     local_mode: bool = Field(default=False, validation_alias="TAU_LOCAL_MODE")
     exclude_base_tools: bool = Field(default=False, validation_alias="TAU_EXCLUDE_BASE_TOOLS")
     exclude_mainsequence_mcp: bool = Field(
