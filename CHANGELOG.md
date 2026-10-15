@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.16 — 2026-10-15
 
 - **The Tau skills say when and how a tool checks the person's teams
   ([#103](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/103)).** `tau_security_and_access`
