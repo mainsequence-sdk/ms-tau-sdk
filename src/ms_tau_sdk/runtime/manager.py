@@ -1776,7 +1776,7 @@ class SessionRuntimeManager:
         The platform's answer to the turn start names that person, whoever called: a chat or A2A
         Message turn, a Task attempt, and a turn the platform starts for a caller delivery alike.
         ``caller`` is the verified caller of the request, when there is one; it supplies the
-        person's teams only when it is that person.
+        deprecated team list its assertion carried only when it is that person.
         """
 
         if not self._requester_identity_verified():
@@ -1784,7 +1784,7 @@ class SessionRuntimeManager:
         uid = runtime.requester_user_uid
         if uid is None:
             return None
-        team_uids = caller.team_uids if caller is not None and caller.uid == uid else ()
+        team_uids = caller.signed_team_uids if caller is not None and caller.uid == uid else ()
         return Requester(uid=uid, team_uids=team_uids)
 
     def _requester_http(self) -> httpx.AsyncClient:

@@ -158,10 +158,12 @@ async def revenue_by_region(tool_call_id, arguments, signal=None, on_update=None
     return AgentToolResult(content=[TextContent(text=json.dumps(answer.json()["rows"]))])
 ```
 
-- `current_requester()` returns the person the turn serves, with `uid` and `team_uids`, or
-  `None`. The platform names that person when the turn starts, whoever called; it is `None` when
-  the platform names nobody, in local mode, and in code outside a turn. Only it names the
-  requester: never take a person's UID from tool arguments, the prompt, history, or a header.
+- `current_requester()` returns the person the turn serves, with `uid` and
+  `await in_teams(team_uids, *, max_age_seconds=None)`, or `None`. `in_teams()` answers while the
+  person is the verified caller of the turn's request; `team_uids` is deprecated. The platform
+  names that person when the turn starts, whoever called; it is `None` when the platform names
+  nobody, in local mode, and in code outside a turn. Only it names the requester: never take a
+  person's UID from tool arguments, the prompt, history, or a header.
 - `platform_client()` returns a client. `await client.request("GET", "/api/v1/...")` calls a
   platform API path, and `await client.call_release(release_uid, method, path, ...)` calls another
   platform application. Both return an `httpx.Response`.

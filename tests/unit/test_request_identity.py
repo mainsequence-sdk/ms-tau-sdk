@@ -698,7 +698,7 @@ async def test_handlers_receive_the_verified_caller(served_platform_keys, tmp_pa
     assert response.json() == {
         "current": {
             "uid": OWNER_UID,
-            "team_uids": [team_uid],
+            "signed_team_uids": [team_uid],
             "is_organization_admin": True,
         },
         "user_uid": OWNER_UID,

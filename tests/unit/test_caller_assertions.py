@@ -21,7 +21,7 @@ from ms_tau_sdk.backend.assertions import (
     VerifiedAssertion,
     VerifiedCaller,
 )
-from ms_tau_sdk.errors import ConfigurationError
+from ms_tau_sdk.errors import ConfigurationError, TauSDKError
 
 TEAM_UIDS = sorted(
     [
@@ -72,6 +72,39 @@ async def test_a_valid_caller_assertion_names_the_caller(platform_keys):
     assert platform_keys.fetches == 1
 
 
+async def test_a_caller_assertion_without_a_team_list_names_the_caller(platform_keys):
+    claims = platform_keys.caller_claims(is_organization_admin=True)
+    del claims["team_uids"]
+
+    verified = await _verifier(platform_keys).verify(platform_keys.sign(claims), kind="caller")
+
+    caller = verified.caller
+    assert caller == VerifiedCaller(uid=platform_keys.user_uid, is_organization_admin=True)
+    assert caller.signed_team_uids is None
+    # Its teams are unknown, not empty: the deprecated list names in_teams() instead.
+    with pytest.warns(DeprecationWarning, match="in_teams"):
+        with pytest.raises(TauSDKError, match=r"in_teams\(\)"):
+            caller.team_uids  # noqa: B018
+
+
+async def test_a_null_team_list_is_rejected(platform_keys):
+    claims = platform_keys.caller_claims()
+    claims["team_uids"] = None
+
+    with pytest.raises(InvalidAssertionError):
+        await _verifier(platform_keys).verify(platform_keys.sign(claims), kind="caller")
+
+
+async def test_the_signed_team_list_is_deprecated(platform_keys):
+    token = platform_keys.caller_assertion(team_uids=TEAM_UIDS)
+
+    caller = (await _verifier(platform_keys).verify(token, kind="caller")).caller
+
+    assert caller.signed_team_uids == tuple(TEAM_UIDS)
+    with pytest.warns(DeprecationWarning, match="in_teams"):
+        assert caller.team_uids == tuple(TEAM_UIDS)
+
+
 async def test_a_valid_platform_assertion_names_no_caller(platform_keys):
     verified = await _verifier(platform_keys).verify(
         platform_keys.platform_assertion(),
@@ -107,7 +140,6 @@ async def test_an_assertion_of_another_type_is_rejected(platform_keys, assertion
     ("kind", "change"),
     [
         ("caller", {"add": {"username": "jose"}}),
-        ("caller", {"remove": "team_uids"}),
         ("caller", {"remove": "is_organization_admin"}),
         ("caller", {"remove": "sub"}),
         ("caller", {"remove": "nbf"}),

@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **Team membership on demand; the caller assertion's team list is deprecated
+  ([#103](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/103), ADR 0019).** A caller
+  assertion named every team of its caller, so it grew with the Organization, and an Organization
+  admin is a member of every team. The platform is replacing that list with a membership check,
+  and the runtime now asks it instead of reading the list:
+  - the verifier accepts a caller assertion with or without `team_uids`. A list that is present is
+    still checked, and `null` or any other claim is refused;
+  - `await in_teams(team_uids, *, max_age_seconds=None)` on the verified caller
+    (`request.state.user`, `current_caller()`) returns which of the given teams the person belongs
+    to, as a `frozenset`. It asks the platform with the runtime's credential and the request's
+    assertion, in calls of at most 100 teams. A turn's requester has the same method while it is
+    the verified caller of the request, and raises otherwise;
+  - `TAU_TEAM_MEMBERSHIP_CACHE_SECONDS` (`TauSDKSettings.team_membership_cache_seconds`, default
+    `0`) sets how long an answer is reused across requests. Within a request the same question is
+    asked once, and `max_age_seconds=0` always asks and stores the new answer. Answers are keyed by
+    release, Organization Environment, person and team, at most 10,000 per process. A failed call
+    raises; it never answers "not a member";
+  - `team_uids` on the verified caller and on the requester is deprecated and warns when read. It
+    raises when the assertion carried no list. `signed_team_uids` holds the list, or `None`, and is
+    the name `dataclasses.asdict()` and the repr show.
+
 - **Tau reads skills nested in folders
   ([#99](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/99)).** Tau read only the skill
   folders directly in `.tau/skills` and `.agents/skills`, so a skill one folder deeper, such as
