@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.17 — 2026-10-15
 
 - **`team_uids` is removed; the verifier refuses caller assertions that list teams
   ([#103](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/103), ADR 0019).** The platform no
