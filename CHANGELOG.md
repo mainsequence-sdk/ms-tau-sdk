@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.15 — 2026-10-15
 
 - **Team membership on demand; the caller assertion's team list is deprecated
   ([#103](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/103), ADR 0019).** A caller
