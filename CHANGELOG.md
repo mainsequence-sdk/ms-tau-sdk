@@ -21,7 +21,9 @@
     raises; it never answers "not a member";
   - `team_uids` on the verified caller and on the requester is deprecated and warns when read. It
     raises when the assertion carried no list. `signed_team_uids` holds the list, or `None`, and is
-    the name `dataclasses.asdict()` and the repr show.
+    the name `dataclasses.asdict()` and the repr show;
+  - the `tau_security_and_access` skill says when a tool checks the person's teams and how, and
+    `tau_project_customization` points to it.
 
 - **Tau reads skills nested in folders
   ([#99](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/99)).** Tau read only the skill

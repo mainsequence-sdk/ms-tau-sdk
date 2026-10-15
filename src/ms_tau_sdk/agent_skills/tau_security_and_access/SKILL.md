@@ -207,6 +207,33 @@ How sharing works:
   tool can use them when its design needs to, for example to refuse a team key where it expects a
   personal one. That is a choice of the tool, not a platform rule.
 
+## Checking the person's teams
+
+A delegated call already reaches exactly what the person can, including what is shared with their
+teams, so a tool rarely checks teams itself. When the tool's own policy names teams, ask the
+platform with `in_teams()`:
+
+```python
+person = current_requester()
+if person is None or REPORTS_TEAM_UID not in await person.in_teams([REPORTS_TEAM_UID]):
+    return AgentToolResult(content=[TextContent(text="These reports are for the team's members.")])
+```
+
+- `await in_teams(team_uids, *, max_age_seconds=None)` returns the subset of `team_uids` the
+  person is an active member of, as a `frozenset`. Unknown and inactive teams are left out.
+- On the turn's requester it answers only while that person is the verified caller of the request
+  the turn runs in, such as a chat or A2A Message they sent. A turn with no such request raises
+  `TauSDKError`: a Task attempt the platform dispatches, a turn that resumes a caller delivery, or
+  work another Agent asked for. Refuse the action then; never read the error as a membership
+  answer. An HTTP handler asks for its caller with `await request.state.user.in_teams(...)`.
+- The process reuses an answer across requests for `TAU_TEAM_MEMBERSHIP_CACHE_SECONDS` (default
+  `0`: only within its request); set it in `harness_agent.spec.env_vars`. `max_age_seconds=0`
+  always asks the platform: use it before a write that must see a removal at once.
+- A check the platform cannot answer raises `BackendError`; it never answers "not a member".
+- `team_uids` on the requester is deprecated and warns when read. It is empty when the turn does
+  not know the person's teams, and raises when the caller's assertion carried no team list, as
+  every assertion will once the platform stops signing them. Use `in_teams()`.
+
 ## What never reaches the model
 
 Tool results, their `details`, and errors can reach the model provider and the session history.
