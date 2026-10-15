@@ -121,7 +121,7 @@ def _assertion(
     token: str = RAW_ASSERTION,
 ) -> CallerAssertion:
     return CallerAssertion(
-        caller=VerifiedCaller(uid=uid, team_uids=(TEAM_UID,), is_organization_admin=False),
+        caller=VerifiedCaller(uid=uid, is_organization_admin=False),
         expires_at=int(time.time()) + lifetime_seconds,
         token=token,
     )
@@ -222,10 +222,9 @@ async def _close(manager: SessionRuntimeManager) -> None:
 @pytest.mark.parametrize(
     ("answered_requester", "expected"),
     [
-        pytest.param(OWNER_UID, Requester(uid=OWNER_UID, team_uids=(TEAM_UID,)), id="the_caller"),
+        pytest.param(OWNER_UID, Requester(uid=OWNER_UID), id="the_caller"),
         pytest.param(None, None, id="nobody"),
-        # The platform's answer is the only source: the turn serves whoever it names. The caller's
-        # teams belong to the caller, so another person has none.
+        # The platform's answer is the only source: the turn serves whoever it names.
         pytest.param(OTHER_UID, Requester(uid=OTHER_UID), id="someone_else"),
     ],
 )
@@ -426,16 +425,14 @@ def _task_context(caller: VerifiedCaller | None = None) -> TaskExecutionContext:
     )
 
 
-THE_CALLER = VerifiedCaller(uid=OWNER_UID, team_uids=(TEAM_UID,), is_organization_admin=False)
+THE_CALLER = VerifiedCaller(uid=OWNER_UID, is_organization_admin=False)
 
 
 @pytest.mark.parametrize(
     ("hosted", "caller", "expected"),
     [
-        pytest.param(
-            True, THE_CALLER, Requester(uid=OWNER_UID, team_uids=(TEAM_UID,)), id="run_by_them"
-        ),
-        # A dispatched attempt has no caller, so the person it serves has no known teams.
+        pytest.param(True, THE_CALLER, Requester(uid=OWNER_UID), id="run_by_them"),
+        # A dispatched attempt has no caller; it serves the person named.
         pytest.param(True, None, Requester(uid=OWNER_UID), id="dispatched"),
         pytest.param(False, THE_CALLER, None, id="not_hosted"),
     ],
@@ -467,7 +464,7 @@ async def test_a_task_turn_never_presents_an_assertion_and_serves_the_person_nam
     "caller",
     [
         pytest.param(
-            VerifiedCaller(uid=AGENT_USER_UID, team_uids=(TEAM_UID,), is_organization_admin=False),
+            VerifiedCaller(uid=AGENT_USER_UID, is_organization_admin=False),
             id="run_by_the_job",
         ),
         pytest.param(None, id="dispatched"),
@@ -492,33 +489,13 @@ async def test_a_task_a_job_asked_for_serves_nobody(platform_keys, tmp_path, cal
 
 
 @pytest.mark.parametrize(
-    ("named", "caller", "expected"),
+    ("named", "expected"),
     [
-        pytest.param(OWNER_UID, THE_CALLER, Requester(uid=OWNER_UID, team_uids=(TEAM_UID,))),
-        # A caller whose assertion carried no team list passes on none: its teams are unknown,
-        # not empty (#103).
-        pytest.param(
-            OWNER_UID,
-            VerifiedCaller(uid=OWNER_UID, is_organization_admin=False),
-            Requester(uid=OWNER_UID, team_uids=None),
-        ),
-        pytest.param(OTHER_UID, THE_CALLER, Requester(uid=OTHER_UID)),
-        pytest.param(
-            OWNER_UID,
-            VerifiedCaller(uid=AGENT_USER_UID, team_uids=(TEAM_UID,), is_organization_admin=False),
-            Requester(uid=OWNER_UID),
-        ),
-        pytest.param(None, THE_CALLER, None),
-        pytest.param(OWNER_UID, None, Requester(uid=OWNER_UID)),
+        pytest.param(OWNER_UID, Requester(uid=OWNER_UID), id="a_person"),
+        pytest.param(None, None, id="nobody"),
     ],
 )
-def test_the_person_named_gets_the_callers_teams_only_when_the_caller_is_that_person(
-    platform_keys,
-    tmp_path,
-    named,
-    caller,
-    expected,
-):
+def test_the_turn_serves_the_person_the_platform_names(platform_keys, tmp_path, named, expected):
     manager = SessionRuntimeManager(
         settings=platform_keys.hosted_settings(tmp_path),
         backend=AsyncMock(),
@@ -526,7 +503,9 @@ def test_the_person_named_gets_the_callers_teams_only_when_the_caller_is_that_pe
     )
     runtime = SimpleNamespace(requester_user_uid=named)
 
-    assert manager._turn_requester(runtime, caller=caller) == expected  # type: ignore[arg-type]
+    assert manager._turn_requester(runtime) == expected  # type: ignore[arg-type]
+    # The requester carries no team list; in_teams() asks the platform (#103).
+    assert not hasattr(expected, "team_uids")
 
 
 async def test_the_turns_delegation_ends_with_the_turn(platform_keys, tmp_path):
@@ -914,7 +893,7 @@ async def test_the_platform_dispatch_is_not_a_source_of_the_person(
 # --- platform_client(): calls for the work ------------------------------------------------------
 
 HOLDER_ID = "runtime-host:holder-1"
-THE_REQUESTER = Requester(uid=OWNER_UID, team_uids=(TEAM_UID,))
+THE_REQUESTER = Requester(uid=OWNER_UID)
 RPC_URL = "https://analyst-data.test/rpc"
 BINDING_HEADERS = {
     "x-mainsequence-acting-for-session": SESSION_UID,
@@ -1695,9 +1674,7 @@ async def test_a_hosted_turn_acts_for_its_requester_and_exposes_no_secret(
     )
     app = create_app(config, services_factory=lambda _settings: services)
     # The proof names the person only; the tool asks the platform for the person's teams (#103).
-    claims = platform_keys.caller_claims()
-    del claims["team_uids"]
-    raw = platform_keys.sign(claims)
+    raw = platform_keys.caller_assertion()
 
     with respx.mock(assert_all_called=False) as router:
         router.get(platform_keys.jwks_url).mock(side_effect=platform_keys.respond)
@@ -1834,7 +1811,7 @@ async def test_a_task_the_request_creates_presents_its_assertion_and_keeps_its_c
         task=_answered_task(OTHER_UID, "human"),
         created=True,
     )
-    raw = served_platform_keys.caller_assertion(team_uids=[TEAM_UID])
+    raw = served_platform_keys.caller_assertion()
     headers = {
         **USER_CALLER_HEADERS,
         ASSERTION_HEADER: raw,
@@ -1865,7 +1842,7 @@ async def test_a_task_the_request_continues_presents_its_assertion_and_keeps_its
     app, manager = _hosted_routes(served_platform_keys, tmp_path)
     manager.backend.get_task_by_protocol_id.return_value = _task("input_required")
     manager.backend.continue_task.return_value = _answered_task(None, None, "working")
-    raw = served_platform_keys.caller_assertion(team_uids=[TEAM_UID])
+    raw = served_platform_keys.caller_assertion()
     body = _message(configuration={"responseKind": "task", "returnImmediately": True})
     body["message"]["taskId"] = "task-1"
 

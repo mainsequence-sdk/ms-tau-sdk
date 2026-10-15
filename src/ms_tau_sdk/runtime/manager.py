@@ -30,7 +30,7 @@ from tau_agent.types import JSONValue
 from tau_coding import CodingSession, CodingSessionConfig
 from tau_coding.tools import create_coding_tools
 
-from ms_tau_sdk.backend.assertions import CallerAssertion, VerifiedCaller
+from ms_tau_sdk.backend.assertions import CallerAssertion
 from ms_tau_sdk.backend.client import LeaseProof, MainSequenceClient
 from ms_tau_sdk.backend.mcp import MainSequenceMCPClient
 from ms_tau_sdk.backend.models import (
@@ -1573,16 +1573,7 @@ class SessionRuntimeManager:
         )
         requester_binding = TurnRequesterBinding(
             session_uid=session_uid,
-            requester=self._turn_requester(
-                runtime,
-                caller=(
-                    presented.caller
-                    if presented is not None
-                    else task_context.caller
-                    if task_context is not None
-                    else None
-                ),
-            ),
+            requester=self._turn_requester(runtime),
             lease_proof=lambda: LeaseProof(
                 session_uid=session_uid,
                 holder_id=self.holder_id,
@@ -1765,18 +1756,11 @@ class SessionRuntimeManager:
 
         return not self.settings.local_mode and self.settings.request_identity_mode == "assertion"
 
-    def _turn_requester(
-        self,
-        runtime: ActiveSessionRuntime,
-        *,
-        caller: VerifiedCaller | None,
-    ) -> Requester | None:
+    def _turn_requester(self, runtime: ActiveSessionRuntime) -> Requester | None:
         """Name the person a turn serves, or None.
 
         The platform's answer to the turn start names that person, whoever called: a chat or A2A
         Message turn, a Task attempt, and a turn the platform starts for a caller delivery alike.
-        ``caller`` is the verified caller of the request, when there is one; it supplies the
-        deprecated team list its assertion carried only when it is that person.
         """
 
         if not self._requester_identity_verified():
@@ -1784,8 +1768,7 @@ class SessionRuntimeManager:
         uid = runtime.requester_user_uid
         if uid is None:
             return None
-        team_uids = caller.signed_team_uids if caller is not None and caller.uid == uid else ()
-        return Requester(uid=uid, team_uids=team_uids)
+        return Requester(uid=uid)
 
     def _requester_http(self) -> httpx.AsyncClient:
         """The client for calls to platform applications, made when first used."""

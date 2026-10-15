@@ -12,7 +12,6 @@ import math
 import threading
 import time
 import uuid
-import warnings
 from collections import OrderedDict
 from collections.abc import Iterable
 from contextvars import ContextVar, Token
@@ -209,21 +208,3 @@ async def _platform_members(
     if scope.client is None:
         raise TauSDKError("in_teams() needs the Agent runtime of this process")
     return await scope.client.team_memberships(person_uid, team_uids, caller_assertion=token)
-
-
-def deprecated_team_uids(signed: tuple[str, ...] | None) -> tuple[str, ...]:
-    """Return the deprecated team list a caller assertion carried, with a warning.
-
-    It raises when the assertion carried none; it never answers an empty list for that.
-    """
-
-    warnings.warn(
-        "team_uids is deprecated; check membership with in_teams() instead",
-        DeprecationWarning,
-        stacklevel=3,
-    )
-    if signed is None:
-        raise TauSDKError(
-            "The caller assertion carries no team list; check membership with in_teams()"
-        )
-    return signed

@@ -21,7 +21,7 @@ from ms_tau_sdk.backend.assertions import (
     VerifiedAssertion,
     VerifiedCaller,
 )
-from ms_tau_sdk.errors import ConfigurationError, TauSDKError
+from ms_tau_sdk.errors import ConfigurationError
 
 TEAM_UIDS = sorted(
     [
@@ -58,51 +58,25 @@ def _verifier(platform_keys, **overrides) -> AssertionVerifier:
 
 
 async def test_a_valid_caller_assertion_names_the_caller(platform_keys):
-    token = platform_keys.caller_assertion(team_uids=TEAM_UIDS, is_organization_admin=True)
+    token = platform_keys.caller_assertion(is_organization_admin=True)
 
     verified = await _verifier(platform_keys).verify(token, kind="caller")
 
     assert verified.kind == "caller"
-    assert verified.caller == VerifiedCaller(
-        uid=platform_keys.user_uid,
-        team_uids=tuple(TEAM_UIDS),
-        is_organization_admin=True,
-    )
+    assert verified.caller == VerifiedCaller(uid=platform_keys.user_uid, is_organization_admin=True)
+    # Membership is checked with in_teams() (#103); the caller carries no team list.
+    assert not hasattr(verified.caller, "team_uids")
     assert verified.expires_at - verified.issued_at == 300
     assert platform_keys.fetches == 1
 
 
-async def test_a_caller_assertion_without_a_team_list_names_the_caller(platform_keys):
-    claims = platform_keys.caller_claims(is_organization_admin=True)
-    del claims["team_uids"]
-
-    verified = await _verifier(platform_keys).verify(platform_keys.sign(claims), kind="caller")
-
-    caller = verified.caller
-    assert caller == VerifiedCaller(uid=platform_keys.user_uid, is_organization_admin=True)
-    assert caller.signed_team_uids is None
-    # Its teams are unknown, not empty: the deprecated list names in_teams() instead.
-    with pytest.warns(DeprecationWarning, match="in_teams"):
-        with pytest.raises(TauSDKError, match=r"in_teams\(\)"):
-            caller.team_uids  # noqa: B018
-
-
-async def test_a_null_team_list_is_rejected(platform_keys):
+@pytest.mark.parametrize("team_uids", [TEAM_UIDS, [], None], ids=["list", "empty", "null"])
+async def test_a_caller_assertion_that_lists_teams_is_rejected(platform_keys, team_uids):
     claims = platform_keys.caller_claims()
-    claims["team_uids"] = None
+    claims["team_uids"] = team_uids
 
     with pytest.raises(InvalidAssertionError):
         await _verifier(platform_keys).verify(platform_keys.sign(claims), kind="caller")
-
-
-async def test_the_signed_team_list_is_deprecated(platform_keys):
-    token = platform_keys.caller_assertion(team_uids=TEAM_UIDS)
-
-    caller = (await _verifier(platform_keys).verify(token, kind="caller")).caller
-
-    assert caller.signed_team_uids == tuple(TEAM_UIDS)
-    with pytest.warns(DeprecationWarning, match="in_teams"):
-        assert caller.team_uids == tuple(TEAM_UIDS)
 
 
 async def test_a_valid_platform_assertion_names_no_caller(platform_keys):
@@ -240,9 +214,7 @@ async def test_an_assertion_for_another_target_is_rejected(platform_keys, overri
     [
         {"sub": "2B7F1C48-3D1E-4A5B-9C6D-0E1F2A3B4C5D"},
         {"sub": "not-a-uid"},
-        {"team_uids": list(reversed(TEAM_UIDS))},
-        {"team_uids": [TEAM_UIDS[0], TEAM_UIDS[0]]},
-        {"team_uids": ["team-1"]},
+        {"team_uids": TEAM_UIDS},
         {"team_uids": TEAM_UIDS[0]},
         {"is_organization_admin": "true"},
         {"is_organization_admin": 1},

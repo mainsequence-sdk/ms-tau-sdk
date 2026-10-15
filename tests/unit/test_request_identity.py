@@ -670,7 +670,6 @@ async def test_the_caller_kind_header_is_still_required(
 
 async def test_handlers_receive_the_verified_caller(served_platform_keys, tmp_path, asgi_client):
     app, _backend, _manager = _hosted_app(served_platform_keys, tmp_path)
-    team_uid = "8c7d6e5f-4a3b-4c2d-9e1f-0a9b8c7d6e5f"
 
     @app.get("/caller")
     async def caller(request: Request) -> dict[str, object]:
@@ -688,7 +687,6 @@ async def test_handlers_receive_the_verified_caller(served_platform_keys, tmp_pa
             "/caller",
             headers={
                 ASSERTION_HEADER: served_platform_keys.caller_assertion(
-                    team_uids=[team_uid],
                     is_organization_admin=True,
                 )
             },
@@ -696,11 +694,7 @@ async def test_handlers_receive_the_verified_caller(served_platform_keys, tmp_pa
 
     assert response.status_code == 200
     assert response.json() == {
-        "current": {
-            "uid": OWNER_UID,
-            "signed_team_uids": [team_uid],
-            "is_organization_admin": True,
-        },
+        "current": {"uid": OWNER_UID, "is_organization_admin": True},
         "user_uid": OWNER_UID,
         "auth_outcome": "authenticated",
         "resource_release_uid": served_platform_keys.release_uid,

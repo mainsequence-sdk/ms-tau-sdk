@@ -273,11 +273,10 @@ class PlatformKeys:
         **overrides: Any,
     ) -> dict[str, Any]:
         claims = self.platform_claims(now=now)
-        claims.update(
-            sub=user_uid or self.user_uid,
-            team_uids=[] if team_uids is None else team_uids,
-            is_organization_admin=is_organization_admin,
-        )
+        claims.update(sub=user_uid or self.user_uid, is_organization_admin=is_organization_admin)
+        # The platform signs no team list (#103); tests pass one to see it refused.
+        if team_uids is not None:
+            claims["team_uids"] = team_uids
         claims.update(overrides)
         return claims
 

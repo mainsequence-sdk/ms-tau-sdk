@@ -97,8 +97,8 @@ calls of at most 100 teams, and only when application code calls it.
   request with a verified caller, after that request ended, or once its assertion expired before a
   call it needs, `in_teams()` raises `TauSDKError`.
 
-`team_uids` on the verified caller and on the requester is deprecated and warns when read. It
-raises when the assertion carried no team list. Use `in_teams()`.
+The verified caller and the requester carry no team list, and a caller assertion that lists teams
+is refused: the platform signs none. Use `in_teams()`.
 
 ### Session ownership
 

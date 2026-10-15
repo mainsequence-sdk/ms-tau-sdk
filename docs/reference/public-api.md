@@ -34,9 +34,7 @@ install a second request-identity integration on it. See the
 [runtime contract](./runtime-contract.md#request-identity). `in_teams()` answers Team membership,
 reusing answers as [Team membership](./runtime-contract.md#team-membership) describes; it does not
 state whether the caller is a Team writer. See
-[Teams and membership](./security-model.md#teams-and-membership). `team_uids`, the team list the
-caller's assertion carried, is deprecated: it warns when read and raises when the assertion carried
-none.
+[Teams and membership](./security-model.md#teams-and-membership). The caller carries no team list.
 
 ## `TauSDKSettings`
 
@@ -69,16 +67,13 @@ check [what each call may do](./security-model.md#what-each-call-may-do) before 
 `current_requester()` returns the person the current turn serves, an immutable object with `uid`
 (a User UID) and `await in_teams(team_uids, *, max_age_seconds=None)`, or `None`. `in_teams()`
 answers while the person is the verified caller of the request the turn runs in, and raises
-`TauSDKError` otherwise. The deprecated `team_uids` is a tuple of Team UIDs, empty when the turn
-does not know them.
+`TauSDKError` otherwise. The requester carries no team list.
 
 When a hosted turn or Task attempt starts, the platform's answer names the person the Agent may act
 for, or nobody, for every kind of turn: a chat (`POST /api/chat`) or A2A Message turn, a Task
 attempt the platform dispatches or the request runs itself, and a turn that resumes a caller
 delivery. That answer is the only source, whoever called: an Agent that delegates work for a person
-gets that person for the work it sends, when the platform records them. The deprecated `team_uids`
-come from the team list of the request's verified caller when the caller is that person, and are
-empty otherwise. Local mode, a
+gets that person for the work it sends, when the platform records them. Local mode, a
 runtime that is not hosted, and code outside a turn, such as Tau Board's tool workbench, have
 `None`.
 
