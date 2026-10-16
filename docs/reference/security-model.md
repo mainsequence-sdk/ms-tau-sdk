@@ -236,6 +236,12 @@ business results, never tokens, response headers or proofs.
 
 ## What the Agent's code can reach
 
+Hosted execution isolation depends on the deployment provider. AWS Auto Mode hosting uses
+standard managed containers without gVisor or a separate userspace kernel. Do not
+assume that custom code has a separate kernel boundary. Platform permissions,
+restricted container settings and network restrictions still apply. This hosting
+choice does not change the SDK API, Agent grants or session ownership rules.
+
 The SDK does not sandbox code that runs in the Agent's process:
 
 - the `bash`, `read`, `write` and `edit` tools run with the runtime's own operating-system access
