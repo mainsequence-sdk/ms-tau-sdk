@@ -183,6 +183,10 @@ Check the signed-in user, selected provider/model, configured credential, and En
   missing or inaccessible. Check its name, Environment, and sharing with the signed-in user.
 - `model_provider_credential_unavailable` means the selected credential is unusable. Check its
   status and ask its owner to restore or replace it, then explicitly select an available record.
+  When the error detail names an Environment, that is the Environment whose credential was
+  selected. Without `TAU_LOCAL_ORGANIZATION_ENVIRONMENT_UID`, it is your active Environment,
+  which can change between runs. Set that variable to pin the intended Environment, or reconnect
+  the provider in the named one.
 - If selection is correct, check that the deployed platform supports authenticated local provider
   use and that the provider publishes the selected model.
 
