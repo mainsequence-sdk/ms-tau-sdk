@@ -33,7 +33,7 @@ serve the application `create_app` returns rather than mounting it inside anothe
 install a second request-identity integration on it. See the
 [runtime contract](./runtime-contract.md#request-identity). `in_teams()` answers Team membership,
 reusing answers as [Team membership](./runtime-contract.md#team-membership) describes; it does not
-state whether the caller is a Team writer. See
+state who manages the Team. See
 [Teams and membership](./security-model.md#teams-and-membership). The caller carries no team list.
 
 ## `TauSDKSettings`

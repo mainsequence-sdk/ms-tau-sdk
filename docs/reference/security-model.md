@@ -85,29 +85,29 @@ access that all of them may have.
 
 ## Teams and membership
 
-With the matching platform Team-membership change, ordinary Team membership shows who
-can view or control the Team. Each member can view it; a writer can edit it. Only Organization
-admins add, remove or change members. Member rows show `can_edit` and `is_protected`.
+A Team groups people and workloads of an Organization. Who is in a Team and who manages it are
+decided separately:
 
-- Every current Organization admin is a protected writer member of every ordinary Team and
-  cannot be removed or downgraded. Removing the admin role keeps existing memberships and
-  writer access, while ending that protection.
-- A Team's creator is added as a writer once, at creation. An Organization admin can later
-  downgrade or remove that creator. Being its creator gives no continuing Team access, and
-  subsequent Team updates do not add the creator back.
-- Managing an Agent that created a Team does not grant Team access to the Agent's managers.
-  The person or workload must have its own membership. A separate grant to a person or
-  another Team does not confer ordinary-Team control.
-- All members receive the resources shared with their Team at the shared level. Writer status
-  controls the Team itself; it does not raise the level granted on those resources.
-- The built-in Full directory keeps its existing computed people membership and read-only
-  behavior. Access to it can reveal Team directory entries without granting edit access.
+- **Membership** decides who receives what is shared with the Team, at the level it was shared,
+  and what `in_teams()` answers for a caller. A workload can be a member: an Agent whose workload
+  is in a Team receives what is shared with that Team.
+- **Policies on the Team** decide who can see and manage it: `viewer` (see the Team and its
+  members), `membership_manager` (add and remove members), `editor` (rename it, change its
+  description, activate or deactivate it) and `owner` (everything, including deleting it and
+  deciding who manages it). Every member can see the Team and its members, and leave it.
 
-Existing ordinary Teams gain their missing current Organization admins and creators as writers
-when that platform change is applied. Other existing members stay readers until an admin changes
-their membership. This policy is a platform behavior change; it does not add an SDK method.
-`in_teams()` answers membership, not whether the caller is a writer. Ask an Organization admin to review the Team's member list when access
-is missing. Platform operators retain their separate operational access.
+Any person can create a Team and becomes its owner and first member. Organization admins manage
+every Team from their role, without being members. No membership is protected: an admin can be
+removed from a Team like anyone else, and losing the admin role ends that authority at once.
+
+Managing a Team does not make anyone a member, so `in_teams()` does not say who manages it: an
+owner, a membership manager or an Organization admin who is not a member is not in its answer. The
+built-in full-directory Team stays computed and read-only, and `in_teams()` leaves it out.
+
+This is platform behavior: it adds no SDK method, `in_teams()` is unchanged, and existing
+memberships are kept. When access through a Team is missing, ask someone who manages the Team to
+check that it is active and lists the person or workload. Platform operators retain their separate
+operational access.
 
 ## Acting for the person (`acts_for_requester`)
 
