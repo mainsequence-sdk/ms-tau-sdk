@@ -266,8 +266,15 @@ in a process that carries the platform's hosting settings. See
 `platform_client().call_release()` lets a project tool call another platform application. The
 platform first checks that the caller can view that application in the Agent's Environment, the
 person for a delegated call and the Agent's workload otherwise, then issues an access token for the
-call. On every call the application receives a signed assertion that names the Agent as the caller
-and, for a delegated call, the person as the requester.
+call. It repeats that check on every call, so a token issued earlier does not keep access the
+caller has lost:
+
+- when the person can no longer view the application, the next delegated call answers `403`;
+- when the Agent's workload can no longer view it, the Agent's own calls answer `403` within at
+  most 60 seconds.
+
+On every call the application receives a signed assertion that names the Agent as the caller and,
+for a delegated call, the person as the requester.
 
 - The application decides what each call may do. It should authorize against the verified person
   when the call carries one, and against the caller otherwise.

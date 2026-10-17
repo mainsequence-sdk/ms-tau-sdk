@@ -115,7 +115,10 @@ permissions and [availability](./security-model.md#availability) for the platfor
 A turn that serves nobody calls a declared application with the Agent's own token. Declaring an
 application grants no access: the Agent's workload needs its own grants on the application's
 release and Environment, given in the workflow's `access` declaration or by a person who manages
-them. The application itself decides what each call may do.
+them. The application itself decides what each call may do. When the workload loses view of the
+application, its calls answer `403` within at most 60 seconds, also with a token it already holds,
+and are admitted again once the grant is back. See
+[calling other applications](./security-model.md#calling-other-applications).
 
 ## A platform MCP tool call times out
 
