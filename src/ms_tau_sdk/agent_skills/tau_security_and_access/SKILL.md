@@ -163,8 +163,9 @@ What makes it safe:
 
 - No tool takes a Secret value or a Secret name from the model. The name is built from
   `current_requester().uid`, so prompt injection cannot point the tool at another Secret.
-- `delegation="required"` reads the Secret as the person. The platform returns it only if the
-  person can view it; the name is a lookup key, not the protection.
+- `delegation="required"` reads the Secret as the person. The platform returns the value only if
+  the person holds `value_reader`, `editor` or `owner` on it; the name is a lookup key, not the
+  protection.
 - The value exists only inside one call. It never goes into the result, `details`, a log, an
   exception message, a file or a cache for the next turn. It travels in a header, never in a URL,
   because URLs reach logs. Errors from the outside call are caught, and the provider's raw body is
@@ -189,8 +190,8 @@ convention states that design:
 
 - **A personal credential:** a name tied to the person, such as `QUOTES_API_KEY__<person uid>`.
   The person decides whether to share it.
-- **A team credential:** a name the team agrees on, shared with the team for view. The tool reads
-  it for any member.
+- **A team credential:** a name the team agrees on, with `value_reader` attached to the team. The
+  tool reads it for any member.
 - **Someone else's Secret shared with the person:** valid whenever the tool is meant to use it.
 
 Whoever can edit a Secret decides its value, so the tool uses whatever value they set. Granting or
@@ -199,13 +200,19 @@ decision people make through sharing, not one the platform makes for them.
 
 How sharing works:
 
-- The creator of a Secret can always view and edit it, and cannot be removed from it. People who
-  can edit a Secret can share it, for view or for edit, with people and teams.
-- Most people can share only within the teams they belong to; Organization admins can share
-  across their Organization.
-- `GET /api/v1/secrets/<uid>/can-view/` and `can-edit/` list the people and teams with access. A
-  tool can use them when its design needs to, for example to refuse a team key where it expects a
-  personal one. That is a choice of the tool, not a platform rule.
+- Policies on a Secret decide access: `reader` sees that it exists and its name, never its value;
+  `value_reader` also reads the current value; `editor` also reads earlier values, sets a new value,
+  deletes it and sees who has access; `owner` also decides who has access. The creator becomes its
+  owner, and Organization admins hold every policy on their Organization's Secrets from their role.
+- Owners attach and detach these policies for people, teams and workloads; whoever manages a
+  workload can also give it a policy they hold, and anyone can remove their own. No policy is
+  protected: an owner can remove the creator's. Nobody gives a policy with more than they hold, and
+  people other than Organization admins give access only to people who share an active team with
+  them, to teams they belong to and to workloads they can view.
+- `GET /api/v1/secrets/<uid>/access/` lists who holds which policy, for editors and owners, and
+  `GET /api/v1/secrets/<uid>/access/me/` answers what the caller may do with it. A tool can use
+  them when its design needs to, for example to refuse a team key where it expects a personal one.
+  That is a choice of the tool, not a platform rule.
 
 ## Checking the person's teams
 

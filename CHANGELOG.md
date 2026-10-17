@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **The Security and access guide and the Tau security skill describe Secret policies.** The
+  platform now decides Secrets by the policies on them. The
+  [guide](docs/reference/security-model.md#secrets) and `tau_security_and_access` said that a
+  Secret value follows view access, that its creator cannot be removed, and that `can-view/` and
+  `can-edit/` list who has access. They now say that `reader` sees a Secret without its value,
+  `value_reader` reads the current value, `editor` also reads earlier values, sets a new value,
+  deletes it and sees who has access, and `owner` also decides who has access; that the creator
+  becomes its owner and no policy is protected; that `access.secrets` gives a workload
+  `value_reader` for `level: view` and `editor` for `level: edit`; and that
+  `GET /api/v1/secrets/<uid>/access/` and `access/me/` replace `can-view/` and `can-edit/`.
+  Existing shares are kept. No SDK code changes.
 - **The Tau security skill describes team policies.** The platform now decides who can see and
   manage a team by the policies on it. `tau_security_and_access` said that Organization admins are
   protected writer members of every team and the only people who manage membership. It now says

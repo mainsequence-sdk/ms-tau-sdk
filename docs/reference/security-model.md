@@ -203,17 +203,29 @@ Organization admin can accept that risk by enabling requester access.
 
 ## Secrets
 
-- **Secret values follow ordinary permissions.** A hosted Agent can read a Secret value its
-  workload was granted and, in a delegated call, a value the person may read. Anything the Agent
-  reads can reach the model provider and the session history, so grant an Agent no Secret it does
-  not need.
+- **Policies on a Secret decide who can see it and who can read its value:** `reader` (see that
+  the Secret exists and refer to it by name, never its value), `value_reader` (also read the
+  current value), `editor` (also read earlier values, set a new value, delete the Secret and see
+  who has access) and `owner` (also decide who has access). Whoever creates a Secret becomes its
+  owner, and Organization admins hold every policy on their Organization's Secrets from their
+  role. Owners give and remove policies through `/api/v1/secrets/<uid>/access/`, and anyone can
+  remove their own; no policy is protected, so an owner can remove the creator's. Existing shares
+  are kept: a share for view became `value_reader`, a share for edit `editor`.
+- **Reading a value needs a policy that includes it.** A hosted Agent reads a value its workload
+  holds `value_reader`, `editor` or `owner` on and, in a delegated call, a value the person may
+  read. With only `reader`, `GET /api/v1/secrets/<uid>/` answers `403` with `required_action`
+  `secrets.read_value`, and an earlier value (`?version=`) needs `secrets.read_value_history`.
+  Anything the Agent reads can reach the model provider and the session history, so give an
+  Agent's workload no Secret it does not need.
 - **People enter Secret values themselves,** on the Secrets page in Command Center or with
   `mainsequence secrets create <NAME>`, which asks for the value without showing it. An Agent must
   never ask for a value in chat. Do not paste one into a conversation: everything in it reaches the
   model provider and the session history.
 - **A workload that needs a value reads it when it runs.** A Job or FastAPI application declares
-  the Secret's name under `access.secrets` in its workflow file, or a person grants the Secret to
-  that workload. The declaration works when the person behind the push can view the Secret.
+  the Secret's name under `access.secrets` in its workflow file: `level: view` gives its workload
+  `value_reader` and `level: edit` gives it `editor`. A Secret's owner can also attach a policy to
+  the workload, and so can whoever manages the workload, for a policy they hold. The declaration
+  works when the person behind the push can do everything that policy allows on the Secret.
 - **Whoever can change a workload's code can reach the Secrets granted to it.** An Agent that can
   edit a workload's repository can make that workload reveal those values in a log, an output or a
   response. Keep a Secret away from every workload an Agent can edit.
@@ -254,7 +266,7 @@ as code that holds these credentials. See
 
 Local mode signs in with your own Main Sequence login (`mainsequence login`) or a user token pair.
 The Agent then acts as you: its tools and extensions can do anything you can do on the platform,
-including reading the Secret values you can view. For an Organization admin, that includes
+including reading the Secret values you can read. For an Organization admin, that includes
 receiving and using any member's configured model provider without a share; see
 [named providers and sharing](../guides/project-configuration.md#named-providers-and-sharing). The hosted rules above, such as no access
 beyond the Agent's grants, do not apply to your own login. Local mode refuses to start
