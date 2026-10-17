@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+- **The Tau security skill describes team policies.** The platform now decides who can see and
+  manage a team by the policies on it. `tau_security_and_access` said that Organization admins are
+  protected writer members of every team and the only people who manage membership. It now says
+  that any person creates a team and becomes its owner and first member, that the `viewer`,
+  `membership_manager`, `editor` and `owner` policies decide who can see and manage it, and that
+  Organization admins manage every team from their role, with no membership protected. Membership
+  still decides who receives what is shared with a team and what `in_teams()` answers, and a team
+  the person only manages is not in that answer. `in_teams()` is unchanged; the
+  [Security and access guide](docs/reference/security-model.md#teams-and-membership) says the same.
+
 ## 2.0.17 — 2026-10-15
 
 - **`team_uids` is removed; the verifier refuses caller assertions that list teams

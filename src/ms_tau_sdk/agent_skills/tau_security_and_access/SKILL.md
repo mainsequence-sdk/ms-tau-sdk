@@ -178,14 +178,14 @@ What makes it safe:
 
 A delegated read returns anything the person can view in the Agent's Environment: what they
 created and what others shared with them, directly or through a team. This holds for Secrets and
-other shared resources. Ordinary Teams use explicit membership: the creator is added once and
-can be removed; current Organization admins are protected writer members. Removing the admin
-role keeps membership and writer access but ends protection. Only Organization admins manage
-membership, and managing a workload that created a Team does not grant Team control. A Team's
-members still receive the resources shared with it. The Full directory remains unchanged.
-See the SDK Security and access guide's **Teams and membership** section for platform rollout.
-The platform enforces sharing; which of those objects a tool uses is part of
-the tool's design. For Secrets, the naming convention states that design:
+other shared resources. A team's members receive what is shared with it, and `in_teams()` answers
+membership. Who can see and manage a team is decided separately, by the `viewer`,
+`membership_manager`, `editor` and `owner` policies on it: any person can create a team and
+becomes its owner and first member, members can see the team and leave it, and Organization admins
+manage every team from their role, without being members. No membership is protected. See the SDK
+Security and access guide's **Teams and membership** section. The platform enforces sharing;
+which of those objects a tool uses is part of the tool's design. For Secrets, the naming
+convention states that design:
 
 - **A personal credential:** a name tied to the person, such as `QUOTES_API_KEY__<person uid>`.
   The person decides whether to share it.
@@ -220,7 +220,9 @@ if person is None or REPORTS_TEAM_UID not in await person.in_teams([REPORTS_TEAM
 ```
 
 - `await in_teams(team_uids, *, max_age_seconds=None)` returns the subset of `team_uids` the
-  person is an active member of, as a `frozenset`. Unknown and inactive teams are left out.
+  person is an active member of, as a `frozenset`. Unknown and inactive teams are left out, and so
+  is a team the person only manages: managing a team, also as an Organization admin, does not make
+  anyone a member.
 - On the turn's requester it answers only while that person is the verified caller of the request
   the turn runs in, such as a chat or A2A Message they sent. A turn with no such request raises
   `TauSDKError`: a Task attempt the platform dispatches, a turn that resumes a caller delivery, or
