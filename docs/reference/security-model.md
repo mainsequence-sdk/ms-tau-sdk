@@ -37,12 +37,10 @@ for people. Check your installed SDK before relying on these features.
   Organization admins.
 - **Who holds them.** Whoever creates an Agent holds `owner`. A repository workflow creates an Agent
   with no owner; Organization admins hold every action on their Organization's Agents and give the
-  first policies. Existing shares are kept: a share for view became `viewer` and a share for edit
-  `editor`, including a share that was given on the Agent's release.
+  first policies.
 - **Owners give and remove policies** for people, Teams and workloads through
-  `/api/v1/agents/<uid>/access/`; the view and edit sharing routes are gone. Anyone can remove their
-  own policy, `access/me/` answers what you may do with an Agent, and editors and owners see who
-  holds which policy.
+  `/api/v1/agents/<uid>/access/`. Anyone can remove their own policy, `access/me/` answers what you
+  may do with an Agent, and editors and owners see who holds which policy.
 - **A workload needs its own policy to send an Agent work.** Another Agent or application that sends
   it messages or Tasks without a person's delegation needs a policy on it: its workflow file names
   the Agent under `access.agents`, usually with `policy: user`, or a person who manages that
@@ -139,17 +137,16 @@ decided separately:
   deciding who manages it). Every member can see the Team and its members, and leave it.
 
 Any person can create a Team and becomes its owner and first member. Organization admins manage
-every Team from their role, without being members. No membership is protected: an admin can be
-removed from a Team like anyone else, and losing the admin role ends that authority at once.
+every Team from their role without being members, and that authority ends at once when they lose
+the admin role.
 
 Managing a Team does not make anyone a member, so `in_teams()` does not say who manages it: an
 owner, a membership manager or an Organization admin who is not a member is not in its answer. The
-built-in full-directory Team stays computed and read-only, and `in_teams()` leaves it out.
+built-in full-directory Team is computed and read-only, and `in_teams()` leaves it out.
 
-This is platform behavior: it adds no SDK method, `in_teams()` is unchanged, and existing
-memberships are kept. When access through a Team is missing, ask someone who manages the Team to
-check that it is active and lists the person or workload. Platform operators retain their separate
-operational access.
+These are platform rules, and the SDK adds no method for them. When access through a Team is
+missing, ask someone who manages the Team to check that it is active and lists the person or
+workload. Platform operators retain their separate operational access.
 
 ## Acting for the person (`acts_for_requester`)
 
@@ -161,8 +158,8 @@ tools identify the person with `current_requester()`. This authority is separate
 own grants. See the [public API](./public-api.md#current_requester-and-platform_client).
 
 - A delegated call uses the requester's ordinary permissions, including administrative ones when
-  the requester is an Organization admin. Read access does not grant edit, run, sharing, or
-  deletion rights.
+  the requester is an Organization admin. Each operation needs its own action: one that reads an
+  object does not let the call change, run or delete it, or decide who has access.
 - It stays in the Agent's Environment.
 - It lasts at most 24 hours after the request, and only while the turn or Task serving it runs.
 - Delegating to another Agent passes the person on only when the delegating work serves that
@@ -252,8 +249,7 @@ Organization admin can accept that risk by enabling requester access.
   who has access) and `owner` (also decide who has access). Whoever creates a Secret becomes its
   owner, and Organization admins hold every policy on their Organization's Secrets from their
   role. Owners give and remove policies through `/api/v1/secrets/<uid>/access/`, and anyone can
-  remove their own; no policy is protected, so an owner can remove the creator's. Existing shares
-  are kept: a share for view became `value_reader`, a share for edit `editor`.
+  remove their own.
 - **Reading a value needs a policy that includes it.** A hosted Agent reads a value its workload
   holds `value_reader`, `editor` or `owner` on and, in a delegated call, a value the person may
   read. With only `reader`, `GET /api/v1/secrets/<uid>/` answers `403` with `required_action`
@@ -270,9 +266,13 @@ Organization admin can accept that risk by enabling requester access.
   also attach a policy to the workload, and so can whoever manages the workload, for a policy they
   hold. The declaration works when the person behind the push can do everything that policy allows
   on the Secret.
-- **Whoever can change a workload's code can reach the Secrets granted to it.** An Agent that can
-  edit a workload's repository can make that workload reveal those values in a log, an output or a
-  response. Keep a Secret away from every workload an Agent can edit.
+- **Whoever can change what a workload runs can reach the Secrets given to it.** `editor` and
+  `owner` on a workload's repository, branch or Job, held directly, through a Team or passed down
+  from a Project, let their holder change the code or image the workload runs: a repository deploy
+  key pushes code, and a branch's base image and a Job's image and arguments can be changed. An
+  Agent that holds one of these policies can make that workload reveal those values in a log, an
+  output or a response. Keep a Secret away from every workload whose repository, branch or Job an
+  Agent holds `editor` or `owner` on.
 
 ## Model providers
 
@@ -281,7 +281,7 @@ Organization admin can accept that risk by enabling requester access.
   revoke a credential, or change or delete an endpoint, and see who has access) and `owner` (also
   decide who has access). The credential's person and the endpoint's creator hold `owner`, and
   Organization admins hold every action on their Organization's records.
-  [Named providers and sharing](../guides/project-configuration.md#named-providers-and-sharing)
+  [Named providers and policies](../guides/project-configuration.md#named-providers-and-policies)
   explains selection and how policies are given.
 - **A session uses what its owner may use.** The platform checks the credential or endpoint a
   session uses against the session owner, never the Agent's workload, and for a delegated child
@@ -340,9 +340,9 @@ Local mode signs in with your own Main Sequence login (`mainsequence login`) or 
 The Agent then acts as you: its tools and extensions can do anything you can do on the platform,
 including reading the Secret values you can read. For an Organization admin, that includes
 receiving and using any member's configured model provider without a policy on it; see
-[named providers and sharing](../guides/project-configuration.md#named-providers-and-sharing). The hosted rules above, such as no access
-beyond the Agent's grants, do not apply to your own login. Local mode refuses to start
-in a process that carries the platform's hosting settings. See
+[named providers and policies](../guides/project-configuration.md#named-providers-and-policies).
+The hosted rules above, such as no access beyond the Agent's grants, do not apply to your own
+login. Local mode refuses to start in a process that carries the platform's hosting settings. See
 [authenticated local development](./settings.md#authenticated-local-development).
 
 ## Calling other applications
@@ -391,7 +391,8 @@ for a delegated call, the person as the requester.
   acting for the requester, and tell people what that means.
 - Never ask for a Secret value in chat. Ask the person to create the Secret, and declare it under
   `access.secrets` on the workload that uses it.
-- Keep Secrets away from workloads the Agent can edit.
+- Keep Secrets away from workloads whose repository, branch or Job the Agent holds `editor` or
+  `owner` on.
 - In an application that serves people, authorize against the verified requester when the call
   carries one, and against the caller otherwise.
 - Do not retry a refused delegated call as the Agent.

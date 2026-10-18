@@ -130,7 +130,7 @@ Local mode defaults to `127.0.0.1:8787`. Explicitly binding another interface ex
 that acts with the authenticated user's live Main Sequence authority.
 
 For multiple provider accounts or Environments, follow
-[named provider selection](../guides/project-configuration.md#named-providers-and-sharing).
+[named provider selection](../guides/project-configuration.md#named-providers-and-policies).
 Before giving people policies on a deployed Agent, review the
 [Security and access guide](../reference/security-model.md#agent-policies) for what each policy
 allows, conversation privacy, the Agent's own grants, and administrator-enabled requester access.

@@ -183,8 +183,8 @@ Rules for tools that act for the requester:
   credentials itself. A tool never reads, logs, stores, or forwards them, passes a path rather than
   a URL, and never sets `Authorization` or an `X-MainSequence-*` header.
 - A delegated call uses the person's ordinary permissions, including administrative ones; any other
-  call uses the Agent's own. Each operation decides what it needs. Never infer write permission
-  from read access.
+  call uses the Agent's own. Each operation decides what it needs: never infer that a call may
+  change an object because it may read it.
 - Return to the model only business results, such as rows, numbers, and names. Never return the
   response object, its headers, a token, a proof, or a raw error body.
 - Keep nothing for another turn or another person. The delegation ends with the turn, and a task
@@ -206,8 +206,8 @@ separate authority. Prompt injection can cause unintended changes, sharing, or d
 person's permissions, and completed writes can outlast the delegation. Only Organization admins
 enable this authority.
 
-For a complete example, a tool that uses a person's Secret without exposing it, and how sharing
-decides what a delegated call can reach, use `tau_security_and_access`.
+For a complete example, a tool that uses a person's Secret without exposing it, and how policies
+decide what a delegated call can reach, use `tau_security_and_access`.
 
 ## Validation
 

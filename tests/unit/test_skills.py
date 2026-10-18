@@ -51,7 +51,7 @@ def test_security_skill_teaches_delegated_tools_and_secrets() -> None:
         "Never paste the key into this chat",
         "No tool takes a Secret value or a Secret name from the model",
         "It travels in a header, never in a URL",
-        "Whoever can edit a Secret decides its value",
+        "Whoever holds `editor` or `owner` on a Secret sets its value",
         "That is a choice of the tool, not a platform rule",
         "it cannot call the platform as that person",
     )
