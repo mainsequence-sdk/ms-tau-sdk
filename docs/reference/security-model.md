@@ -345,6 +345,10 @@ The hosted rules above, such as no access beyond the Agent's grants, do not appl
 login. Local mode refuses to start in a process that carries the platform's hosting settings. See
 [authenticated local development](./settings.md#authenticated-local-development).
 
+In local mode the token that `platform_client().call_release()` obtains for an application
+belongs to your login: it stops working once you log out or that login session is revoked,
+even before it expires.
+
 ## Calling other applications
 
 `platform_client().call_release()` lets a project tool call another platform application. The
