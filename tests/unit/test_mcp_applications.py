@@ -1076,7 +1076,7 @@ async def test_readiness_wait_cancels_without_an_mcp_call_or_fallback_access(
 @pytest.mark.parametrize(
     ("answer", "failure"),
     [
-        (BackendError("not shared", status_code=403), "not_available"),
+        (BackendError("refused", status_code=403), "not_available"),
         (BackendError("not found", status_code=404), "not_available"),
         (
             BackendError("ended", status_code=403, detail={"code": "requester_binding_invalid"}),

@@ -870,7 +870,7 @@ class MainSequenceClient:
         custom_id: str | None = None,
         organization_environment_uid: str | None = None,
     ) -> ProviderExecutionEvidence:
-        """Hydrate an owned or shared selection using the backend's access checks."""
+        """Hydrate a selection the user's policies allow, using the backend's access checks."""
         selection: dict[str, str] = {"provider": provider, "model": model}
         if thinking_level:
             selection["thinking_level"] = thinking_level

@@ -1313,7 +1313,7 @@ async def test_an_ended_binding_raises_a_typed_error_and_is_never_retried_as_the
 
 
 async def test_another_refusal_is_the_answer_of_the_platform_or_application(tmp_path):
-    forbidden = httpx.Response(403, json={"code": "permission_denied", "detail": "Not shared."})
+    forbidden = httpx.Response(403, json={"code": "permission_denied", "detail": "Not allowed."})
     async with _bound_turn(tmp_path) as (platform, application, _binding, _auth):
         platform.answer("/api/v1/data-nodes/", forbidden)
         application.answers = [httpx.Response(403, json={"detail": "Not yours."})]
