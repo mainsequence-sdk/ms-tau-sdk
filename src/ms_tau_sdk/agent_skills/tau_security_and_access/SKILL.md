@@ -236,6 +236,33 @@ runtime, including local Tau, where it can be copied; removing the policy stops 
 not copies already made. To let a team run an Agent on one credential, its owner gives the team
 `user`.
 
+## Agents
+
+Policies on an Agent decide who may talk to it and manage it, held directly or through a team:
+
+- `user` talks to it and gives it Tasks, seeing only the Tasks they asked for; `viewer` also sees
+  every Task of the Agent with its requests and results; `operator` also stops any Task or
+  conversation run, other people's included; `editor` also configures it, moves it to a new runtime
+  build, deletes it, manages what its workload can reach and sees who has access; `owner` also
+  decides who has access.
+- A conversation stays its owner's: no Agent policy, `owner` included, reads another person's
+  conversation (Organization admins can read it, never change it), and only a Task's requesters
+  continue it. On an Agent that acts for its requester, a Task is visible only to its requesters
+  and Organization admins.
+- Whoever creates an Agent holds `owner`, and Organization admins hold every action on their
+  Organization's Agents. Owners give and remove the policies through
+  `/api/v1/agents/<uid>/access/`; a refused change answers `403` `missing_action` with the
+  `granting_policies` that would allow it, and an Agent the caller holds no policy on answers `404`.
+- The release an Agent runs on takes no policy of its own: `viewer` and `operator` on the Agent see
+  it, and `editor` and `owner` change it.
+
+A tool reaches Agents and their Tasks with the caller's policies: the person's in a delegated call,
+the Agent's workload's otherwise. To send another Agent work without a delegation, the workload
+needs its own policy on that Agent, declared under `access.agents` in its workflow file, usually
+`policy: user`. Calling another application with `call_release()` needs a policy on its release
+that includes calling it (`resource-releases.invoke`, which every release policy has), and the
+platform checks it again on every call.
+
 ## Checking the person's teams
 
 A delegated call already reaches exactly what the person can, including what is shared with their
@@ -303,4 +330,5 @@ Patch the extension module's `current_requester` and `platform_client` with fake
 - Secret values stay inside one call, in headers, never in results, logs, errors, URLs or caches.
 - The naming convention says whose Secrets the tool uses, and the people sharing them know it.
 - A refused delegated call is reported, never retried as the Agent.
-- The Agent's workload holds no grants it does not need, and none on people's Secrets.
+- The Agent's workload holds no grants it does not need, and none on people's Secrets; `user` is
+  enough on an Agent it only sends work to.

@@ -184,7 +184,7 @@ Rules for tools that act for the requester:
   a URL, and never sets `Authorization` or an `X-MainSequence-*` header.
 - A delegated call uses the person's ordinary permissions, including administrative ones; any other
   call uses the Agent's own. Each operation decides what it needs. Never infer write permission
-  from view access.
+  from read access.
 - Return to the model only business results, such as rows, numbers, and names. Never return the
   response object, its headers, a token, a proof, or a raw error body.
 - Keep nothing for another turn or another person. The delegation ends with the turn, and a task

@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- **The Security and access guide and the Tau security skill describe Agent policies.** The
+  platform now decides Agents, and the releases they run on, by the policies on them. The
+  [guide](docs/reference/security-model.md#agent-policies) said that sharing an Agent lets another
+  person use it, that everyone who can view an Agent reads all its Tasks, that an Agent editor stops
+  conversations and cancels Tasks, and that calling another application needs view of it. It now
+  says that `user` talks to the Agent and gives it Tasks, seeing only the Tasks they asked for,
+  `viewer` also sees every Task, `operator` also stops other people's work, `editor` also
+  configures it, moves it to a new runtime build, deletes it and manages its workload, and `owner`
+  also decides who has access; that no policy opens another person's conversation; that whoever
+  creates an Agent holds `owner`, Organization admins hold every action, and owners give policies
+  through `/api/v1/agents/<uid>/access/`; that the Agent's release follows the Agent and takes no
+  policy of its own; that a workload sends an Agent work with its own policy, declared under
+  `access.agents`, and a delegation reaches only Agents the person holds a policy on; and that
+  `call_release()` needs a policy on the application's release that includes
+  `resource-releases.invoke`. `tau_security_and_access` gains an Agents section, the public API
+  reference links `call_release()` to that rule, and troubleshooting and the quickstart no longer
+  speak of sharing an Agent. Existing shares are kept. No SDK code changes.
 - **The Security and access guide and the provider guide show workflow API `3.0.0`.** The
   platform's workflow API `3.0.0` replaces `2.3.0`: an `access` entry names the policy its workload
   gets (`policy:`) instead of `level: view` or `level: edit`, and a workflow file of any other
