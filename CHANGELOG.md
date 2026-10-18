@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.18 — 2026-10-18
 
 - **The Security and access guide and the Tau security skill describe Agent policies.** The
   platform now decides Agents, and the releases they run on, by the policies on them. The
