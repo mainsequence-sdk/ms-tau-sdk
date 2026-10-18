@@ -1,5 +1,74 @@
 # Changelog
 
+## 2.0.18 — 2026-10-18
+
+- **The Security and access guide and the Tau security skill describe Agent policies.** The
+  platform now decides Agents, and the releases they run on, by the policies on them. The
+  [guide](docs/reference/security-model.md#agent-policies) said that sharing an Agent lets another
+  person use it, that everyone who can view an Agent reads all its Tasks, that an Agent editor stops
+  conversations and cancels Tasks, and that calling another application needs view of it. It now
+  says that `user` talks to the Agent and gives it Tasks, seeing only the Tasks they asked for,
+  `viewer` also sees every Task, `operator` also stops other people's work, `editor` also
+  configures it, moves it to a new runtime build, deletes it and manages its workload, and `owner`
+  also decides who has access; that no policy opens another person's conversation; that whoever
+  creates an Agent holds `owner`, Organization admins hold every action, and owners give policies
+  through `/api/v1/agents/<uid>/access/`; that the Agent's release follows the Agent and takes no
+  policy of its own; that a workload sends an Agent work with its own policy, declared under
+  `access.agents`, and a delegation reaches only Agents the person holds a policy on; and that
+  `call_release()` needs a policy on the application's release that includes
+  `resource-releases.invoke`. `tau_security_and_access` gains an Agents section, the public API
+  reference links `call_release()` to that rule, and troubleshooting and the quickstart no longer
+  speak of sharing an Agent. Existing shares are kept. No SDK code changes.
+- **The Security and access guide and the provider guide show workflow API `3.0.0`.** The
+  platform's workflow API `3.0.0` replaces `2.3.0`: an `access` entry names the policy its workload
+  gets (`policy:`) instead of `level: view` or `level: edit`, and a workflow file of any other
+  version is refused before anything of it is applied, so a project switches its
+  `.mainsequence/workflows` files to `3.0.0` before its next push. The
+  [Security and access guide](docs/reference/security-model.md#secrets) and
+  [Named providers and sharing](docs/guides/project-configuration.md#named-providers-and-sharing)
+  said that `access.secrets` and `access.model_providers` give a policy for a level. They now say
+  that the entry names the policy, such as `policy: value_reader` for a Secret's current value or
+  `policy: user` for a provider, and requester access is declared in a `3.0.0` file. No SDK code
+  changes.
+- **The provider guide, the Security and access guide and the Tau security skill describe
+  model-provider policies.** The platform now decides model-provider credentials and custom
+  endpoints by the policies on them.
+  [Named providers and sharing](docs/guides/project-configuration.md#named-providers-and-sharing)
+  said that people share a configured provider and that Organization admins need no share. It now
+  says that on a credential `user` selects and receives it, including in local Tau, `editor` also
+  refreshes, reconnects and revokes it and sees who has access, and `owner` also decides who has
+  access; that on a custom endpoint `user` sends requests through it and `editor` also changes and
+  deletes it; that the credential's person and an endpoint's creator hold `owner`; that a session
+  counts its owner's policies, never the Agent's workload's; that owners give policies in Command
+  Center or through the record's `access/` routes, and `access.model_providers` gives a workload
+  `user` for `level: view` and `editor` for `level: edit`; and that a refused change answers `403`
+  `missing_action`. The disclosure now goes with giving `user`: the holder can copy the credential,
+  and removing the policy does not recall copies. The
+  [Security and access guide](docs/reference/security-model.md#model-providers) and
+  `tau_security_and_access` gain a Model providers section, and the settings and troubleshooting
+  pages no longer speak of shares. Selection rules and existing shares are kept. No SDK code
+  changes.
+- **The Security and access guide and the Tau security skill describe Secret policies.** The
+  platform now decides Secrets by the policies on them. The
+  [guide](docs/reference/security-model.md#secrets) and `tau_security_and_access` said that a
+  Secret value follows view access, that its creator cannot be removed, and that `can-view/` and
+  `can-edit/` list who has access. They now say that `reader` sees a Secret without its value,
+  `value_reader` reads the current value, `editor` also reads earlier values, sets a new value,
+  deletes it and sees who has access, and `owner` also decides who has access; that the creator
+  becomes its owner and no policy is protected; that `access.secrets` gives a workload
+  `value_reader` for `level: view` and `editor` for `level: edit`; and that
+  `GET /api/v1/secrets/<uid>/access/` and `access/me/` replace `can-view/` and `can-edit/`.
+  Existing shares are kept. No SDK code changes.
+- **The Tau security skill describes team policies.** The platform now decides who can see and
+  manage a team by the policies on it. `tau_security_and_access` said that Organization admins are
+  protected writer members of every team and the only people who manage membership. It now says
+  that any person creates a team and becomes its owner and first member, that the `viewer`,
+  `membership_manager`, `editor` and `owner` policies decide who can see and manage it, and that
+  Organization admins manage every team from their role, with no membership protected. Membership
+  still decides who receives what is shared with a team and what `in_teams()` answers, and a team
+  the person only manages is not in that answer. `in_teams()` is unchanged; the
+  [Security and access guide](docs/reference/security-model.md#teams-and-membership) says the same.
+
 ## 2.0.17 — 2026-10-15
 
 - **`team_uids` is removed; the verifier refuses caller assertions that list teams

@@ -111,10 +111,10 @@ export TAU_LOCAL_ORGANIZATION_ENVIRONMENT_UID="<your-environment-uid>"
 Replace the Environment placeholder before running the commands. Both settings are optional.
 Without an Environment, the platform uses an accessible active Environment or the sole accessible
 one; if neither is unambiguous, select one explicitly. Without a credential name, a new session
-prefers your original owned credential, then the first shared record; for an Organization admin,
-the first record anyone added in that Environment. An explicit name selects your own record of
-that name first; otherwise it must match exactly one accessible record in that Environment. Custom endpoints keep their provider identifier
-and do not use `custom_id`.
+prefers your original owned credential, then the oldest record you hold a policy on; for an
+Organization admin, the first record anyone added in that Environment. An explicit name selects
+your own record of that name first; otherwise it must match exactly one accessible record in that
+Environment. Custom endpoints keep their provider identifier and do not use `custom_id`.
 
 The session records its resolved credential and Environment. Resume and refresh keep that selection;
 changing an idle session's model or configured provider uses the session-model operation. A revoked
@@ -122,12 +122,48 @@ or unavailable selection fails rather than silently switching credentials. Check
 owner, and Environment before use. See the [settings reference](../reference/settings.md#authenticated-local-development)
 and [provider troubleshooting](../reference/troubleshooting.md#local-provider-hydration-is-rejected).
 
-Sharing a configured provider lets recipients receive and copy its credentials in their own
-runtime, including local Tau. Only share with people and workload operators you trust. Their usage
-counts against the provider quota or billing associated with those credentials. Removing access
-stops future credential retrieval; credentials already received may work until they expire or are
-revoked at the provider. Organization admins don't need a share: they can receive and use the
-credentials of any configured provider in the Organization, and their usage counts against it
-too. An admin with none of their own for a provider gets the first one added in that Environment. Never include keys or tokens in model-visible messages, logs, or ordinary
-metadata responses. The [Security and access guide](../reference/security-model.md#what-the-agents-code-can-reach)
+Policies on each record decide who may use and manage it. A policy can be held directly or through
+a Team:
+
+- **A credential** (a person's sign-in to a built-in provider, named by its `custom_id`): `user`
+  selects it and receives it in sessions and workloads, including local Tau; `editor` also refreshes
+  it, signs in to the provider again to reconnect it, revokes it, and sees who has access; `owner`
+  also decides who has access. The credential's person holds `owner`.
+- **A custom endpoint** (an Environment's own inference endpoint and models): `user` sends requests
+  through it and its models; `editor` also changes its endpoint, authentication and models, deletes
+  it, and sees who has access; `owner` also decides who has access. Its creator holds `owner`.
+
+Organization admins hold every action on their Organization's records. Existing shares are kept: a
+share for view became `user` and a share for edit `editor`.
+
+In a session, the platform checks these policies for the session owner, never for the Agent's
+workload: local Tau uses the records you may use, and a person's session on a hosted Agent uses the
+records that person may use. A policy given only to the Agent's workload does not reach people's
+sessions; to let several people run an Agent on one record, its owner gives `user` to them or to a
+Team they belong to.
+
+Owners give and remove these policies in Command Center, in the provider settings' Access panel, or
+through `/api/v1/model-provider-credentials/<uid>/access/` and
+`/api/v1/custom-model-providers/<uid>/access/`; there is no separate share action. Anyone can remove
+their own policy, whoever manages a workload can give it a policy they hold, `access/me/` answers
+what you may do with a record, and editors and owners see who holds which policy. A workflow file's
+`access.model_providers` entry gives its workload the policy it names, usually `policy: user`, and
+works when the person behind the push can do everything that policy allows.
+
+A refused change answers `403` with the code `missing_action`, the `required_action` (for example
+`model-provider-credentials.revoke` when you hold only `user`) and the `granting_policies` that
+include it: ask an owner for one of them, or ask an editor to make the change. A record you cannot
+see answers `404`.
+
+Giving `user` or more on a credential or custom endpoint lets the holder receive and copy its
+credentials in their own runtime, including local Tau. Only give it to people and workload
+operators you trust. Their usage counts against the provider quota or billing associated with those
+credentials. Removing a policy stops future credential retrieval; credentials already received may
+work until they expire or are revoked at the provider. Organization admins need no policy: they can
+receive and use the credentials of any configured provider in the Organization, and their usage
+counts against it too. An admin with none of their own for a provider gets the first one added in
+that Environment. Never include keys or tokens in model-visible messages, logs, or ordinary
+metadata responses. The [Security and access guide](../reference/security-model.md#model-providers)
+summarizes these rules, and
+[what the Agent's code can reach](../reference/security-model.md#what-the-agents-code-can-reach)
 explains why trusted runtime code can reach delivered provider credentials.

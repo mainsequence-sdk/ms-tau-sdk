@@ -163,8 +163,9 @@ What makes it safe:
 
 - No tool takes a Secret value or a Secret name from the model. The name is built from
   `current_requester().uid`, so prompt injection cannot point the tool at another Secret.
-- `delegation="required"` reads the Secret as the person. The platform returns it only if the
-  person can view it; the name is a lookup key, not the protection.
+- `delegation="required"` reads the Secret as the person. The platform returns the value only if
+  the person holds `value_reader`, `editor` or `owner` on it; the name is a lookup key, not the
+  protection.
 - The value exists only inside one call. It never goes into the result, `details`, a log, an
   exception message, a file or a cache for the next turn. It travels in a header, never in a URL,
   because URLs reach logs. Errors from the outside call are caught, and the provider's raw body is
@@ -178,19 +179,19 @@ What makes it safe:
 
 A delegated read returns anything the person can view in the Agent's Environment: what they
 created and what others shared with them, directly or through a team. This holds for Secrets and
-other shared resources. Ordinary Teams use explicit membership: the creator is added once and
-can be removed; current Organization admins are protected writer members. Removing the admin
-role keeps membership and writer access but ends protection. Only Organization admins manage
-membership, and managing a workload that created a Team does not grant Team control. A Team's
-members still receive the resources shared with it. The Full directory remains unchanged.
-See the SDK Security and access guide's **Teams and membership** section for platform rollout.
-The platform enforces sharing; which of those objects a tool uses is part of
-the tool's design. For Secrets, the naming convention states that design:
+other shared resources. A team's members receive what is shared with it, and `in_teams()` answers
+membership. Who can see and manage a team is decided separately, by the `viewer`,
+`membership_manager`, `editor` and `owner` policies on it: any person can create a team and
+becomes its owner and first member, members can see the team and leave it, and Organization admins
+manage every team from their role, without being members. No membership is protected. See the SDK
+Security and access guide's **Teams and membership** section. The platform enforces sharing;
+which of those objects a tool uses is part of the tool's design. For Secrets, the naming
+convention states that design:
 
 - **A personal credential:** a name tied to the person, such as `QUOTES_API_KEY__<person uid>`.
   The person decides whether to share it.
-- **A team credential:** a name the team agrees on, shared with the team for view. The tool reads
-  it for any member.
+- **A team credential:** a name the team agrees on, with `value_reader` attached to the team. The
+  tool reads it for any member.
 - **Someone else's Secret shared with the person:** valid whenever the tool is meant to use it.
 
 Whoever can edit a Secret decides its value, so the tool uses whatever value they set. Granting or
@@ -199,13 +200,68 @@ decision people make through sharing, not one the platform makes for them.
 
 How sharing works:
 
-- The creator of a Secret can always view and edit it, and cannot be removed from it. People who
-  can edit a Secret can share it, for view or for edit, with people and teams.
-- Most people can share only within the teams they belong to; Organization admins can share
-  across their Organization.
-- `GET /api/v1/secrets/<uid>/can-view/` and `can-edit/` list the people and teams with access. A
-  tool can use them when its design needs to, for example to refuse a team key where it expects a
-  personal one. That is a choice of the tool, not a platform rule.
+- Policies on a Secret decide access: `reader` sees that it exists and its name, never its value;
+  `value_reader` also reads the current value; `editor` also reads earlier values, sets a new value,
+  deletes it and sees who has access; `owner` also decides who has access. The creator becomes its
+  owner, and Organization admins hold every policy on their Organization's Secrets from their role.
+- Owners attach and detach these policies for people, teams and workloads; whoever manages a
+  workload can also give it a policy they hold, and anyone can remove their own. No policy is
+  protected: an owner can remove the creator's. Nobody gives a policy with more than they hold, and
+  people other than Organization admins give access only to people who share an active team with
+  them, to teams they belong to and to workloads they can view.
+- `GET /api/v1/secrets/<uid>/access/` lists who holds which policy, for editors and owners, and
+  `GET /api/v1/secrets/<uid>/access/me/` answers what the caller may do with it. A tool can use
+  them when its design needs to, for example to refuse a team key where it expects a personal one.
+  That is a choice of the tool, not a platform rule.
+
+## Model providers
+
+The model a session runs on uses a provider credential or custom endpoint that the session owner
+may use; a delegated child session uses its parent's owner. A policy that only the Agent's workload
+holds does not count in a person's session. Policies on the record decide who may use it, held
+directly or through a team:
+
+- `user` uses it: a credential is selected and delivered to sessions and workloads, including local
+  Tau, and a custom endpoint receives their requests.
+- `editor` also refreshes, reconnects or revokes a credential, or changes or deletes an endpoint,
+  and sees who has access; `owner` also decides who has access.
+- The credential's person and the endpoint's creator hold `owner`, and Organization admins hold
+  every action on their Organization's records. Owners give and remove the policies in Command
+  Center's provider settings or through `/api/v1/model-provider-credentials/<uid>/access/` and
+  `/api/v1/custom-model-providers/<uid>/access/`; a refused change answers `403` `missing_action`
+  with the `granting_policies` that would allow it.
+
+Holding `user` delivers the credential, or the endpoint's stored authentication, to the holder's own
+runtime, including local Tau, where it can be copied; removing the policy stops later deliveries,
+not copies already made. To let a team run an Agent on one credential, its owner gives the team
+`user`.
+
+## Agents
+
+Policies on an Agent decide who may talk to it and manage it, held directly or through a team:
+
+- `user` talks to it and gives it Tasks, seeing only the Tasks they asked for; `viewer` also sees
+  every Task of the Agent with its requests and results; `operator` also stops any Task or
+  conversation run, other people's included; `editor` also configures it, moves it to a new runtime
+  build, deletes it, manages what its workload can reach and sees who has access; `owner` also
+  decides who has access.
+- A conversation stays its owner's: no Agent policy, `owner` included, reads another person's
+  conversation (Organization admins can read it, never change it), and only a Task's requesters
+  continue it. On an Agent that acts for its requester, a Task is visible only to its requesters
+  and Organization admins.
+- Whoever creates an Agent holds `owner`, and Organization admins hold every action on their
+  Organization's Agents. Owners give and remove the policies through
+  `/api/v1/agents/<uid>/access/`; a refused change answers `403` `missing_action` with the
+  `granting_policies` that would allow it, and an Agent the caller holds no policy on answers `404`.
+- The release an Agent runs on takes no policy of its own: `viewer` and `operator` on the Agent see
+  it, and `editor` and `owner` change it.
+
+A tool reaches Agents and their Tasks with the caller's policies: the person's in a delegated call,
+the Agent's workload's otherwise. To send another Agent work without a delegation, the workload
+needs its own policy on that Agent, declared under `access.agents` in its workflow file, usually
+`policy: user`. Calling another application with `call_release()` needs a policy on its release
+that includes calling it (`resource-releases.invoke`, which every release policy has), and the
+platform checks it again on every call.
 
 ## Checking the person's teams
 
@@ -220,7 +276,9 @@ if person is None or REPORTS_TEAM_UID not in await person.in_teams([REPORTS_TEAM
 ```
 
 - `await in_teams(team_uids, *, max_age_seconds=None)` returns the subset of `team_uids` the
-  person is an active member of, as a `frozenset`. Unknown and inactive teams are left out.
+  person is an active member of, as a `frozenset`. Unknown and inactive teams are left out, and so
+  is a team the person only manages: managing a team, also as an Organization admin, does not make
+  anyone a member.
 - On the turn's requester it answers only while that person is the verified caller of the request
   the turn runs in, such as a chat or A2A Message they sent. A turn with no such request raises
   `TauSDKError`: a Task attempt the platform dispatches, a turn that resumes a caller delivery, or
@@ -272,4 +330,5 @@ Patch the extension module's `current_requester` and `platform_client` with fake
 - Secret values stay inside one call, in headers, never in results, logs, errors, URLs or caches.
 - The naming convention says whose Secrets the tool uses, and the people sharing them know it.
 - A refused delegated call is reported, never retried as the Agent.
-- The Agent's workload holds no grants it does not need, and none on people's Secrets.
+- The Agent's workload holds no grants it does not need, and none on people's Secrets; `user` is
+  enough on an Agent it only sends work to.

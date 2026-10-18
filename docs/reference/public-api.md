@@ -33,7 +33,7 @@ serve the application `create_app` returns rather than mounting it inside anothe
 install a second request-identity integration on it. See the
 [runtime contract](./runtime-contract.md#request-identity). `in_teams()` answers Team membership,
 reusing answers as [Team membership](./runtime-contract.md#team-membership) describes; it does not
-state whether the caller is a Team writer. See
+state who manages the Team. See
 [Teams and membership](./security-model.md#teams-and-membership). The caller carries no team list.
 
 ## `TauSDKSettings`
@@ -137,9 +137,11 @@ async def revenue_by_region(tool_call_id, arguments, signal=None, on_update=None
   `POST /api/v1/resource-releases/<release_uid>/resolve-runtime-access/`, sent with the same three
   headers for a delegated call and without them otherwise, then calls the application's RPC URL
   plus `path` with only `Authorization: Bearer <token>`. The application answers as the person for
-  a delegated call, and as the Agent otherwise. The client keeps the token for the turn while it is
-  valid, replaces it shortly before it expires, and replaces it once when the application answers
-  401.
+  a delegated call, and as the Agent otherwise. The platform gives access only to a caller whose
+  policy on the application's release includes calling it, and checks that again on every call; see
+  [calling other applications](./security-model.md#calling-other-applications). The client keeps
+  the token for the turn while it is valid, replaces it shortly before it expires, and replaces it
+  once when the application answers 401.
 - Both return an `httpx.Response` with the answer's status, headers and body. Its `request`
   carries no header, so neither the credential, the lease proof nor the application token travels
   with it. Redirects are not followed.

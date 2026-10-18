@@ -131,8 +131,9 @@ that acts with the authenticated user's live Main Sequence authority.
 
 For multiple provider accounts or Environments, follow
 [named provider selection](../guides/project-configuration.md#named-providers-and-sharing).
-Before sharing a deployed Agent, review the [Security and access guide](../reference/security-model.md)
-for conversation privacy, the Agent's own grants, and administrator-enabled requester access.
+Before giving people policies on a deployed Agent, review the
+[Security and access guide](../reference/security-model.md#agent-policies) for what each policy
+allows, conversation privacy, the Agent's own grants, and administrator-enabled requester access.
 
 ## Customize Tau
 

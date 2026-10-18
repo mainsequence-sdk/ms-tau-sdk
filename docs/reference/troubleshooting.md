@@ -100,7 +100,7 @@ For a refused call, check these conditions:
 | Symptom | Check and recovery |
 | --- | --- |
 | Agent is not enabled | Ask an Organization admin to enable `acts_for_requester`; a non-admin workflow push that would turn it on is refused with `declared_access_not_granted`; once a declaration has turned it on, later pushes of it keep it on. A bot's push, such as a GitHub Actions release job committing the next version, keeps the authority of the admin whose push it directly follows only when the workflow file is unchanged; otherwise an admin pushes the change. Until then the platform names nobody, and the Agent's calls are its own. |
-| Access worked earlier | Check that the person is active and still has access to the Agent, Environment, and target resource. A finished turn or request older than 24 hours cannot reuse its delegation; start a new authorized request. |
+| Access worked earlier | Check that the person is active, still holds a policy on the Agent and on every Agent that passed the work on, and still has access to the Environment and target resource. A finished turn or request older than 24 hours cannot reuse its delegation; start a new authorized request. |
 | A Task was continued by another person | The Task no longer serves one person. Start separate work for the person whose access is needed. |
 | A `runtime_lease_*` refusal | The running work no longer has valid execution ownership. Inspect its status and let normal recovery finish; do not reuse proofs or force a retry with old credentials. |
 | The operation refuses the person | The person lacks the permission on that resource. A delegated call uses the person's ordinary permissions, exactly as their own request would. |
@@ -113,9 +113,13 @@ permissions and [availability](./security-model.md#availability) for the platfor
 ## An application refuses the Agent's own calls
 
 A turn that serves nobody calls a declared application with the Agent's own token. Declaring an
-application grants no access: the Agent's workload needs its own grants on the application's
-release and Environment, given in the workflow's `access` declaration or by a person who manages
-them. The application itself decides what each call may do.
+application grants no access. The Agent's workload needs its own policy that lets it call the
+application's release, in the Agent's Environment: `viewer`, `user`, `editor` or `owner` on the
+release, or a policy on its branch that passes one down, such as `reader`. The workflow's `access`
+declaration gives it, or a person who manages the workload does. The application itself decides
+what each call may do. When the workload loses that policy, its calls answer `403` within at most
+60 seconds, also with a token it already holds, and are admitted again once the policy is back. See
+[calling other applications](./security-model.md#calling-other-applications).
 
 ## A platform MCP tool call times out
 
@@ -157,16 +161,24 @@ same `failure`, `status` and `timeout_seconds`, with the application, tool and e
 ## Conversation or Task access is denied
 
 A `404` can mean that a conversation or Task is not visible to the caller; it does not prove it was
-deleted. Check the selected Environment, access to the Agent, and the
+deleted. Check the selected Environment, the caller's policy on the Agent, and the
 [conversation and Task permission matrix](./security-model.md#conversation-and-task-permissions).
-Sharing the Agent does not share its conversation histories. Tasks of requester-enabled Agents are
-visible only to their requesters and Organization admins.
+No Agent policy opens another person's conversation. A holder of `user` sees only the Tasks they
+asked for, and Tasks of requester-enabled Agents are visible only to their requesters and
+Organization admins.
 
-For a visible Task, `agent_task_cancel_forbidden` means the caller is neither a requester nor an
-Agent editor. `agent_task_continue_forbidden` means the caller is not a requester; being an
-Organization admin does not override that rule. Ask the requester to continue the Task. Runtime
-chat and A2A routes also apply their session-owner check, so platform cancellation permission does
-not itself grant direct runtime access.
+For a visible Task, `agent_task_cancel_forbidden` means the caller is neither a requester nor a
+holder of `operator`, `editor` or `owner` on the Agent. `agent_task_continue_forbidden` means the
+caller is not a requester; being an Organization admin does not override that rule. Ask the
+requester to continue the Task. Runtime chat and A2A routes also apply their session-owner check,
+so platform cancellation permission does not itself grant direct runtime access.
+
+A change to the Agent that your policies do not allow, such as editing its configuration with
+`operator`, answers `403` `missing_action` with the `required_action` (here `agents.update`) and
+the `granting_policies` that include it: ask an owner for one of them, or ask an editor to make the
+change. Giving a policy on the Agent's release answers `400` `sharing_managed_by_owner`; give it on
+the Agent. An Agent's own runtime needs no policy on its own Agent to record the Tasks it is sent,
+so do not give its workload one for that. See [Agent policies](./security-model.md#agent-policies).
 
 ## Local provider hydration is rejected
 
@@ -180,13 +192,19 @@ Check the signed-in user, selected provider/model, configured credential, and En
   Environment is accessible. Choose a uniquely named record in the intended Environment; ask
   its owner to resolve duplicate names when necessary.
 - `Selected configured provider is not available in this Environment.` means that selection is
-  missing or inaccessible. Check its name, Environment, and sharing with the signed-in user.
+  missing or inaccessible. Check its name and Environment, and that the signed-in user holds a
+  policy on it, directly or through a Team; an Organization admin needs none.
 - `model_provider_credential_unavailable` means the selected credential is unusable. Check its
-  status and ask its owner to restore or replace it, then explicitly select an available record.
+  status and ask someone who holds `editor` or `owner` on it, such as its person, to reconnect or
+  replace it, then explicitly select an available record.
   When the error detail names an Environment, that is the Environment whose credential was
   selected. Without `TAU_LOCAL_ORGANIZATION_ENVIRONMENT_UID`, it is your active Environment,
   which can change between runs. Set that variable to pin the intended Environment, or reconnect
   the provider in the named one.
+- Reconnecting or revoking a credential on which you hold only `user` answers `403`
+  `missing_action` with `required_action` `model-provider-credentials.update` or
+  `model-provider-credentials.revoke` and the `granting_policies` that include it. Ask an owner for
+  `editor`, or ask an editor to do it.
 - If selection is correct, check that the deployed platform supports authenticated local provider
   use and that the provider publishes the selected model.
 
