@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+- **The Security and access guide and the provider guide show workflow API `3.0.0`.** The
+  platform's workflow API `3.0.0` replaces `2.3.0`: an `access` entry names the policy its workload
+  gets (`policy:`) instead of `level: view` or `level: edit`, and a workflow file of any other
+  version is refused before anything of it is applied, so a project switches its
+  `.mainsequence/workflows` files to `3.0.0` before its next push. The
+  [Security and access guide](docs/reference/security-model.md#secrets) and
+  [Named providers and sharing](docs/guides/project-configuration.md#named-providers-and-sharing)
+  said that `access.secrets` and `access.model_providers` give a policy for a level. They now say
+  that the entry names the policy, such as `policy: value_reader` for a Secret's current value or
+  `policy: user` for a provider, and requester access is declared in a `3.0.0` file. No SDK code
+  changes.
 - **The provider guide, the Security and access guide and the Tau security skill describe
   model-provider policies.** The platform now decides model-provider credentials and custom
   endpoints by the policies on them.

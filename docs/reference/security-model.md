@@ -146,7 +146,7 @@ the call carries none. Applications decide the same way; see
 
 ### Only an Organization admin can turn it on
 
-In a workflow using API version `2.3.0`, add it beside `key`, `kind`, `spec`, and `access` on the
+In a workflow file (API version `3.0.0`), add it beside `key`, `kind`, `spec`, and `access` on the
 Agent's resource (keep the existing `spec`):
 
 ```yaml
@@ -222,10 +222,11 @@ Organization admin can accept that risk by enabling requester access.
   never ask for a value in chat. Do not paste one into a conversation: everything in it reaches the
   model provider and the session history.
 - **A workload that needs a value reads it when it runs.** A Job or FastAPI application declares
-  the Secret's name under `access.secrets` in its workflow file: `level: view` gives its workload
-  `value_reader` and `level: edit` gives it `editor`. A Secret's owner can also attach a policy to
-  the workload, and so can whoever manages the workload, for a policy they hold. The declaration
-  works when the person behind the push can do everything that policy allows on the Secret.
+  the Secret's name under `access.secrets` in its workflow file, with the policy its workload gets:
+  `policy: value_reader` to read the current value (`reader` gives no value). A Secret's owner can
+  also attach a policy to the workload, and so can whoever manages the workload, for a policy they
+  hold. The declaration works when the person behind the push can do everything that policy allows
+  on the Secret.
 - **Whoever can change a workload's code can reach the Secrets granted to it.** An Agent that can
   edit a workload's repository can make that workload reveal those values in a log, an output or a
   response. Keep a Secret away from every workload an Agent can edit.

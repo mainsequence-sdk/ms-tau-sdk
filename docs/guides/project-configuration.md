@@ -147,8 +147,8 @@ through `/api/v1/model-provider-credentials/<uid>/access/` and
 `/api/v1/custom-model-providers/<uid>/access/`; there is no separate share action. Anyone can remove
 their own policy, whoever manages a workload can give it a policy they hold, `access/me/` answers
 what you may do with a record, and editors and owners see who holds which policy. A workflow file's
-`access.model_providers` entry gives its workload `user` for `level: view` and `editor` for
-`level: edit`, and works when the person behind the push can do everything that policy allows.
+`access.model_providers` entry gives its workload the policy it names, usually `policy: user`, and
+works when the person behind the push can do everything that policy allows.
 
 A refused change answers `403` with the code `missing_action`, the `required_action` (for example
 `model-provider-credentials.revoke` when you hold only `user`) and the `granting_policies` that
