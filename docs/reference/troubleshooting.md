@@ -183,13 +183,19 @@ Check the signed-in user, selected provider/model, configured credential, and En
   Environment is accessible. Choose a uniquely named record in the intended Environment; ask
   its owner to resolve duplicate names when necessary.
 - `Selected configured provider is not available in this Environment.` means that selection is
-  missing or inaccessible. Check its name, Environment, and sharing with the signed-in user.
+  missing or inaccessible. Check its name and Environment, and that the signed-in user holds a
+  policy on it, directly or through a Team; an Organization admin needs none.
 - `model_provider_credential_unavailable` means the selected credential is unusable. Check its
-  status and ask its owner to restore or replace it, then explicitly select an available record.
+  status and ask someone who holds `editor` or `owner` on it, such as its person, to reconnect or
+  replace it, then explicitly select an available record.
   When the error detail names an Environment, that is the Environment whose credential was
   selected. Without `TAU_LOCAL_ORGANIZATION_ENVIRONMENT_UID`, it is your active Environment,
   which can change between runs. Set that variable to pin the intended Environment, or reconnect
   the provider in the named one.
+- Reconnecting or revoking a credential on which you hold only `user` answers `403`
+  `missing_action` with `required_action` `model-provider-credentials.update` or
+  `model-provider-credentials.revoke` and the `granting_policies` that include it. Ask an owner for
+  `editor`, or ask an editor to do it.
 - If selection is correct, check that the deployed platform supports authenticated local provider
   use and that the provider publishes the selected model.
 

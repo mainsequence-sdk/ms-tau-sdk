@@ -214,6 +214,28 @@ How sharing works:
   them when its design needs to, for example to refuse a team key where it expects a personal one.
   That is a choice of the tool, not a platform rule.
 
+## Model providers
+
+The model a session runs on uses a provider credential or custom endpoint that the session owner
+may use; a delegated child session uses its parent's owner. A policy that only the Agent's workload
+holds does not count in a person's session. Policies on the record decide who may use it, held
+directly or through a team:
+
+- `user` uses it: a credential is selected and delivered to sessions and workloads, including local
+  Tau, and a custom endpoint receives their requests.
+- `editor` also refreshes, reconnects or revokes a credential, or changes or deletes an endpoint,
+  and sees who has access; `owner` also decides who has access.
+- The credential's person and the endpoint's creator hold `owner`, and Organization admins hold
+  every action on their Organization's records. Owners give and remove the policies in Command
+  Center's provider settings or through `/api/v1/model-provider-credentials/<uid>/access/` and
+  `/api/v1/custom-model-providers/<uid>/access/`; a refused change answers `403` `missing_action`
+  with the `granting_policies` that would allow it.
+
+Holding `user` delivers the credential, or the endpoint's stored authentication, to the holder's own
+runtime, including local Tau, where it can be copied; removing the policy stops later deliveries,
+not copies already made. To let a team run an Agent on one credential, its owner gives the team
+`user`.
+
 ## Checking the person's teams
 
 A delegated call already reaches exactly what the person can, including what is shared with their

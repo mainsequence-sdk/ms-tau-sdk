@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+- **The provider guide, the Security and access guide and the Tau security skill describe
+  model-provider policies.** The platform now decides model-provider credentials and custom
+  endpoints by the policies on them.
+  [Named providers and sharing](docs/guides/project-configuration.md#named-providers-and-sharing)
+  said that people share a configured provider and that Organization admins need no share. It now
+  says that on a credential `user` selects and receives it, including in local Tau, `editor` also
+  refreshes, reconnects and revokes it and sees who has access, and `owner` also decides who has
+  access; that on a custom endpoint `user` sends requests through it and `editor` also changes and
+  deletes it; that the credential's person and an endpoint's creator hold `owner`; that a session
+  counts its owner's policies, never the Agent's workload's; that owners give policies in Command
+  Center or through the record's `access/` routes, and `access.model_providers` gives a workload
+  `user` for `level: view` and `editor` for `level: edit`; and that a refused change answers `403`
+  `missing_action`. The disclosure now goes with giving `user`: the holder can copy the credential,
+  and removing the policy does not recall copies. The
+  [Security and access guide](docs/reference/security-model.md#model-providers) and
+  `tau_security_and_access` gain a Model providers section, and the settings and troubleshooting
+  pages no longer speak of shares. Selection rules and existing shares are kept. No SDK code
+  changes.
 - **The Security and access guide and the Tau security skill describe Secret policies.** The
   platform now decides Secrets by the policies on them. The
   [guide](docs/reference/security-model.md#secrets) and `tau_security_and_access` said that a

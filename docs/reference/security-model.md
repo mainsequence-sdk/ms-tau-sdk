@@ -230,6 +230,28 @@ Organization admin can accept that risk by enabling requester access.
   edit a workload's repository can make that workload reveal those values in a log, an output or a
   response. Keep a Secret away from every workload an Agent can edit.
 
+## Model providers
+
+- **Policies on each credential and custom endpoint decide who may use and manage it:** `user`
+  (use it in sessions and workloads, including local Tau), `editor` (also refresh, reconnect or
+  revoke a credential, or change or delete an endpoint, and see who has access) and `owner` (also
+  decide who has access). The credential's person and the endpoint's creator hold `owner`, and
+  Organization admins hold every action on their Organization's records.
+  [Named providers and sharing](../guides/project-configuration.md#named-providers-and-sharing)
+  explains selection and how policies are given.
+- **A session uses what its owner may use.** The platform checks the credential or endpoint a
+  session uses against the session owner, never the Agent's workload, and for a delegated child
+  session against its parent's owner. A policy given only to an Agent's workload does not reach
+  people's sessions.
+- **`user` delivers the credential.** Its holder receives the credential, or the endpoint's stored
+  authentication, in their own runtime, including local Tau, and can copy it there. Removing the
+  policy stops future delivery; it cannot recall what was already received. Give it only to people
+  and workload operators you trust.
+- **A refusal names the policies to ask for.** A change the caller's policies do not allow answers
+  `403` `missing_action` with the `required_action`, for example
+  `model-provider-credentials.revoke`, and the `granting_policies` that include it. A record the
+  caller cannot see answers `404`.
+
 ## What reaches the model
 
 Treat file contents, command output, tool results, and application responses returned to the
@@ -267,7 +289,7 @@ as code that holds these credentials. See
 Local mode signs in with your own Main Sequence login (`mainsequence login`) or a user token pair.
 The Agent then acts as you: its tools and extensions can do anything you can do on the platform,
 including reading the Secret values you can read. For an Organization admin, that includes
-receiving and using any member's configured model provider without a share; see
+receiving and using any member's configured model provider without a policy on it; see
 [named providers and sharing](../guides/project-configuration.md#named-providers-and-sharing). The hosted rules above, such as no access
 beyond the Agent's grants, do not apply to your own login. Local mode refuses to start
 in a process that carries the platform's hosting settings. See
