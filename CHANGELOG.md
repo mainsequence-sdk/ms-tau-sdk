@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.20 — 2026-10-19
+
+- **ADR 0024 records the requirements for file attachments in chat.** The proposed
+  [ADR](docs/adrs/0024-chat-attachments-and-authorized-content-delivery.md) says that in its first
+  version a person attaches a file that an application stores, and the chat message carries a
+  reference to one version of that document. Tau reads the content from the application for the
+  person the turn serves and keeps no uploaded file. A PDF reaches the model as text from the
+  application, because the pinned tau-ai takes only text and images. The implementation will ship
+  a skill that explains how agents and applications handle attachments. Nothing is implemented
+  yet. No SDK behavior changes.
+
 ## 2.0.19 — 2026-10-19
 
 - **The Security and access guide, the provider guide and the Tau skills describe access only by
