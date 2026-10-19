@@ -1,6 +1,6 @@
 ---
 name: tau-security-and-access
-description: Build and review project tools that call the platform or other applications for the person a turn serves, including tools that use a person's Secret without exposing it, and explain how delegation and sharing decide what those tools can reach.
+description: Build and review project tools that call the platform or other applications for the person a turn serves, including tools that use a person's Secret without exposing it, and explain how delegation and policies decide what those tools can reach.
 ---
 
 # TAU Security and Access
@@ -8,7 +8,7 @@ description: Build and review project tools that call the platform or other appl
 Use this skill when a project tool under `.tau/extensions/` calls the platform or another
 platform application, uses a Secret, or must answer each person with their own data. Extension
 mechanics are in `tau_project_customization`. The full model, with the administrator setup, is in
-the SDK's Security and access guide (`docs/reference/security-model.md`). Sharing itself is in
+the SDK's Security and access guide (`docs/reference/security-model.md`). Managing policies is in
 `.agents/skills/mainsequence/platform_operations/access_control_and_sharing/SKILL.md`.
 
 ## Who a call acts as
@@ -26,7 +26,8 @@ Every call a tool makes through `platform_client()` follows one rule:
   enable it, with `acts_for_requester`), for work no person asked for, in local mode and outside a
   turn.
 - The operation or application that receives the call decides what it may do. No list says which
-  operations accept a delegation. Read access never implies edit, run, share or delete.
+  operations accept a delegation. On the platform, each operation needs its own action: reading an
+  object never lets the call change, run or delete it, or decide who has access.
 - The call stays the Agent's call, made for the person. It is not impersonation: the platform
   checks it on every call, only while the turn or Task serving the person runs, for at most 24
   hours after their request, and only in the Agent's Environment.
@@ -175,40 +176,42 @@ What makes it safe:
 - The Agent's own workload holds no grant on these Secrets, so a call without the person reaches
   none of them.
 
-## Sharing decides what a delegated call can reach
+## Policies decide what a delegated call can reach
 
-A delegated read returns anything the person can view in the Agent's Environment: what they
-created and what others shared with them, directly or through a team. This holds for Secrets and
-other shared resources. A team's members receive what is shared with it, and `in_teams()` answers
-membership. Who can see and manage a team is decided separately, by the `viewer`,
-`membership_manager`, `editor` and `owner` policies on it: any person can create a team and
-becomes its owner and first member, members can see the team and leave it, and Organization admins
-manage every team from their role, without being members. No membership is protected. See the SDK
-Security and access guide's **Teams and membership** section. The platform enforces sharing;
-which of those objects a tool uses is part of the tool's design. For Secrets, the naming
-convention states that design:
+A delegated call reaches what the person's policies allow in the Agent's Environment: the policies
+they hold directly, such as `owner` on what they created, and those given to a team they belong to.
+This holds for Secrets and every other object the platform decides by policies. A team's members
+receive the policies given to it, and `in_teams()` answers membership. Who can see and manage a
+team is decided separately, by the `viewer`, `membership_manager`, `editor` and `owner` policies on
+it: any person can create a team and becomes its owner and first member, members can see the team
+and leave it, and Organization admins manage every team from their role, without being members.
+See the SDK Security and access guide's **Teams and membership** section. The platform enforces
+the policies; which of those objects a tool uses is part of the tool's design. For Secrets, the
+naming convention states that design:
 
 - **A personal credential:** a name tied to the person, such as `QUOTES_API_KEY__<person uid>`.
-  The person decides whether to share it.
+  The person owns it and decides whether anyone else gets a policy on it.
 - **A team credential:** a name the team agrees on, with `value_reader` attached to the team. The
   tool reads it for any member.
-- **Someone else's Secret shared with the person:** valid whenever the tool is meant to use it.
+- **Someone else's Secret whose value the person may read:** valid whenever the tool is meant to
+  use it.
 
-Whoever can edit a Secret decides its value, so the tool uses whatever value they set. Granting or
-accepting edit on a Secret means trusting that person with what the tool does with it. That is a
-decision people make through sharing, not one the platform makes for them.
+Whoever holds `editor` or `owner` on a Secret sets its value, so the tool uses whatever value they
+set. Giving someone either policy on a Secret, or using a Secret whose editors or owners are other
+people, means trusting them with what the tool does with it. That is a decision people make when
+they give policies, not one the platform makes for them.
 
-How sharing works:
+How Secret policies work:
 
 - Policies on a Secret decide access: `reader` sees that it exists and its name, never its value;
   `value_reader` also reads the current value; `editor` also reads earlier values, sets a new value,
   deletes it and sees who has access; `owner` also decides who has access. The creator becomes its
   owner, and Organization admins hold every policy on their Organization's Secrets from their role.
 - Owners attach and detach these policies for people, teams and workloads; whoever manages a
-  workload can also give it a policy they hold, and anyone can remove their own. No policy is
-  protected: an owner can remove the creator's. Nobody gives a policy with more than they hold, and
-  people other than Organization admins give access only to people who share an active team with
-  them, to teams they belong to and to workloads they can view.
+  workload can also give it a policy they hold, and anyone can remove their own. Nobody gives a
+  policy with more than they hold, and people other than Organization admins give access only to
+  people who share an active team with them, to teams they belong to, and to workloads they manage
+  or whose Job or release they can see (`jobs.read` or `resource-releases.read`).
 - `GET /api/v1/secrets/<uid>/access/` lists who holds which policy, for editors and owners, and
   `GET /api/v1/secrets/<uid>/access/me/` answers what the caller may do with it. A tool can use
   them when its design needs to, for example to refuse a team key where it expects a personal one.
@@ -265,9 +268,9 @@ platform checks it again on every call.
 
 ## Checking the person's teams
 
-A delegated call already reaches exactly what the person can, including what is shared with their
-teams, so a tool rarely checks teams itself. When the tool's own policy names teams, ask the
-platform with `in_teams()`:
+A delegated call already reaches exactly what the person can, including what the policies given to
+their teams allow, so a tool rarely checks teams itself. When the tool's own policy names teams,
+ask the platform with `in_teams()`:
 
 ```python
 person = current_requester()
@@ -328,7 +331,7 @@ Patch the extension module's `current_requester` and `platform_client` with fake
 - No person's UID, Secret name or Secret value comes from tool arguments, the prompt or history.
 - No tool returns a credential or calls a platform path the model chooses.
 - Secret values stay inside one call, in headers, never in results, logs, errors, URLs or caches.
-- The naming convention says whose Secrets the tool uses, and the people sharing them know it.
+- The naming convention says whose Secrets the tool uses, and the owners of those Secrets know it.
 - A refused delegated call is reported, never retried as the Agent.
 - The Agent's workload holds no grants it does not need, and none on people's Secrets; `user` is
   enough on an Agent it only sends work to.

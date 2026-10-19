@@ -121,7 +121,7 @@ selected model provider. Provider credentials are hydrated remotely and kept out
 environment and local database. The SDK does not depend on, import, or dynamically load the
 `mainsequence` Python package, and it does not read the Main Sequence CLI's credential store.
 
-Named provider selection is described in [project configuration](../guides/project-configuration.md#named-providers-and-sharing).
+Named provider selection is described in [project configuration](../guides/project-configuration.md#named-providers-and-policies).
 When no credential name is supplied for a new session, selection prefers the user's original owned
 record, then the oldest record the user holds a policy on; for an Organization admin, the first
 record anyone added in that Environment. Existing sessions keep their selected credential and

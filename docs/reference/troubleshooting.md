@@ -211,7 +211,7 @@ Check the signed-in user, selected provider/model, configured credential, and En
 A resumed session retains its recorded selection; changing process defaults alone does not replace
 it. Change the selection on an idle session or start a new session. The SDK never falls back to an
 environment provider API key or silently swaps a revoked credential for another. See
-[named providers and sharing](../guides/project-configuration.md#named-providers-and-sharing).
+[named providers and policies](../guides/project-configuration.md#named-providers-and-policies).
 
 ## Reset or inspect local conversations
 

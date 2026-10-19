@@ -97,7 +97,7 @@ filesystem, network, environment, and credential access. Coding tools, Main Sequ
 and A2A Task-control tools are visible but cannot be executed from this project-tool workbench.
 
 
-## Named providers and sharing
+## Named providers and policies
 
 A built-in provider can have several configured credentials in an Environment. Choose a record by
 its `custom_id`, such as `openai-work`; this is a name, not a credential value. The provider name
@@ -123,7 +123,7 @@ owner, and Environment before use. See the [settings reference](../reference/set
 and [provider troubleshooting](../reference/troubleshooting.md#local-provider-hydration-is-rejected).
 
 Policies on each record decide who may use and manage it. A policy can be held directly or through
-a Team:
+a Team, and Organization admins hold every action on their Organization's records:
 
 - **A credential** (a person's sign-in to a built-in provider, named by its `custom_id`): `user`
   selects it and receives it in sessions and workloads, including local Tau; `editor` also refreshes
@@ -133,9 +133,6 @@ a Team:
   through it and its models; `editor` also changes its endpoint, authentication and models, deletes
   it, and sees who has access; `owner` also decides who has access. Its creator holds `owner`.
 
-Organization admins hold every action on their Organization's records. Existing shares are kept: a
-share for view became `user` and a share for edit `editor`.
-
 In a session, the platform checks these policies for the session owner, never for the Agent's
 workload: local Tau uses the records you may use, and a person's session on a hosted Agent uses the
 records that person may use. A policy given only to the Agent's workload does not reach people's
@@ -144,11 +141,11 @@ Team they belong to.
 
 Owners give and remove these policies in Command Center, in the provider settings' Access panel, or
 through `/api/v1/model-provider-credentials/<uid>/access/` and
-`/api/v1/custom-model-providers/<uid>/access/`; there is no separate share action. Anyone can remove
-their own policy, whoever manages a workload can give it a policy they hold, `access/me/` answers
-what you may do with a record, and editors and owners see who holds which policy. A workflow file's
-`access.model_providers` entry gives its workload the policy it names, usually `policy: user`, and
-works when the person behind the push can do everything that policy allows.
+`/api/v1/custom-model-providers/<uid>/access/`. Anyone can remove their own policy, whoever manages
+a workload can give it a policy they hold, `access/me/` answers what you may do with a record, and
+editors and owners see who holds which policy. A workflow file's `access.model_providers` entry
+gives its workload the policy it names, usually `policy: user`, and works when the person behind
+the push can do everything that policy allows.
 
 A refused change answers `403` with the code `missing_action`, the `required_action` (for example
 `model-provider-credentials.revoke` when you hold only `user`) and the `granting_policies` that

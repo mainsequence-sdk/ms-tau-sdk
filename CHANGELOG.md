@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.0.19 — 2026-10-19
+
+- **The Security and access guide, the provider guide and the Tau skills describe access only by
+  policies.** The platform decides access to every shareable object by the policies on it. The
+  [guide](docs/reference/security-model.md#secrets) and the provider guide no longer say how earlier
+  shares became policies or that no membership or policy is protected, and
+  `tau_security_and_access` no longer says that a delegated call reaches what the person can view
+  and what others shared with them. The skill now says that the call reaches what the person's
+  policies allow, held directly or through a team; that whoever holds `editor` or `owner` on a
+  Secret sets its value; and that people other than Organization admins give a workload access
+  only when they manage it or can see its Job or release. The guide says that `editor` or `owner`
+  on a workload's repository, branch or Job lets an Agent change what that workload runs, and so
+  reach its Secrets. The provider guide's section is now
+  [Named providers and policies](docs/guides/project-configuration.md#named-providers-and-policies).
+  No SDK behavior changes.
+
 ## 2.0.18 — 2026-10-18
 
 - **The Security and access guide and the Tau security skill describe Agent policies.** The
