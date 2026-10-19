@@ -55,4 +55,5 @@ def test_active_adr_index_lists_the_complete_sdk_decision_set() -> None:
         "0021-mcp-connections-on-the-persons-identity.md",
         "0022-mcp-application-tool-call-limits-and-failures.md",
         "0023-skills-and-resources-of-declared-applications.md",
+        "0024-chat-attachments-and-authorized-content-delivery.md",
     }
