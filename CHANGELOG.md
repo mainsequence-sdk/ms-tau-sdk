@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.19 — 2026-10-19
 
 - **The Security and access guide, the provider guide and the Tau skills describe access only by
   policies.** The platform decides access to every shareable object by the policies on it. The
