@@ -27,3 +27,5 @@ These records are the normative decisions for Main Sequence TAU SDK:
   (Accepted; implemented)
 - [ADR 0023: Skills and resources of declared applications](./0023-skills-and-resources-of-declared-applications.md)
   (Accepted; implemented)
+- [ADR 0024: Chat attachments and authorized content delivery](./0024-chat-attachments-and-authorized-content-delivery.md)
+  (Proposed; requirements only, not implemented)
