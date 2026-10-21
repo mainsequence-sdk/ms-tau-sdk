@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.22 — 2026-10-21
 
 - **A hosted Task's answer reaches the caller of GetTask
   ([#113](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/113)).** GetTask answered a
