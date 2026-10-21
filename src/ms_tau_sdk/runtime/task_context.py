@@ -27,8 +27,12 @@ class TaskExecutionContext:
     interruption_message: dict[str, Any] | None = None
     # The verified caller of the request that runs this attempt itself; None for an attempt the
     # platform dispatches. It supplies the teams of the person the attempt serves when that
-    # person is the caller; the platform's answer to the turn start names the person.
+    # person is the caller.
     caller: VerifiedCaller | None = None
+    # The person the attempt serves, as the platform named them for running the Task: in its
+    # answer to the runtime's own creation or continuation of the Task, or in the dispatch. None
+    # when it named nobody. The platform checks the person again on every call made for them.
+    requester_uid: str | None = None
 
     def request_interruption(
         self,

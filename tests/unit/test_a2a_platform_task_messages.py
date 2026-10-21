@@ -80,6 +80,27 @@ STATUS_MESSAGE = {
 }
 
 
+# A finalized answer as the platform's AgentTaskOutputSerializer answers it. An error answer
+# is an answer too, and reaches the caller like any other.
+ANSWER = {
+    "uid": "output-row-1",
+    "task_uid": TASK_UID,
+    "artifact_id": "answer-1",
+    "name": "answer",
+    "description": "",
+    "parts": [{"text": '{"tool":"crm_settings_get","code":"forbidden","settings":null}'}],
+    "metadata": {},
+    "extensions": [],
+    "revision": 17,
+    "finalized": True,
+    "finalized_at": "2026-10-21T10:31:57Z",
+    "created_at": "2026-10-21T10:30:44Z",
+    "updated_at": "2026-10-21T10:31:57Z",
+    "created_by_user_uid": "workload-user-1",
+}
+ANSWER_ARTIFACT = {"artifactId": "answer-1", "name": "answer", "parts": ANSWER["parts"]}
+
+
 def _a2a_message(record: dict[str, Any], role: str) -> dict[str, Any]:
     return {
         "messageId": record["message_id"],
@@ -96,14 +117,23 @@ def _a2a_message(record: dict[str, Any], role: str) -> dict[str, Any]:
 class _Platform:
     """The platform's Task API for one Task, answering in its own serializers' shapes."""
 
-    def __init__(self, *, messages: list[dict[str, Any]], status: str = "submitted") -> None:
+    def __init__(
+        self,
+        *,
+        messages: list[dict[str, Any]],
+        status: str = "submitted",
+        outputs: list[dict[str, Any]] | None = None,
+    ) -> None:
         self.messages = messages
         self.status = status
+        self.outputs = outputs or []
         self.broken_history = False
         self.requests: list[tuple[str, str, str]] = []
 
-    def _task(self, *, status: str, history_length: int = 0) -> dict[str, Any]:
-        task: dict[str, Any] = {
+    def _row(self, *, status: str, history_length: int = 0) -> dict[str, Any]:
+        """A Task as the platform's Task list answers it: counts, never output contents."""
+
+        row: dict[str, Any] = {
             "uid": TASK_UID,
             "task_id": TASK_ID,
             "context_id": SESSION_UID,
@@ -111,11 +141,23 @@ class _Platform:
             "agent_session_uid": SESSION_UID,
             "status": status,
             "status_message": STATUS_MESSAGE if status == "input_required" else None,
-            "latest_message": self.messages[-1] if status != "submitted" else self.messages[0],
-            "outputs": [],
+            "latest_message_preview": self.messages[-1]["parts"][0]["text"],
+            "output_count": len(self.outputs),
+            "finalized_output_count": sum(output["finalized"] for output in self.outputs),
         }
         if history_length:
-            task["history"] = self._tail(history_length)
+            row["history"] = self._tail(history_length)
+        return row
+
+    def _task(self, *, status: str, history_length: int = 0) -> dict[str, Any]:
+        """A Task as the platform's Task detail, snapshot and runtime answers give it."""
+
+        task: dict[str, Any] = {
+            **self._row(status=status, history_length=history_length),
+            "latest_message": self.messages[-1] if status != "submitted" else self.messages[0],
+            "outputs": self.outputs,
+        }
+        del task["latest_message_preview"], task["output_count"], task["finalized_output_count"]
         return task
 
     def _tail(self, history_length: int) -> list[dict[str, Any]]:
@@ -160,10 +202,11 @@ class _Platform:
         if path == "/api/v1/agent-tasks/" and request.method == "POST":
             return httpx.Response(201, json=self._task(status="submitted"))
         if path == "/api/v1/agent-tasks/" and request.method == "GET":
-            task = self._task(status=self.status, history_length=history_length)
-            return httpx.Response(200, json={"results": [task]})
+            row = self._row(status=self.status, history_length=history_length)
+            return httpx.Response(200, json={"results": [row]})
         if path == f"/api/v1/agent-tasks/{TASK_UID}/":
-            return httpx.Response(200, json=self._task(status=self.status))
+            task = self._task(status=self.status, history_length=history_length)
+            return httpx.Response(200, json=task)
         if path == f"/api/v1/agent-tasks/{TASK_UID}/snapshot/":
             return httpx.Response(
                 200,
@@ -348,9 +391,9 @@ async def test_a_hosted_task_send_answers_with_the_latest_messages():
 @pytest.mark.parametrize(
     ("query", "platform_query", "message_ids"),
     [
-        ("", "task_id=task-1&history_length=100", ["message-1", "message-agent-1"]),
-        ("?historyLength=1", "task_id=task-1&history_length=1", ["message-agent-1"]),
-        ("?historyLength=0", "task_id=task-1&history_length=0", None),
+        ("", "history_length=100", ["message-1", "message-agent-1"]),
+        ("?historyLength=1", "history_length=1", ["message-agent-1"]),
+        ("?historyLength=0", "history_length=0", None),
     ],
 )
 async def test_a_hosted_task_get_answers_with_the_platforms_messages(
@@ -365,7 +408,11 @@ async def test_a_hosted_task_get_answers_with_the_platforms_messages(
 
     assert response.status_code == 200, response.text
     task = response.json()["task"]
-    assert platform.requests == [("GET", "/api/v1/agent-tasks/", platform_query)]
+    # The Task list finds the Task; its detail answers it.
+    assert platform.requests == [
+        ("GET", "/api/v1/agent-tasks/", "task_id=task-1"),
+        ("GET", f"/api/v1/agent-tasks/{TASK_UID}/", platform_query),
+    ]
     if message_ids is None:
         assert "history" not in task
     else:
@@ -387,6 +434,55 @@ async def test_a_hosted_task_list_answers_with_the_platforms_messages():
     assert response.json()["tasks"][0]["history"] == [
         _a2a_message(REQUESTER, "ROLE_USER"),
         _a2a_message(RESPONDER, "ROLE_AGENT"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_hosted_task_get_answers_with_its_persisted_answer():
+    platform = _Platform(messages=[REQUESTER], status="completed", outputs=[ANSWER])
+
+    async with _hosted_tau(platform) as http:
+        response = await http.get(f"{REST_BASE}/tasks/{TASK_ID}")
+
+    assert response.status_code == 200, response.text
+    task = response.json()["task"]
+    assert task["id"] == TASK_ID
+    assert task["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert task["artifacts"] == [ANSWER_ARTIFACT]
+
+
+@pytest.mark.asyncio
+async def test_a_hosted_json_rpc_get_task_answers_with_its_persisted_answer():
+    platform = _Platform(messages=[REQUESTER], status="completed", outputs=[ANSWER])
+
+    async with _hosted_tau(platform) as http:
+        response = await http.post(
+            "/api/a2a/rpc",
+            json={"jsonrpc": "2.0", "id": 3, "method": "GetTask", "params": {"id": TASK_ID}},
+        )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["result"]["task"]["artifacts"] == [ANSWER_ARTIFACT]
+
+
+@pytest.mark.asyncio
+async def test_a_hosted_task_lookup_reads_the_complete_task():
+    platform = _Platform(messages=[REQUESTER], status="completed", outputs=[ANSWER])
+
+    async with _platform_client(platform) as client:
+        task = await client.get_task_by_protocol_id(TASK_ID)
+        snapshot = await client.get_task_snapshot_by_protocol_id(TASK_ID)
+
+    assert task.outputs == snapshot.task.outputs == [ANSWER]
+    assert task.latest_message == platform_message_to_binding(
+        REQUESTER, context_id=SESSION_UID, task_id=TASK_ID
+    )
+    # Each lookup finds the Task in the list once, then reads the Task itself.
+    assert platform.requests == [
+        ("GET", "/api/v1/agent-tasks/", "task_id=task-1"),
+        ("GET", f"/api/v1/agent-tasks/{TASK_UID}/", ""),
+        ("GET", "/api/v1/agent-tasks/", "task_id=task-1"),
+        ("GET", f"/api/v1/agent-tasks/{TASK_UID}/snapshot/", ""),
     ]
 
 

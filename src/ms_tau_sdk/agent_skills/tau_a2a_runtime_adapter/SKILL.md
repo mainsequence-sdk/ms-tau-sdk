@@ -32,7 +32,9 @@ The SDK owns:
   which the platform's own records establish, never the `X-Caller-*` headers;
 - presenting the verified caller assertion of the request that starts a chat or A2A Message turn
   only when it marks that turn active, so that the platform can record the turn's requester;
-  taking the person the turn serves only from the platform's answer to the turn start; and giving
+  taking the person a chat, A2A Message or caller-delivery turn serves from the platform's answer
+  to the turn start, and the person a Task attempt serves from the platform's answer to the Task's
+  creation or continuation or from its dispatch; and giving
   extension tools that person and calls for the work through `current_requester()` and
   `platform_client()` without exposing the assertion, the lease proof, or any token;
 - translating inbound A2A requests into the shared TAU runtime; and

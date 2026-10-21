@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- **A hosted Task's answer reaches the caller of GetTask
+  ([#113](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/113)).** GetTask answered a
+  completed hosted Task with no Artifacts, although the platform had stored its answer. The SDK
+  found the Task in the platform's Task list and answered with that list's entry, which carries
+  only the counts of a Task's outputs. It now reads the Task in full after the list finds it, so
+  GetTask, JSON-RPC `GetTask` and the stream of an existing Task answer with its Artifacts, an
+  error answer included. A2A ListTasks still answers each Task without its Artifacts.
+
+- **A Task acts for the person who asked for it
+  ([#114](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/114), ADR 0019, ADR 0021).** A
+  Task attempt took the person it serves from the platform's answer to its turn start, which names
+  nobody for a Task, so a Task's application calls went out as the Agent alone and the application
+  refused them. A Task attempt now serves the person the platform names for running the Task: in
+  its answer when the request creates or continues the Task, or in the dispatch when the platform
+  asks the runtime to run it. The platform names only an active person whom the executing Agent may
+  act for, and checks them again on every call made for them. Chat, A2A Message and
+  caller-delivery turns still take the person from the turn start.
+
 ## 2.0.21 — 2026-10-21
 
 - **Hosted Tasks can be sent, read and listed with their Messages

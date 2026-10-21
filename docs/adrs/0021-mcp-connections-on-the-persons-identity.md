@@ -1,5 +1,13 @@
 # ADR 0021: MCP Connections on the Person's Identity
 
+Amended 2026-10-21 for [issue #114](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/114): a
+Task attempt serves the person the platform names for running the Task, in its answer to the
+runtime's own creation or continuation of the Task or in the dispatch. The platform's answer to a
+Task attempt's turn start names nobody, because the platform binds a Task-owned turn to the Task's
+requester, so the SDK had served nobody and an application refused the Task's calls. Chat and A2A
+Message turns and caller-delivery turns still take the person from the turn start. Section 3, the
+platform requirements and the acceptance criteria are edited.
+
 Amended 2026-10-07 for [issue #78](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/78): one
 delegation envelope replaces the per-tool labels. Every call made for the work carries
 `delegation: <proof for this receiver> | None`, and each receiving tool decides what it needs. The
@@ -92,11 +100,16 @@ and application MCP tool calls, and project code's calls through `platform_clien
 
 ### 3. The person a turn serves
 
-When a hosted turn or Task attempt starts, the platform's answer names the person the Agent may act
-for, or nobody. That answer is the only source, whoever called: a chat or A2A Message turn, a Task
-attempt the platform dispatches or the request runs itself, and a turn the platform starts for a
-caller delivery alike. The SDK never reads a person from an assertion claim, a dispatch or a Task
-answer. The verified caller of the request supplies the person's teams only when it is that person.
+When a hosted chat or A2A Message turn starts, or a turn the platform starts for a caller delivery,
+the platform's answer names the person the Agent may act for, or nobody. A Task attempt serves the
+person the platform names for running the Task, or nobody: in its answer to the runtime's own
+creation or continuation of the Task when the request runs the attempt itself, and in the dispatch
+when the platform asks the runtime to run it. The platform names only an active person, and only
+while the executing Agent may act for them. Its answer to a Task attempt's turn start names nobody,
+and an ordinary read of the Task records who asked without saying whether the Agent may act for
+them, so neither is a source. The SDK never reads a person from an assertion claim. The platform
+checks the person again, from its own record of the Task, on every call made for them. The verified
+caller of the request supplies the person's teams only when it is that person.
 
 When an Agent working for a person delegates to another Agent, the delegated Agent acts for that
 same person:
@@ -168,9 +181,10 @@ The SDK depends on the platform to:
    selects a person; the delegation entry (`mainsequence.ai/delegation/v1`, carrying the session
    proof's fields) or the delegation headers select the person; check a supplied delegation on
    every call and reject an invalid one without falling back to the workload;
-2. name, in its answer to every turn start (a chat or A2A Message turn, a Task attempt and a
-   caller-delivery turn), the person the runtime may act for: only a person, only when the Agent is
-   enabled to act for people, and nobody otherwise;
+2. name the person the runtime may act for, only a person, only when the Agent is enabled to act
+   for people, and nobody otherwise: in its answer to a chat or A2A Message turn start and a
+   caller-delivery turn start, and, for a Task, in its answer to the runtime's own creation or
+   continuation of the Task and in the dispatch;
 3. record the person who started delegated work from its own records, with the limits in section
    3, and deliver caller assertions to Agent runtimes with exactly the base claim set;
 4. resolve the applications an Agent declares in its Environment, hand their names and releases to
@@ -216,11 +230,13 @@ for each Agent, and limiting `platform_client()` to the applications an Agent de
    `requester_client()` with `platform_client()`; remove the per-tool labels, the refusals of a
    turn that serves nobody and the operations kept for a platform that had not removed private
    Secret entry.
-5. In the same change as each step, update the
+5. Issue #114: a Task attempt takes the person from the platform's answer to the runtime's own
+   creation or continuation of the Task, or from the dispatch, instead of from its turn start.
+6. In the same change as each step, update the
    [Security and access guide](../reference/security-model.md), the public API reference and the
    packaged skills. The security model states the write risk in section 2, application
    connections, delegation and turns that serve nobody.
-6. Tests show that tokens, proofs and assertions never reach model context, tool results, history
+7. Tests show that tokens, proofs and assertions never reach model context, tool results, history
    or logs; that no MCP session or catalog is shared between people; that a hosted call names its
    session and carries the delegation exactly when the turn serves a person; that a refused
    delegated call is not retried as the Agent; and that the runtime's housekeeping carries no

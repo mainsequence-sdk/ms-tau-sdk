@@ -89,7 +89,8 @@ names the assertion the route required (`caller` or `platform`) and the reason, 
 ## Requester access is refused
 
 `current_requester()` is `None` outside a hosted turn, in local mode, and when the platform names
-nobody for the turn. A turn that serves nobody carries no delegation: its calls are the Agent's
+nobody for the turn. For a Task, the platform names the person when the Task is created, continued
+or dispatched. A turn that serves nobody carries no delegation: its calls are the Agent's
 own, and `platform_client(delegation="required")` raises `PermissionError` with `code`
 `requester_binding_invalid` before sending a request. Start from the person's own conversation; do
 not supply a person UID yourself. Work another Agent sends serves a person only when the platform

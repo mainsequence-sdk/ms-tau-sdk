@@ -130,21 +130,26 @@ section 9, and ADR 0021).
 - **Turn start.** When a hosted runtime marks a turn active
   (`PATCH /api/v1/agent-sessions/<uid>/tau-runtime-activity/` with `runtime_activity` `working` and
   the new `active_turn_uid`), the answer is the usual runtime state plus `requester_user_uid`: the
-  person the turn serves, or `null`. This answer is the only source of the person, for every kind
-  of turn and whoever called. A chat or A2A Message turn sends the verified caller assertion of the
-  request that started it in `X-MainSequence-Caller-Assertion`, beside its own credential: only on
+  person the turn serves, or `null`. It is the source of the person for a chat or A2A Message turn
+  and a turn that resumes a caller delivery, whoever called. For a Task attempt it is always
+  `null`, and the attempt takes its person from the Task as below. A chat or A2A Message turn
+  sends the verified caller assertion of the request that started it in
+  `X-MainSequence-Caller-Assertion`, beside its own credential: only on
   that transition, only while it is valid, and never in local mode or outside hosting. A turn that
   resumes a caller delivery names the delivery in `caller_delivery_uid` instead. A Task attempt
   sends neither.
 - **Task creation and continuation.** When a hosted request creates a Task
   (`POST /api/v1/agent-tasks/`) or continues one (`POST /api/v1/agent-tasks/<uid>/continue/`), the
   runtime sends the request's verified caller assertion in the same header, under the same rules.
-  The answer's `requester_user_uid` and `requester_identity_type` are the Task's records; the
-  runtime does not take the person from them. The request's verified caller supplies the person's
-  teams when the attempt's turn start names that caller.
+  The answer's `requester_user_uid` and `requester_identity_type` name an active person only while
+  the executing Agent may act for them, and the attempt the request runs serves that person. The
+  request's verified caller supplies the person's teams when it is that person.
 - **Task dispatch and caller delivery.** `POST /internal/a2a/task-dispatch` and
   `POST /internal/a2a/task-caller-delivery` may carry `requester_user_uid` and
-  `requester_identity_type`; the runtime does not take the person from them either.
+  `requester_identity_type`. A dispatched attempt serves the person the dispatch names, on the same
+  terms. A caller delivery's facts are not used: the turn it resumes takes its person from the turn
+  start. An ordinary Task read records who asked without saying whether the Agent may act for
+  them, and is never a source. The platform checks the person again on every call made for them.
 - **Calls for the work.** While the turn serves a person, every call made for the work carries the
   person's delegation: a Main Sequence MCP call carries the turn's session proof under
   `mainsequence.ai/delegation/v1` in its private metadata, and a REST call through
@@ -361,6 +366,11 @@ order are unchanged, and the Task and context IDs come from the Task the Message
 Fields only the platform keeps, such as the request hash and the requester, are left out, and any
 other role is a backend error. The tail is read with the platform's `history_length` mode, so it
 holds the latest Messages. A Task's `status_message` is already a binding Message.
+
+A Task named by its protocol ID is found in the platform's Task list, which answers only the counts
+of its outputs, and then read in full from the Task's detail. GetTask and the stream of an existing
+Task therefore answer with the Task's persisted Artifacts. A2A ListTasks answers each Task as the
+list gives it, without its Artifacts.
 
 Caller delivery flows in the other direction. The platform sends the signed internal delivery signal,
 including the canonical caller AgentSession UID as a selector. The runtime persists the platform

@@ -21,7 +21,8 @@ Every call a tool makes through `platform_client()` follows one rule:
 | A valid delegation | The person the turn serves, with their ordinary permissions, including administrative ones. |
 | A delegation that ended or is invalid | None. The call is refused with a `PermissionError` and is never retried as the Agent. |
 
-- The platform names the person when the turn starts, and `current_requester()` returns them. It
+- The platform names the person when a chat or Message turn starts, and for a Task when it is
+  created, continued or dispatched; `current_requester()` returns them. It
   returns `None` when the Agent is not enabled to act for people (only an Organization admin can
   enable it, with `acts_for_requester`), for work no person asked for, in local mode and outside a
   turn.

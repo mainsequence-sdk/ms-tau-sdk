@@ -83,7 +83,7 @@ from ms_tau_sdk.runtime.snapshots import (
     restore_snapshot,
     sha256_json,
 )
-from ms_tau_sdk.runtime.task_context import active_task_execution
+from ms_tau_sdk.runtime.task_context import TaskExecutionContext, active_task_execution
 from ms_tau_sdk.sessions.storage import SESSION_ENTRY_ADAPTER, BackendSessionStorage
 from ms_tau_sdk.settings import TauSDKSettings
 from ms_tau_sdk.tools.mainsequence_mcp import (
@@ -1573,7 +1573,7 @@ class SessionRuntimeManager:
         )
         requester_binding = TurnRequesterBinding(
             session_uid=session_uid,
-            requester=self._turn_requester(runtime),
+            requester=self._turn_requester(runtime, task_context),
             lease_proof=lambda: LeaseProof(
                 session_uid=session_uid,
                 holder_id=self.holder_id,
@@ -1756,16 +1756,22 @@ class SessionRuntimeManager:
 
         return not self.settings.local_mode and self.settings.request_identity_mode == "assertion"
 
-    def _turn_requester(self, runtime: ActiveSessionRuntime) -> Requester | None:
+    def _turn_requester(
+        self,
+        runtime: ActiveSessionRuntime,
+        task_context: TaskExecutionContext | None,
+    ) -> Requester | None:
         """Name the person a turn serves, or None.
 
-        The platform's answer to the turn start names that person, whoever called: a chat or A2A
-        Message turn, a Task attempt, and a turn the platform starts for a caller delivery alike.
+        A Task attempt serves the person the platform named for running the Task, which its
+        execution context holds; the platform's answer to a Task attempt's turn start names
+        nobody. Any other turn, a chat or A2A Message turn and a turn the platform starts for a
+        caller delivery, serves the person the platform's answer to the turn start names.
         """
 
         if not self._requester_identity_verified():
             return None
-        uid = runtime.requester_user_uid
+        uid = task_context.requester_uid if task_context is not None else runtime.requester_user_uid
         if uid is None:
             return None
         return Requester(uid=uid)
