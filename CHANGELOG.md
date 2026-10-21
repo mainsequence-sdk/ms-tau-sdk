@@ -1,5 +1,31 @@
 # Changelog
 
+## Unreleased
+
+- **Hosted Tasks can be sent, read and listed with their Messages
+  ([#111](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/111), ADR 0002).** On the platform,
+  a Task-mode `message:send` and GetTask answered HTTP 500 whenever the answer included the Task's
+  Messages. The platform stores a Task Message with the role `user` or `agent` and snake-case
+  fields such as `message_id`, and the SDK read it as one of its own binding Messages. The
+  platform client now translates every Task Message it reads, in a Task's `latest_message` and
+  `history` and in the Message tail, into a binding Message. The Task and context IDs come from
+  the Task the Message belongs to, and fields only the platform keeps, such as the request hash and
+  the requester, are left out. A2A callers get `ROLE_USER` and `ROLE_AGENT` as before.
+  - The platform's wake-up for a submitted hosted Task runs it again; the runtime had refused it
+    with HTTP 409 because it could not read the Task's requester Message.
+  - On the platform, `historyLength` returns the latest Messages instead of the first ones.
+  - `list_task_messages()` takes the Task and a `history_length` instead of a Task UID, `limit`
+    and `offset`.
+
+- **A Task-mode `message:send` that fails after its Task was accepted names the Task
+  ([#111](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/111), ADR 0002).** It answered a
+  bare HTTP 500 that looked as if nothing had happened, although the Task existed and could
+  already run. It now answers HTTP 500 `INTERNAL` with an `ErrorInfo` whose reason is
+  `ACCEPTED_TASK_STATE_UNAVAILABLE` and whose metadata gives the `taskId` and `contextId`, and
+  JSON-RPC answers `-32603` with the same `ErrorInfo`. The caller reads the Task with GetTask
+  instead of sending the Message again. See the
+  [runtime contract](docs/reference/runtime-contract.md#task-terminalization-and-failure).
+
 ## 2.0.20 — 2026-10-19
 
 - **ADR 0024 records the requirements for file attachments in chat.** The proposed

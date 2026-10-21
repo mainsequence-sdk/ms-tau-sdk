@@ -8,7 +8,7 @@ import json
 import re
 import time
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
@@ -448,6 +448,83 @@ def _message_limit_json_rpc_error(request_id: object, limit_seconds: float) -> d
     }
 
 
+class _AcceptedTaskUnanswered(Exception):
+    """A Task was accepted, but the answer that describes it could not be prepared."""
+
+    def __init__(self, task: AgentTask) -> None:
+        super().__init__(f"Task {task.task_id} was accepted, but its state could not be returned")
+        self.task_id = task.task_id
+        self.context_id = task.context_id
+
+
+@contextlib.contextmanager
+def _naming_accepted_task(task: AgentTask) -> Iterator[None]:
+    """Name ``task`` when the request fails after the Task was accepted.
+
+    The Task exists and may already run, so a bare server error would suggest that nothing
+    happened and invite the caller to send the Message again.
+    """
+
+    try:
+        yield
+    except Exception as error:
+        logger.error(
+            "a2a.task.answer_failed",
+            message="A Task was accepted, but the answer that describes it could not be prepared",
+            task_uid=task.uid,
+            task_id=task.task_id,
+            error_type=type(error).__name__,
+        )
+        raise _AcceptedTaskUnanswered(task) from error
+
+
+def _accepted_task_text(error: _AcceptedTaskUnanswered) -> str:
+    return (
+        f"Task {error.task_id} was accepted, but its state could not be returned. "
+        "Read it with GetTask instead of sending the Message again."
+    )
+
+
+def _accepted_task_error_info(error: _AcceptedTaskUnanswered) -> dict[str, Any]:
+    return {
+        "@type": "type.googleapis.com/google.rpc.ErrorInfo",
+        "reason": "ACCEPTED_TASK_STATE_UNAVAILABLE",
+        "domain": "mainsequence.ai",
+        # ErrorInfo metadata values are strings.
+        "metadata": {"taskId": error.task_id, "contextId": error.context_id},
+    }
+
+
+def _accepted_task_rest_error(error: _AcceptedTaskUnanswered) -> JSONResponse:
+    return JSONResponse(
+        status_code=500,
+        media_type="application/a2a+json",
+        content={
+            "error": {
+                "code": 500,
+                "status": "INTERNAL",
+                "message": _accepted_task_text(error),
+                "details": [_accepted_task_error_info(error)],
+            }
+        },
+    )
+
+
+def _accepted_task_json_rpc_error(
+    request_id: object,
+    error: _AcceptedTaskUnanswered,
+) -> dict[str, Any]:
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": {
+            "code": -32603,
+            "message": _accepted_task_text(error),
+            "data": [_accepted_task_error_info(error)],
+        },
+    }
+
+
 def _without_push_notification_capability(
     agent_card: dict[str, Any] | None,
 ) -> dict[str, Any] | None:
@@ -631,7 +708,7 @@ async def _task_with_history(
 ) -> AgentTask:
     if history_length == 0:
         return task.model_copy(update={"history": None})
-    history = await client.list_task_messages(task.uid, limit=history_length, offset=0)
+    history = await client.list_task_messages(task, history_length=history_length)
     return task.model_copy(update={"history": history})
 
 
@@ -2376,6 +2453,8 @@ async def message_send(
         return await _message_send(body, client, manager, config, request, a2a_extensions)
     except _MessageLimitExceeded as error:
         return _message_limit_rest_error(error.limit_seconds)  # type: ignore[return-value]
+    except _AcceptedTaskUnanswered as error:
+        return _accepted_task_rest_error(error)  # type: ignore[return-value]
 
 
 async def _message_send(
@@ -2392,7 +2471,8 @@ async def _message_send(
     bounds a Message-mode request as a whole, including output-contract repair turns, and it ends
     the wait of a Task-mode request that does not return immediately. A Message-mode request that
     reaches its limit, or its turn's own limit, raises ``_MessageLimitExceeded``, which each
-    transport answers in its own form.
+    transport answers in its own form. A Task-mode request that fails after its Task was accepted
+    raises ``_AcceptedTaskUnanswered``, which each transport answers with the Task named.
     """
     platform_limit = config.a2a_message_limit_seconds
     deadline = (
@@ -2447,48 +2527,14 @@ async def _message_send(
             continued_message,
             **_presented_assertion(caller_assertion),
         )
-        if config.local_mode:
-            task = await _persist_local_recovery_contract(
-                client,
-                task,
-                output_contract=output_contract,
-                provenance=provenance,
-            )
-        await _schedule_task_accelerator(
-            client,
-            manager,
-            task,
-            prompt=prompt,
-            output_contract=output_contract,
-            max_output_bytes=config.max_turn_output_bytes,
-            provenance=provenance,
-            config=config,
-            caller=_request_caller(caller_assertion),
-        )
-        if return_immediately:
-            task = await _task_with_history(client, task, history_length=history_length)
-            return {"task": _task_payload(task, history_length=history_length)}
-        task = await _wait_for_task_return_state(
-            client,
-            task,
-            poll_interval_seconds=config.a2a_task_event_poll_interval_seconds,
-            wait_timeout_seconds=_task_wait_seconds(config, deadline),
-        )
-        task = await _task_with_history(client, task, history_length=history_length)
-        return {"task": _task_payload(task, history_length=history_length)}
-    if response_kind is ResponseKind.TASK:
-        caller_assertion = _task_caller_assertion(request, config)
-        creation = await _create_backend_task(
-            client,
-            message=message,
-            task_id=_task_id(body),
-            local_mode=config.local_mode,
-            output_contract=output_contract,
-            provenance=provenance,
-            caller_assertion=caller_assertion,
-        )
-        task = creation.task
-        if creation.created:
+        with _naming_accepted_task(task):
+            if config.local_mode:
+                task = await _persist_local_recovery_contract(
+                    client,
+                    task,
+                    output_contract=output_contract,
+                    provenance=provenance,
+                )
             await _schedule_task_accelerator(
                 client,
                 manager,
@@ -2511,31 +2557,68 @@ async def _message_send(
             )
             task = await _task_with_history(client, task, history_length=history_length)
             return {"task": _task_payload(task, history_length=history_length)}
+    if response_kind is ResponseKind.TASK:
+        caller_assertion = _task_caller_assertion(request, config)
+        creation = await _create_backend_task(
+            client,
+            message=message,
+            task_id=_task_id(body),
+            local_mode=config.local_mode,
+            output_contract=output_contract,
+            provenance=provenance,
+            caller_assertion=caller_assertion,
+        )
+        task = creation.task
+        if creation.created:
+            with _naming_accepted_task(task):
+                await _schedule_task_accelerator(
+                    client,
+                    manager,
+                    task,
+                    prompt=prompt,
+                    output_contract=output_contract,
+                    max_output_bytes=config.max_turn_output_bytes,
+                    provenance=provenance,
+                    config=config,
+                    caller=_request_caller(caller_assertion),
+                )
+                if return_immediately:
+                    task = await _task_with_history(client, task, history_length=history_length)
+                    return {"task": _task_payload(task, history_length=history_length)}
+                task = await _wait_for_task_return_state(
+                    client,
+                    task,
+                    poll_interval_seconds=config.a2a_task_event_poll_interval_seconds,
+                    wait_timeout_seconds=_task_wait_seconds(config, deadline),
+                )
+                task = await _task_with_history(client, task, history_length=history_length)
+                return {"task": _task_payload(task, history_length=history_length)}
         # An existing Task with this ID is answered only to a caller who may address its session.
         await _require_task_session_access(client, task, checked=requested_context_id)
-        if config.local_mode and task.status == "submitted":
-            recovered_prompt, recovered_contract, recovered_provenance = (
-                _recovery_execution_contract(task, config)
-            )
-            await _schedule_task_accelerator(
-                client,
-                manager,
-                task,
-                prompt=recovered_prompt,
-                output_contract=recovered_contract,
-                max_output_bytes=config.max_turn_output_bytes,
-                provenance=recovered_provenance,
-                config=config,
-            )
-        if not return_immediately and task.status not in TASK_RETURN_STATES:
-            task = await _wait_for_task_return_state(
-                client,
-                task,
-                poll_interval_seconds=config.a2a_task_event_poll_interval_seconds,
-                wait_timeout_seconds=_task_wait_seconds(config, deadline),
-            )
-        task = await _task_with_history(client, task, history_length=history_length)
-        return {"task": _task_payload(task, history_length=history_length)}
+        with _naming_accepted_task(task):
+            if config.local_mode and task.status == "submitted":
+                recovered_prompt, recovered_contract, recovered_provenance = (
+                    _recovery_execution_contract(task, config)
+                )
+                await _schedule_task_accelerator(
+                    client,
+                    manager,
+                    task,
+                    prompt=recovered_prompt,
+                    output_contract=recovered_contract,
+                    max_output_bytes=config.max_turn_output_bytes,
+                    provenance=recovered_provenance,
+                    config=config,
+                )
+            if not return_immediately and task.status not in TASK_RETURN_STATES:
+                task = await _wait_for_task_return_state(
+                    client,
+                    task,
+                    poll_interval_seconds=config.a2a_task_event_poll_interval_seconds,
+                    wait_timeout_seconds=_task_wait_seconds(config, deadline),
+                )
+            task = await _task_with_history(client, task, history_length=history_length)
+            return {"task": _task_payload(task, history_length=history_length)}
     request_message_id = str(message["messageId"])
     context_id = str(message["contextId"])
     if config.local_mode:
@@ -2845,6 +2928,8 @@ async def json_rpc(
                 )
             except _MessageLimitExceeded as error:
                 return _message_limit_json_rpc_error(request_id, error.limit_seconds)
+            except _AcceptedTaskUnanswered as error:
+                return _accepted_task_json_rpc_error(request_id, error)
         elif method in {"SendStreamingMessage", "message/stream"}:
             _response_kind(
                 params,

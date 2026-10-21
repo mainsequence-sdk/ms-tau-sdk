@@ -352,6 +352,16 @@ translate the A2A Message into the platform's snake_case `message_id`, `parts`, 
 default; a nonempty array returns HTTP 400 before a managed Task mutation until the backend can
 persist extension URIs. Object-valued extensions and other non-A2A-v1 shapes also return HTTP 400.
 
+Task Messages read back from the platform, in a Task's `latest_message` and `history` and in the
+`messages/` tail, carry the platform's stored role `user` or `agent` and the same snake-case
+fields. The platform client translates each into a binding Message before any other code uses it:
+`user` becomes `ROLE_REQUESTER`, `agent` becomes `ROLE_RESPONDER`, `message_id` becomes
+`messageId`, and `reference_task_ids` becomes `referenceTaskIds`. Parts, metadata and extension
+order are unchanged, and the Task and context IDs come from the Task the Message belongs to.
+Fields only the platform keeps, such as the request hash and the requester, are left out, and any
+other role is a backend error. The tail is read with the platform's `history_length` mode, so it
+holds the latest Messages. A Task's `status_message` is already a binding Message.
+
 Caller delivery flows in the other direction. The platform sends the signed internal delivery signal,
 including the canonical caller AgentSession UID as a selector. The runtime persists the platform
 event idempotently by delivery UID and flushes session storage before returning success, then
@@ -430,6 +440,15 @@ dispatcher.
 `MAINSEQUENCE_TAU_A2A_TASK_WAIT_TIMEOUT_SECONDS`, never past the platform's Message limit when the
 platform sets one. Reaching that bound returns the latest non-terminal Task handle and leaves
 execution running. Caller disconnect and transport timeout never imply Task cancellation.
+
+A Task-mode `message:send` that fails after its Task was accepted, for example while it waits for
+the Task or reads its Messages, names the Task. The Task exists and may already run, so the
+runtime answers HTTP 500 with media type `application/a2a+json`: the google.rpc error envelope
+with status `INTERNAL` and one `ErrorInfo` with reason `ACCEPTED_TASK_STATE_UNAVAILABLE`, domain
+`mainsequence.ai`, and the Task's `taskId` and `contextId` in `metadata`. JSON-RPC `message/send`
+answers a JSON-RPC error with code `-32603` and the same `ErrorInfo` list in `data`. The caller
+reads the Task with GetTask instead of sending the Message again. The runtime logs
+`a2a.task.answer_failed` with the Task and the error type.
 
 ### Task conversation, result, and execution correlation
 

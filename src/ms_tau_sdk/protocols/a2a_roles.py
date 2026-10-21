@@ -1,4 +1,4 @@
-"""Role translation between A2A v1 and the Main Sequence Tau binding."""
+"""Role translation between A2A v1, the Main Sequence Tau binding, and platform storage."""
 
 from __future__ import annotations
 
@@ -19,11 +19,22 @@ class A2AProtocolRole(StrEnum):
     AGENT = "ROLE_AGENT"
 
 
+class PlatformMessageRole(StrEnum):
+    """Direction-neutral roles of a Task Message the platform stores."""
+
+    USER = "user"
+    AGENT = "agent"
+
+
 _TO_BINDING = {
     A2AProtocolRole.USER.value: A2AMessageDirection.REQUESTER.value,
     A2AProtocolRole.AGENT.value: A2AMessageDirection.RESPONDER.value,
 }
 _TO_PROTOCOL = {value: key for key, value in _TO_BINDING.items()}
+_FROM_PLATFORM = {
+    PlatformMessageRole.USER.value: A2AMessageDirection.REQUESTER.value,
+    PlatformMessageRole.AGENT.value: A2AMessageDirection.RESPONDER.value,
+}
 
 
 def _validate_message_shape(message: Mapping[str, object]) -> None:
@@ -60,6 +71,36 @@ def message_to_protocol(message: Mapping[str, object]) -> dict[str, object]:
     return {**message, "role": _TO_PROTOCOL[role]}
 
 
+def platform_message_to_binding(
+    record: Mapping[str, object],
+    *,
+    context_id: str,
+    task_id: str,
+) -> dict[str, object]:
+    """Translate a Task Message the platform stores into a Main Sequence binding Message.
+
+    The platform stores the role ``user`` or ``agent`` and snake-case fields. The Task that owns
+    the Message supplies its context and Task IDs. Fields only the platform keeps, such as the
+    request hash and the requester, are left out.
+    """
+
+    role = str(record.get("role") or "")
+    if role not in _FROM_PLATFORM:
+        raise ValueError("Platform Task Message role must be user or agent")
+    message: dict[str, object] = {
+        "messageId": record.get("message_id"),
+        "contextId": context_id,
+        "taskId": task_id,
+        "role": _FROM_PLATFORM[role],
+        "parts": record.get("parts"),
+        "metadata": record.get("metadata", {}),
+        "extensions": record.get("extensions", []),
+        "referenceTaskIds": record.get("reference_task_ids", []),
+    }
+    _validate_message_shape(message)
+    return message
+
+
 def has_a2a_direction(
     message: Mapping[str, object],
     direction: A2AMessageDirection,
@@ -72,7 +113,9 @@ def has_a2a_direction(
 __all__ = [
     "A2AMessageDirection",
     "A2AProtocolRole",
+    "PlatformMessageRole",
     "has_a2a_direction",
     "message_to_binding",
     "message_to_protocol",
+    "platform_message_to_binding",
 ]

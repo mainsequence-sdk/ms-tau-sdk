@@ -47,6 +47,8 @@ Task-history and execution-correlation changes additionally gate on omitted/zero
 URI-array extensions, legacy settlement rejection, identical settlement replay, changed-replay
 conflict, and status events that reference rather than embed Messages. Query tests must prove zero
 does not read a history tail and Task lists use one bounded history query instead of one per Task.
+Hosted tests answer with Task Messages in the platform's stored shape (`user`/`agent` and
+snake-case fields), never with binding Messages, and run the real platform client.
 
 Local persistence tests must prove adjacent attempts cannot share entries, every Task entry carries
 the reserved turn UID, boundaries are exclusive, abandonment rejects late append/commit, and a

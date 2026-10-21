@@ -23,6 +23,7 @@ from ms_tau_sdk.errors import (
     LocalModeUnsupportedError,
     SessionNotFoundError,
 )
+from ms_tau_sdk.protocols.a2a_roles import platform_message_to_binding
 from ms_tau_sdk.settings import TauSDKSettings
 
 from .assertions import ASSERTION_HEADER
@@ -170,6 +171,30 @@ def _backend_rejection_log_fields(detail: object) -> dict[str, object]:
     if paths:
         fields["backend_field_error_paths"] = paths[:64]
     return fields
+
+
+def _binding_message(task: AgentTask, record: Mapping[str, Any]) -> dict[str, Any]:
+    try:
+        return platform_message_to_binding(
+            record,
+            context_id=task.context_id,
+            task_id=task.task_id,
+        )
+    except ValueError as error:
+        raise BackendError(
+            f"Backend Task {task.task_id} has an invalid Message: {error}"
+        ) from error
+
+
+def _with_binding_messages(task: AgentTask) -> AgentTask:
+    """Return ``task`` with the Messages the platform stores as Main Sequence binding Messages."""
+
+    update: dict[str, Any] = {}
+    if task.latest_message is not None:
+        update["latest_message"] = _binding_message(task, task.latest_message)
+    if task.history is not None:
+        update["history"] = [_binding_message(task, record) for record in task.history]
+    return task.model_copy(update=update) if update else task
 
 
 class MainSequenceClient:
@@ -970,7 +995,7 @@ class MainSequenceClient:
             headers={ASSERTION_HEADER: caller_assertion} if caller_assertion else None,
         )
         return AgentTaskCreateResult(
-            task=AgentTask.model_validate(data),
+            task=_with_binding_messages(AgentTask.model_validate(data)),
             created=status_code == 201,
         )
 
@@ -979,7 +1004,10 @@ class MainSequenceClient:
         path = AGENT_TASKS + (f"?{query}" if query else "")
         data = await self._request("GET", path, idempotent=True)
         values = data.get("results", []) if isinstance(data, dict) else data
-        return TypeAdapter(list[AgentTask]).validate_python(values or [])
+        return [
+            _with_binding_messages(task)
+            for task in TypeAdapter(list[AgentTask]).validate_python(values or [])
+        ]
 
     async def get_task_by_protocol_id(
         self,
@@ -1008,25 +1036,26 @@ class MainSequenceClient:
             f"{AGENT_TASKS}{task_uid}/{query}",
             idempotent=True,
         )
-        return AgentTask.model_validate(data)
+        return _with_binding_messages(AgentTask.model_validate(data))
 
     async def list_task_messages(
         self,
-        task_uid: str,
+        task: AgentTask,
         *,
-        limit: int = 100,
-        offset: int = 0,
+        history_length: int,
     ) -> list[dict[str, Any]]:
-        query = urlencode({"limit": max(0, min(int(limit), 100)), "offset": max(0, int(offset))})
+        """Return the latest ``history_length`` Messages of ``task``, oldest first."""
+
+        query = urlencode({"history_length": max(0, min(int(history_length), 100))})
         data = await self._request(
             "GET",
-            f"{agent_task_operation(task_uid, 'messages')}?{query}",
+            f"{agent_task_operation(task.uid, 'messages')}?{query}",
             idempotent=True,
         )
         values = data.get("results", []) if isinstance(data, dict) else data
         if not isinstance(values, list) or any(not isinstance(item, dict) for item in values):
             raise BackendError("Backend Task-message response is invalid")
-        return [dict(item) for item in values]
+        return [_binding_message(task, item) for item in values]
 
     async def get_task_snapshot(self, task_uid: str) -> AgentTaskSnapshot:
         data = await self._request(
@@ -1034,7 +1063,8 @@ class MainSequenceClient:
             agent_task_operation(task_uid, "snapshot"),
             idempotent=True,
         )
-        return AgentTaskSnapshot.model_validate(data)
+        snapshot = AgentTaskSnapshot.model_validate(data)
+        return snapshot.model_copy(update={"task": _with_binding_messages(snapshot.task)})
 
     async def get_task_snapshot_by_protocol_id(self, task_id: str) -> AgentTaskSnapshot:
         task = await self.get_task_by_protocol_id(task_id)
@@ -1262,7 +1292,7 @@ class MainSequenceClient:
             idempotent=True,
             headers={ASSERTION_HEADER: caller_assertion} if caller_assertion else None,
         )
-        return AgentTask.model_validate(data)
+        return _with_binding_messages(AgentTask.model_validate(data))
 
     async def cancel_task(self, task_uid: str) -> AgentTask:
         data = await self._request(
@@ -1271,4 +1301,4 @@ class MainSequenceClient:
             json={},
             idempotent=True,
         )
-        return AgentTask.model_validate(data)
+        return _with_binding_messages(AgentTask.model_validate(data))
