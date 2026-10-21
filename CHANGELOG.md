@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.21 — 2026-10-21
 
 - **Hosted Tasks can be sent, read and listed with their Messages
   ([#111](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/111), ADR 0002).** On the platform,
