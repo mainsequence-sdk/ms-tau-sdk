@@ -747,7 +747,7 @@ async def test_local_failed_settlement_abandons_turn_and_replays_exactly(tmp_pat
     )
 
     entries = await backend.get_entries(session_uid)
-    history = await backend.list_task_messages(creation.task.uid, limit=100)
+    history = await backend.list_task_messages(creation.task, history_length=100)
     events_before_conflict = await backend.list_task_events(
         creation.task.uid, after_sequence=0, limit=100
     )

@@ -277,6 +277,15 @@ mode (`configuration.responseKind: "task"`, or `response_kind: "task"` with `a2a
 and follow the Task. Do not send the same Message again to wait longer: the stopped turn's tool
 calls are not rolled back, so a new Message runs the work again.
 
+## A Task-mode send answers 500 `ACCEPTED_TASK_STATE_UNAVAILABLE`
+
+The runtime accepted the Task but could not return its state. The Task exists and may already
+run; the `ErrorInfo` names it in `metadata.taskId`. Read it with GetTask
+(`GET /api/a2a/v1/tasks/{taskId}`) instead of sending the Message again. The runtime log
+`a2a.task.answer_failed` gives the Task and the error type; `BackendError` means the platform
+answered something the runtime could not read. See the
+[runtime contract](./runtime-contract.md#task-terminalization-and-failure).
+
 ## An A2A Task remains submitted or working
 
 Check `a2a_task_recovery` and `a2a_task_policy` in `/health`, then inspect the Task in Tau Board.
@@ -300,7 +309,8 @@ mean revisions of one streaming Artifact, not repeated responses.
 
 Use `historyLength=0` to prove a client is not requesting history, or a positive bound to inspect
 the latest Message tail. Omission requests 100. Public payloads must use `ROLE_USER`/`ROLE_AGENT`;
-local persistence uses `ROLE_REQUESTER`/`ROLE_RESPONDER`. A legacy `{code, message}` status object,
+local persistence uses `ROLE_REQUESTER`/`ROLE_RESPONDER`, and the platform stores `user`/`agent`,
+which the SDK translates when it reads them. A legacy `{code, message}` status object,
 object-valued `extensions`, or mismatched Task/context ID is rejected by design.
 
 In Tau Board, compare the attempt's turn UID and half-open entry interval with Execution. A pending

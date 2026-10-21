@@ -2590,20 +2590,14 @@ class LocalDevelopmentBackend(MainSequenceClient):
 
     async def list_task_messages(
         self,
-        task_uid: str,
+        task: AgentTask,
         *,
-        limit: int = 100,
-        offset: int = 0,
+        history_length: int,
     ) -> list[dict[str, Any]]:
         def operation() -> list[dict[str, Any]]:
             with closing(self._connect()) as connection:
-                self._task_row(connection, task_uid)
-                return self._task_messages(
-                    connection,
-                    task_uid,
-                    limit=limit,
-                    offset=offset,
-                )
+                self._task_row(connection, task.uid)
+                return self._task_messages(connection, task.uid, limit=history_length)
 
         return await self._run(operation)
 

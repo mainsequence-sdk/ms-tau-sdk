@@ -44,6 +44,11 @@ passes it to the runtime it hosts in `MAINSEQUENCE_A2A_MESSAGE_LIMIT_SECONDS`. T
 it for every caller on the whole Message request and caps the Task-mode wait with it
 (decision 12).
 
+Amended 2026-10-21 for [#111](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/111): the
+platform client translates the Task Messages the platform stores into binding Messages, and a
+Task-mode `message:send` that fails after its Task was accepted names the Task in a typed error
+instead of an untyped HTTP 500 (decision 13).
+
 ## Context
 
 The project identity changed, but its useful transport and execution behavior remains necessary.
@@ -107,6 +112,16 @@ The SDK adopts the following contracts:
     limit and returns the Task, which keeps running. `message:stream`, chat, caller delivery,
     Task dispatch and Task turns have no platform Message limit. Without the variable a direct
     Message has only the turn limit.
+13. The platform stores a Task Message with the role `user` or `agent` and snake-case fields. The
+    platform client translates every Task Message it reads, in a Task's `latest_message` and
+    `history` and in the latest-Message tail, into a binding Message before any other code uses
+    it. The Task and context IDs come from the owning Task, fields only the platform keeps are
+    left out, and any other role is a backend error. A Task-mode `message:send` that fails after
+    its Task was accepted answers HTTP 500 with media type `application/a2a+json`: the
+    google.rpc error envelope with status `INTERNAL` and one `ErrorInfo` with reason
+    `ACCEPTED_TASK_STATE_UNAVAILABLE`, domain `mainsequence.ai` and the Task's `taskId` and
+    `contextId` in `metadata`. JSON-RPC answers a JSON-RPC error (`-32603`) with the same
+    `ErrorInfo` in `data`. The caller reads the Task instead of sending the Message again.
 
 External HTTP field names that are part of an existing service contract remain wire details; they
 do not define local SDK runtime roles or deployment modes.

@@ -354,11 +354,49 @@ def test_runtime_lease_route_uses_harness_neutral_contract(
     assert "checkpoint-lease" not in route
 
 
+def _platform_message(sequence: int, role: str, message_id: str, text: str) -> dict:
+    """A Task Message as the platform's AgentTaskMessageSerializer answers it."""
+
+    return {
+        "uid": f"message-row-{sequence}",
+        "task_uid": "task-uid-1",
+        "agent_uid": "agent-1",
+        "agent_session_uid": "session-1",
+        "message_id": message_id,
+        "request_hash": f"sha256:{sequence:064d}",
+        "role": role,
+        "parts": [{"text": text}],
+        "metadata": {},
+        "extensions": [],
+        "reference_task_ids": [],
+        "sequence": sequence,
+        "created_at": "2026-10-21T08:30:03Z",
+        "created_by_user_uid": "user-1",
+        "requester_user_uid": None,
+        "requester_identity_type": None,
+    }
+
+
+def _binding_message(role: str, message_id: str, text: str) -> dict:
+    return {
+        "messageId": message_id,
+        "contextId": "context-1",
+        "taskId": "task-1",
+        "role": role,
+        "parts": [{"text": text}],
+        "metadata": {},
+        "extensions": [],
+        "referenceTaskIds": [],
+    }
+
+
 @pytest.mark.asyncio
 async def test_python_client_matches_canonical_provider_and_task_contract(
     runtime_identity_token_file,
 ):
     requests: list[tuple[str, str, str]] = []
+    requester = _platform_message(0, "user", "message-1", "Run.")
+    responder = _platform_message(1, "agent", "message-agent-1", "Which account?")
     task = {
         "uid": "task-uid-1",
         "task_id": "task-1",
@@ -366,6 +404,7 @@ async def test_python_client_matches_canonical_provider_and_task_contract(
         "agent_uid": "agent-1",
         "agent_session_uid": "session-1",
         "status": "submitted",
+        "latest_message": requester,
     }
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -407,7 +446,10 @@ async def test_python_client_matches_canonical_provider_and_task_contract(
         if path == "/api/v1/agent-tasks/" and request.method == "POST":
             return httpx.Response(201, json=task)
         if path == "/api/v1/agent-tasks/" and request.method == "GET":
-            return httpx.Response(200, json={"results": [task]})
+            return httpx.Response(
+                200,
+                json={"results": [{**task, "history": [requester, responder]}]},
+            )
         if path == "/api/v1/agent-tasks/task-uid-1/":
             return httpx.Response(200, json={**task, "status": "working"})
         if path == "/api/v1/agent-tasks/task-uid-1/snapshot/":
@@ -434,13 +476,10 @@ async def test_python_client_matches_canonical_provider_and_task_contract(
             return httpx.Response(
                 200,
                 json={
-                    "results": [
-                        {
-                            "messageId": "message-1",
-                            "role": "ROLE_REQUESTER",
-                            "parts": [{"text": "Run."}],
-                        }
-                    ]
+                    "count": 2,
+                    "next": None,
+                    "previous": None,
+                    "results": [requester, responder],
                 },
             )
         if path == "/api/v1/agent-tasks/task-uid-1/dispatches/":
@@ -564,7 +603,7 @@ async def test_python_client_matches_canonical_provider_and_task_contract(
         created = await client.create_task({"task_id": "task-1"})
         found = await client.get_task_by_protocol_id("task-1", history_length=5)
         loaded = await client.get_task("task-uid-1", history_length=0)
-        messages = await client.list_task_messages("task-uid-1", limit=5, offset=2)
+        messages = await client.list_task_messages(found, history_length=5)
         snapshot = await client.get_task_snapshot("task-uid-1")
         events = await client.list_task_events(
             "task-uid-1",
@@ -628,7 +667,19 @@ async def test_python_client_matches_canonical_provider_and_task_contract(
     assert created.created is True
     assert created.task.uid == found.uid == "task-uid-1"
     assert loaded.status == "working"
-    assert messages[0]["messageId"] == "message-1"
+    # Every Task Message the platform stores reaches the SDK as a binding Message.
+    requester_message = _binding_message("ROLE_REQUESTER", "message-1", "Run.")
+    responder_message = _binding_message("ROLE_RESPONDER", "message-agent-1", "Which account?")
+    assert messages == found.history == [requester_message, responder_message]
+    assert (
+        created.task.latest_message
+        == found.latest_message
+        == loaded.latest_message
+        == snapshot.task.latest_message
+        == continued.latest_message
+        == cancelled.latest_message
+        == requester_message
+    )
     assert snapshot.event_cursor == 3
     assert events.events[0].sequence == 3
     assert dispatches[0].uid == "dispatch-1"
@@ -646,7 +697,7 @@ async def test_python_client_matches_canonical_provider_and_task_contract(
         ("POST", "/api/v1/agent-tasks/", ""),
         ("GET", "/api/v1/agent-tasks/", "task_id=task-1&history_length=5"),
         ("GET", "/api/v1/agent-tasks/task-uid-1/", "history_length=0"),
-        ("GET", "/api/v1/agent-tasks/task-uid-1/messages/", "limit=5&offset=2"),
+        ("GET", "/api/v1/agent-tasks/task-uid-1/messages/", "history_length=5"),
         ("GET", "/api/v1/agent-tasks/task-uid-1/snapshot/", ""),
         ("GET", "/api/v1/agent-tasks/task-uid-1/events/", "after_sequence=2&limit=100"),
         ("GET", "/api/v1/agent-tasks/task-uid-1/dispatches/", ""),
