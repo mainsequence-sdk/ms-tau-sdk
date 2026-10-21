@@ -1,5 +1,22 @@
 # Changelog
 
+## 2.0.23 — 2026-10-21
+
+- **A hosted Task's answer reaches the platform in a few writes, and none of it is lost
+  ([#116](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/116)).** While a Task attempt
+  checked for cancellation or wrote its answer, it stopped reading the model. With platform calls
+  slower than the 200-millisecond write interval, every small piece of text became its own write,
+  each preceded by another read of the Task, so an answer took minutes to reach the platform. The
+  check and the writes now run in the background, one of each at a time, while the turn keeps
+  reading the model; text that arrives meanwhile joins the next write. In a test with 60-millisecond
+  platform calls, a 40-piece answer takes 4 writes and 9 reads instead of 41 and 86. Cancellation,
+  the lease check on each write, the order of the text and settlement are unchanged, and nothing the
+  writer started keeps running once the attempt ends.
+  - When an answer was written in more than one batch, the text still waiting at the end was
+    dropped: the output was finalized without writing it. It is now written first.
+  - The poll interval now runs from when the previous cancellation check ended, not when it
+    started.
+
 ## 2.0.22 — 2026-10-21
 
 - **A hosted Task's answer reaches the caller of GetTask

@@ -1289,6 +1289,15 @@ async def _settle_execution_failure(
 
 @dataclass(slots=True)
 class _DurableArtifactWriter:
+    """Write a Task attempt's text answer as one durable output.
+
+    The routine cancellation read and each batch's write run in the background, one of each at a
+    time, so the turn keeps reading the model while the platform answers; text that arrives
+    meanwhile joins the next batch. A batch that reaches ``flush_bytes`` waits for the write before
+    it, which bounds the text held. A failure or cancellation found in the background is raised by
+    the writer's next call. ``close()`` stops background work before the attempt settles.
+    """
+
     client: MainSequenceClient
     manager: SessionRuntimeManager
     task: AgentTask
@@ -1303,16 +1312,35 @@ class _DurableArtifactWriter:
     pending_bytes: int = 0
     last_flush_at: float = field(default_factory=time.monotonic)
     last_cancellation_check_at: float = 0.0
+    writing: asyncio.Task[None] | None = None
+    polling: asyncio.Task[None] | None = None
 
     async def ensure_not_canceled(self, *, force: bool = False) -> None:
-        now = time.monotonic()
-        if (
-            not force
-            and now - self.last_cancellation_check_at < self.cancellation_poll_interval_seconds
+        """Raise when the Task was canceled; ``force`` reads the Task now and waits for it.
+
+        Otherwise the read starts in the background once the poll interval has passed, and what
+        it finds is raised by a later call.
+        """
+
+        self._observe_cancellation_read()
+        if force:
+            await self._read_cancellation()
+        elif (
+            self.polling is None
+            and time.monotonic() - self.last_cancellation_check_at
+            >= self.cancellation_poll_interval_seconds
         ):
-            return
+            self.polling = asyncio.create_task(self._read_cancellation())
+
+    def _observe_cancellation_read(self) -> None:
+        polling = self.polling
+        if polling is not None and polling.done():
+            self.polling = None
+            polling.result()
+
+    async def _read_cancellation(self) -> None:
         current = await self.client.get_task(self.task.uid)
-        self.last_cancellation_check_at = now
+        self.last_cancellation_check_at = time.monotonic()
         if current.cancellation_requested or current.status == "canceled":
             raise _TaskCancellationRequested(current)
 
@@ -1321,15 +1349,39 @@ class _DurableArtifactWriter:
             return
         self.pending.append(value)
         self.pending_bytes += len(value.encode("utf-8"))
+        if self.writing is not None:
+            if not self.writing.done() and self.pending_bytes < self.flush_bytes:
+                return
+            await self._finish_write()
         elapsed_ms = (time.monotonic() - self.last_flush_at) * 1000
         if self.pending_bytes >= self.flush_bytes or elapsed_ms >= self.flush_interval_ms:
-            await self.flush()
+            self.writing = asyncio.create_task(self._write())
+
+    async def _finish_write(self) -> None:
+        writing, self.writing = self.writing, None
+        if writing is not None:
+            await writing
 
     async def flush(self, *, final: bool = False) -> None:
+        await self._finish_write()
+        await self._write(final=final)
+
+    async def close(self) -> None:
+        """Stop the background read and write, keeping none of their results."""
+
+        running = [work for work in (self.writing, self.polling) if work is not None]
+        self.writing = self.polling = None
+        for work in running:
+            work.cancel()
+        await asyncio.gather(*running, return_exceptions=True)
+
+    async def _write(self, *, final: bool = False) -> None:
         text = "".join(self.pending)
         if not text and not final:
             return
-        await self.ensure_not_canceled(force=True)
+        self.pending.clear()
+        self.pending_bytes = 0
+        await self._read_cancellation()
         fence = await _current_task_fence(self.manager, self.task, self.claim)
         created = self.revision == 0
         if created:
@@ -1343,7 +1395,19 @@ class _DurableArtifactWriter:
                 name="Agent response",
             )
             self.output_uid = str(result["uid"])
-        elif final:
+        elif text:
+            if self.output_uid is None:
+                raise RuntimeError("Backend Task output UID is unavailable")
+            result = await self.client.append_task_output(
+                self.task.uid,
+                attempt_uid=self.claim.attempt_uid,
+                holder_id=fence.holder_id,
+                lease_token=fence.lease_token,
+                output_uid=self.output_uid,
+                expected_revision=self.revision,
+                parts=[{"text": text}],
+            )
+        else:
             if self.output_uid is None:
                 raise RuntimeError("Backend Task output UID is unavailable")
             result = await self.client.finalize_task_output(
@@ -1354,24 +1418,11 @@ class _DurableArtifactWriter:
                 output_uid=self.output_uid,
                 expected_revision=self.revision,
             )
-        else:
-            if self.output_uid is None:
-                raise RuntimeError("Backend Task output UID is unavailable")
-            result = await self.client.append_task_output(
-                self.task.uid,
-                attempt_uid=self.claim.attempt_uid,
-                holder_id=fence.holder_id,
-                lease_token=fence.lease_token,
-                output_uid=self.output_uid,
-                expected_revision=self.revision,
-                parts=[{"text": text}] if text else [],
-            )
         self.revision = int(result.get("revision") or self.revision + 1)
-        self.pending.clear()
-        self.pending_bytes = 0
         self.last_flush_at = time.monotonic()
-        if final and created:
-            await self.flush(final=True)
+        if final and (created or text):
+            # The output is finalized after the text still pending is written, never instead.
+            await self._write(final=True)
 
     async def write_strict_json(self, text: str) -> None:
         await self.ensure_not_canceled(force=True)
@@ -1419,26 +1470,32 @@ async def _collect_task_turn(
         return text
 
     accumulator = _TurnAccumulator(max_output_bytes=max_output_bytes)
-    async for event in manager.prompt(
-        task.context_id,
-        prompt,
-        provenance=provenance,
-        turn_uid=writer.claim.turn_uid,
-    ):
-        await writer.ensure_not_canceled()
-        accumulator.consume(event)
-        value = _event_text(event.type, event.data, has_chunks=bool(accumulator.delta_chunks[:-1]))
-        if event.type in {"text_delta", "text-delta"} and value:
-            await writer.append_text(value)
-    context = active_task_execution()
-    if context is not None and context.interruption_status is not None:
-        await writer.flush()
-        return ""
-    text = accumulator.result()
-    if not accumulator.delta_chunks:
-        await writer.append_text(text)
-    await writer.flush(final=True)
-    return text
+    try:
+        async for event in manager.prompt(
+            task.context_id,
+            prompt,
+            provenance=provenance,
+            turn_uid=writer.claim.turn_uid,
+        ):
+            await writer.ensure_not_canceled()
+            accumulator.consume(event)
+            value = _event_text(
+                event.type, event.data, has_chunks=bool(accumulator.delta_chunks[:-1])
+            )
+            if event.type in {"text_delta", "text-delta"} and value:
+                await writer.append_text(value)
+        context = active_task_execution()
+        if context is not None and context.interruption_status is not None:
+            await writer.flush()
+            return ""
+        text = accumulator.result()
+        if not accumulator.delta_chunks:
+            await writer.append_text(text)
+        await writer.flush(final=True)
+        return text
+    finally:
+        # Nothing the writer started in the background outlives the turn or reaches settlement.
+        await writer.close()
 
 
 async def _execute_task(
@@ -1884,111 +1941,116 @@ async def _stream_task_events(
     text = ""
     emitted = False
     try:
-        await writer.ensure_not_canceled(force=True)
-        if output_contract.enabled:
-            with task_execution_scope(task_context):
-                text = await _collect_validated_turn(
-                    manager,
-                    task.context_id,
-                    prompt,
-                    output_contract,
-                    max_output_bytes=max_output_bytes,
-                    provenance=provenance,
-                    turn_uid=claim.turn_uid,
-                )
-            if text and task_context.interruption_status is None:
-                await writer.write_strict_json(text)
-                yield _artifact_update(
-                    task,
-                    artifact_id=artifact_id,
-                    part={
-                        "data": json.loads(text),
-                        "mediaType": "application/json",
-                    },
-                    append=False,
-                    last_chunk=True,
-                )
-                emitted = True
-        else:
-            accumulator = _TurnAccumulator(max_output_bytes=max_output_bytes)
-            with task_execution_scope(task_context):
-                async for event in manager.prompt(
-                    task.context_id,
-                    prompt,
-                    provenance=provenance,
-                    turn_uid=claim.turn_uid,
-                ):
-                    await writer.ensure_not_canceled()
-                    accumulator.consume(event)
-                    if event.type not in {"text_delta", "text-delta"}:
-                        continue
-                    value = _event_text(
-                        event.type,
-                        event.data,
-                        has_chunks=bool(accumulator.delta_chunks[:-1]),
-                    )
-                    if not value:
-                        continue
-                    await writer.append_text(value)
-                    yield _artifact_update(
-                        task,
-                        artifact_id=artifact_id,
-                        part={"text": value},
-                        append=emitted,
-                        last_chunk=False,
-                    )
-                    emitted = True
-            if task_context.interruption_status is None:
-                text = accumulator.result()
-                if not accumulator.delta_chunks:
-                    await writer.append_text(text)
-                    yield _artifact_update(
-                        task,
-                        artifact_id=artifact_id,
-                        part={"text": text},
-                        append=False,
-                        last_chunk=False,
-                    )
-                    emitted = True
-        if task_context.interruption_status is not None:
-            await writer.flush()
+        try:
             await writer.ensure_not_canceled(force=True)
-            interrupted = await _settle_claimed_task(
+            if output_contract.enabled:
+                with task_execution_scope(task_context):
+                    text = await _collect_validated_turn(
+                        manager,
+                        task.context_id,
+                        prompt,
+                        output_contract,
+                        max_output_bytes=max_output_bytes,
+                        provenance=provenance,
+                        turn_uid=claim.turn_uid,
+                    )
+                if text and task_context.interruption_status is None:
+                    await writer.write_strict_json(text)
+                    yield _artifact_update(
+                        task,
+                        artifact_id=artifact_id,
+                        part={
+                            "data": json.loads(text),
+                            "mediaType": "application/json",
+                        },
+                        append=False,
+                        last_chunk=True,
+                    )
+                    emitted = True
+            else:
+                accumulator = _TurnAccumulator(max_output_bytes=max_output_bytes)
+                with task_execution_scope(task_context):
+                    async for event in manager.prompt(
+                        task.context_id,
+                        prompt,
+                        provenance=provenance,
+                        turn_uid=claim.turn_uid,
+                    ):
+                        await writer.ensure_not_canceled()
+                        accumulator.consume(event)
+                        if event.type not in {"text_delta", "text-delta"}:
+                            continue
+                        value = _event_text(
+                            event.type,
+                            event.data,
+                            has_chunks=bool(accumulator.delta_chunks[:-1]),
+                        )
+                        if not value:
+                            continue
+                        await writer.append_text(value)
+                        yield _artifact_update(
+                            task,
+                            artifact_id=artifact_id,
+                            part={"text": value},
+                            append=emitted,
+                            last_chunk=False,
+                        )
+                        emitted = True
+                if task_context.interruption_status is None:
+                    text = accumulator.result()
+                    if not accumulator.delta_chunks:
+                        await writer.append_text(text)
+                        yield _artifact_update(
+                            task,
+                            artifact_id=artifact_id,
+                            part={"text": text},
+                            append=False,
+                            last_chunk=False,
+                        )
+                        emitted = True
+            if task_context.interruption_status is not None:
+                await writer.flush()
+                await writer.ensure_not_canceled(force=True)
+                interrupted = await _settle_claimed_task(
+                    client,
+                    manager,
+                    task,
+                    claim,
+                    status=task_context.interruption_status,
+                    status_message=task_context.interruption_message,
+                )
+                interrupted = await _task_with_history(
+                    client, interrupted, history_length=history_length
+                )
+                yield {"task": _task_payload(interrupted, history_length=history_length)}
+                return
+            if not output_contract.enabled:
+                await writer.flush(final=True)
+            await writer.ensure_not_canceled(force=True)
+            completed = await _settle_claimed_task(
                 client,
                 manager,
                 task,
                 claim,
-                status=task_context.interruption_status,
-                status_message=task_context.interruption_message,
+                status="completed",
             )
-            interrupted = await _task_with_history(
-                client, interrupted, history_length=history_length
-            )
-            yield {"task": _task_payload(interrupted, history_length=history_length)}
-            return
-        if not output_contract.enabled:
-            await writer.flush(final=True)
-        await writer.ensure_not_canceled(force=True)
-        completed = await _settle_claimed_task(
-            client,
-            manager,
-            task,
-            claim,
-            status="completed",
-        )
-        if emitted and not output_contract.enabled:
-            yield _artifact_update(
-                task,
-                artifact_id=artifact_id,
-                part={"text": ""},
-                append=True,
-                last_chunk=True,
-            )
-        completed = await _task_with_history(client, completed, history_length=history_length)
-        yield {
-            "task": _task_payload(completed, history_length=history_length),
-            "final": True,
-        }
+            if emitted and not output_contract.enabled:
+                yield _artifact_update(
+                    task,
+                    artifact_id=artifact_id,
+                    part={"text": ""},
+                    append=True,
+                    last_chunk=True,
+                )
+            completed = await _task_with_history(client, completed, history_length=history_length)
+            yield {
+                "task": _task_payload(completed, history_length=history_length),
+                "final": True,
+            }
+        finally:
+            # Nothing the writer started in the background outlives the turn or reaches
+            # settlement.
+            await writer.close()
     except _TaskCancellationRequested as cancellation:
         canceled = cancellation.task
         if canceled.status != "canceled":
