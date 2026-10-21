@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.23 — 2026-10-21
 
 - **A hosted Task's answer reaches the platform in a few writes, and none of it is lost
   ([#116](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/116)).** While a Task attempt
