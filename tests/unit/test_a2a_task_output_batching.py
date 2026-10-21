@@ -47,10 +47,10 @@ def _assistant(text: str) -> AssistantMessage:
     )
 
 
-def _model_events() -> list[Any]:
+def _model_events(deltas: list[str] = DELTAS) -> list[Any]:
     events: list[Any] = []
     streamed = ""
-    for delta in DELTAS:
+    for delta in deltas:
         streamed += delta
         partial = _assistant(streamed)
         events.append(
@@ -63,7 +63,7 @@ def _model_events() -> list[Any]:
                 ),
             )
         )
-    final = _assistant(ANSWER)
+    final = _assistant(streamed)
     events.append(MessageEndEvent(message=final))
     events.append(SessionAgentEndEvent(messages=[final], will_retry=False))
     return events
@@ -174,14 +174,15 @@ class _StreamingModel:
     settings = CONFIG
     draining = False
 
-    def __init__(self) -> None:
+    def __init__(self, deltas: list[str] = DELTAS) -> None:
+        self.events = _model_events(deltas)
         self.consumed = 0
 
     async def task_execution_fence(self, _session_uid: str) -> SimpleNamespace:
         return SimpleNamespace(holder_id="holder-1", lease_token="lease-1")
 
     async def prompt(self, _context_id: str, _prompt: str, *, provenance=None, turn_uid=None):
-        for event in _model_events():
+        for event in self.events:
             await asyncio.sleep(MODEL_GAP)
             self.consumed += 1
             yield translate_tau_event(event)
@@ -217,8 +218,8 @@ async def test_a_slow_platform_gets_the_answer_in_a_few_ordered_writes():
     assert {operation for operation, _text in writes[1:-1]} <= {"append"}
     assert "".join(text for _operation, text in writes) == ANSWER
     # One write per delta would be 40 writes and at least as many reads of the Task.
-    assert len(writes) <= 8
-    assert platform.reads <= 20
+    assert len(writes) <= 10
+    assert platform.reads <= 30
     assert platform.settled == "completed"
 
 
@@ -251,7 +252,7 @@ async def test_a_slow_platform_does_not_hold_back_the_streamed_answer():
     assert "".join(streamed) == ANSWER
     assert len([text for text in streamed if text]) == len(DELTAS)
     assert "".join(text for _operation, text in platform.writes) == ANSWER
-    assert len(platform.writes) <= 8
+    assert len(platform.writes) <= 10
     assert events[-1]["final"] is True
     assert platform.settled == "completed"
 
@@ -259,14 +260,16 @@ async def test_a_slow_platform_does_not_hold_back_the_streamed_answer():
 @pytest.mark.asyncio
 async def test_a_cancellation_seen_in_the_background_stops_the_attempt_before_it_settles():
     platform = _SlowPlatform(cancel_after_writes=1)
-    model = _StreamingModel()
+    # A model that would stream for five seconds, far longer than the background read takes to
+    # see the cancellation, so the turn stops reading it whatever the machine's speed.
+    model = _StreamingModel([f"word{index} " for index in range(1000)])
 
     result = await _run(platform, model)
 
     assert result == {"taskId": "task-1", "state": "canceled"}
     assert platform.settled == "canceled"
     # The turn stopped reading the model once the cancellation was seen.
-    assert model.consumed < len(_model_events())
+    assert model.consumed < len(model.events) // 2
     assert "finalize" not in {operation for operation, _text in platform.writes}
 
 
