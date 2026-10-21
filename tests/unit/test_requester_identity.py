@@ -413,7 +413,10 @@ async def test_without_hosting_a_caller_delivery_turn_names_nothing(tmp_path):
     await _close(manager)
 
 
-def _task_context(caller: VerifiedCaller | None = None) -> TaskExecutionContext:
+def _task_context(
+    caller: VerifiedCaller | None = None,
+    requester_uid: str | None = None,
+) -> TaskExecutionContext:
     return TaskExecutionContext(
         task_uid="backend-task-1",
         task_id="task-1",
@@ -422,6 +425,7 @@ def _task_context(caller: VerifiedCaller | None = None) -> TaskExecutionContext:
         holder_id="holder-1",
         lease_token=LEASE_TOKEN,
         caller=caller,
+        requester_uid=requester_uid,
     )
 
 
@@ -429,34 +433,43 @@ THE_CALLER = VerifiedCaller(uid=OWNER_UID, is_organization_admin=False)
 
 
 @pytest.mark.parametrize(
-    ("hosted", "caller", "expected"),
+    ("hosted", "caller", "requester_uid", "answered_requester", "expected"),
     [
-        pytest.param(True, THE_CALLER, Requester(uid=OWNER_UID), id="run_by_them"),
-        # A dispatched attempt has no caller; it serves the person named.
-        pytest.param(True, None, Requester(uid=OWNER_UID), id="dispatched"),
-        pytest.param(False, THE_CALLER, None, id="not_hosted"),
+        pytest.param(True, THE_CALLER, OWNER_UID, None, Requester(uid=OWNER_UID), id="run_by_them"),
+        # A dispatched attempt has no caller; it serves the person the dispatch named.
+        pytest.param(True, None, OWNER_UID, None, Requester(uid=OWNER_UID), id="dispatched"),
+        # The platform named nobody for running the Task. A Task attempt never takes its person
+        # from the turn start, even one that names somebody.
+        pytest.param(True, THE_CALLER, None, OWNER_UID, None, id="named_nobody"),
+        pytest.param(False, THE_CALLER, OWNER_UID, None, None, id="not_hosted"),
     ],
 )
-async def test_a_task_turn_never_presents_an_assertion_and_serves_the_person_named(
+async def test_a_task_turn_never_presents_an_assertion_and_serves_the_person_the_task_names(
     platform_keys,
     tmp_path,
     hosted,
     caller,
+    requester_uid,
+    answered_requester,
     expected,
 ):
-    seen: list[Requester | None] = []
+    seen: list[tuple[Requester | None, bool]] = []
 
     async def tool() -> None:
-        seen.append(current_requester())
+        binding = requester_module._current_turn_binding()
+        assert binding is not None
+        # Calls the tool makes, an application's MCP calls included, carry the person's
+        # delegation exactly when the turn serves them.
+        seen.append((current_requester(), binding.serving))
 
     config = platform_keys.hosted_settings(tmp_path) if hosted else _managed_settings(tmp_path)
-    manager, storage = _turn_manager(config, tool, answered_requester=OWNER_UID)
+    manager, storage = _turn_manager(config, tool, answered_requester=answered_requester)
 
-    with task_execution_scope(_task_context(caller)):
+    with task_execution_scope(_task_context(caller, requester_uid)):
         await _run_turn(manager, caller_assertion=_assertion(), turn_uid="turn-of-attempt-1")
 
     storage.begin_turn.assert_awaited_once_with(turn_uid="turn-of-attempt-1", activity_sequence=1)
-    assert seen == [expected]
+    assert seen == [(expected, expected is not None)]
     await _close(manager)
 
 
@@ -476,7 +489,7 @@ async def test_a_task_a_job_asked_for_serves_nobody(platform_keys, tmp_path, cal
     async def tool() -> None:
         seen.append(current_requester())
 
-    # A Job's workload asked for the Task, so the platform names nobody for its attempts.
+    # A Job's workload asked for the Task, so the platform names nobody for running it.
     manager, _storage = _turn_manager(
         platform_keys.hosted_settings(tmp_path), tool, answered_requester=None
     )
@@ -503,7 +516,7 @@ def test_the_turn_serves_the_person_the_platform_names(platform_keys, tmp_path, 
     )
     runtime = SimpleNamespace(requester_user_uid=named)
 
-    assert manager._turn_requester(runtime) == expected  # type: ignore[arg-type]
+    assert manager._turn_requester(runtime, None) == expected  # type: ignore[arg-type]
     # The requester carries no team list; in_teams() asks the platform (#103).
     assert not hasattr(expected, "team_uids")
 
@@ -635,6 +648,7 @@ class _RecordingManager:
             "caller": assertion.caller.uid if assertion is not None else None,
             "task_attempt": task is not None,
             "task_caller": task.caller.uid if task is not None and task.caller else None,
+            "task_requester": task.requester_uid if task is not None else None,
         }
         if options.get("caller_delivery") is not None:
             turn["delivery"] = options["caller_delivery"]
@@ -846,11 +860,33 @@ async def test_task_attempt_turns_never_receive_the_request_assertion(
 
 
 @pytest.mark.parametrize("hosted", [True, False])
-async def test_the_platform_dispatch_is_not_a_source_of_the_person(
+@pytest.mark.parametrize(
+    ("named", "expected"),
+    [
+        pytest.param(
+            {"requester_user_uid": OWNER_UID, "requester_identity_type": "human"},
+            OWNER_UID,
+            id="a_person",
+        ),
+        # The platform names nobody when the Agent may not act for the person who asked.
+        pytest.param(
+            {"requester_user_uid": None, "requester_identity_type": None}, None, id="nobody"
+        ),
+        pytest.param(
+            {"requester_user_uid": AGENT_USER_UID, "requester_identity_type": "workload"},
+            None,
+            id="a_workload",
+        ),
+        pytest.param({}, None, id="not_named"),
+    ],
+)
+async def test_the_platform_dispatch_names_the_person_the_attempt_serves(
     served_platform_keys,
     tmp_path,
     asgi_client,
     hosted,
+    named,
+    expected,
 ):
     config = (
         served_platform_keys.hosted_settings(tmp_path) if hosted else _managed_settings(tmp_path)
@@ -858,7 +894,11 @@ async def test_the_platform_dispatch_is_not_a_source_of_the_person(
     app = create_app(config)
     client = _platform_client(config)
     manager = _RecordingManager(config, client)
-    _dispatchable(manager)
+    # The Task read records who asked; it does not say whether the Agent may act for them.
+    client.get_task.side_effect = [
+        _answered_task(OTHER_UID, "human", "submitted"),
+        *[_task("working")] * 20,
+    ]
     app.dependency_overrides[backend] = lambda: client
     app.dependency_overrides[runtime_manager] = lambda: manager
     app.dependency_overrides[settings] = lambda: config
@@ -867,18 +907,12 @@ async def test_the_platform_dispatch_is_not_a_source_of_the_person(
     async with asgi_client(app) as http:
         response = await http.post(
             "/internal/a2a/task-dispatch",
-            json={
-                "task_uid": "backend-task-1",
-                "dispatch_uid": "dispatch-1",
-                "requester_user_uid": OWNER_UID,
-                "requester_identity_type": "human",
-            },
+            json={"task_uid": "backend-task-1", "dispatch_uid": "dispatch-1", **named},
             headers=headers,
         )
     await manager.run_background()
 
     assert response.status_code == 200, response.text
-    # The attempt's turn start answers with the person; the dispatch names nobody for it.
     assert manager.turns == [
         {
             "session_uid": SESSION_UID,
@@ -886,6 +920,7 @@ async def test_the_platform_dispatch_is_not_a_source_of_the_person(
             "caller": None,
             "task_attempt": True,
             "task_caller": None,
+            "task_requester": expected,
         }
     ]
 
@@ -1783,6 +1818,7 @@ async def test_a_caller_delivery_turn_names_its_delivery(
             "caller": None,
             "task_attempt": False,
             "task_caller": None,
+            "task_requester": None,
             "delivery": CallerDelivery(uid="delivery-1"),
         }
     ]
@@ -1806,7 +1842,7 @@ async def test_a_task_the_request_creates_presents_its_assertion_and_keeps_its_c
 ):
     path, body = TASK_TURN_REQUESTS[route]
     app, manager = _hosted_routes(served_platform_keys, tmp_path)
-    # The Task answer's requester is an audit fact; it never decides whom the attempt serves.
+    # The platform's answer to the creation names the person the attempt serves.
     manager.backend.create_task.return_value = AgentTaskCreateResult(
         task=_answered_task(OTHER_UID, "human"),
         created=True,
@@ -1829,6 +1865,7 @@ async def test_a_task_the_request_creates_presents_its_assertion_and_keeps_its_c
     assert raw not in json.dumps(create.args[0])
     assert [turn["task_attempt"] for turn in manager.turns] == [True]
     assert manager.turns[0]["task_caller"] == OWNER_UID
+    assert manager.turns[0]["task_requester"] == OTHER_UID
     # A Task attempt never presents the assertion when it starts its turn.
     assert manager.turns[0]["assertion"] is None
     assert raw not in response.text
@@ -1841,7 +1878,8 @@ async def test_a_task_the_request_continues_presents_its_assertion_and_keeps_its
 ):
     app, manager = _hosted_routes(served_platform_keys, tmp_path)
     manager.backend.get_task_by_protocol_id.return_value = _task("input_required")
-    manager.backend.continue_task.return_value = _answered_task(None, None, "working")
+    # The platform's answer to the continuation names the person the attempt serves.
+    manager.backend.continue_task.return_value = _answered_task(OWNER_UID, "human", "working")
     raw = served_platform_keys.caller_assertion()
     body = _message(configuration={"responseKind": "task", "returnImmediately": True})
     body["message"]["taskId"] = "task-1"
@@ -1864,6 +1902,7 @@ async def test_a_task_the_request_continues_presents_its_assertion_and_keeps_its
     assert proceed.kwargs == {"caller_assertion": raw}
     assert raw not in json.dumps(proceed.args[1])
     assert [turn["task_caller"] for turn in manager.turns] == [OWNER_UID]
+    assert [turn["task_requester"] for turn in manager.turns] == [OWNER_UID]
     assert manager.turns[0]["assertion"] is None
 
 
@@ -2023,5 +2062,7 @@ async def test_a_task_the_delegating_agent_creates_keeps_its_caller(
 
     assert response.status_code == 200, response.text
     assert client.create_task.await_args.kwargs == {"caller_assertion": raw}
-    # The attempt keeps A's verified caller only for teams; the platform names the person.
+    # The attempt keeps A's verified caller only for teams; the platform's answer to the
+    # creation names the person A works for, and the attempt serves them.
     assert [turn["task_caller"] for turn in manager.turns] == [AGENT_USER_UID]
+    assert [turn["task_requester"] for turn in manager.turns] == [OWNER_UID]

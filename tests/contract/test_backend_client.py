@@ -446,12 +446,19 @@ async def test_python_client_matches_canonical_provider_and_task_contract(
         if path == "/api/v1/agent-tasks/" and request.method == "POST":
             return httpx.Response(201, json=task)
         if path == "/api/v1/agent-tasks/" and request.method == "GET":
+            # The Task list answers counts, never the latest Message or output contents.
+            row = {key: value for key, value in task.items() if key != "latest_message"}
             return httpx.Response(
                 200,
-                json={"results": [{**task, "history": [requester, responder]}]},
+                json={"results": [{**row, "output_count": 0, "finalized_output_count": 0}]},
             )
         if path == "/api/v1/agent-tasks/task-uid-1/":
-            return httpx.Response(200, json={**task, "status": "working"})
+            history = (
+                {"history": [requester, responder]}
+                if request.url.params.get("history_length") not in {None, "0"}
+                else {}
+            )
+            return httpx.Response(200, json={**task, "status": "working", **history})
         if path == "/api/v1/agent-tasks/task-uid-1/snapshot/":
             return httpx.Response(
                 200,
@@ -695,7 +702,8 @@ async def test_python_client_matches_canonical_provider_and_task_contract(
         ("POST", "/api/v1/runtime-credentials/token/", ""),
         ("POST", "/api/v1/model-provider-credentials/hydrate/", ""),
         ("POST", "/api/v1/agent-tasks/", ""),
-        ("GET", "/api/v1/agent-tasks/", "task_id=task-1&history_length=5"),
+        ("GET", "/api/v1/agent-tasks/", "task_id=task-1"),
+        ("GET", "/api/v1/agent-tasks/task-uid-1/", "history_length=5"),
         ("GET", "/api/v1/agent-tasks/task-uid-1/", "history_length=0"),
         ("GET", "/api/v1/agent-tasks/task-uid-1/messages/", "history_length=5"),
         ("GET", "/api/v1/agent-tasks/task-uid-1/snapshot/", ""),

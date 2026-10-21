@@ -1009,16 +1009,26 @@ class MainSequenceClient:
             for task in TypeAdapter(list[AgentTask]).validate_python(values or [])
         ]
 
+    async def _task_uid_by_protocol_id(self, task_id: str) -> str:
+        tasks = await self.list_tasks(task_id=task_id)
+        if not tasks:
+            raise SessionNotFoundError(f"A2A task not found: {task_id}")
+        return tasks[0].uid
+
     async def get_task_by_protocol_id(
         self,
         task_id: str,
         *,
         history_length: int | None = None,
     ) -> AgentTask:
-        tasks = await self.list_tasks(task_id=task_id, history_length=history_length)
-        if not tasks:
-            raise SessionNotFoundError(f"A2A task not found: {task_id}")
-        return tasks[0]
+        """Return the complete Task that the protocol ID names.
+
+        The platform's Task list finds the Task but answers only the counts of its outputs, so
+        the Task is then read in full.
+        """
+
+        task_uid = await self._task_uid_by_protocol_id(task_id)
+        return await self.get_task(task_uid, history_length=history_length)
 
     async def get_task(
         self,
@@ -1067,8 +1077,7 @@ class MainSequenceClient:
         return snapshot.model_copy(update={"task": _with_binding_messages(snapshot.task)})
 
     async def get_task_snapshot_by_protocol_id(self, task_id: str) -> AgentTaskSnapshot:
-        task = await self.get_task_by_protocol_id(task_id)
-        return await self.get_task_snapshot(task.uid)
+        return await self.get_task_snapshot(await self._task_uid_by_protocol_id(task_id))
 
     async def list_task_events(
         self,

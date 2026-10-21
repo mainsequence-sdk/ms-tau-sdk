@@ -1,5 +1,11 @@
 # ADR 0019: Verified Request Identity and Session Ownership
 
+Amended 2026-10-21 for [issue #114](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/114): a
+Task attempt serves the person the platform names for running the Task, in its answer to the
+runtime's own creation or continuation of the Task or in the dispatch, instead of the person its
+turn start names, which is always nobody (section 9 and
+[ADR 0021](./0021-mcp-connections-on-the-persons-identity.md) section 3).
+
 Amended 2026-10-15 for [issue #103](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/103),
 second change: the platform signs no team list any more, so the runtime drops it. The verified
 caller and the turn's requester have no `team_uids`, and the verifier refuses a caller assertion
@@ -264,8 +270,11 @@ the runtime sends the request's verified caller assertion in the same header bes
 credential, under the same rules: only while it is valid, never in local mode or outside hosting,
 never on the platform's own calls, and never in the Task's body. The platform records the person
 as the Task's requester and names them in the answer's `requester_user_uid` and
-`requester_identity_type`, and its later dispatches of the Task name the same facts. These are
-records: the runtime does not take the person it serves from them.
+`requester_identity_type`, and its later dispatches of the Task name the same facts. The answers
+to the runtime's own creation and continuation and the dispatch name only an active person the
+executing Agent may act for, and nobody otherwise; a Task attempt serves that person. An ordinary
+read of the Task records who asked without that check, so the runtime does not take the person
+from it.
 
 **A turn that resumes a caller delivery.** When the platform's
 `POST /internal/a2a/task-caller-delivery` resumes a hosted session for delegated work, the turn it
@@ -276,10 +285,12 @@ own the session, or null. Local mode and a runtime that is not hosted name no de
 
 **The turn's requester.** `current_requester()` returns, inside a turn, an immutable object with
 `uid` and `in_teams()`, or None. The platform's answer to the transition that marks the turn active
-names that person in `requester_user_uid`, or null, for every kind of turn: a chat or A2A Message
-turn, a Task attempt the platform dispatches or the request runs itself, and a turn that resumes a
-caller delivery. That answer is the only source, whoever called: the runtime never takes a person
-from an assertion claim, a dispatch or a Task answer. `in_teams()` answers while the person is the
+names that person in `requester_user_uid`, or null, for a chat or A2A Message turn and a turn that
+resumes a caller delivery. A Task attempt serves the person the platform names for running the Task:
+in its answer to the runtime's own creation or continuation of the Task when the request runs the
+attempt itself, and in the dispatch when the platform asks the runtime to run it. The answer to a
+Task attempt's turn start names nobody and is not used. The runtime never takes a person from an
+assertion claim. `in_teams()` answers while the person is the
 verified caller of the request the turn runs in, and raises otherwise (section 10). Local mode, a runtime that is not hosted, and code outside a turn have None.
 
 The turn binds its requester for its own duration and ends the binding when it ends. Detached SDK
@@ -416,9 +427,10 @@ a failed lookup; and one lookup per request.
 `tests/unit/test_requester_identity.py` covers section 9: the assertion on the turn-start
 transition of hosted chat, A2A Message, JSON-RPC and strict JSON repair turns, for person and
 Agent callers; none on Task attempts, after expiry, in local mode or outside hosting; the person
-the platform names for every kind of turn, whoever called, and nobody; the caller's teams only
+the platform names for each kind of turn, whoever called, and nobody; the caller's teams only
 when it is that person; the assertion on Task creation and continuation, the verified caller an
-attempt keeps, and a dispatch that is not a source of the person; the delegation ending with the
+attempt keeps, and the person the creation, continuation or dispatch names for a Task attempt, and
+nobody for a workload or no one, never the turn start's person; the delegation ending with the
 turn; `platform_client()` with each delegation mode, inside and outside a turn; the three headers
 only on delegated calls and only to the platform origin; the release access flow, its cache, its
 renewal near expiry and after a 401; the refusal codes; and a hosted turn end to end, with a

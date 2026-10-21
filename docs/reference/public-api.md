@@ -69,11 +69,12 @@ check [what each call may do](./security-model.md#what-each-call-may-do) before 
 answers while the person is the verified caller of the request the turn runs in, and raises
 `TauSDKError` otherwise. The requester carries no team list.
 
-When a hosted turn or Task attempt starts, the platform's answer names the person the Agent may act
-for, or nobody, for every kind of turn: a chat (`POST /api/chat`) or A2A Message turn, a Task
-attempt the platform dispatches or the request runs itself, and a turn that resumes a caller
-delivery. That answer is the only source, whoever called: an Agent that delegates work for a person
-gets that person for the work it sends, when the platform records them. Local mode, a
+When a hosted chat (`POST /api/chat`) or A2A Message turn starts, or a turn that resumes a caller
+delivery, the platform's answer names the person the Agent may act for, or nobody, whoever called.
+A Task attempt serves the person the platform names for running the Task: in its answer when the
+request creates or continues the Task, or in the dispatch when the platform asks the runtime to run
+it. An Agent that delegates work for a person gets that person for the work it sends, when the
+platform records them. Local mode, a
 runtime that is not hosted, and code outside a turn, such as Tau Board's tool workbench, have
 `None`.
 

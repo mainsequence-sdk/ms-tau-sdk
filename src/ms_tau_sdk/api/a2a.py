@@ -63,7 +63,7 @@ from ms_tau_sdk.runtime.provenance import (
     TurnProvenance,
     turn_provenance_from_request,
 )
-from ms_tau_sdk.runtime.requester import CallerDelivery
+from ms_tau_sdk.runtime.requester import CallerDelivery, canonical_requester_uid
 from ms_tau_sdk.runtime.task_context import (
     TaskExecutionContext,
     active_task_execution,
@@ -1072,11 +1072,24 @@ def _presented_assertion(caller_assertion: CallerAssertion | None) -> dict[str, 
 def _request_caller(caller_assertion: CallerAssertion | None) -> VerifiedCaller | None:
     """Return the verified caller of a request that runs a Task attempt itself.
 
-    The platform's answer to the attempt's turn start names the person the attempt serves; this
-    caller only supplies that person's teams, when it is that person.
+    The platform names the person the attempt serves; this caller only supplies that person's
+    teams, when it is that person.
     """
 
     return caller_assertion.caller if caller_assertion is not None else None
+
+
+def _task_requester_uid(requester_user_uid: object, requester_identity_type: object) -> str | None:
+    """Return the person a Task attempt serves, as the platform named them for running the Task.
+
+    The platform names a requester for running a Task in its answer to the runtime's own creation
+    or continuation of the Task and in the dispatch: an active person, only while the executing
+    Agent may act for them, and nobody otherwise.
+    """
+
+    if requester_identity_type != "human":
+        return None
+    return canonical_requester_uid(requester_user_uid)
 
 
 async def _wait_for_task_return_state(
@@ -1441,6 +1454,7 @@ async def _execute_task(
     dispatch_uid: str | None = None,
     claim: _ClaimedTask | None = None,
     caller: VerifiedCaller | None = None,
+    requester_uid: str | None = None,
 ) -> dict[str, Any]:
     bind_contextvars(
         a2a_task_id=task.task_id,
@@ -1474,6 +1488,7 @@ async def _execute_task(
         holder_id=claim.holder_id,
         lease_token=claim.lease_token,
         caller=caller,
+        requester_uid=requester_uid,
     )
     try:
         await writer.ensure_not_canceled(force=True)
@@ -1561,7 +1576,11 @@ async def _schedule_task_accelerator(
     config: TauSDKSettings,
     caller: VerifiedCaller | None = None,
 ) -> bool:
-    """Best-effort local start after durable creation; dispatch remains recovery owner."""
+    """Best-effort local start after durable creation; dispatch remains recovery owner.
+
+    ``task`` is the platform's answer to the runtime's own creation or continuation of the Task,
+    which names the person the attempt serves.
+    """
 
     try:
         claim = await _claim_backend_task(client, manager, task)
@@ -1592,6 +1611,7 @@ async def _schedule_task_accelerator(
         config=config,
         claim=claim,
         caller=caller,
+        requester_uid=_task_requester_uid(task.requester_user_uid, task.requester_identity_type),
     )
     try:
         _background, scheduled = manager.create_a2a_task_execution(
@@ -1854,6 +1874,8 @@ async def _stream_task_events(
         holder_id=claim.holder_id,
         lease_token=claim.lease_token,
         caller=caller,
+        # ``task`` is the platform's answer to the runtime's own creation of the Task.
+        requester_uid=_task_requester_uid(task.requester_user_uid, task.requester_identity_type),
     )
     working = await client.get_task(task.uid)
     working = await _task_with_history(client, working, history_length=history_length)
@@ -2337,6 +2359,12 @@ async def task_dispatch_available(
             provenance=provenance,
             config=config,
             claim=claim,
+            # The dispatch names the person the attempt serves. The Task read above records who
+            # asked, but does not say whether the Agent may act for them.
+            requester_uid=_task_requester_uid(
+                body.get("requester_user_uid"),
+                body.get("requester_identity_type"),
+            ),
         ),
         name=f"a2a-task-{task.task_id}",
     )
