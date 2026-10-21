@@ -254,6 +254,15 @@ MCP call has no implicit turn.
 | `MAINSEQUENCE_TAU_A2A_TASK_EVENT_POLL_SECONDS` | `0.5` |
 | `MAINSEQUENCE_TAU_A2A_TASK_WAIT_TIMEOUT_SECONDS` | `30`; bounds the wait of a Task-mode `message:send` with `returnImmediately: false`, never past the platform's Message limit; ending the wait does not cancel the Task |
 
+A Task attempt writes its text answer to the platform in batches. A batch is written once it
+reaches `MAINSEQUENCE_TAU_A2A_TASK_OUTPUT_FLUSH_BYTES`, or once
+`MAINSEQUENCE_TAU_A2A_TASK_OUTPUT_FLUSH_INTERVAL_MS` has passed since the previous write ended.
+The writes and the attempt's cancellation check, made every
+`MAINSEQUENCE_TAU_A2A_TASK_EVENT_POLL_SECONDS`, run in the background, one of each at a time, so
+the turn keeps reading the model while the platform answers and the text that arrives meanwhile
+joins the next batch. A batch that reaches the byte size waits for the write before it. The output
+is finalized after its last text is written.
+
 The local reconciler is the recovery owner for SQLite-backed Tasks. It safely schedules unclaimed
 `submitted` work, expires stale attempts after their session lease is no longer active, and marks
 uncertain external effects failed/ambiguous instead of replaying them. Lowering these values makes
