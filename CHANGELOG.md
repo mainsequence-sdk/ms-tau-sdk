@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 2.0.24 — 2026-10-22
+
+- **Agent deployment and recovery guidance uses the repository workflow.** The runtime
+  contract, Security and access guide and troubleshooting guide retire the manual
+  `agent.update_runtime` operation and runtime-update REST endpoint. Discovery no longer
+  supplies manual-update remediation; A2A uses the active deployed image. No SDK runtime
+  behavior changes.
 
 - **The quickstart, the README, troubleshooting and the Tau repository skills say what a hosted
   runtime installs and runs.** When Main Sequence hosts the runtime, it now installs the packages

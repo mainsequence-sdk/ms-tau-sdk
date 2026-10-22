@@ -29,7 +29,7 @@ for people. Check your installed SDK before relying on these features.
   `user` (talk to it and give it Tasks, seeing only the Tasks you asked for), `viewer` (also see
   every Task of the Agent with its requests and results, and read the Agent's log lines that
   belong to you), `operator` (also stop any Task or conversation run of the Agent, other people's
-  included), `editor` (also configure it, move it to a new runtime build, delete it, manage what
+  included), `editor` (also configure it, delete it, manage what
   its workload can reach and see who has access) and `owner` (also decide who has access). `user`
   is the right policy for most people. No policy, `owner` included, opens another person's
   conversation, and none turns on
@@ -50,10 +50,13 @@ for people. Check your installed SDK before relying on these features.
   own: `viewer` and `operator` on the Agent see the release, and `editor` and `owner` change it.
   Access to its repository or branch does not reach it, and a policy given on the release itself
   answers `400` `sharing_managed_by_owner`: give it on the Agent instead.
-- **Two changes need a second policy.** A subagent binding is part of its parent Agent's
-  configuration: creating, changing or deleting one needs `editor` or `owner` on the parent, and
-  creating or changing one also needs a policy on the child Agent it names. Moving an Agent to a
-  new runtime build needs `editor` or `owner` on the Agent and on its branch.
+- **A subagent binding needs policies on its Agents.** Creating, changing or deleting one needs
+  `editor` or `owner` on the parent, and creating or changing one also needs a policy on the child
+  Agent it names.
+- **Deployments follow the repository workflow.** Agent policies do not offer a manual runtime
+  update. Publish changes through the normal repository workflow, which applies promotion rules
+  and required steps before deploying an image. A newer branch commit waiting for a tag or a
+  prerequisite does not itself prevent communication with the currently deployed Agent.
 - **A refusal names the policies to ask for.** A change your policies do not allow answers `403`
   `missing_action` with the `required_action`, for example `agents.update` when you hold only
   `operator`, and the `granting_policies` that include it: ask an owner for one of them. An Agent

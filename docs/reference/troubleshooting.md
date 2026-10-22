@@ -1,5 +1,14 @@
 # Troubleshooting
 
+## Agent runtime-update tool or endpoint is unavailable
+
+Current platform development removes `agent.update_runtime` and the Agent `runtime-update/`
+endpoint. Refresh the MCP tool catalog and remove cached instructions to call that operation.
+Publish Agent changes through the repository workflow and inspect its image, prerequisite and
+deployment results. For communication, follow session runtime admission and the returned notice;
+a newer branch commit alone does not require updating the deployed Agent. See
+[Hosted Agent deployments](./runtime-contract.md#hosted-agent-deployments).
+
 ## Workspace validation fails
 
 Run the command from the project root or set `MAINSEQUENCE_TAU_WORKSPACE` to an existing readable

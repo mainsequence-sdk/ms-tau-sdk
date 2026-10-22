@@ -30,6 +30,19 @@ Local state defaults to `~/.tau/mainsequence/<workspace-hash>/runtime.sqlite3`. 
 uploaded when local mode is disabled. Main Sequence authentication, provider hydration, and model
 inference remain remote. When MCP is enabled, its side effects are real platform side effects.
 
+## Hosted Agent deployments
+
+Current platform development retires the `agent.update_runtime` MCP tool and the Agent
+`runtime-update/` REST endpoint. Agent discovery no longer returns a `runtime_update` remediation.
+All hosted Agent image builds and deployments follow the repository workflow and its promotion
+rules and prerequisites. This is a platform contract change; upgrading the SDK alone does not
+change the platform's tool catalog.
+
+Communication uses the already deployed active image and the session's runtime-admission result.
+A newer branch commit awaiting promotion is not a reason to redeploy before sending a Message or
+Task. If the runtime is waking, follow its bounded retry hint; if deployment failed, inspect and
+correct the repository workflow. See the [Security and access guide](./security-model.md#agent-policies).
+
 ## Operations
 
 The executable operation contract covers:
