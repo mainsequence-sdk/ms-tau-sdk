@@ -1,5 +1,25 @@
 # Changelog
 
+## Unreleased
+
+- **The quickstart, the README, troubleshooting and the Tau repository skills say what a hosted
+  runtime installs and runs.** When Main Sequence hosts the runtime, it now installs the packages
+  that the committed `requirements.txt` at the repository root lists (without that file, the
+  dependencies the root `pyproject.toml` declares), reuses them for every later commit until the
+  file changes, and runs the repository's files from `/workspace`, with `/workspace/src` and
+  `/workspace` on `PYTHONPATH`, without installing the project. The quickstart said that the
+  lockfile records the versions that will execute, and the README and `tau_repository_integration`
+  only said to add the SDK through the project's dependency manager. The new
+  [hosted Agents](docs/getting-started/quickstart.md#hosted-agents) section, the README and
+  `tau_repository_integration` now say to run `mainsequence code-repository sync` and commit
+  `requirements.txt` with `uv.lock` after adding or upgrading the SDK or a package that project
+  code or an extension imports, because a package that `pyproject.toml` declares but the file does
+  not list fails its import in the hosted runtime; to pin the SDK from the package index or a Git
+  commit, not a local path; and that project code must not rely on `importlib.metadata` for the
+  project's own package, its own console scripts or extensions compiled from its sources.
+  `tau_project_customization` says what an extension must list and import there, and
+  troubleshooting covers the import failures. No SDK behavior changes.
+
 ## 2.0.23 — 2026-10-21
 
 - **A hosted Task's answer reaches the platform in a few writes, and none of it is lost

@@ -12,7 +12,8 @@ uv add ms-tau-sdk
 ```
 
 The project lockfile is the record of the exact SDK, Tau, provider, and transport versions that
-will execute.
+run in your local environment. A hosted Agent runs what the committed `requirements.txt` lists; see
+[hosted Agents](#hosted-agents).
 
 When a coding agent will develop or debug the TAU integration, explicitly copy the skills from the
 installed SDK version:
@@ -23,6 +24,35 @@ uv run ms-tau skills sync --path .
 
 The managed copies are written to `.agents/skills/ms_tau_sdk/`. Re-run the same command after an
 SDK update. Installing the package and starting the runtime do not copy files automatically.
+
+### Hosted Agents
+
+When Main Sequence hosts the runtime, it installs the packages that the committed
+`requirements.txt` at the repository root lists, or, without that file, the dependencies that the
+root `pyproject.toml` declares. It installs them once for each content of that file and reuses them
+for every later commit, on every branch in the same Environment, until the file or the base image
+changes, so a commit that changes only code does not install dependencies again. After adding or
+upgrading the SDK, or a package that project code or an extension imports, refresh the file and
+commit it with `uv.lock`:
+
+```bash
+mainsequence code-repository sync
+```
+
+A package that `pyproject.toml` declares but `requirements.txt` does not list, `ms-tau-sdk`
+included, is not installed, and code that imports it fails in the hosted runtime. The SDK version a
+hosted runtime runs is the one `requirements.txt` pins; `code-repository sync` pins every version,
+and an unpinned line stays as first resolved until the file changes. Pin the SDK from the package
+index or a Git commit, never from a local path: the hosted build refuses local paths other than the
+repository itself, and `-r` or `-c` references.
+
+The hosted runtime runs the repository's files from `/workspace`, its working directory and
+therefore the SDK workspace, with `/workspace/src` and `/workspace` on `PYTHONPATH`. The project
+itself is not installed. Keep its top-level packages directly under `src/` or the repository root,
+and do not rely on `importlib.metadata` for the project's own version or entry points, on the
+console scripts its `pyproject.toml` declares, or on extensions compiled from its sources. The Main
+Sequence CLI documentation lists every rule for the file in
+[Dependencies and the deployed image](https://mainsequence-sdk.github.io/mainsequence-sdk/knowledge/cli/#dependencies-and-the-deployed-image).
 
 ## Configure runtime authentication
 

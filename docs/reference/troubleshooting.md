@@ -85,6 +85,14 @@ names the assertion the route required (`caller` or `platform`) and the reason, 
   `app.state.mainsequence_request_identity` from the application object it serves. Serve the
   application `create_app()` returns; an application that mounts it inside another one declares
   nothing.
+- **`ModuleNotFoundError` or `importlib.metadata.PackageNotFoundError` when the application or an
+  extension loads.** A hosted runtime installs what the repository's committed `requirements.txt`
+  lists, not what `pyproject.toml` or `uv.lock` adds to it, and runs the repository's files from
+  `/workspace` without installing the project. For a missing package, `ms-tau-sdk` included, run
+  `mainsequence code-repository sync` and commit `requirements.txt` with `uv.lock`. For the
+  project's own code, import its packages from `src/` or the repository root, and do not read the
+  project's version or entry points through `importlib.metadata`. See
+  [hosted Agents](../getting-started/quickstart.md#hosted-agents).
 
 ## Requester access is refused
 
@@ -330,7 +338,9 @@ may mutate real platform resources.
 
 Extension diagnostics include a project-relative path, extension name, severity, safe error type,
 and effective catalog counts. Reproduce in the project's locked environment. The project owns the
-extension and its optional dependencies; the SDK does not install or repair them dynamically.
+extension and its optional dependencies; the SDK does not install or repair them dynamically. For a
+hosted runtime, every package an extension imports must be in the committed `requirements.txt`; see
+[hosted Agents](../getting-started/quickstart.md#hosted-agents).
 
 ## Health is ready but no Main Sequence tools appear
 
