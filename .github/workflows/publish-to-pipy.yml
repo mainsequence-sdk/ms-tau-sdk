@@ -35,13 +35,15 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up patched Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13.17"
+
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
           version: "0.13.4"
-
-      - name: Install Python
-        run: uv python install 3.13.17
 
       - name: Sync locked workspace
         run: uv sync --frozen
@@ -51,7 +53,7 @@ jobs:
       - name: Read the version this merge releases
         id: release-version
         run: |
-          uv run --no-project --python 3.13 python scripts/compute_development_version.py \
+          uv run --no-project --python 3.13.17 python scripts/compute_development_version.py \
             --final --github-output
 
       # A tag vX.Y.Z on another commit would make the release tag name code that was not
@@ -168,6 +170,11 @@ jobs:
           ref: development
           fetch-depth: 0
 
+      - name: Set up patched Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13.17"
+
       - name: Set up uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
@@ -183,11 +190,11 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git merge --no-edit "$GITHUB_SHA"
-          declared="$(uv run --no-project --python 3.13 python -c 'import tomllib, pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
+          declared="$(uv run --no-project --python 3.13.17 python -c 'import tomllib, pathlib; print(tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"])')"
           if [ "$declared" != "$RELEASED" ]; then
             echo "development declares $declared, not the released $RELEASED; nothing to raise"
           else
-            next="$(uv run --no-project --python 3.13 python scripts/compute_development_version.py --bump-patch)"
+            next="$(uv run --no-project --python 3.13.17 python scripts/compute_development_version.py --bump-patch)"
             uv lock
             git add -- pyproject.toml uv.lock
             git commit -m "Declare $next as the next release after $RELEASED"
