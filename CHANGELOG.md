@@ -1,6 +1,6 @@
 # Changelog
 
-## [2.0.25] - 2026-10-22
+## 2.0.25 — 2026-10-22
 
 - Require certifi 2026.10.19 or newer so downstream installs receive the corrected
   CA bundle; refresh the matching lock pins.
