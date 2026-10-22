@@ -37,9 +37,11 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.13.4"
 
       - name: Install Python
-        run: uv python install 3.13
+        run: uv python install 3.13.17
 
       - name: Sync locked workspace
         run: uv sync --frozen
@@ -168,6 +170,8 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+        with:
+          version: "0.13.4"
 
       # `development` receives the release merge and the next version in one push made with the
       # workflow token, which starts no development release. A push by hand in between would
