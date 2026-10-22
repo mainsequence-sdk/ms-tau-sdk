@@ -31,13 +31,16 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Set up patched Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13.17"
+
       - name: Install uv
         uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
         with:
+          version: "0.13.4"
           enable-cache: true
-
-      - name: Install Python
-        run: uv python install 3.13
 
       - name: Sync locked workspace
         run: uv sync --frozen --extra tau-board
@@ -96,7 +99,7 @@ jobs:
       - name: Compute development version
         id: development-version
         run: |
-          uv run --no-project --python 3.13 python scripts/compute_development_version.py \
+          uv run --no-project --python 3.13.17 python scripts/compute_development_version.py \
             --write --github-output
 
       - name: Require the computed version to be the only source change
@@ -116,13 +119,13 @@ jobs:
       - name: Build and inspect distributions
         run: |
           uv build --no-sources --out-dir release-dist
-          uv run --no-project --python 3.13 python scripts/verify_distribution.py \
+          uv run --no-project --python 3.13.17 python scripts/verify_distribution.py \
             --dist-dir release-dist \
             --write-release-metadata
 
       - name: Verify clean wheel installation
         run: |
-          uv run --no-project --python 3.13 python scripts/verify_clean_install.py \
+          uv run --no-project --python 3.13.17 python scripts/verify_clean_install.py \
             release-dist/ms_tau_sdk-*.whl
 
       - name: Attest build provenance

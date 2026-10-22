@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ms-tau-sdk"
-version = "2.0.24"
+version = "2.0.25"
 description = "Workspace-bound Tau application primitives for Main Sequence projects"
 readme = "README.md"
 requires-python = ">=3.13"
@@ -16,6 +16,7 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
+  "certifi>=2026.10.19",
   "anyio>=4.10",
   "concurrent-log-handler>=0.9.28,<1",
   "cryptography>=42",
