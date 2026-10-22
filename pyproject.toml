@@ -16,6 +16,7 @@ classifiers = [
   "Programming Language :: Python :: 3.13",
 ]
 dependencies = [
+  "certifi>=2026.10.19",
   "anyio>=4.10",
   "concurrent-log-handler>=0.9.28,<1",
   "cryptography>=42",
