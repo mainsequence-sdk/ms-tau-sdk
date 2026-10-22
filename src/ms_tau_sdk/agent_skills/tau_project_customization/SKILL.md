@@ -38,7 +38,10 @@ application can publish with the mainsequence SDK's skills publisher. The manage
 
 Project extensions belong under `.tau/extensions/` and may add tools, hooks, and lifecycle
 behavior. Keep reusable business logic in the normal application package and make extension
-adapters thin and structured.
+adapters thin and structured. When Main Sequence hosts the runtime, list every package an
+extension imports in the repository's committed `requirements.txt`, and import the project's own
+packages from `src/` or the repository root, because the project itself is not installed;
+`tau-repository-integration` says how to keep that file current.
 
 The project author owns:
 

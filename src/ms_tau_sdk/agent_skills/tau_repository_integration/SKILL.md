@@ -58,6 +58,25 @@ only with that declaration, read from the object it serves. Therefore:
   repository. The platform sets them when it hosts the runtime, and local mode refuses to start
   with them.
 
+## Hosted dependencies and code
+
+When Main Sequence hosts the runtime, it installs the packages that the committed
+`requirements.txt` at the repository root lists, or, without that file, the dependencies that the
+root `pyproject.toml` declares, and reuses them for every later commit until the file or the base
+image changes. A package that `pyproject.toml` declares but `requirements.txt` does not list,
+`ms-tau-sdk` included, is not installed, and its import fails in the hosted runtime. After adding
+or upgrading the SDK, or a package that project code or an extension imports, run
+`mainsequence code-repository sync` and commit `requirements.txt` with `uv.lock`. Pin the SDK from
+the package index or a Git commit, never from a local path: the hosted build refuses local paths
+other than the repository itself, and `-r` or `-c` references.
+
+The hosted runtime runs the repository's files from `/workspace`, its working directory and
+therefore the SDK workspace, with `/workspace/src` and `/workspace` on `PYTHONPATH`. The project
+itself is not installed. Keep its top-level packages directly under `src/` or the repository root,
+and do not make project code or extensions depend on `importlib.metadata` for the project's own
+version or entry points, on the project's own console scripts, or on extensions compiled from its
+sources.
+
 ## Job-hosted batch execution
 
 ADR 0015 accepts a Python batch entry point, but it is **not implemented in this SDK version**.
@@ -96,7 +115,8 @@ JobRun UID in the SDK.
 ## Repository integration procedure
 
 1. Inspect the project's Python constraint, dependency manager, lockfile, and application layout.
-2. Add and pin `ms-tau-sdk` through that existing dependency workflow.
+2. Add and pin `ms-tau-sdk` through that existing dependency workflow. For a runtime that Main
+   Sequence hosts, refresh and commit `requirements.txt` as "Hosted dependencies and code" says.
 3. Synchronize these skills explicitly with `uv run ms-tau skills sync --path .`.
 4. For a service, use `uv run ms-tau` unless the repository needs an importable ASGI module.
    For a finite Job, follow the batch design only after the installed SDK supports it.
@@ -125,6 +145,13 @@ uv run python -c "from api.tau.main import app; print(app.state.mainsequence_req
 
 The second command prints `{'installed': True, 'mode': 'local', 'public_ingress': ()}` outside
 hosting.
+
+For a runtime that Main Sequence hosts, also check that the committed `requirements.txt` pins the
+SDK; the command prints its line:
+
+```bash
+grep -i '^ms-tau-sdk' requirements.txt
+```
 
 Do not require the `mainsequence` Python distribution in the TAU dependency graph. Authentication
 and Main Sequence transport are implemented directly by `ms-tau-sdk`.

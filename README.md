@@ -51,6 +51,12 @@ uv add --prerelease=allow ms-tau-sdk   # or pin one exactly: uv add "ms-tau-sdk=
 See the [release process](docs/reference/releasing.md#registry-publication) for what each workflow
 publishes.
 
+When Main Sequence hosts the runtime, it installs what the repository's committed
+`requirements.txt` lists and runs the repository's files, not an installed copy of the project.
+After adding or upgrading the SDK, run `mainsequence code-repository sync` and commit
+`requirements.txt` with `uv.lock`. See
+[hosted Agents](docs/getting-started/quickstart.md#hosted-agents).
+
 Provide the runtime credential that Main Sequence assigned to the deployment, and the file that
 holds the runtime's projected workload identity token:
 
