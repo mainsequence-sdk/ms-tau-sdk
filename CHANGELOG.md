@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Move the advisory `design-agent-icons-and-motion` skill and its worked MetaTables visual
+  example into the SDK-owned skill bundle. `ms-tau skills sync` installs both under
+  `.agents/skills/ms_tau_sdk/`; project artwork remains in its owning repository. No runtime
+  behavior or rendering changes.
+
 ## 2.0.25 — 2026-10-22
 
 - Require certifi 2026.10.19 or newer so downstream installs receive the corrected

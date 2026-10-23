@@ -34,6 +34,12 @@ Tau reads skills in `.tau/skills/` and `.agents/skills/` at any depth: a folder 
 application can publish with the mainsequence SDK's skills publisher. The managed skills in
 `.agents/skills/ms_tau_sdk/` are read too.
 
+## Agent artwork
+
+For optional icon composition and motion guidance, use `design-agent-icons-and-motion` from
+this SDK's skill bundle. It includes a worked visual example; project artwork and animations
+remain owned by the project.
+
 ## Extension ownership
 
 Project extensions belong under `.tau/extensions/` and may add tools, hooks, and lifecycle

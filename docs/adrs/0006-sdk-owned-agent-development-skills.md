@@ -5,6 +5,10 @@ tools that act for the person a turn serves under
 [ADR 0021](./0021-mcp-connections-on-the-persons-identity.md), including tools that use a
 person's Secret without exposing it.
 
+Amended 2026-10-24: the bundle adds `design-agent-icons-and-motion`, moved from Command Center
+AI, for advisory agent artwork composition and motion. Its single worked MetaTables example
+ships with the skill; production artwork and animation tooling remain in each owning project.
+
 Status: Accepted
 
 Date: 2026-09-17
@@ -31,6 +35,7 @@ language-neutral semantics while an installed library supplies version-matched e
 
 `ms-tau-sdk` packages these skills below `src/ms_tau_sdk/agent_skills`:
 
+- `design-agent-icons-and-motion`;
 - `tau_repository_integration`;
 - `tau_local_development`;
 - `tau_project_customization`;

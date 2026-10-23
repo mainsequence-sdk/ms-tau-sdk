@@ -85,7 +85,10 @@ uv run ms-tau skills sync --path .
 ```
 
 This explicit command owns only `.agents/skills/ms_tau_sdk/`; package installation and runtime
-startup never modify the repository automatically.
+startup never modify the repository automatically. The bundle includes
+[`design-agent-icons-and-motion`](src/ms_tau_sdk/agent_skills/design-agent-icons-and-motion/SKILL.md):
+advisory composition and animation guidance with a self-contained MetaTables visual example.
+Each agent's artwork and build files remain in its owning project.
 
 The credential pair is exchanged for short-lived Main Sequence access tokens. Do not commit it or
 place it in `.tau` configuration. For an embedded ASGI deployment, construct the same application
