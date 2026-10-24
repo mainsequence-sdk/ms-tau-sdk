@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.26 — 2026-10-24
 
 - **The deployed Agent reads its resources only from `.tau/` by default (ADR 0025).** Tau, a
   coding-agent harness, also read the repository's development instructions as the Agent's: the
