@@ -9,6 +9,11 @@ Amended 2026-10-24: the bundle adds `design-agent-icons-and-motion`, moved from 
 AI, for advisory agent artwork composition and motion. Its single worked MetaTables example
 ships with the skill; production artwork and animation tooling remain in each owning project.
 
+Amended 2026-10-24 by [ADR 0025](./0025-runtime-resources-only-from-tau.md): section 5 is
+enforced. Release 2.0.15 had made the runtime read the synchronized skills in
+`.agents/skills/ms_tau_sdk/` as the deployed Agent's skills; the runtime reads skills only from
+`.tau/skills` and no `.agents/` resource.
+
 Status: Accepted
 
 Date: 2026-09-17

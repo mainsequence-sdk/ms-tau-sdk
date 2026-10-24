@@ -18,26 +18,57 @@ the Tau version pinned by the SDK.
 
 ## Project resources
 
-Tau discovers project-owned resources from the workspace, including:
+The runtime reads the Agent's resources from the workspace `.tau/` directory:
 
 ```text
 .tau/
-├── SYSTEM.md
-├── prompts/
-├── skills/
-└── extensions/
+├── SYSTEM.md            replaces the packaged system prompt
+├── APPEND_SYSTEM.md     appended to the system prompt
+├── AGENTS.md            project instructions for the Agent
+├── prompts/             prompt templates
+├── skills/              the Agent's skills
+└── extensions/          project extensions
 ```
 
 Project resources participate in Tau diagnostics and reload. Extension session-start, tool hooks,
 and session-shutdown callbacks use Tau's normal lifecycle.
 
+## Two sets of instructions
+
+A repository that deploys an Agent holds instructions for two different agents. `.tau/` is the
+deployed Agent's: the assistant people talk to. The repository root's `AGENTS.md` and `.agents/`
+are the coding agents': `ms-tau skills sync` writes `.agents/skills/ms_tau_sdk/`, the mainsequence
+CLI writes `.agents/skills/mainsequence/`, and the repository adds its own development skills. The
+runtime reads nothing from the second set by default: no `AGENTS.md` outside `.tau`, no
+`.agents/skills`, no `.agents/prompts`. Instructions meant for the deployed Agent belong in
+`.tau/AGENTS.md`, `.tau/APPEND_SYSTEM.md` or `.tau/SYSTEM.md`. The one `.agents` file the SDK
+reads is `.agents/agent_card.json`, the Agent's platform identity, which local mode serves at
+`GET /api/local/v1/agent`; Tau does not read it.
+
+An Agent that is a coding agent over its own repository wants the second set: set
+`TAU_INCLUDE_DEVELOPMENT_RESOURCES=true` and Tau reads the repository as a coding harness, the
+root `AGENTS.md` and every `AGENTS.md` above the workspace, `.agents/AGENTS.md`, `.agents/skills`
+and `.agents/prompts`, beside `.tau`. See [runtime composition](#runtime-tool-composition) and
+[ADR 0025](../adrs/0025-runtime-resources-only-from-tau.md).
+
 ## Project skills
 
-Tau reads skills from `.tau/skills/` and `.agents/skills/`. A folder holding a `SKILL.md` is a
-skill; a folder without one groups skills, at any depth, such as
-`.agents/skills/mcp_tools/<skill>/SKILL.md`. A folder inside a skill is not a skill, and a linked
-group folder is not followed. When two skills in the same one of these folders share a name, the
-first in path order is kept and Tau reports the other.
+Tau reads the Agent's skills from `.tau/skills/`. A folder holding a `SKILL.md` is a skill; a
+folder without one groups skills, at any depth, such as `.tau/skills/<group>/<skill>/SKILL.md`. A
+folder inside a skill is not a skill, and a linked group folder is not followed. A skill's name is
+its folder's name. When two skills in the folder share a name, the first in path order is kept and
+Tau reports the other. A chat user can invoke any of these skills with `/skill:<name>`.
+
+An application that publishes its Agent's usage skills to other agents with the mainsequence SDK's
+`skills_extension` points it at `.tau/skills` itself: the Agent's skills and the published skills
+are one set. Do not publish a group folder inside it to keep some skills private; instructions
+other agents may not see belong in `.tau/SYSTEM.md` or `.tau/AGENTS.md`. The publisher's rules
+then hold for the whole folder: lowercase letters, digits and single hyphens in every skill and
+group folder name; every folder a skill or a non-empty group; a skill's frontmatter `name` equal to
+its folder's name; leaf folder names unique, because Tau names a skill by its folder. A group folder
+prefixes the published `skill://` URIs, so a pack that was published from its own folder moves its
+skills directly into `.tau/skills` to keep its URIs. Development skills under `.agents/skills` are
+never published.
 
 ## Ownership and trust
 
@@ -63,12 +94,13 @@ the SDK's own Main Sequence HTTP transport.
 
 ## Runtime tool composition
 
-The host process sets two independent booleans, both `false` by default:
+The host process sets three independent booleans, all `false` by default:
 
 | Environment variable | When `true` |
 | --- | --- |
 | `TAU_EXCLUDE_BASE_TOOLS` | Replace Tau's `read`, `write`, `edit`, and `bash` with a `read` that serves only skill files. |
 | `TAU_EXCLUDE_MAINSEQUENCE_MCP` | Do not connect to Main Sequence MCP or inject its tools, resources, or resource prompt. |
+| `TAU_INCLUDE_DEVELOPMENT_RESOURCES` | Read the repository as a coding harness: the root `AGENTS.md` and every `AGENTS.md` above the workspace, `.agents/AGENTS.md`, `.agents/skills` and `.agents/prompts`, beside `.tau`. |
 
 Project extension tools remain in either mode. `task_request_input` and
 `task_request_authorization` always remain for the agent's own A2A Task and cannot be replaced by
@@ -80,7 +112,8 @@ remains. A project prompt or Agent Card skill description does not remove tools.
 
 With base tools excluded, project skills stay available. The skill-scoped `read`
 opens a discovered skill's `SKILL.md` and the files in its directory, such as `references/*.md`,
-and rejects every other path, including symlinks that resolve outside the skill. Because a tool
+and rejects every other path, including symlinks that resolve outside the skill and every path
+under `.agents/skills`. Because a tool
 named `read` exists, Tau still lists the skills in the system prompt. A project extension cannot
 register `read` in this mode.
 

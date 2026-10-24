@@ -177,19 +177,22 @@ def _skill(folder: Path, description: str) -> None:
 
 async def test_tau_reads_skills_nested_in_group_folders(tmp_path):
     workspace = _workspace(tmp_path)
-    group = workspace / ".agents/skills/mcp_tools"
+    group = workspace / ".tau/skills/mcp-tools"
     _skill(group / "alpaca-demo", "Grouped skill")
     (group / "alpaca-demo/references").mkdir()
     (group / "alpaca-demo/references/orders.md").write_text("Use limit orders.")
     _skill(group / "alpaca-demo/references/inner", "A skill inside a skill is not read")
     (group / "README.md").write_text("Not a skill.")
-    _skill(workspace / ".agents/skills/billing/refunds/refund-review", "Deeper group")
-    _skill(workspace / ".agents/skills/flat-skill", "Flat skill")
+    _skill(workspace / ".tau/skills/billing/refunds/refund-review", "Deeper group")
+    _skill(workspace / ".tau/skills/flat-skill", "Flat skill")
     _skill(workspace / ".tau/skills/team/pg-guide", "Duplicate name in a .tau group")
-    _skill(workspace / ".agents/skills/other-tools/alpaca-demo", "Duplicate name in a group")
+    _skill(workspace / ".tau/skills/other-tools/alpaca-demo", "Duplicate name in a group")
+    # Development skills for the coding agents that work on the repository (ADR 0025).
+    _skill(workspace / ".agents/skills/ms_tau_sdk/tau_local_development", "Development skill")
+    _skill(workspace / ".agents/skills/dev-only", "Flat development skill")
     outside = tmp_path / "outside"
     _skill(outside / "linked-skill", "Behind a linked group")
-    (workspace / ".agents/skills/linked").symlink_to(outside)
+    (workspace / ".tau/skills/linked").symlink_to(outside)
     (group / "alpaca-demo/references/escape.md").symlink_to(tmp_path / "outside.txt")
     (tmp_path / "outside.txt").write_text("credential", encoding="utf-8")
 
@@ -197,9 +200,9 @@ async def test_tau_reads_skills_nested_in_group_folders(tmp_path):
 
     assert {skill.name: skill.path for skill in session.skills} == {
         "alpaca-demo": group / "alpaca-demo/SKILL.md",
-        "flat-skill": workspace / ".agents/skills/flat-skill/SKILL.md",
+        "flat-skill": workspace / ".tau/skills/flat-skill/SKILL.md",
         "pg-guide": workspace / ".tau/skills/pg-guide/SKILL.md",
-        "refund-review": workspace / ".agents/skills/billing/refunds/refund-review/SKILL.md",
+        "refund-review": workspace / ".tau/skills/billing/refunds/refund-review/SKILL.md",
     }
     assert {
         (diagnostic.name, diagnostic.message)
@@ -207,19 +210,22 @@ async def test_tau_reads_skills_nested_in_group_folders(tmp_path):
         if diagnostic.kind == "skill"
     } == {
         ("pg-guide", f"Duplicate skill name ignored in {workspace / '.tau/skills'}"),
-        ("alpaca-demo", f"Duplicate skill name ignored in {workspace / '.agents/skills'}"),
+        ("alpaca-demo", f"Duplicate skill name ignored in {workspace / '.tau/skills'}"),
     }
     assert "<name>alpaca-demo</name>" in session.system_prompt
+    assert "tau_local_development" not in session.system_prompt
     read = next(tool for tool in session.tools if tool.name == "read")
     result = await read.execute(
-        "call-1", {"path": ".agents/skills/mcp_tools/alpaca-demo/references/orders.md"}
+        "call-1", {"path": ".tau/skills/mcp-tools/alpaca-demo/references/orders.md"}
     )
     assert "Use limit orders." in result.content[0].text
     for path in (
-        ".agents/skills/mcp_tools/README.md",
-        ".agents/skills/mcp_tools/alpaca-demo/../../../../app.py",
-        ".agents/skills/mcp_tools/alpaca-demo/references/escape.md",
-        ".agents/skills/linked/linked-skill/SKILL.md",
+        ".tau/skills/mcp-tools/README.md",
+        ".tau/skills/mcp-tools/alpaca-demo/../../../../app.py",
+        ".tau/skills/mcp-tools/alpaca-demo/references/escape.md",
+        ".tau/skills/linked/linked-skill/SKILL.md",
+        ".agents/skills/ms_tau_sdk/tau_local_development/SKILL.md",
+        ".agents/skills/dev-only/SKILL.md",
     ):
         with pytest.raises(ToolInputError, match="outside the available skills"):
             await read.execute("call-2", {"path": path})

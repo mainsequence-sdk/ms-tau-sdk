@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- **The deployed Agent reads its resources only from `.tau/` by default (ADR 0025).** Tau, a
+  coding-agent harness, also read the repository's development instructions as the Agent's: the
+  root `AGENTS.md` and every `AGENTS.md` above the workspace were injected as project
+  instructions, and since 2.0.15 every skill under `.agents/skills`, among them the `ms_tau_sdk`,
+  `mainsequence` and repository development bundles, was listed as one of the Agent's skills,
+  expandable from chat with `/skill:<name>` and served by the skill-scoped `read`. The runtime now
+  reads skills from `.tau/skills`, prompt templates from `.tau/prompts` and project instructions
+  from `.tau/AGENTS.md`; `.agents/skills`, `.agents/prompts` and every `AGENTS.md` outside `.tau`
+  are not read. The new `TAU_INCLUDE_DEVELOPMENT_RESOURCES` setting (default `false`) restores
+  Tau's whole-repository reading for an Agent that is a coding agent over its own repository; like
+  the two exclusion settings it is process-wide and applies to managed and local sessions. The
+  interception of Tau's `AGENTS.md` discovery is locked to `tau-ai==0.4.2`, like the provider
+  patch of ADR 0016, and another version fails session construction. The selected system prompt
+  files, context files and skills, and Tau's resource diagnostics, such as a skill overriding
+  another or an `AGENTS.md` left out, are logged as `runtime.project_resources.*` and shown in
+  agent inspection under `resources`. **Migration:** a repository whose Agent used skills under
+  `.agents/skills` at runtime moves them directly into `.tau/skills` and, when it publishes them
+  with the mainsequence SDK's `skills_extension`, points the publisher at `.tau/skills`; the
+  publisher's folder rules then apply to the whole folder, and a skill folder cannot share its
+  name with a group folder. Instructions for the Agent that lived in the root `AGENTS.md` move to
+  `.tau/AGENTS.md`. `ms-tau skills sync` and the development workflow are unchanged.
 - Move the advisory `design-agent-icons-and-motion` skill and its worked MetaTables visual
   example into the SDK-owned skill bundle. `ms-tau skills sync` installs both under
   `.agents/skills/ms_tau_sdk/`; project artwork remains in its owning repository. No runtime

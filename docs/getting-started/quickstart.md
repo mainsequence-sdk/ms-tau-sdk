@@ -23,7 +23,10 @@ uv run ms-tau skills sync --path .
 ```
 
 The managed copies are written to `.agents/skills/ms_tau_sdk/`. Re-run the same command after an
-SDK update. Installing the package and starting the runtime do not copy files automatically.
+SDK update. Installing the package and starting the runtime do not copy files automatically. These
+are instructions for the coding agent that works on the repository; the Agent the repository
+deploys does not read them, nor anything else under `.agents/` or the root `AGENTS.md`, unless the
+host sets `TAU_INCLUDE_DEVELOPMENT_RESOURCES=true` because the Agent is itself a coding agent.
 
 ### Hosted Agents
 
@@ -167,6 +170,7 @@ allows, conversation privacy, the Agent's own grants, and administrator-enabled 
 
 ## Customize Tau
 
-Add a project `.tau/SYSTEM.md` to replace the packaged behavioral default. Add project skills,
-prompt templates, hooks, or extensions using Tau's native layout. See
+Add a project `.tau/SYSTEM.md` to replace the packaged behavioral default. Add the Agent's
+skills, prompt templates, project instructions (`.tau/AGENTS.md`), hooks, or extensions under
+`.tau/`, the only directory the deployed Agent reads. See
 [project configuration](../guides/project-configuration.md).

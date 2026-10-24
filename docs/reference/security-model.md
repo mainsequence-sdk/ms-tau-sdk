@@ -386,6 +386,12 @@ for a delegated call, the person as the requester.
   coding tools (`bash` among them), a model that follows a skill can run commands on the runtime;
   set `TAU_EXCLUDE_BASE_TOOLS` when that must not happen. A skill file is returned only when its
   bytes match the skill's list of files.
+- The Agent's own skills and instructions come from `.tau/` only, by default. The development
+  instructions a repository holds for coding agents, its root `AGENTS.md` and `.agents/skills`,
+  do not reach the Agent: not in the system prompt, not through `/skill:<name>` from chat, and not
+  through the skill-scoped `read`. `TAU_INCLUDE_DEVELOPMENT_RESOURCES=true` admits them, for an
+  Agent that is a coding agent over its own repository; set it only there
+  ([ADR 0025](../adrs/0025-runtime-resources-only-from-tau.md)).
 - The SDK's Main Sequence MCP tools follow the same rule: every call names the turn's session, and
   carries the person's delegation while the turn serves a person.
 

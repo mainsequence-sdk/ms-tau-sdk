@@ -183,6 +183,7 @@ Sequence CLI is found. Managed startup fails if `MAINSEQUENCE_RUNTIME_CREDENTIAL
 | `MAINSEQUENCE_TAU_STARTUP_DEPENDENCIES_ENABLED` | `true` |
 | `TAU_EXCLUDE_BASE_TOOLS` | `false`; when `true`, replace `read`, `write`, `edit`, and `bash` with a `read` that serves only skill files |
 | `TAU_EXCLUDE_MAINSEQUENCE_MCP` | `false`; skip Main Sequence MCP connection, tools, resources, and resource prompt when `true` |
+| `TAU_INCLUDE_DEVELOPMENT_RESOURCES` | `false`; when `true`, the Agent also reads the repository's development resources: the root `AGENTS.md` and every `AGENTS.md` above the workspace, `.agents/AGENTS.md`, `.agents/skills` and `.agents/prompts`. Off, it reads `.tau/` alone ([ADR 0025](../adrs/0025-runtime-resources-only-from-tau.md)) |
 | `MAINSEQUENCE_TAU_STATE_ROOT` | `$XDG_STATE_HOME/ms-tau-sdk`, else `~/.local/state/ms-tau-sdk` |
 
 The workspace must already exist, be a directory, and be readable. There is no no-workspace mode or

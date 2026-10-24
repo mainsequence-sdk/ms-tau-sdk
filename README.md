@@ -85,7 +85,9 @@ uv run ms-tau skills sync --path .
 ```
 
 This explicit command owns only `.agents/skills/ms_tau_sdk/`; package installation and runtime
-startup never modify the repository automatically. The bundle includes
+startup never modify the repository automatically. These skills guide the coding agent that works
+on the repository; the deployed Agent reads its own resources from `.tau/` only and never sees
+them. The bundle includes
 [`design-agent-icons-and-motion`](src/ms_tau_sdk/agent_skills/design-agent-icons-and-motion/SKILL.md):
 advisory composition and animation guidance with a self-contained MetaTables visual example.
 Each agent's artwork and build files remain in its owning project.
@@ -234,11 +236,19 @@ defaults and install project-specific tools through the normal `.tau/` structure
 your-project/
 ├── .tau/
 │   ├── SYSTEM.md
+│   ├── AGENTS.md
 │   ├── settings.json
+│   ├── skills/
 │   └── extensions/
 ├── pyproject.toml
 └── uv.lock
 ```
+
+`.tau/` is the only directory the deployed Agent reads by default. The repository root's
+`AGENTS.md` and the `.agents/` skills are for the coding agents that develop the repository and do
+not reach the deployed Agent, unless the Agent is itself a coding agent over its repository and
+the host sets `TAU_INCLUDE_DEVELOPMENT_RESOURCES=true`. See
+[ADR 0025](docs/adrs/0025-runtime-resources-only-from-tau.md).
 
 Extensions run as project code in the same process and trust boundary as the rest of the
 repository. Optional capabilities such as general web access belong in a project extension; they

@@ -166,6 +166,12 @@ def _coding_session(
     session.tools = tools
     session.extension_names = extension_names
     session.extension_tool_sources = extension_tool_sources or {}
+    # The Agent's resources Tau selected, logged and inspected on load (ADR 0025).
+    session.skills = ()
+    session.context_files = ()
+    session.prompt_templates = ()
+    session.system_prompt_files = ()
+    session.resource_diagnostics = ()
     session.extension_runtime = SimpleNamespace(
         diagnostics=(),
         extension_metadata=tuple(

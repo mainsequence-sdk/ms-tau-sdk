@@ -8,6 +8,11 @@ Amended by [ADR 0011](./0011-independent-base-tool-and-main-sequence-mcp-exclusi
 the host may exclude SDK-provided coding tools and Main Sequence MCP through
 process settings. Project resource and extension configuration remains Tau-native.
 
+Amended by [ADR 0025](./0025-runtime-resources-only-from-tau.md): `.tau/` is the only project
+directory the runtime reads. Tau's own reading of the repository's `AGENTS.md` files and of
+`.agents/skills` and `.agents/prompts`, which are the coding agents' development resources, is
+intercepted by the SDK under a version lock; the effective configuration is still resolved by Tau.
+
 ## Context
 
 The SDK needs useful default agent behavior while allowing each project to own its behavior and

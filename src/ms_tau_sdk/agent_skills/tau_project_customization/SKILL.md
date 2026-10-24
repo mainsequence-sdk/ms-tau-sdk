@@ -15,24 +15,39 @@ The workspace `.tau/` directory is the project behavior boundary:
 
 ```text
 .tau/
-├── SYSTEM.md
+├── SYSTEM.md            replaces the packaged system prompt
+├── APPEND_SYSTEM.md     appended to the system prompt
+├── AGENTS.md            project instructions for the deployed Agent
 ├── prompts/
 ├── skills/
 └── extensions/
 ```
 
 Creating `.tau/SYSTEM.md` replaces the packaged default general system instructions. There is no
-second SDK-specific prompt override or companion append file. Other resources follow the TAU
-version pinned by the installed SDK.
+SDK-specific prompt setting; Tau's own `APPEND_SYSTEM.md` and `AGENTS.md` under `.tau/` are the
+other prompt resources. Other resources follow the TAU version pinned by the installed SDK.
 
-`.agents/skills/ms_tau_sdk/` is different: it contains managed development instructions for coding
-agents working on the repository. It is not the runtime's `.tau` behavior and must not be used as
-application configuration.
+By default the deployed Agent reads `.tau/` and nothing else in the repository. The root
+`AGENTS.md` and `.agents/` hold instructions for coding agents working on the repository, you
+among them: `.agents/skills/ms_tau_sdk/` is this SDK's managed development bundle,
+`.agents/skills/mainsequence/` the platform SDK's, and the repository adds its own. None of it is
+runtime behavior, none of it reaches the Agent, and none of it may be used as application
+configuration. Put instructions meant for the Agent in `.tau/AGENTS.md`, `.tau/APPEND_SYSTEM.md`
+or `.tau/SYSTEM.md`. Only an Agent that is itself a coding agent over its repository sets
+`TAU_INCLUDE_DEVELOPMENT_RESOURCES=true`, which reads the root `AGENTS.md` and `.agents/` as well.
 
-Tau reads skills in `.tau/skills/` and `.agents/skills/` at any depth: a folder without a
-`SKILL.md` groups skills, such as `.agents/skills/mcp_tools/<skill>/SKILL.md`, the folder an
-application can publish with the mainsequence SDK's skills publisher. The managed skills in
-`.agents/skills/ms_tau_sdk/` are read too.
+Tau reads the Agent's skills in `.tau/skills/` at any depth: a folder with a `SKILL.md` is a skill,
+named after its folder; a folder without one groups skills, such as
+`.tau/skills/<group>/<skill>/SKILL.md`. When the application also publishes the Agent's usage skills
+to other agents with the mainsequence SDK's `skills_extension`, point the publisher at `.tau/skills`
+itself: the Agent's skills and the published skills are one set. Do not publish a group folder
+inside it to keep some skills private; instructions other agents may not see belong in
+`.tau/SYSTEM.md` or `.tau/AGENTS.md`. The publisher's rules then hold for the whole folder:
+lowercase letters, digits and single hyphens in every skill and group folder name; every folder a
+skill or a non-empty group; frontmatter `name` equal to the folder name; leaf folder names unique,
+because Tau names a skill by its folder. A group folder prefixes the published `skill://` URIs, so
+a pack that was published from its own folder moves its skills directly into `.tau/skills` to keep
+its URIs. Development skills stay in `.agents/skills` and are never published.
 
 ## Agent artwork
 
@@ -62,12 +77,14 @@ tools are project choices and are not part of the base SDK.
 
 ## Runtime tool composition
 
-Two independent process settings select the host-provided tools. Both default to `false`:
+Three independent process settings select the host-provided tools and the reading scope. All
+default to `false`:
 
 | Setting | Effect when `true` |
 | --- | --- |
 | `TAU_EXCLUDE_BASE_TOOLS` | Replace Tau's `read`, `write`, `edit`, and `bash` with a skill-scoped `read`. |
 | `TAU_EXCLUDE_MAINSEQUENCE_MCP` | Skip Main Sequence MCP connection, tools, resources, and resource prompt. |
+| `TAU_INCLUDE_DEVELOPMENT_RESOURCES` | Read the repository as a coding harness: the root `AGENTS.md`, every `AGENTS.md` above the workspace, `.agents/AGENTS.md`, `.agents/skills` and `.agents/prompts`, beside `.tau`. |
 
 Set them in `harness_agent.spec.env_vars` in a managed repository workflow, in the process
 environment for local `ms-tau`, or through explicit `TauSDKSettings` fields in a Python host. They
@@ -116,7 +133,7 @@ A declared application can publish Agent Skills through the MCP Skills extension
 mainsequence SDK's skills publisher does. The Agent lists them with `<name>__list_resources` and
 reads one file with `<name>__read_resource`; a skill file is returned only when its bytes match the
 size and SHA-256 digest the skill lists. Published skills stay the application's: they are not
-project skills under `.tau/skills/`, and fields such as `allowed-tools` grant nothing. With the
+added to this Agent's skills under `.tau/skills/`, and fields such as `allowed-tools` grant nothing. With the
 coding tools, a model that follows a published skill can run commands; set
 `TAU_EXCLUDE_BASE_TOOLS=true` when that must not happen.
 
