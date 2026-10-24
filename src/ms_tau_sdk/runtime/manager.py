@@ -59,6 +59,8 @@ from ms_tau_sdk.runtime.events import TauRuntimeEvent
 from ms_tau_sdk.runtime.extensions import (
     TASK_CONTROL_TOOL_NAMES,
     ProjectExtensionState,
+    log_project_resources,
+    project_resources_summary,
     validate_tool_catalog,
 )
 from ms_tau_sdk.runtime.live_turns import LiveTurn, LocalChatTurn
@@ -327,6 +329,7 @@ class SessionRuntimeManager:
             "mode": "local" if self.settings.local_mode else "managed",
             "exclude_base_tools": self.settings.exclude_base_tools,
             "exclude_mainsequence_mcp": self.settings.exclude_mainsequence_mcp,
+            "include_development_resources": self.settings.include_development_resources,
             "base_tool_count": 0 if self.settings.exclude_base_tools else 4,
             "task_control_tool_count": 2,
             "workspace_digest": self.settings.workspace_digest,
@@ -612,6 +615,11 @@ class SessionRuntimeManager:
             "tools": tools,
             "extensions": extensions,
             "diagnostics": diagnostics,
+            "resources": project_resources_summary(
+                coding_session,
+                cwd=self.settings.workspace,
+                development_resources=self.settings.include_development_resources,
+            ),
         }
 
     def local_extension_source(self, session_uid: str, source_uid: str) -> dict[str, object]:
@@ -1193,6 +1201,7 @@ class SessionRuntimeManager:
                     resource_paths=tau_resource_paths(
                         cwd,
                         state_home=self.settings.tau_state_home,
+                        include_development_resources=(self.settings.include_development_resources),
                     ),
                     project_extensions_enabled=True,
                     trust_override="approve",
@@ -1211,6 +1220,13 @@ class SessionRuntimeManager:
                 coding_session=coding_session,
                 state=project_extension_state,
             )
+            log_project_resources(
+                coding_session,
+                session_uid=session_uid,
+                cwd=cwd,
+                development_resources=self.settings.include_development_resources,
+                phase="load",
+            )
             runtime = ActiveSessionRuntime(
                 session_uid=session_uid,
                 holder_id=self.holder_id,
@@ -1226,6 +1242,7 @@ class SessionRuntimeManager:
                 catalog_digest=bootstrap.provider_control.catalog_digest,
                 project_extension_state=project_extension_state,
                 validate_tool_catalog=check_catalog,
+                development_resources=self.settings.include_development_resources,
             )
             state = bootstrap.runtime_state
             runtime.runtime_activity = state.runtime_activity or "loading"

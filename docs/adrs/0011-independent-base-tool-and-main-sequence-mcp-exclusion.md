@@ -8,6 +8,10 @@ Amended: 2026-10-05 — with base tools excluded, the SDK registers a `read` too
 files of discovered Tau skills, so project skills stay available
 ([issue #54](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/54)).
 
+Amended by [ADR 0025](./0025-runtime-resources-only-from-tau.md): the skill-scoped `read` serves
+the files of the skills under `.tau/skills`, the only skills the runtime discovers; it never
+reaches the development skills under `.agents/skills`.
+
 Amends [ADR 0003](./0003-tau-native-project-configuration.md) for host-owned tool
 composition settings, [ADR 0004](./0004-minimal-bundled-tool-boundary.md) for the
 default tool catalog, and [ADR 0002](./0002-runtime-and-protocol-contracts.md) and

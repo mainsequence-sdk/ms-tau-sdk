@@ -78,6 +78,12 @@ def _loaded_runtime(manager, tmp_path, execute_fn=None):
         extension_tool_sources={"project_lookup": "fixture"},
         extension_runtime=SimpleNamespace(extension_metadata=(metadata,), diagnostics=()),
         is_running=False,
+        # The Agent's resources Tau selected, reported by the inspection (ADR 0025).
+        skills=(),
+        context_files=(),
+        prompt_templates=(),
+        system_prompt_files=(),
+        resource_diagnostics=(),
     )
     state = ProjectExtensionState(enabled=True)
     state.update_from_session(coding_session)

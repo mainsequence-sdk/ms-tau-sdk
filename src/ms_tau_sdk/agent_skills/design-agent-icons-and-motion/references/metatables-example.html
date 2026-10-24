@@ -1,0 +1,146 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MetaTables — a worked icon composition</title>
+<style id="example-styles">
+:root { color-scheme: dark; --bg:#191919; --surface:#222222; --ink:#eeeae4; --muted:#aaa7a2; --line:#383838; }
+:root[data-theme="light"] { color-scheme:light; --bg:#f7f6f3; --surface:#fff; --ink:#292928; --muted:#65635f; --line:#dedcd7; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+main { max-width:1080px; margin:auto; padding:36px 28px 48px; }
+header { display:flex; justify-content:space-between; align-items:center; gap:16px; }
+.eyebrow { color:var(--muted); font-size:11px; letter-spacing:.12em; text-transform:uppercase; }
+.controls { display:flex; gap:8px; }
+button, summary { font:inherit; cursor:pointer; }
+button { color:var(--ink); background:var(--surface); border:1px solid var(--line); border-radius:20px; padding:7px 14px; }
+button:hover { border-color:var(--muted); }
+button:focus-visible, summary:focus-visible { outline:2px solid var(--ink); outline-offset:4px; }
+button:disabled { cursor:default; opacity:.65; }
+h1 { font-size:36px; font-weight:550; line-height:1.2; letter-spacing:-.035em; margin:32px 0 10px; }
+h2 { font-size:20px; font-weight:550; margin:30px 0 14px; letter-spacing:-.02em; }
+h3 { font-size:15px; font-weight:550; margin:10px 0 4px; }
+p { margin:0 0 12px; }
+.intro { color:var(--muted); max-width:780px; }
+.build { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
+.card { border:1px solid var(--line); background:var(--surface); border-radius:16px; padding:18px 20px; }
+.step { font:11px ui-monospace,SFMono-Regular,monospace; color:var(--muted); }
+.diagram { display:flex; justify-content:center; align-items:center; height:145px; }
+.diagram svg { width:128px; height:128px; overflow:visible; }
+.caption { color:var(--muted); font-size:13px; }
+code { font-family:ui-monospace,SFMono-Regular,monospace; font-size:.86em; }
+.measure { stroke:currentColor; opacity:.16; fill:none; stroke-width:.35; stroke-dasharray:1 1; }
+.states { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+.state { padding:16px 18px; }
+.state svg { display:block; width:72px; height:72px; margin:6px 0 12px; }
+.state p { color:var(--muted); font-size:12px; margin:0; }
+.samples { display:flex; align-items:center; gap:26px; padding:18px 0; flex-wrap:wrap; }
+.sample { display:flex; align-items:center; gap:10px; }
+.sample span { font-size:12px; color:var(--muted); }
+.sample svg { display:block; }
+.note { color:var(--muted); font-size:12px; border-top:1px solid var(--line); padding-top:14px; }
+details { border:1px solid var(--line); border-radius:12px; padding:14px 18px; margin-top:18px; }
+summary { font-size:14px; }
+pre { background:var(--surface); border-radius:8px; padding:16px; font-size:11px; line-height:1.65; overflow:auto; max-height:400px; }
+.recipe { padding-left:20px; font-size:13px; }
+.recipe li { padding-left:4px; margin:10px 0; }
+/* Only supporting marks animate. The logo and lower-left signature stay fixed. */
+.icon { color:var(--ink); }
+.signature { fill:none; stroke:currentColor; stroke-width:2.5; stroke-linecap:round; }
+.node { fill:currentColor; }
+.pulse { animation:breathe 4.8s ease-in-out infinite; }
+.orbit { transform-origin:35.5px 4.5px; animation:gather 2.4s linear infinite; }
+.rows { fill:none; stroke:currentColor; stroke-width:1.3; stroke-linecap:round; opacity:.2; }
+.scan { fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; animation:scan-rows 2.4s steps(1,end) infinite; }
+.attention { fill:none; stroke:currentColor; stroke-width:1.4; animation:breathe 2.4s ease-in-out infinite; }
+@keyframes breathe { 0%,100% { opacity:.5; } 50% { opacity:1; } }
+@keyframes gather { to { transform:rotate(360deg); } }
+@keyframes scan-rows { 0% { transform:translateY(0); } 33.333% { transform:translateY(2.2px); } 66.667% { transform:translateY(4.4px); } }
+[data-paused="true"] .pulse, [data-paused="true"] .orbit, [data-paused="true"] .scan, [data-paused="true"] .attention { animation-play-state:paused; }
+@media (prefers-reduced-motion:reduce) { .pulse,.orbit,.scan,.attention { animation:none; } }
+@media(max-width:700px) { main { padding:24px 16px; } header { align-items:flex-start; flex-direction:column; } h1 { font-size:30px; } .build { grid-template-columns:1fr; } .diagram { height:130px; } .states { grid-template-columns:repeat(2,1fr); } }
+</style>
+</head>
+<body>
+<!-- Original project geometry; fill uses the surrounding host ink. Teaching reference only. -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true"><defs>
+<symbol id="metatables-mark" viewBox="0 0 64 64">
+  <circle cx="11" cy="13" r="5" fill="currentColor"/>
+  <circle cx="11" cy="51" r="5" fill="currentColor"/>
+  <circle cx="26" cy="32" r="4.5" fill="currentColor"/>
+  <path fill="currentColor" d="M10.86 16.97 13.15 15.03 24.15 28.03 21.86 29.97Z"/>
+  <path fill="currentColor" d="M10.86 47.03 13.15 48.97 24.15 35.97 21.86 34.03Z"/>
+  <path fill="currentColor" fill-rule="evenodd" d="M32 20h25v24H32Z M35 23h5v4h-5Z M42 23h5v4h-5Z M49 23h5v4h-5Z M35 29h5v5h-5Z M42 29h5v5h-5Z M49 29h5v5h-5Z M35 36h5v5h-5Z M42 36h5v5h-5Z M49 36h5v5h-5Z"/>
+</symbol>
+</defs></svg>
+<main>
+<header><span class="eyebrow">MainSequence / Composition reference</span><div class="controls"><button id="theme" type="button">Use light theme</button><button id="motion" type="button" aria-pressed="false">Pause motion</button></div></header>
+<h1>Build the MetaTables icon.</h1>
+<p class="intro">One worked example: preserve the project mark, compose a quiet family signature, then add a separate activity layer. The dimensions below explain this composition; adapt them to the next logo.</p>
+<h2>1. Build three layers</h2>
+<section class="build" aria-label="Composition walkthrough">
+<article class="card"><span class="step">01 / IDENTITY</span><div class="diagram" id="identity"></div><h3>Keep the real mark</h3><p class="caption">Place the unchanged logo in a <code>26 × 26</code> box at <code>(7, 7)</code> on a <code>40 × 40</code> canvas. The table cells and relationship nodes stay legible.</p></article>
+<article class="card"><span class="step">02 / FAMILY SIGNATURE</span><div class="diagram" id="composition"></div><h3>Balance the corners</h3><p class="caption">Add a detached node at <code>(35.5, 4.5)</code> and a short lower-left diagonal. Keep both outside the logo. Dashed boxes show the reserved space.</p></article>
+<article class="card"><span class="step">03 / ACTIVITY</span><div class="diagram" id="activity"></div><h3>Scan below the identity</h3><p class="caption">Reserve <code>y = 34.2…38.6</code> for three short rows. Highlight one row at a time while working. The logo stays fixed; the accent carries the motion.</p></article>
+</section>
+<h2>2. Change the accent with the state</h2>
+<section class="states" aria-label="Animated states">
+<article class="card state"><div data-state="idle"></div><h3>Idle</h3><p>Node opacity breathes over 4.8 s. Identity stays still.</p></article>
+<article class="card state"><div data-state="thinking"></div><h3>Thinking</h3><p>Three small signals orbit the node. No table scan yet.</p></article>
+<article class="card state"><div data-state="working"></div><h3>Working</h3><p>A highlight scans three rows over 2.4 s. Activity, not progress.</p></article>
+<article class="card state"><div data-state="error"></div><h3>Needs attention</h3><p>The node becomes a gently pulsing diamond. No flashing.</p></article>
+</section>
+<div class="samples" aria-label="Working icon at actual display sizes"><span class="eyebrow">Check at display size</span><div class="sample" data-size="24"></div><div class="sample" data-size="32"></div><div class="sample" data-size="48"></div></div>
+<p class="note" id="motion-note">Motion here demonstrates design states. In the host, use reported agent activity. Pause and reduced motion preserve a readable frame.</p>
+<details open><summary>3. Adapt this composition to another project</summary><ol class="recipe"><li><strong>Replace the identity layer.</strong> Keep that project's real mark and adjust its optical size. Do not copy MetaTables' table imagery to an unrelated agent.</li><li><strong>Keep a clear activity area.</strong> This example uses the lower band. A wider or taller logo may need another placement or less detail.</li><li><strong>Choose one relevant action.</strong> The moving row communicates the work of this agent. Design the next project's accent around its own purpose.</li><li><strong>Verify the result.</strong> Inspect both themes, small sizes, stills and the loop. This HTML uses SVG/CSS for explanation; export the owning project's assets in the target host's supported format.</li></ol></details>
+<details><summary>Editable source: logo, composition and animation</summary><p class="caption" style="margin-top:14px">This file is the complete runnable example. The excerpts below are read from the same source that draws the previews.</p><h3>Original logo geometry</h3><pre><code id="source-logo"></code></pre><h3>Composition and state selection</h3><pre><code id="source-composition"></code></pre><h3>Motion rules</h3><pre><code id="source-motion"></code></pre></details>
+<p class="note" style="margin-top:20px">Source mark: MetaTables project's <code>public/navigation-icon.svg</code>, reproduced here as a teaching reference with its geometry preserved and fill set to <code>currentColor</code>. Production artwork and build tooling belong to the owning project. This example makes no backend requests and changes no installed icons.</p>
+</main>
+<script>
+function drawIcon(state, {guides=false, layer='activity', size=128}={}) {
+  const identity = '<use data-layer="identity" href="#metatables-mark" x="7" y="7" width="26" height="26"/>';
+  const signature = '<path class="signature" d="M4.5 35.5l3-3"/>';
+  const node = '<circle class="node" cx="35.5" cy="4.5" r="2"/>';
+  const accent = {
+    idle:'<circle class="node pulse" cx="35.5" cy="4.5" r="2"/>',
+    thinking:'<g class="orbit"><circle class="node" cx="37.6" cy="4.5" r="1.2"/><circle class="node" cx="34.45" cy="6.32" r=".8" opacity=".65"/><circle class="node" cx="34.45" cy="2.68" r=".8" opacity=".4"/></g>',
+    working:node+'<path class="rows" d="M14 34.2h14m-14 2.2h14m-14 2.2h14"/><path class="scan" d="M14 34.2h14"/>',
+    error:'<path class="attention" d="m35.5 1.2 3.3 3.3-3.3 3.3-3.3-3.3Z"/>'
+  }[state];
+  const grid = guides ? '<rect class="measure" x=".5" y=".5" width="39" height="39"/><rect class="measure" x="7" y="7" width="26" height="26"/>' : '';
+  const accents = layer === 'identity' ? '' : signature + (layer === 'signature' ? node : accent);
+  return `<svg class="icon" viewBox="0 0 40 40" width="${size}" height="${size}" role="img" aria-label="MetaTables ${state}">${grid}${identity}<g data-layer="activity">${accents}</g></svg>`;
+}
+document.querySelector('#identity').innerHTML=drawIcon('idle',{guides:true,layer:'identity'});
+document.querySelector('#composition').innerHTML=drawIcon('idle',{guides:true,layer:'signature'});
+document.querySelector('#activity').innerHTML=drawIcon('working',{guides:true});
+document.querySelectorAll('[data-state]').forEach(el=>el.innerHTML=drawIcon(el.dataset.state));
+document.querySelectorAll('[data-size]').forEach(el=>el.innerHTML=drawIcon('working',{size:Number(el.dataset.size)})+`<span>${el.dataset.size} px</span>`);
+document.querySelector('#source-logo').textContent=document.querySelector('#metatables-mark').outerHTML;
+document.querySelector('#source-composition').textContent=drawIcon.toString();
+document.querySelector('#source-motion').textContent=document.querySelector('#example-styles').textContent.split('/* Only supporting marks animate. The logo and lower-left signature stay fixed. */')[1].split('@media(max-width:700px)')[0];
+const root=document.documentElement;
+document.querySelector('#theme').onclick=()=>{
+  root.dataset.theme=root.dataset.theme==='dark'?'light':'dark';
+  document.querySelector('#theme').textContent=`Use ${root.dataset.theme==='dark'?'light':'dark'} theme`;
+};
+const motion=document.querySelector('#motion');
+const reduced=matchMedia('(prefers-reduced-motion: reduce)');
+function applyPreference(){
+  motion.disabled=reduced.matches;
+  root.dataset.paused=String(reduced.matches);
+  motion.setAttribute('aria-pressed',String(reduced.matches));
+  motion.textContent=reduced.matches?'Reduced motion':'Pause motion';
+}
+motion.onclick=()=>{
+  const paused=root.dataset.paused!=='true';
+  root.dataset.paused=String(paused);
+  motion.setAttribute('aria-pressed',String(paused));
+  motion.textContent=paused?'Play motion':'Pause motion';
+};
+reduced.addEventListener('change',applyPreference);
+applyPreference();
+</script>
+</body>
+</html>

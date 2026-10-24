@@ -161,6 +161,12 @@ class TauSDKSettings(BaseSettings):
         default=False,
         validation_alias="TAU_EXCLUDE_MAINSEQUENCE_MCP",
     )
+    # Read the repository as a coding harness: its `AGENTS.md` files and `.agents/` join the
+    # Agent's `.tau` resources (ADR 0025). Off, the Agent reads `.tau` alone.
+    include_development_resources: bool = Field(
+        default=False,
+        validation_alias="TAU_INCLUDE_DEVELOPMENT_RESOURCES",
+    )
     local_custom_id: str | None = Field(default=None, validation_alias="TAU_LOCAL_CUSTOM_ID")
     local_organization_environment_uid: str | None = Field(
         default=None, validation_alias="TAU_LOCAL_ORGANIZATION_ENVIRONMENT_UID"

@@ -29,3 +29,5 @@ These records are the normative decisions for Main Sequence TAU SDK:
   (Accepted; implemented)
 - [ADR 0024: Chat attachments and authorized content delivery](./0024-chat-attachments-and-authorized-content-delivery.md)
   (Proposed; requirements only, not implemented)
+- [ADR 0025: The runtime reads its resources only from `.tau` by default](./0025-runtime-resources-only-from-tau.md)
+  (Accepted; implemented)

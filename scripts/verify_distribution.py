@@ -83,7 +83,15 @@ ALLOWED_PACKAGE_ENTRIES = {
 # something else entirely (`.lock`, `.json`, `.jsonl`, `.sqlite3`), so an
 # unexpected suffix fails the gate even under an allowed entry.
 ALLOWED_PACKAGE_SUFFIXES = {".md", ".py"}
+# Explicit skill resources, without allowing arbitrary HTML or YAML runtime residue.
+ICON_SKILL_ROOT = "ms_tau_sdk/agent_skills/design-agent-icons-and-motion"
+SKILL_RESOURCE_PATHS = {
+    f"{ICON_SKILL_ROOT}/agents/openai.yaml",
+    f"{ICON_SKILL_ROOT}/references/metatables-example.html",
+}
 REQUIRED_WHEEL_PATHS = {
+    f"{ICON_SKILL_ROOT}/SKILL.md",
+    *SKILL_RESOURCE_PATHS,
     "ms_tau_sdk/__init__.py",
     "ms_tau_sdk/agent_skills/tau_a2a_runtime_adapter/SKILL.md",
     "ms_tau_sdk/agent_skills/tau_local_development/SKILL.md",
@@ -151,7 +159,10 @@ def _package_allowlist_violation(relative: PurePosixPath) -> str | None:
             f"{entries[0]!r} is not a packaged entry; add it to "
             "ALLOWED_PACKAGE_ENTRIES when the package really grew"
         )
-    if relative.suffix not in ALLOWED_PACKAGE_SUFFIXES:
+    if (
+        relative.suffix not in ALLOWED_PACKAGE_SUFFIXES
+        and str(relative) not in SKILL_RESOURCE_PATHS
+    ):
         return f"{relative.suffix or relative.name!r} is not a packaged file type"
     return None
 
@@ -305,6 +316,8 @@ def _validate_sdist(sdist: Path, *, distribution: str, version: str) -> None:
         raise DistributionError(f"sdist contains paths outside the release allowlist: {invalid}")
 
     required = {
+        f"{expected_root}/src/{ICON_SKILL_ROOT}/SKILL.md",
+        *(f"{expected_root}/src/{path}" for path in SKILL_RESOURCE_PATHS),
         f"{expected_root}/README.md",
         f"{expected_root}/pyproject.toml",
         f"{expected_root}/src/ms_tau_sdk/__init__.py",

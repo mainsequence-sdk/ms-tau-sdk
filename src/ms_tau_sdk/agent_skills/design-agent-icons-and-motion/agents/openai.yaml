@@ -1,0 +1,4 @@
+interface:
+  display_name: "Agent Icons and Motion"
+  short_description: "Optional guidance for agent logos and action motion"
+  default_prompt: "Use $design-agent-icons-and-motion to suggest an agent icon family using existing logos and action-specific motion, adapted to the host and the user's preferences."

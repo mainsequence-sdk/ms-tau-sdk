@@ -15,6 +15,7 @@ from ms_tau_sdk.skills import (
 )
 
 EXPECTED_SKILLS = (
+    "design-agent-icons-and-motion",
     "tau_a2a_runtime_adapter",
     "tau_local_development",
     "tau_project_customization",
@@ -108,6 +109,10 @@ def test_sync_replaces_only_sdk_namespace_and_removes_retired_skills(tmp_path: P
     assert "skill-scoped `read`" in customization
     assert "harness_agent.spec.env_vars" in customization
     assert "task_request_input" in customization
+    icon_source = resolve_packaged_skill("design-agent-icons-and-motion").parent
+    icon_installed = destination / "design-agent-icons-and-motion"
+    for relative in ("SKILL.md", "agents/openai.yaml", "references/metatables-example.html"):
+        assert (icon_installed / relative).read_bytes() == (icon_source / relative).read_bytes()
 
 
 def test_sync_dry_run_does_not_create_agents_directory(tmp_path: Path) -> None:

@@ -160,6 +160,7 @@ assert _task_message_for_backend(
         )
         managed_skills = workspace / ".agents" / "skills" / "ms_tau_sdk"
         expected_skills = {
+            "design-agent-icons-and-motion",
             "tau_a2a_runtime_adapter",
             "tau_local_development",
             "tau_project_customization",
@@ -169,6 +170,10 @@ assert _task_message_for_backend(
         installed_skills = {path.parent.name for path in managed_skills.glob("*/SKILL.md")}
         if installed_skills != expected_skills:
             raise RuntimeError(f"unexpected installed skill bundle: {installed_skills}")
+        icon_skill = managed_skills / "design-agent-icons-and-motion"
+        for relative in ("agents/openai.yaml", "references/metatables-example.html"):
+            if not (icon_skill / relative).is_file():
+                raise RuntimeError(f"installed icon skill is missing {relative}")
         pin = (managed_skills / "PINNED_FROM.txt").read_text(encoding="utf-8")
         if "library_name=ms-tau-sdk" not in pin:
             raise RuntimeError("installed skill bundle has no ms-tau-sdk provenance")

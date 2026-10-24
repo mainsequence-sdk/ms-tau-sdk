@@ -22,6 +22,8 @@ uv run ms-tau skills sync --path .
 
 This command atomically owns only `.agents/skills/ms_tau_sdk/`. Do not copy these files manually,
 edit the managed copies, or make installation and runtime startup synchronize them implicitly.
+These are development instructions for coding agents; the Agent the repository deploys reads its
+resources from `.tau/` only and never sees `.agents/` or the root `AGENTS.md`.
 
 ## Service entry points
 
