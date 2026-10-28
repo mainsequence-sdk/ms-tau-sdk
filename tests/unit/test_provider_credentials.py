@@ -19,6 +19,7 @@ from tau_coding.provider_catalog import BUILTIN_PROVIDER_CATALOG
 
 from ms_tau_sdk.backend.auth import JWTAuth, RuntimeCredentialAuth
 from ms_tau_sdk.backend.client import MainSequenceClient
+from ms_tau_sdk.backend.local import LocalDevelopmentBackend
 from ms_tau_sdk.backend.models import (
     AgentSession,
     ProviderControl,
@@ -788,6 +789,179 @@ def test_factory_rejects_invalid_custom_provider_evidence_before_construction():
             provider_control=_custom_provider_control(),
             model="acme-model",
         )
+
+
+def _meta_control() -> ProviderControl:
+    """The platform's projection of Meta, a catalog provider tau-ai 0.4.2 does not know."""
+    return _custom_provider_control(
+        "meta",
+        "muse-spark-1.3",
+        inputs=["text", "image"],
+        reasoning=True,
+        thinking_levels=["minimal", "low", "medium", "high", "xhigh"],
+    )
+
+
+def test_hydration_keeps_the_catalog_definition_beside_the_saved_credential():
+    hydrated = {
+        "credentials": {
+            "meta": {
+                "credential_kind": "api_key",
+                "credential": {
+                    "type": "api_key",
+                    "key": "meta-secret",
+                    "base_url": "https://saved.example.test/v1",
+                },
+                "catalog_definition": {
+                    "base_url": "https://api.meta.ai/v1",
+                    "compat": {"supportsStore": False},
+                },
+            }
+        }
+    }
+
+    credential = MainSequenceClient.provider_credential_from_hydration("meta", hydrated)
+    envelope = LocalDevelopmentBackend._credential_envelope(
+        ProviderExecutionEvidence(credential=credential, provider_control=_meta_control())
+    )
+
+    assert credential.catalog_definition is not None
+    assert credential.catalog_definition.base_url == "https://api.meta.ai/v1"
+    assert credential.catalog_definition.compat == {"supportsStore": False}
+    assert credential.base_url == "https://saved.example.test/v1"
+    assert (
+        MainSequenceClient.provider_credential_from_hydration("meta", envelope).catalog_definition
+        == credential.catalog_definition
+    )
+
+
+@pytest.mark.asyncio
+async def test_factory_builds_a_provider_tau_lacks_from_the_catalog_definition():
+    assert "meta" not in {provider.name for provider in BUILTIN_PROVIDER_CATALOG}
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=(
+                'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n'
+                "data: [DONE]\n\n"
+            ),
+        )
+
+    factory = ProviderFactory(backend=None)  # type: ignore[arg-type]
+    control = _meta_control()
+    thinking_level = factory.validate_execution(
+        control,
+        provider_name="meta",
+        model="muse-spark-1.3",
+        thinking_level="xhigh",
+    )
+    provider = factory.build(
+        ProviderCredential(
+            provider="meta",
+            api_key="meta-secret",
+            base_url="https://saved.example.test/v1",
+            headers={"x-saved-header": "never-sent"},
+            catalog_definition={
+                "base_url": "https://api.meta.ai/v1",
+                "compat": {"supportsStore": False},
+            },
+        ),
+        provider_control=control,
+        model="muse-spark-1.3",
+        thinking_level=thinking_level,
+    )
+    assert isinstance(provider, OpenAICompatibleProvider)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider._client = client
+        events = [
+            event
+            async for event in provider.stream_response(
+                model="muse-spark-1.3",
+                system="system",
+                messages=[UserMessage(content="hello")],
+                tools=[],
+            )
+        ]
+
+    assert thinking_level == "xhigh"
+    assert events[-1].type == "done"
+    [request] = requests
+    payload = json.loads(request.content)
+    assert str(request.url) == "https://api.meta.ai/v1/chat/completions"
+    assert request.headers["authorization"] == "Bearer meta-secret"
+    assert "x-saved-header" not in request.headers
+    assert payload["reasoning_effort"] == "xhigh"
+    assert "store" not in payload
+
+
+def test_providers_tau_knows_ignore_the_catalog_definition():
+    tau_metadata = next(
+        provider for provider in BUILTIN_PROVIDER_CATALOG if provider.name == "deepseek"
+    ).model_metadata.get("deepseek-v4-pro")
+    factory = ProviderFactory(backend=None)  # type: ignore[arg-type]
+
+    provider = factory.build(
+        ProviderCredential(
+            provider="deepseek",
+            api_key="secret",
+            catalog_definition={
+                "base_url": "https://elsewhere.example.test/v1",
+                "compat": {"supportsStore": False, "maxTokensField": "max_tokens"},
+            },
+        ),
+        provider_control=_provider_control("deepseek", "deepseek-v4-pro"),
+        model="deepseek-v4-pro",
+    )
+
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider._config.base_url == PROVIDER_DEFINITIONS["deepseek"].base_url
+    assert dict(provider._config.compat) == dict(
+        tau_metadata.compat if tau_metadata is not None else {}
+    )
+
+
+@pytest.mark.parametrize(
+    ("base_url", "refusal"),
+    [
+        ("http://169.254.169.254/latest", "prohibited address"),
+        ("http://[fe80::1]/v1", "prohibited address"),
+        ("http://127.0.0.1:8080/v1", "prohibited address"),
+        ("http://0.0.0.0/v1", "prohibited address"),
+        ("http://localhost:8080/v1", "prohibited host"),
+        ("http://metadata.google.internal/v1", "prohibited host"),
+        ("https://api.meta.ai/v1?key=secret", "invalid base_url"),
+        ("ftp://api.meta.ai/v1", "invalid base_url"),
+    ],
+)
+def test_catalog_definition_address_passes_the_custom_provider_checks(base_url, refusal):
+    factory = ProviderFactory(backend=None)  # type: ignore[arg-type]
+
+    with pytest.raises(ConfigurationError, match=f"Platform catalog definition.*{refusal}"):
+        factory.build(
+            ProviderCredential(
+                provider="meta",
+                api_key="meta-secret",
+                catalog_definition={"base_url": base_url},
+            ),
+            provider_control=_meta_control(),
+            model="muse-spark-1.3",
+        )
+
+
+def test_a_provider_tau_lacks_without_a_definition_is_refused_clearly():
+    factory = ProviderFactory(backend=None)  # type: ignore[arg-type]
+
+    with pytest.raises(ConfigurationError, match="not in this runtime's Tau catalog") as raised:
+        factory.build(
+            ProviderCredential(provider="meta", api_key="meta-secret"),
+            provider_control=_meta_control(),
+            model="muse-spark-1.3",
+        )
+    assert "catalog definition" in str(raised.value)
 
 
 def test_factory_applies_model_specific_transport_override():

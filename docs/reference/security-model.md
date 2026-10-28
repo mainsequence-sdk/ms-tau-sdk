@@ -298,6 +298,15 @@ Organization admin can accept that risk by enabling requester access.
   `403` `missing_action` with the `required_action`, for example
   `model-provider-credentials.revoke`, and the `granting_policies` that include it. A record the
   caller cannot see answers `404`.
+- **Where requests to a provider outside Tau's catalog go.** A provider that the runtime's Tau
+  release does not know runs only through Tau's OpenAI-compatible transports (`openai-completions`
+  or `openai-responses`). For a provider the platform publishes, such as Meta, the address and
+  request settings come from the platform's provider catalog for the selected model, never from an
+  address or headers saved with the credential; for a custom endpoint, the address is the one its
+  Environment configured. Before any request, the runtime refuses an address that is not a plain
+  `http` or `https` URL, that carries a user name, password, query or fragment, or that names
+  `localhost`, a cloud metadata host, or a loopback, link-local, multicast, reserved or unspecified
+  IP address.
 
 ## What reaches the model
 

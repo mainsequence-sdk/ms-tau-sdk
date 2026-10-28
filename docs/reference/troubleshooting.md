@@ -231,6 +231,18 @@ it. Change the selection on an idle session or start a new session. The SDK neve
 environment provider API key or silently swaps a revoked credential for another. See
 [named providers and policies](../guides/project-configuration.md#named-providers-and-policies).
 
+## A provider is not in this runtime's Tau catalog
+
+The platform can publish a provider that the runtime's Tau release does not know, such as Meta
+(`meta`). The runtime builds such a provider from the platform's catalog from ms-tau-sdk 2.0.27.
+
+- A runtime on ms-tau-sdk 2.0.26 or earlier refuses it with `A provider absent from Tau's built-in
+  catalog requires an organization_custom credential`. Update the Agent's runtime to 2.0.27 or
+  later; until then, select another provider. Providers that Tau knows are not affected.
+- From 2.0.27, `Provider <name> is not in this runtime's Tau catalog, and the platform sent neither
+  an organization_custom credential nor its catalog definition` means the platform the runtime
+  talks to does not offer that provider yet. Select another provider there.
+
 ## Reset or inspect local conversations
 
 Health reports the workspace digest. Local state lives under

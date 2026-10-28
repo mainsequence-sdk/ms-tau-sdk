@@ -610,6 +610,11 @@ class LocalDevelopmentBackend(MainSequenceClient):
                     "user_uid": credential.owner_user_uid,
                     "credential_kind": credential.credential_kind,
                     "credential": {key: value for key, value in raw.items() if value is not None},
+                    "catalog_definition": (
+                        credential.catalog_definition.model_dump(mode="json")
+                        if credential.catalog_definition is not None
+                        else None
+                    ),
                     "version": credential.metadata.get("version"),
                     "credential_hash": credential.metadata.get("credential_hash"),
                 }
