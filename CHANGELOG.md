@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.27 — 2026-10-28
 
 - **Platform providers that this Tau release does not know run from the platform's catalog.**
   Beside each built-in provider credential, the platform now sends `catalog_definition`: the
