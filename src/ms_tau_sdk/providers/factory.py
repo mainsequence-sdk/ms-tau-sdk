@@ -116,7 +116,11 @@ class ProviderFactory:
         self.provider_timeout_seconds = provider_timeout_seconds
 
     @staticmethod
-    def _validate_custom_base_url(base_url: str) -> None:
+    def _validate_custom_base_url(
+        base_url: str,
+        *,
+        source: str = "Custom provider credential",
+    ) -> None:
         parsed = urlsplit(base_url)
         hostname = str(parsed.hostname or "").casefold()
         if (
@@ -127,13 +131,13 @@ class ProviderFactory:
             or parsed.query
             or parsed.fragment
         ):
-            raise ConfigurationError("Custom provider credential contains an invalid base_url")
+            raise ConfigurationError(f"{source} contains an invalid base_url")
         if (
             hostname in BLOCKED_CUSTOM_PROVIDER_HOSTS
             or hostname == "localhost"
             or hostname.endswith(".localhost")
         ):
-            raise ConfigurationError("Custom provider base_url targets a prohibited host")
+            raise ConfigurationError(f"{source} base_url targets a prohibited host")
         try:
             address = ipaddress.ip_address(hostname)
         except ValueError:
@@ -145,7 +149,7 @@ class ProviderFactory:
             or address.is_reserved
             or address.is_unspecified
         ):
-            raise ConfigurationError("Custom provider base_url targets a prohibited address")
+            raise ConfigurationError(f"{source} base_url targets a prohibited address")
 
     @staticmethod
     def _thinking_levels(
@@ -193,19 +197,20 @@ class ProviderFactory:
             projected_api = provider_control.model.api
             if projected_api not in CUSTOM_API_TRANSPORTS:
                 raise ConfigurationError(
-                    f"Custom provider {provider_name} uses unsupported Tau API "
-                    f"transport {projected_api}"
+                    f"Provider {provider_name} is not in this runtime's Tau catalog and uses "
+                    f"unsupported Tau API transport {projected_api}"
                 )
             projected_inputs = set(provider_control.model.input)
             if not projected_inputs or not projected_inputs.issubset(CUSTOM_INPUT_KINDS):
                 raise ConfigurationError(
-                    "Platform provider-control input capabilities are invalid for a custom provider"
+                    "Platform provider-control input capabilities are invalid for a provider "
+                    "not in this runtime's Tau catalog"
                 )
             projected_thinking = set(provider_control.model.thinking_levels)
             if not provider_control.model.reasoning and projected_thinking:
                 raise ConfigurationError(
-                    "Platform provider-control thinking levels contradict the "
-                    "custom model reasoning capability"
+                    "Platform provider-control thinking levels contradict the reasoning "
+                    "capability of a model not in this runtime's Tau catalog"
                 )
             self.validate_input_media(
                 provider_control,
@@ -405,7 +410,17 @@ class ProviderFactory:
             timeout_seconds = self.provider_timeout_seconds
         definition = PROVIDER_DEFINITIONS.get(credential.provider)
         catalog_provider = CATALOG_BY_NAME.get(credential.provider)
-        is_custom_provider = catalog_provider is None
+        # A provider this Tau does not know runs only through Tau's OpenAI-compatible constructor,
+        # as an Organization custom provider or as the platform's catalog defines it.
+        outside_tau_catalog = catalog_provider is None
+        is_custom_provider = (
+            outside_tau_catalog and credential.credential_kind == "organization_custom"
+        )
+        catalog_definition = (
+            credential.catalog_definition
+            if outside_tau_catalog and not is_custom_provider
+            else None
+        )
         model_metadata = (
             catalog_provider.model_metadata.get(model)
             if catalog_provider is not None and model is not None
@@ -415,7 +430,8 @@ class ProviderFactory:
             normalize_thinking_level(thinking_level) if thinking_level is not None else None
         )
         if not provider_control.model.reasoning or (
-            is_custom_provider and normalized_thinking not in provider_control.model.thinking_levels
+            outside_tau_catalog
+            and normalized_thinking not in provider_control.model.thinking_levels
         ):
             normalized_thinking = None
         mapped_thinking: str | None = None
@@ -427,37 +443,51 @@ class ProviderFactory:
             ):
                 mapped_thinking = model_metadata.thinking_level_map[normalized_thinking]
         api = provider_control.model.api
-        if is_custom_provider:
-            if credential.credential_kind != "organization_custom":
-                raise ConfigurationError(
-                    "A provider absent from Tau's built-in catalog requires an "
-                    "organization_custom credential"
-                )
+        if outside_tau_catalog:
             if api not in CUSTOM_API_TRANSPORTS:
                 raise ConfigurationError(
-                    f"Custom provider {credential.provider} uses unsupported Tau "
-                    f"API transport {api}"
+                    f"Provider {credential.provider} is not in this runtime's Tau catalog and "
+                    f"uses unsupported Tau API transport {api}"
                 )
-            if credential.api != api:
+            if is_custom_provider:
+                if credential.api != api:
+                    raise ConfigurationError(
+                        "Custom provider credential transport does not match "
+                        "Platform provider-control evidence"
+                    )
+                if not credential.base_url:
+                    raise ConfigurationError(
+                        "Custom provider credential requires an explicit base_url"
+                    )
+                self._validate_custom_base_url(credential.base_url)
+            elif catalog_definition is not None:
+                self._validate_custom_base_url(
+                    catalog_definition.base_url,
+                    source="Platform catalog definition",
+                )
+            else:
                 raise ConfigurationError(
-                    "Custom provider credential transport does not match "
-                    "Platform provider-control evidence"
+                    f"Provider {credential.provider} is not in this runtime's Tau catalog, and "
+                    "the platform sent neither an organization_custom credential nor its "
+                    "catalog definition"
                 )
-            if not credential.base_url:
-                raise ConfigurationError("Custom provider credential requires an explicit base_url")
-            self._validate_custom_base_url(credential.base_url)
-        base_url = credential.base_url or (
-            model_metadata.base_url
-            if model_metadata is not None and model_metadata.base_url
-            else definition.base_url
-            if definition
-            else "https://api.openai.com/v1"
-        )
-        headers = {
-            **(catalog_provider.headers if catalog_provider is not None else {}),
-            **(model_metadata.headers if model_metadata is not None else {}),
-            **credential.headers,
-        }
+        if catalog_definition is not None:
+            # The address comes from the platform's catalog, never from the saved credential.
+            base_url = catalog_definition.base_url
+            headers: dict[str, str] = {}
+        else:
+            base_url = credential.base_url or (
+                model_metadata.base_url
+                if model_metadata is not None and model_metadata.base_url
+                else definition.base_url
+                if definition
+                else "https://api.openai.com/v1"
+            )
+            headers = {
+                **(catalog_provider.headers if catalog_provider is not None else {}),
+                **(model_metadata.headers if model_metadata is not None else {}),
+                **credential.headers,
+            }
         secret = credential.secret()
         if not secret and not is_custom_provider:
             raise ConfigurationError(
@@ -527,7 +557,13 @@ class ProviderFactory:
                 and catalog_provider.thinking_parameter in {"reasoning_effort", "reasoning.effort"}
                 else "reasoning_effort"
             ),
-            compat=model_metadata.compat if model_metadata is not None else {},
+            compat=(
+                catalog_definition.compat
+                if catalog_definition is not None
+                else model_metadata.compat
+                if model_metadata is not None
+                else {}
+            ),
         )
         if api == "google-generative-ai":
             return GoogleGenerativeAIProvider(config)

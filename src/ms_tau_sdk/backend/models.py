@@ -422,6 +422,17 @@ class TauResumeSnapshotUploadResponse(BackendModel):
     canonical_size: int = Field(ge=0)
 
 
+class ProviderCatalogDefinition(BackendModel):
+    """The platform catalog's address and Tau compatibility settings for the selected model.
+
+    The platform sends it beside every built-in credential. The runtime reads it only for a
+    provider its pinned Tau does not know.
+    """
+
+    base_url: str
+    compat: dict[str, Any] = Field(default_factory=dict)
+
+
 class ProviderCredential(BackendModel):
     provider: str
     custom_id: str | None = None
@@ -438,6 +449,7 @@ class ProviderCredential(BackendModel):
     # An organization_custom credential carries its key in a header, so the headers never appear
     # in repr() or str().
     headers: dict[str, str] = Field(default_factory=dict, repr=False)
+    catalog_definition: ProviderCatalogDefinition | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     def secret(self) -> str:

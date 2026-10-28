@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- **Platform providers that this Tau release does not know run from the platform's catalog.**
+  Beside each built-in provider credential, the platform now sends `catalog_definition`: the
+  address and Tau compatibility settings its provider catalog publishes for the selected model.
+  When the pinned `tau-ai==0.4.2` does not know the provider, the runtime builds it from that
+  definition through Tau's OpenAI-compatible constructor, `openai-completions` or
+  `openai-responses` only, and never from an address or headers saved with the credential. The
+  address must pass the checks a custom endpoint's address passes. Providers Tau knows ignore the
+  definition and keep Tau's address and settings. Meta (`meta`, one Meta Model API key per
+  person) is the first such provider; earlier runtimes refuse it. Errors about a provider outside
+  Tau's catalog now say "not in this runtime's Tau catalog" instead of "custom provider". The
+  `tau-ai` pin and the ADR 0016 provider patch are unchanged.
+
 ## 2.0.26 — 2026-10-24
 
 - **The deployed Agent reads its resources only from `.tau/` by default (ADR 0025).** Tau, a

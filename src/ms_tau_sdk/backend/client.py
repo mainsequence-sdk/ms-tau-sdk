@@ -966,6 +966,8 @@ class MainSequenceClient:
                 "base_url": raw.get("base_url"),
                 "headers": raw.get("headers", {}),
                 "api": raw.get("api"),
+                # Server-owned, beside the saved credential and never inside it.
+                "catalog_definition": hydrated.get("catalog_definition"),
                 "metadata": {
                     "version": hydrated.get("version"),
                     "credential_hash": hydrated.get("credential_hash"),

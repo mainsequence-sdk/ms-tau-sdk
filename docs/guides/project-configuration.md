@@ -149,6 +149,11 @@ Organization admin, the first record anyone added in that Environment. An explic
 your own record of that name first; otherwise it must match exactly one accessible record in that
 Environment. Custom endpoints keep their provider identifier and do not use `custom_id`.
 
+Meta (`meta`, default model `muse-spark-1.3`) has no interactive sign-in: each person stores their
+own Meta Model API key as a `meta` credential, and sessions select and use it like any other
+credential. Running Meta needs ms-tau-sdk 2.0.27 or later; see
+[provider troubleshooting](../reference/troubleshooting.md#a-provider-is-not-in-this-runtimes-tau-catalog).
+
 The session records its resolved credential and Environment. Resume and refresh keep that selection;
 changing an idle session's model or configured provider uses the session-model operation. A revoked
 or unavailable selection fails rather than silently switching credentials. Check the selected name,
