@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 from pydantic import ValidationError
-from tau_agent import UserMessage
+from tau_agent import ImageContent, TextContent, UserMessage
 from tau_ai import (
     AnthropicProvider,
     GoogleGenerativeAIProvider,
@@ -15,6 +15,7 @@ from tau_ai import (
     OpenAICodexProvider,
     OpenAICompatibleProvider,
 )
+from tau_ai.content import NON_VISION_USER_IMAGE_PLACEHOLDER
 from tau_coding.provider_catalog import BUILTIN_PROVIDER_CATALOG
 
 from ms_tau_sdk.backend.auth import JWTAuth, RuntimeCredentialAuth
@@ -1008,6 +1009,49 @@ def test_factory_constructs_every_tau_catalog_provider(provider_name, model):
     assert callable(provider.stream_response)
 
 
+def _fake_provider_stream(request: httpx.Request) -> httpx.Response:
+    """Answer a request on any Tau transport with a minimal completed stream."""
+    if request.url.path.endswith("/messages"):
+        body = "\n\n".join(
+            [
+                'data: {"type":"message_start","message":{"usage":{"input_tokens":1}}}',
+                (
+                    'data: {"type":"content_block_delta","index":0,'
+                    '"delta":{"type":"text_delta","text":"ok"}}'
+                ),
+                (
+                    'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},'
+                    '"usage":{"output_tokens":1}}'
+                ),
+            ]
+        )
+    elif ":streamGenerateContent" in request.url.path:
+        body = 'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}'
+    elif request.url.path.endswith("/chat/completions"):
+        body = "\n\n".join(
+            [
+                ('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}'),
+                "data: [DONE]",
+            ]
+        )
+    else:
+        body = "\n\n".join(
+            [
+                'data: {"type":"response.output_text.delta","delta":"ok"}',
+                (
+                    'data: {"type":"response.completed",'
+                    '"response":{"status":"completed","usage":'
+                    '{"input_tokens":1,"output_tokens":1}}}'
+                ),
+            ]
+        )
+    return httpx.Response(
+        200,
+        headers={"content-type": "text/event-stream"},
+        content=f"{body}\n\n",
+    )
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("credential", "model", "expected_type"),
@@ -1065,49 +1109,6 @@ async def test_every_tau_transport_class_completes_fake_stream(
     model,
     expected_type,
 ):
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/messages"):
-            body = "\n\n".join(
-                [
-                    'data: {"type":"message_start","message":{"usage":{"input_tokens":1}}}',
-                    (
-                        'data: {"type":"content_block_delta","index":0,'
-                        '"delta":{"type":"text_delta","text":"ok"}}'
-                    ),
-                    (
-                        'data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},'
-                        '"usage":{"output_tokens":1}}'
-                    ),
-                ]
-            )
-        elif ":streamGenerateContent" in request.url.path:
-            body = (
-                'data: {"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}'
-            )
-        elif request.url.path.endswith("/chat/completions"):
-            body = "\n\n".join(
-                [
-                    ('data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}'),
-                    "data: [DONE]",
-                ]
-            )
-        else:
-            body = "\n\n".join(
-                [
-                    'data: {"type":"response.output_text.delta","delta":"ok"}',
-                    (
-                        'data: {"type":"response.completed",'
-                        '"response":{"status":"completed","usage":'
-                        '{"input_tokens":1,"output_tokens":1}}}'
-                    ),
-                ]
-            )
-        return httpx.Response(
-            200,
-            headers={"content-type": "text/event-stream"},
-            content=f"{body}\n\n",
-        )
-
     factory = ProviderFactory(backend=None)  # type: ignore[arg-type]
     provider = factory.build(
         credential,
@@ -1116,7 +1117,7 @@ async def test_every_tau_transport_class_completes_fake_stream(
     )
     assert isinstance(provider, expected_type)
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx.AsyncClient(transport=httpx.MockTransport(_fake_provider_stream)) as client:
         provider._client = client
         events = [
             event
@@ -1131,3 +1132,145 @@ async def test_every_tau_transport_class_completes_fake_stream(
     assert [event.delta for event in events if event.type == "text_delta"] == ["ok"]
     assert events[-1].type == "done"
     assert events[-1].message.text == "ok"
+
+
+def _json_nodes(node: object) -> list[object]:
+    """Every value in a decoded request body, the body itself included."""
+    children = node.values() if isinstance(node, dict) else node if isinstance(node, list) else ()
+    return [node, *(nested for child in children for nested in _json_nodes(child))]
+
+
+async def _request_body_for_an_image(
+    credential: ProviderCredential,
+    provider_control: ProviderControl,
+) -> object:
+    """Stream a user message with an image through the built provider; return the request body."""
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return _fake_provider_stream(request)
+
+    model = provider_control.model.model
+    factory = ProviderFactory(backend=None)  # type: ignore[arg-type]
+    provider = factory.build(credential, provider_control=provider_control, model=model)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider._client = client
+        events = [
+            event
+            async for event in provider.stream_response(
+                model=model,
+                system="system",
+                messages=[
+                    UserMessage(
+                        content=[
+                            TextContent(text="see"),
+                            ImageContent(data="aW1hZ2U=", mime_type="image/png"),
+                        ]
+                    )
+                ],
+                tools=[],
+            )
+        ]
+
+    assert events[-1].type == "done"
+    [request] = requests
+    return json.loads(request.content)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("credential", "provider_control", "image_part"),
+    [
+        (
+            ProviderCredential(provider="xai", api_key="api-key"),
+            _provider_control("xai", "grok-4.3"),
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,aW1hZ2U="}},
+        ),
+        (
+            ProviderCredential(provider="openai", api_key="api-key"),
+            _provider_control("openai", "gpt-5.4"),
+            {
+                "type": "input_image",
+                "detail": "auto",
+                "image_url": "data:image/png;base64,aW1hZ2U=",
+            },
+        ),
+        (
+            ProviderCredential(provider="google", api_key="api-key"),
+            _provider_control("google", "gemini-flash-latest"),
+            {"inlineData": {"mimeType": "image/png", "data": "aW1hZ2U="}},
+        ),
+        (
+            ProviderCredential(provider="mistral", api_key="api-key"),
+            _provider_control("mistral", "mistral-medium-latest"),
+            {"type": "image_url", "image_url": "data:image/png;base64,aW1hZ2U="},
+        ),
+        (
+            ProviderCredential(
+                provider="meta",
+                api_key="api-key",
+                catalog_definition={"base_url": "https://api.meta.ai/v1"},
+            ),
+            _meta_control(),
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,aW1hZ2U="}},
+        ),
+        (
+            ProviderCredential(
+                provider="acme-gateway",
+                credential_kind="organization_custom",
+                api="openai-completions",
+                api_key="api-key",
+                base_url="https://models.example.test/v1",
+            ),
+            _custom_provider_control(inputs=["text", "image"]),
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,aW1hZ2U="}},
+        ),
+    ],
+)
+async def test_factory_sends_images_to_a_model_enabled_for_image_input(
+    credential,
+    provider_control,
+    image_part,
+):
+    nodes = _json_nodes(await _request_body_for_an_image(credential, provider_control))
+
+    assert image_part in nodes
+    assert not any(
+        isinstance(node, str) and NON_VISION_USER_IMAGE_PLACEHOLDER in node for node in nodes
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("credential", "provider_control"),
+    [
+        (
+            ProviderCredential(provider="deepseek", api_key="api-key"),
+            _provider_control("deepseek", "deepseek-v4-pro"),
+        ),
+        # Tau can send images to gpt-5.4, but the platform enables only text for it.
+        (
+            ProviderCredential(provider="openai", api_key="api-key"),
+            _custom_provider_control("openai", "gpt-5.4", api="openai-responses"),
+        ),
+        (
+            ProviderCredential(
+                provider="acme-gateway",
+                credential_kind="organization_custom",
+                api="openai-completions",
+                api_key="api-key",
+                base_url="https://models.example.test/v1",
+            ),
+            _custom_provider_control(),
+        ),
+    ],
+)
+async def test_factory_keeps_the_image_placeholder_for_a_text_only_model(
+    credential,
+    provider_control,
+):
+    nodes = _json_nodes(await _request_body_for_an_image(credential, provider_control))
+
+    assert f"see\n{NON_VISION_USER_IMAGE_PLACEHOLDER}" in nodes
+    assert not any(isinstance(node, str) and "aW1hZ2U=" in node for node in nodes)

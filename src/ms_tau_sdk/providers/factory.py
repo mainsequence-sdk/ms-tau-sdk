@@ -549,6 +549,8 @@ class ProviderFactory:
             provider_name=credential.provider,
             omit_authorization_header=is_custom_provider and not bool(secret),
             max_tokens=max_tokens,
+            # Tau puts a placeholder in place of every image unless the model reads images.
+            supports_images="image" in provider_control.model.input,
             timeout_seconds=timeout_seconds,
             reasoning_effort=mapped_thinking,
             reasoning_effort_parameter=(
