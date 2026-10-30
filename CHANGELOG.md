@@ -1,5 +1,27 @@
 # Changelog
 
+## 2.0.28 — 2026-10-30
+
+- **Models that read images receive them on OpenAI-compatible, Google and Mistral providers
+  ([#121](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/121)).** The runtime built these
+  providers without telling Tau which models read images, and `tau-ai==0.4.2` then assumes that
+  none does: every image in a user message or a tool result, such as the image content of an MCP
+  tool result or Tau's `read` of an image file, was replaced by a note telling the model that the
+  image was unavailable. A model whose platform projection lists `image` in its input now receives
+  the image: an `image_url` part on Chat Completions (`openai-completions`), an `input_image` part
+  on Responses (`openai-responses`), and the image parts of the Google and Mistral APIs.
+  Organization custom providers and providers built from the platform's catalog definition, such
+  as Meta, follow the same rule. A text-only model still receives the note in place of the image.
+  The `tau-ai` pin and the ADR 0016 provider patch are unchanged.
+
+- **Models that read images receive them on Anthropic Messages and OpenAI Codex providers
+  ([#123](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/123)).** These two transports had
+  the same gap: every image reached the model as the note saying it was unavailable. A model whose
+  platform projection lists `image` in its input now receives an `image` block on Anthropic
+  Messages, which serves Anthropic's Claude models and the other catalog models Tau routes to it,
+  such as GitHub Copilot's Claude models, and an `input_image` part on OpenAI Codex. A text-only
+  model still receives the note.
+
 ## 2.0.27 — 2026-10-28
 
 - **Platform providers that this Tau release does not know run from the platform's catalog.**
