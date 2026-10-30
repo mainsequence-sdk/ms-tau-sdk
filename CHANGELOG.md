@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.28 — 2026-10-30
 
 - **Models that read images receive them on OpenAI-compatible, Google and Mistral providers
   ([#121](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/121)).** The runtime built these
