@@ -443,6 +443,8 @@ class ProviderFactory:
             ):
                 mapped_thinking = model_metadata.thinking_level_map[normalized_thinking]
         api = provider_control.model.api
+        # Tau puts a placeholder in place of every image unless the model reads images.
+        supports_images = "image" in provider_control.model.input
         if outside_tau_catalog:
             if api not in CUSTOM_API_TRANSPORTS:
                 raise ConfigurationError(
@@ -520,6 +522,7 @@ class ProviderFactory:
                     headers=headers,
                     timeout_seconds=timeout_seconds,
                     reasoning_effort=mapped_thinking,
+                    supports_images=supports_images,
                     provider_name=credential.provider,
                 )
             )
@@ -533,6 +536,7 @@ class ProviderFactory:
                     provider_name=credential.provider,
                     timeout_seconds=timeout_seconds,
                     max_tokens=max_tokens,
+                    supports_images=supports_images,
                     thinking_budget_tokens=(
                         anthropic_thinking_budget_for_level(normalized_thinking)
                         if normalized_thinking is not None and mapped_thinking is not None
@@ -549,8 +553,7 @@ class ProviderFactory:
             provider_name=credential.provider,
             omit_authorization_header=is_custom_provider and not bool(secret),
             max_tokens=max_tokens,
-            # Tau puts a placeholder in place of every image unless the model reads images.
-            supports_images="image" in provider_control.model.input,
+            supports_images=supports_images,
             timeout_seconds=timeout_seconds,
             reasoning_effort=mapped_thinking,
             reasoning_effort_parameter=(

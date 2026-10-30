@@ -14,6 +14,14 @@
   as Meta, follow the same rule. A text-only model still receives the note in place of the image.
   The `tau-ai` pin and the ADR 0016 provider patch are unchanged.
 
+- **Models that read images receive them on Anthropic Messages and OpenAI Codex providers
+  ([#123](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/123)).** These two transports had
+  the same gap: every image reached the model as the note saying it was unavailable. A model whose
+  platform projection lists `image` in its input now receives an `image` block on Anthropic
+  Messages, which serves Anthropic's Claude models and the other catalog models Tau routes to it,
+  such as GitHub Copilot's Claude models, and an `input_image` part on OpenAI Codex. A text-only
+  model still receives the note.
+
 ## 2.0.27 — 2026-10-28
 
 - **Platform providers that this Tau release does not know run from the platform's catalog.**

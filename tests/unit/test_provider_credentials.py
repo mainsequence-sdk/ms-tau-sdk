@@ -1207,6 +1207,30 @@ async def _request_body_for_an_image(
             {"type": "image_url", "image_url": "data:image/png;base64,aW1hZ2U="},
         ),
         (
+            ProviderCredential(provider="anthropic", api_key="api-key"),
+            _provider_control("anthropic", "claude-sonnet-4-6"),
+            # Tau marks the last block of the conversation for Anthropic's prompt cache.
+            {
+                "type": "image",
+                "source": {"type": "base64", "media_type": "image/png", "data": "aW1hZ2U="},
+                "cache_control": {"type": "ephemeral"},
+            },
+        ),
+        (
+            ProviderCredential(
+                provider="openai-codex",
+                credential_kind="oauth",
+                access_token="access-token",
+                account_id="account-id",
+            ),
+            _provider_control("openai-codex", "gpt-5.5"),
+            {
+                "type": "input_image",
+                "detail": "auto",
+                "image_url": "data:image/png;base64,aW1hZ2U=",
+            },
+        ),
+        (
             ProviderCredential(
                 provider="meta",
                 api_key="api-key",
@@ -1253,6 +1277,19 @@ async def test_factory_sends_images_to_a_model_enabled_for_image_input(
         (
             ProviderCredential(provider="openai", api_key="api-key"),
             _custom_provider_control("openai", "gpt-5.4", api="openai-responses"),
+        ),
+        (
+            ProviderCredential(provider="minimax", api_key="api-key"),
+            _provider_control("minimax", "MiniMax-M2.7"),
+        ),
+        (
+            ProviderCredential(
+                provider="openai-codex",
+                credential_kind="oauth",
+                access_token="access-token",
+                account_id="account-id",
+            ),
+            _provider_control("openai-codex", "gpt-5.3-codex-spark"),
         ),
         (
             ProviderCredential(
