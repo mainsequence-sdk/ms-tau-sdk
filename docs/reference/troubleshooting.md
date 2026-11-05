@@ -122,6 +122,7 @@ For a refused call, check these conditions:
 | A Task was continued by another person | The Task no longer serves one person. Start separate work for the person whose access is needed. |
 | A `runtime_lease_*` refusal | The running work no longer has valid execution ownership. Inspect its status and let normal recovery finish; do not reuse proofs or force a retry with old credentials. |
 | The operation refuses the person | The person lacks the permission on that resource. A delegated call uses the person's ordinary permissions, exactly as their own request would. |
+| Creating a code repository answers `400` with `github_org_uid` code `github_organization_not_connected` or `github_organization_required` | The platform creates the GitHub repository only in a GitHub organization the Organization linked through the Main Sequence GitHub App, and without `github_org_uid` it uses the only one linked. `github_organization_not_connected` means none is linked, or the one named has no GitHub App installation: ask an Organization admin with billing access to link it, then create the repository again. `github_organization_required` means several are linked: pass `github_org_uid` naming one; the person can list them with `mainsequence organization github-organizations`. Nothing was created, and the person's own request fails the same way. |
 | Other non-success HTTP response | Inspect the safe status/code before consuming the response body. The client returns other responses unchanged. |
 
 Never retry a refused delegated call as the Agent. See the
