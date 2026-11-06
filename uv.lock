@@ -651,7 +651,7 @@ wheels = [
 
 [[package]]
 name = "ms-tau-sdk"
-version = "2.0.28"
+version = "2.0.29"
 source = { editable = "." }
 dependencies = [
     { name = "anyio" },

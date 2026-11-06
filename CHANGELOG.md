@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- **Troubleshooting covers code repository creation without a linked GitHub organization.** The
+  platform creates a code repository's GitHub repository only in a GitHub organization the
+  Organization linked. When an Agent creates one for its requester, the call answers `400` with
+  `github_organization_not_connected` (none linked, or the named one has no GitHub App
+  installation) or `github_organization_required` (several linked, none named). The
+  [troubleshooting guide](docs/reference/troubleshooting.md#requester-access-is-refused) says how
+  to recover. SDK behavior is unchanged.
+
 ## 2.0.28 — 2026-10-30
 
 - **Models that read images receive them on OpenAI-compatible, Google and Mistral providers
