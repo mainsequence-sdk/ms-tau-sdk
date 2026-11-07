@@ -12,8 +12,8 @@ This guide covers the current SDK development documentation. The application MCP
 [2.0.6](../../CHANGELOG.md#206--2026-10-07). The delegation envelope shipped in
 [2.0.7](../../CHANGELOG.md#207--2026-10-08), in one cutover with the matching platform change:
 2.0.7 and later SDK releases work only with that platform, and earlier SDK releases no longer act
-for people. [Caller context](#caller-context) is development behavior and ships in the next release
-([Unreleased](../../CHANGELOG.md#unreleased)); an Agent on an earlier release keeps working and
+for people. [Caller context](#caller-context) first ships in
+[2.0.29](../../CHANGELOG.md#2029--2026-11-07); an Agent on an earlier release keeps working and
 carries no caller context. Check your installed SDK before relying on these features.
 
 ## Who is who

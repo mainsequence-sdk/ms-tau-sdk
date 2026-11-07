@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.29 — 2026-11-07
 
 - **Agents receive and pass on caller context (W3C `baggage` and `traceparent`).** A service user,
   such as an application outside Main Sequence that serves its own users, can say in the W3C
