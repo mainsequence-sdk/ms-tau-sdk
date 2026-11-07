@@ -28,6 +28,7 @@ from structlog.contextvars import (
 from structlog.typing import EventDict, Processor, WrappedLogger
 
 from ms_tau_sdk import __version__
+from ms_tau_sdk.protocols.caller_context import recorded_baggage
 
 SENSITIVE_EXACT_KEYS = {
     "api_key",
@@ -165,6 +166,20 @@ def _bind_context(
     for key, value in context.items():
         event_dict.setdefault(key, value)
     event_dict.setdefault("request_id", context.get("request_id"))
+    return event_dict
+
+
+def _add_caller_context(
+    _logger: WrappedLogger,
+    _method_name: str,
+    event_dict: EventDict,
+) -> EventDict:
+    """Record the current caller context's ``mainsequence.`` keys as ``baggage``, as a claim."""
+
+    if "baggage" not in event_dict:
+        members = recorded_baggage()
+        if members:
+            event_dict["baggage"] = members
     return event_dict
 
 
@@ -344,6 +359,7 @@ def _common_processors() -> list[Processor]:
         structlog.stdlib.add_log_level,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         _bind_context,
+        _add_caller_context,
         _add_google_cloud_trace_fields,
         structlog.dev.set_exc_info,
         _safe_exception,

@@ -22,9 +22,12 @@ from mcp.shared._context_streams import (
     create_context_streams,
 )
 from mcp.shared.message import SessionMessage
+from opentelemetry import context as otel_context
+from opentelemetry.context import Context
 from pydantic import BaseModel, Field, model_validator
 from structlog.contextvars import bound_contextvars, get_contextvars
 
+from ms_tau_sdk.protocols.caller_context import caller_context_scope, outbound_headers
 from ms_tau_sdk.settings import TauSDKSettings
 
 from .auth import BackendAuth
@@ -294,6 +297,7 @@ class _CallToolCommand:
     meta: dict[str, object] | None
     timeout_seconds: float | None
     log_context: dict[str, object]
+    caller_context: Context
     result: asyncio.Future[types.CallToolResult]
 
 
@@ -301,12 +305,14 @@ class _CallToolCommand:
 class _ReadResourceCommand:
     uri: str
     log_context: dict[str, object]
+    caller_context: Context
     result: asyncio.Future[types.ReadResourceResult]
 
 
 @dataclass(frozen=True)
 class _ListSkillsCommand:
     log_context: dict[str, object]
+    caller_context: Context
     result: asyncio.Future[tuple[Skill, ...]]
 
 
@@ -410,7 +416,7 @@ class MCPConnectionClient:
                 timeout=self._http_timeout,
                 auth=self._http_auth,
                 event_hooks={
-                    "request": [self._prepare_tool_request],
+                    "request": [self._carry_caller_context, self._prepare_tool_request],
                     "response": [self._raise_for_error_status],
                 },
             ) as http_client:
@@ -452,6 +458,12 @@ class MCPConnectionClient:
                 failure or RuntimeError(f"{self.display_name} MCP client closed")
             )
             self._http_calls.clear()
+
+    async def _carry_caller_context(self, request: httpx2.Request) -> None:
+        # MCP sends each message from its own task, in the context of the call that sent it, so
+        # a request carries the caller context of that call and the connection's own requests
+        # carry none. A header already on the request wins.
+        request.headers.update(outbound_headers(request.headers))
 
     async def _prepare_tool_request(self, request: httpx2.Request) -> None:
         if request.method != "POST":
@@ -515,7 +527,10 @@ class MCPConnectionClient:
                 return
             self._in_flight.add(command.result)
             try:
-                with bound_contextvars(**command.log_context):
+                with (
+                    bound_contextvars(**command.log_context),
+                    caller_context_scope(command.caller_context),
+                ):
                     if isinstance(command, _CallToolCommand):
                         with anyio.CancelScope() as cancel_scope:
                             call = _ToolCall(cancel_scope)
@@ -643,6 +658,7 @@ class MCPConnectionClient:
                 meta=meta,
                 timeout_seconds=timeout_seconds,
                 log_context=dict(get_contextvars()),
+                caller_context=otel_context.get_current(),
                 result=result,
             )
         )
@@ -657,6 +673,7 @@ class MCPConnectionClient:
             _ReadResourceCommand(
                 uri=uri,
                 log_context=dict(get_contextvars()),
+                caller_context=otel_context.get_current(),
                 result=result,
             )
         )
@@ -672,7 +689,13 @@ class MCPConnectionClient:
             return ()
         commands = self._require_commands()
         result: asyncio.Future[tuple[Skill, ...]] = asyncio.get_running_loop().create_future()
-        commands.put_nowait(_ListSkillsCommand(log_context=dict(get_contextvars()), result=result))
+        commands.put_nowait(
+            _ListSkillsCommand(
+                log_context=dict(get_contextvars()),
+                caller_context=otel_context.get_current(),
+                result=result,
+            )
+        )
         return await result
 
     async def aclose(self) -> None:
