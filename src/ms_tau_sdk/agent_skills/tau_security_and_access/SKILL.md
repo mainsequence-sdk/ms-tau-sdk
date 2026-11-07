@@ -1,6 +1,6 @@
 ---
 name: tau-security-and-access
-description: Build and review project tools that call the platform or other applications for the person a turn serves, including tools that use a person's Secret without exposing it, and explain how delegation and policies decide what those tools can reach.
+description: Build and review project tools that call the platform or other applications for the person a turn serves, including tools that use a person's Secret without exposing it or read the caller context another application sends, and explain how delegation and policies decide what those tools can reach.
 ---
 
 # TAU Security and Access
@@ -294,6 +294,33 @@ if person is None or REPORTS_TEAM_UID not in await person.in_teams([REPORTS_TEAM
 - A check the platform cannot answer raises `BackendError`; it never answers "not a member".
 - The requester carries no team list; `in_teams()` is the only membership check.
 
+## Caller context from another application
+
+An application that serves its own users, such as a service outside Main Sequence, can say which
+of its users the work it sends is for, in W3C `baggage` keys of the form
+`mainsequence.<application>.<name>`. The runtime makes that context OpenTelemetry's current context
+for the request or Task, and a tool reads it with OpenTelemetry's API:
+
+```python
+from opentelemetry import baggage
+
+person = baggage.get_baggage("mainsequence.advisor.person")  # None when the work carries none
+```
+
+- It is the sender's claim, never Main Sequence identity. It names no requester and carries no
+  delegation: `current_requester()` and `platform_client()` never read it, and it grants nothing.
+  Never let it choose whose Secret, credential or data a delegated call uses.
+- Anyone who may give the Agent work can send any context, and a Task's context is whatever its
+  creator sent. Make rules from it only in an Agent whose policies admit only callers trusted to
+  vouch for it; in an HTTP handler, check `request.state.user` first.
+- Use it to narrow what a tool returns, never to widen it. Missing context means no external user:
+  refuse what needs one, and never fall back to everyone's data.
+- It is public. The runtime passes it on with every platform and application call, so never put a
+  secret in it, and know that an application that trusts this Agent's context trusts everyone who
+  may give the Agent work.
+
+The SDK Security and access guide's **Caller context** section has the full rules.
+
 ## What never reaches the model
 
 Tool results, their `details`, and errors can reach the model provider and the session history.
@@ -334,5 +361,7 @@ Patch the extension module's `current_requester` and `platform_client` with fake
 - Secret values stay inside one call, in headers, never in results, logs, errors, URLs or caches.
 - The naming convention says whose Secrets the tool uses, and the owners of those Secrets know it.
 - A refused delegated call is reported, never retried as the Agent.
+- Caller context only narrows results, comes from callers the Agent's policies trust, and its
+  absence is refused, never read as everyone.
 - The Agent's workload holds no grants it does not need, and none on people's Secrets; `user` is
   enough on an Agent it only sends work to.

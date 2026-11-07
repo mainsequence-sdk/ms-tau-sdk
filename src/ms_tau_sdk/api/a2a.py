@@ -51,6 +51,7 @@ from ms_tau_sdk.protocols.a2a_roles import (
     message_to_binding,
     message_to_protocol,
 )
+from ms_tau_sdk.protocols.caller_context import request_context
 from ms_tau_sdk.protocols.strict_json import (
     StrictJsonContract,
     StrictJsonError,
@@ -1671,6 +1672,8 @@ async def _schedule_task_accelerator(
         requester_uid=_task_requester_uid(task.requester_user_uid, task.requester_identity_type),
     )
     try:
+        # The attempt runs in the caller context of the request that created or continued the
+        # Task.
         _background, scheduled = manager.create_a2a_task_execution(
             task.uid,
             execution,
@@ -2392,8 +2395,14 @@ async def task_dispatch_available(
     client: BackendDep,
     manager: RuntimeManagerDep,
     config: SettingsDep,
+    request: Request,
 ) -> dict[str, Any]:
-    """Handle the bounded post-wake hint; the backend claim is the authority."""
+    """Handle the bounded post-wake hint; the backend claim is the authority.
+
+    The signal carries the Task's caller context, the context of the request that created the
+    Task, as W3C ``traceparent`` and ``baggage`` headers. It becomes the context of the Task's
+    execution; a signal without them leaves the Task with none.
+    """
 
     task_uid = str(body.get("task_uid") or "").strip()
     dispatch_uid = str(body.get("dispatch_uid") or "").strip()
@@ -2429,6 +2438,7 @@ async def task_dispatch_available(
             ),
         ),
         name=f"a2a-task-{task.task_id}",
+        caller_context=request_context(request.scope.get("headers", ())),
     )
     return {"accepted": True, "scheduled": scheduled, "task_uid": task.uid}
 

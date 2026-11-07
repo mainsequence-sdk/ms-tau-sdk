@@ -39,6 +39,7 @@ from ms_tau_sdk.errors import (
     BackendTimeoutError,
     TauSDKError,
 )
+from ms_tau_sdk.protocols.caller_context import outbound_headers
 
 logger = structlog.get_logger(__name__)
 
@@ -329,7 +330,9 @@ class TurnRequesterBinding:
         client = self._application_http()
         # Only the application's bearer token goes to the application: never the runtime
         # credential or the lease proof. The request is built here so that no cookie the shared
-        # client kept from another answer is sent with it.
+        # client kept from another answer is sent with it. The caller context of the work goes
+        # on with it, unless the call sets those headers itself.
+        own_headers = dict(options.get("headers") or {})
         request = httpx.Request(
             method,
             url,
@@ -338,7 +341,11 @@ class TurnRequesterBinding:
             content=options.get("content"),
             data=options.get("data"),
             files=options.get("files"),
-            headers={**dict(options.get("headers") or {}), "Authorization": f"Bearer {token}"},
+            headers={
+                **outbound_headers(own_headers),
+                **own_headers,
+                "Authorization": f"Bearer {token}",
+            },
             extensions={"timeout": client.timeout.as_dict()},
         )
         started_at = time.monotonic()

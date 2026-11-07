@@ -6,7 +6,9 @@
 ``RequestIdentityMiddleware``, which admits a request only with the platform's signed assertion of
 the kind its route requires: a platform assertion on ``/internal/*``, a caller assertion on every
 other route. Handlers read the verified caller with ``current_caller()``, or from
-``request.state.user`` and ``request.state.user_uid``.
+``request.state.user`` and ``request.state.user_uid``. Beside it, the request's W3C
+``traceparent`` and ``baggage`` become OpenTelemetry's current context for the request: the caller
+context, which is the caller's claim and never identity.
 
 A request that addresses an existing session must also come from the session's owner, from an
 Organization admin, or, for a delegated child session, from the workload User of the Agent that
@@ -48,7 +50,12 @@ from ms_tau_sdk.backend.team_memberships import (
     unbind_team_membership_scope,
 )
 from ms_tau_sdk.errors import SessionNotFoundError, TauSDKError
-from ms_tau_sdk.logging import bind_request_identity_log_fields
+from ms_tau_sdk.logging import bind_request_identity_log_fields, bind_request_log_fields
+from ms_tau_sdk.protocols.caller_context import (
+    caller_context_scope,
+    recorded_baggage,
+    request_context,
+)
 from ms_tau_sdk.runtime.provenance import CallerIdentityError
 from ms_tau_sdk.settings import TauSDKSettings
 
@@ -345,11 +352,18 @@ class RequestIdentityMiddleware:
                 assertion=caller_assertion,
                 client=_backend_of(scope),
             )
+        # The caller context arrives beside the assertion verified above, and only with one. It is
+        # the caller's claim: it never admits a request or names a caller.
+        caller_context = request_context(scope.get("headers", ()))
+        baggage = recorded_baggage(caller_context)
+        if baggage:
+            bind_request_log_fields(scope, baggage=baggage)
         caller_token = _current_caller.set(caller)
         lookups_token = _workload_lookups.set({})
         membership_token = bind_team_membership_scope(membership)
         try:
-            await self.app(scope, receive, send)
+            with caller_context_scope(caller_context):
+                await self.app(scope, receive, send)
         finally:
             unbind_team_membership_scope(membership, membership_token)
             _workload_lookups.reset(lookups_token)

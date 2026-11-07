@@ -24,6 +24,7 @@ dependencies = [
   "httpx>=0.28",
   "jsonschema>=4.25,<5",
   "mcp>=2.3,<3",
+  "opentelemetry-api>=1.28,<2",
   "pydantic>=2.11",
   "pydantic-settings>=2.10",
   "pyjwt[crypto]>=2.10.1,<3",

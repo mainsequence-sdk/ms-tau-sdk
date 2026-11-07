@@ -24,6 +24,7 @@ from ms_tau_sdk.errors import (
     SessionNotFoundError,
 )
 from ms_tau_sdk.protocols.a2a_roles import platform_message_to_binding
+from ms_tau_sdk.protocols.caller_context import outbound_headers
 from ms_tau_sdk.settings import TauSDKSettings
 
 from .assertions import ASSERTION_HEADER
@@ -311,7 +312,13 @@ class MainSequenceClient:
                 response = await self._client.request(
                     method,
                     path,
-                    headers={**(headers or {}), **await self.auth.headers(force=force_auth)},
+                    # The caller context of the work goes on with the call; a header the call
+                    # sets wins.
+                    headers={
+                        **outbound_headers(headers or ()),
+                        **(headers or {}),
+                        **await self.auth.headers(force=force_auth),
+                    },
                     json=json,
                 )
                 response_detail = self._safe_body(response) if not response.is_success else None
@@ -734,6 +741,7 @@ class MainSequenceClient:
                     data=data,
                     files=files,
                     headers={
+                        **outbound_headers(headers or ()),
                         **dict(headers or {}),
                         **delegation,
                         **await self.auth.headers(force=force_auth),

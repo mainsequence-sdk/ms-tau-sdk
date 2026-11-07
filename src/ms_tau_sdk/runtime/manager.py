@@ -19,6 +19,7 @@ import httpx
 import structlog
 from jsonschema.exceptions import SchemaError, ValidationError
 from jsonschema.validators import validator_for
+from opentelemetry.context import Context
 from structlog.contextvars import (
     bind_contextvars,
     bound_contextvars,
@@ -53,6 +54,7 @@ from ms_tau_sdk.errors import (
     ToolWorkbenchError,
 )
 from ms_tau_sdk.logging import conversation_log_fields
+from ms_tau_sdk.protocols.caller_context import caller_context_scope
 from ms_tau_sdk.providers.factory import ProviderFactory
 from ms_tau_sdk.resources.loader import tau_resource_paths
 from ms_tau_sdk.runtime.events import TauRuntimeEvent
@@ -2026,7 +2028,14 @@ class SessionRuntimeManager:
         *,
         name: str,
         operation_uid: str | None = None,
+        caller_context: Context | None = None,
     ) -> asyncio.Task[object]:
+        """Run ``coroutine`` detached from the turn that starts it.
+
+        The work keeps the caller context of the work that starts it, or runs in
+        ``caller_context`` when one is given.
+        """
+
         if self._draining or self._closed:
             coroutine.close()
             raise RuntimeError("Main Sequence TAU SDK runtime is shutting down")
@@ -2066,7 +2075,12 @@ class SessionRuntimeManager:
                 **{key: value for key, value in detached_fields.items() if value is not None}
             )
             try:
-                return await coroutine
+                with (
+                    caller_context_scope(caller_context)
+                    if caller_context is not None
+                    else contextlib.nullcontext()
+                ):
+                    return await coroutine
             finally:
                 clear_contextvars()
 
@@ -2081,8 +2095,13 @@ class SessionRuntimeManager:
         coroutine: Coroutine[Any, Any, object],
         *,
         name: str,
+        caller_context: Context | None = None,
     ) -> tuple[asyncio.Task[object], bool]:
-        """Deduplicate local accelerators; the platform's dispatch remains recovery owner."""
+        """Deduplicate local accelerators; the platform's dispatch remains recovery owner.
+
+        The execution runs in ``caller_context``, the Task's caller context, when one is given,
+        and otherwise in the caller context of the work that starts it.
+        """
 
         existing = self._a2a_task_executions.get(task_uid)
         if existing is not None and not existing.done():
@@ -2092,6 +2111,7 @@ class SessionRuntimeManager:
             coroutine,
             name=name,
             operation_uid=task_uid,
+            caller_context=caller_context,
         )
         self._a2a_task_executions[task_uid] = task
 
@@ -2162,10 +2182,15 @@ class SessionRuntimeManager:
 
     async def _renew_lease(self, runtime: ActiveSessionRuntime) -> None:
         clear_contextvars()
-        with bound_contextvars(
-            session_uid=runtime.session_uid,
-            agent_session_uid=runtime.session_uid,
-            operation_uid=str(uuid.uuid4()),
+        # The lease outlives the request that loaded the session, so its renewals carry no
+        # caller's context.
+        with (
+            caller_context_scope(Context()),
+            bound_contextvars(
+                session_uid=runtime.session_uid,
+                agent_session_uid=runtime.session_uid,
+                operation_uid=str(uuid.uuid4()),
+            ),
         ):
             await self._renew_lease_with_context(runtime)
 

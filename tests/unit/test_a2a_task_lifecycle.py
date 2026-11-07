@@ -4,7 +4,8 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
 import pytest
-from fastapi import HTTPException
+from fastapi import HTTPException, Request
+from opentelemetry import baggage
 
 from ms_tau_sdk.api.a2a import (
     _execute_task,
@@ -224,12 +225,14 @@ async def test_dispatch_signal_pulls_durable_task_then_claims_before_execution()
         def __init__(self) -> None:
             self.background = None
             self.prompt_started = False
+            self.caller_context = None
 
-        def create_a2a_task_execution(self, task_uid, coroutine, *, name):
+        def create_a2a_task_execution(self, task_uid, coroutine, *, name, caller_context=None):
             assert task_uid == submitted.uid
             assert name == "a2a-task-task-1"
             assert client.claim_task_dispatch.await_count == 1
             self.background = coroutine
+            self.caller_context = caller_context
             return None, True
 
         async def task_execution_fence(self, _session_uid):
@@ -253,11 +256,22 @@ async def test_dispatch_signal_pulls_durable_task_then_claims_before_execution()
             return True
 
     manager = Manager()
+    # The signal carries the Task's caller context, which becomes the context of its execution.
+    signal = Request(
+        {
+            "type": "http",
+            "headers": [
+                (b"traceparent", b"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"),
+                (b"baggage", b"mainsequence.portal.user=u-81"),
+            ],
+        }
+    )
     result = await task_dispatch_available(
         {"task_uid": submitted.uid, "dispatch_uid": "dispatch-1"},
         client,
         manager,  # type: ignore[arg-type]
         manager.settings,
+        signal,
     )
 
     assert result == {
@@ -268,6 +282,7 @@ async def test_dispatch_signal_pulls_durable_task_then_claims_before_execution()
     assert manager.background is not None
     assert manager.prompt_started is False
     assert client.claim_task_dispatch.await_count == 1
+    assert baggage.get_all(context=manager.caller_context) == {"mainsequence.portal.user": "u-81"}
     await manager.background
     assert manager.prompt_started is True
     client.claim_task_dispatch.assert_awaited_once_with(

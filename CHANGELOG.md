@@ -1,6 +1,22 @@
 # Changelog
 
-## Unreleased
+## 2.0.29 — 2026-11-07
+
+- **Agents receive and pass on caller context (W3C `baggage` and `traceparent`).** A service user,
+  such as an application outside Main Sequence that serves its own users, can say in the W3C
+  `baggage` header which of its users a call is for. In hosted mode the runtime makes a verified
+  request's `traceparent` and `baggage` OpenTelemetry's current context, next to the verified
+  caller, and a Task's dispatch signal now carries the Task's context as the same two headers,
+  which become the context of that Task's execution. Agent code reads it with OpenTelemetry's
+  standard API (`opentelemetry.baggage`); the SDK adds no accessor and defines no keys. The
+  runtime's platform calls, Main Sequence MCP tools (A2A sends included), application tools and
+  `platform_client()` calls carry the current context on, and log lines record its
+  `mainsequence.` keys as a `baggage` field. The context is the caller's claim, never Main
+  Sequence identity: the [Security and access guide](docs/reference/security-model.md#caller-context)
+  says when to believe it, and missing context means no external user. `opentelemetry-api`, which
+  the runtime already installed through `mcp`, is now a direct dependency. An Agent on an earlier
+  release keeps working and carries no context. See the
+  [runtime contract](docs/reference/runtime-contract.md#caller-context).
 
 - **Troubleshooting covers code repository creation without a linked GitHub organization.** The
   platform creates a code repository's GitHub repository only in a GitHub organization the

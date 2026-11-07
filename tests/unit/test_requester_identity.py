@@ -26,6 +26,7 @@ from unittest.mock import ANY, AsyncMock, Mock
 import httpx
 import pytest
 import respx
+from opentelemetry import baggage, trace
 from tau_agent.messages import AssistantMessage, ToolCall
 from tau_agent.provider_events import AssistantDoneEvent
 from tau_ai.fake import FakeProvider
@@ -58,6 +59,7 @@ from ms_tau_sdk.backend.models import (
 )
 from ms_tau_sdk.errors import BackendConflictError, BackendError, TauSDKError
 from ms_tau_sdk.protocols.a2a_roles import A2AMessageDirection
+from ms_tau_sdk.protocols.caller_context import caller_context_scope, request_context
 from ms_tau_sdk.providers.factory import ProviderRuntime
 from ms_tau_sdk.runtime import requester as requester_module
 from ms_tau_sdk.runtime.events import TauRuntimeEvent
@@ -636,6 +638,7 @@ class _RecordingManager:
         self.backend = client
         self.turns: list[dict[str, Any]] = []
         self.background: list[Any] = []
+        self.caller_contexts: list[Any] = []
         # Answers for successive turns; the last one repeats.
         self.answers = ["Answer."]
 
@@ -669,9 +672,12 @@ class _RecordingManager:
     async def task_execution_fence(self, _session_uid: str):
         return SimpleNamespace(holder_id=self.holder_id, lease_token=LEASE_TOKEN)
 
-    def create_a2a_task_execution(self, _task_uid: str, coroutine, *, name: str):
+    def create_a2a_task_execution(
+        self, _task_uid: str, coroutine, *, name: str, caller_context: Any = None
+    ):
         del name
         self.background.append(coroutine)
+        self.caller_contexts.append(caller_context)
         return None, True
 
     def create_a2a_caller_delivery(self, _delivery_uid: str, coroutine, *, name: str):
@@ -925,6 +931,57 @@ async def test_the_platform_dispatch_names_the_person_the_attempt_serves(
     ]
 
 
+TRACEPARENT = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+
+
+@pytest.mark.parametrize(
+    ("signal_headers", "expected"),
+    [
+        pytest.param(
+            {"traceparent": TRACEPARENT, "baggage": "mainsequence.portal.user=u-81"},
+            {"mainsequence.portal.user": "u-81"},
+            id="with_context",
+        ),
+        pytest.param({}, {}, id="without_context"),
+    ],
+)
+async def test_a_dispatched_task_runs_in_the_context_the_signal_carries(
+    served_platform_keys,
+    tmp_path,
+    asgi_client,
+    signal_headers,
+    expected,
+):
+    config = served_platform_keys.hosted_settings(tmp_path)
+    app = create_app(config)
+    client = _platform_client(config)
+    manager = _RecordingManager(config, client)
+    client.get_task.side_effect = [
+        _answered_task(OTHER_UID, "human", "submitted"),
+        *[_task("working")] * 20,
+    ]
+    app.dependency_overrides[backend] = lambda: client
+    app.dependency_overrides[runtime_manager] = lambda: manager
+    app.dependency_overrides[settings] = lambda: config
+
+    async with asgi_client(app) as http:
+        response = await http.post(
+            "/internal/a2a/task-dispatch",
+            json={"task_uid": "backend-task-1", "dispatch_uid": "dispatch-1"},
+            headers={
+                ASSERTION_HEADER: served_platform_keys.platform_assertion(),
+                **signal_headers,
+            },
+        )
+    await manager.run_background()
+
+    assert response.status_code == 200, response.text
+    (caller_context,) = manager.caller_contexts
+    assert baggage.get_all(context=caller_context) == expected
+    trace_parent = trace.get_current_span(caller_context).get_span_context()
+    assert trace_parent.is_valid is bool(signal_headers)
+
+
 # --- platform_client(): calls for the work ------------------------------------------------------
 
 HOLDER_ID = "runtime-host:holder-1"
@@ -1104,6 +1161,28 @@ async def test_a_call_without_the_delegation_is_the_agents_own(tmp_path, request
     )
     [sent] = application.requests
     assert _secret_headers(sent) == {"authorization": f"Bearer {_release_token(marker='first')}"}
+
+
+async def test_calls_for_the_work_carry_its_caller_context(tmp_path):
+    context = request_context(
+        [(b"traceparent", TRACEPARENT.encode()), (b"baggage", b"mainsequence.portal.user=u-81")]
+    )
+    async with _bound_turn(tmp_path) as (platform, application, _binding, _auth):
+        client = platform_client()
+        with caller_context_scope(context):
+            await client.request("GET", "/api/v1/data-nodes/")
+            await client.call_release(
+                RELEASE_UID, "GET", "/tables", headers={"Baggage": "mainsequence.portal.user=own"}
+            )
+
+    data_nodes, resolve = platform.requests
+    (table_call,) = application.requests
+    for request in (data_nodes, resolve):
+        assert request.headers["traceparent"] == TRACEPARENT
+        assert request.headers["baggage"] == "mainsequence.portal.user=u-81"
+    # The application receives the context too; a header the tool sets wins.
+    assert table_call.headers["traceparent"] == TRACEPARENT
+    assert table_call.headers.get_list("baggage") == ["mainsequence.portal.user=own"]
 
 
 async def test_outside_a_turn_calls_go_through_the_runtime_without_a_delegation(
