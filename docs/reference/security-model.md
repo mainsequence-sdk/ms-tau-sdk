@@ -421,10 +421,10 @@ the platform's
 page gives the key form, the limits and an example.
 
 - **It is public, and it is never Main Sequence identity.** Context travels on downstream, to third
-  parties too, and the platform records it. Never put a secret, a credential or a proof in it, and
-  refer to a person by an opaque id that means nothing without your own records. A person it names
-  is not a Main Sequence user and never the requester: `current_requester()`, delegation and
-  session ownership never read it, and it grants nothing.
+  parties too, and the platform records it. Never put a secret, a credential or a proof in it.
+  What its keys and values mean, including whether one refers to a person, is up to whoever
+  designs the application. A person it names is not a Main Sequence user and never the requester:
+  `current_requester()`, delegation and session ownership never read it, and it grants nothing.
 - **It is worth as much as the caller that delivered it.** Anyone who can send the Agent work can
   send any context, and the platform never signs it or checks a value. Believe it only from
   callers you trust to vouch for it, checked against the verified caller at the hop where you read
