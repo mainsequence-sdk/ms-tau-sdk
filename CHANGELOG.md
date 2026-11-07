@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- **The Security and access guide sets no rule on what caller context holds.** It no longer says
+  to refer to a person by an opaque id: what the keys and values mean, including whether one
+  refers to a person, is up to whoever designs the application. Caller context stays public, so
+  nothing secret or used as proof goes in it, and the
+  [trust rule](docs/reference/security-model.md#caller-context) is unchanged. SDK behavior is
+  unchanged.
+
 ## 2.0.29 — 2026-11-07
 
 - **Agents receive and pass on caller context (W3C `baggage` and `traceparent`).** A service user,
