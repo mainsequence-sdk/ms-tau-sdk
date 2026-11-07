@@ -35,6 +35,9 @@ install a second request-identity integration on it. See the
 reusing answers as [Team membership](./runtime-contract.md#team-membership) describes; it does not
 state who manages the Team. See
 [Teams and membership](./security-model.md#teams-and-membership). The caller carries no team list.
+Beside the verified caller, a request's W3C `traceparent` and `baggage` are OpenTelemetry's current
+context, which Agent code reads with `opentelemetry.baggage`; the SDK adds no name of its own for it.
+See [caller context](./runtime-contract.md#caller-context).
 
 ## `TauSDKSettings`
 

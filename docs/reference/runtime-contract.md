@@ -91,6 +91,38 @@ In hosted mode every request carries one platform-signed assertion in
 
 Outside hosted mode nothing is verified and every route behaves as before.
 
+### Caller context
+
+In hosted mode, the W3C `traceparent` and `baggage` headers of a request whose assertion verified
+become OpenTelemetry's current context while the request is handled, next to the verified caller.
+Agent code reads it with OpenTelemetry's standard API; the SDK adds no accessor and gives no key a
+meaning:
+
+```python
+from opentelemetry import baggage
+
+person = baggage.get_baggage("mainsequence.advisor.person")  # None when the call carries none
+```
+
+- Every key is carried as it arrives. W3C properties, after a member's `;`, are dropped. The
+  parser's limits apply: a header over 8192 bytes is ignored whole, a member over 4096 bytes is
+  skipped, and at most 180 members are read. A malformed member is skipped and never fails the
+  request. The platform carries only keys of the form `mainsequence.<application>.<name>` into the
+  work a call creates, such as a Task.
+- A rejected request, an `OPTIONS` request, and every request outside hosted mode carry none.
+- The calls the runtime makes for the work carry the current `traceparent` and `baggage`: its own
+  platform calls, the Main Sequence MCP tools (A2A sends included), application tools, and
+  `platform_client()` calls. A header that project code sets on a `platform_client()` call wins.
+  The runtime adds nothing to requests to model providers or to calls that project code makes with
+  its own HTTP client.
+- Log lines written in the context carry its `mainsequence.` keys as a `baggage` field, the
+  request's `http.request.completed` line included. Other keys and the raw header are not logged.
+
+A Task's context arrives with its dispatch; see
+[managed AgentTask execution](#managed-agenttask-execution). The context is the caller's claim,
+never identity: read the [Security and access guide](./security-model.md#caller-context) before
+making a rule from it.
+
 ### Team membership
 
 `await request.state.user.in_teams(team_uids, *, max_age_seconds=None)` returns which of
@@ -362,6 +394,16 @@ starts the returned attempt through `attempts/start`, writes artifacts through
 `attempts/settle`. Settlement returns an attempt record; the runtime reads the Task afterward for
 the resulting protocol state. The SDK does not post attempt Messages or use combined mutation or
 route aliases that the platform does not expose.
+
+A Task keeps the [caller context](#caller-context) of the request that created it. When it has
+one, the platform's dispatch signal (`POST /internal/a2a/task-dispatch`) carries it as W3C
+`traceparent` and `baggage` headers, and the runtime makes it OpenTelemetry's current context for
+that Task's execution: the turn, its tools, the calls it makes and its log lines carry it, and
+Agent code reads it with `opentelemetry.baggage`. A dispatch without the headers leaves the Task
+with no context. A Task the runtime starts at once, for the request that created or continued it,
+runs in that request's context. The dispatch is the platform's own call and names no caller, so
+the Task's context is worth as much as your trust in the Task's creator; see the
+[Security and access guide](./security-model.md#caller-context).
 
 Local Task creation and continuation persist one complete Main Sequence binding Message with
 `ROLE_REQUESTER` and ordered URI-array `extensions`. Managed Task creation and continuation

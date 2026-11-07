@@ -12,7 +12,9 @@ This guide covers the current SDK development documentation. The application MCP
 [2.0.6](../../CHANGELOG.md#206--2026-10-07). The delegation envelope shipped in
 [2.0.7](../../CHANGELOG.md#207--2026-10-08), in one cutover with the matching platform change:
 2.0.7 and later SDK releases work only with that platform, and earlier SDK releases no longer act
-for people. Check your installed SDK before relying on these features.
+for people. [Caller context](#caller-context) is development behavior and ships in the next release
+([Unreleased](../../CHANGELOG.md#unreleased)); an Agent on an earlier release keeps working and
+carries no caller context. Check your installed SDK before relying on these features.
 
 ## Who is who
 
@@ -22,6 +24,7 @@ for people. Check your installed SDK before relying on these features.
 | Session owner | The person a conversation (AgentSession) belongs to. |
 | The Agent's workload | The identity a deployed Agent runs as. Each Agent has its own. It is never the person who pushed or deployed the Agent, never an Organization admin, and it starts with no access. |
 | Requester | The person whose own request a turn is serving. Always a person, never an Agent or another workload. |
+| Caller context | What a caller says about who a call is for, in the W3C `baggage` header: for example which of its own users an outside application calls for. A claim of that caller, never Main Sequence identity; see [caller context](#caller-context). |
 
 ## Agent policies
 
@@ -404,6 +407,44 @@ for a delegated call, the person as the requester.
 - The SDK's Main Sequence MCP tools follow the same rule: every call names the turn's session, and
   carries the person's delegation while the turn serves a person.
 
+## Caller context
+
+A service user, such as an application outside Main Sequence that serves its own users, can send
+its own context with a call: which of its users the call is for, and its own information about the
+call, as keys of the form `mainsequence.<application>.<name>` in the W3C `baggage` header, next to
+`traceparent`. The platform carries that context to the Agent and records it as the caller's claim.
+It never uses it to authenticate, authorize, admit or bill a call, and it defines no keys. Agent
+code reads it with OpenTelemetry's standard API, `opentelemetry.baggage`; the
+[runtime contract](./runtime-contract.md#caller-context) says where the runtime receives it, and
+the platform's
+[caller context](https://mainsequence-sdk.github.io/mainsequence-sdk/knowledge/server/caller_context/)
+page gives the key form, the limits and an example.
+
+- **It is public, and it is never Main Sequence identity.** Context travels on downstream, to third
+  parties too, and the platform records it. Never put a secret, a credential or a proof in it, and
+  refer to a person by an opaque id that means nothing without your own records. A person it names
+  is not a Main Sequence user and never the requester: `current_requester()`, delegation and
+  session ownership never read it, and it grants nothing.
+- **It is worth as much as the caller that delivered it.** Anyone who can send the Agent work can
+  send any context, and the platform never signs it or checks a value. Believe it only from
+  callers you trust to vouch for it, checked against the verified caller at the hop where you read
+  it: in an HTTP handler, `request.state.user`. From any other caller, ignore it, or treat it as
+  that caller's own unverified claim.
+- **For a Task, trust it as far as you trust the Task's creator.** A Task keeps the context of the
+  request that created it or, when that request carried none and the Task was admitted for an A2A
+  send, the send's. The platform delivers it with the Task's dispatch, which is the platform's own
+  call and names no caller. Whoever may
+  give the Agent Tasks or messages can set that context, so an Agent whose code makes rules from it
+  gives [policies on the Agent](#agent-policies) only to callers it trusts to vouch for it.
+- **Missing context means no external user.** Fail closed: refuse what needs that user, and never
+  fall back to broader access. Context is missing when the caller sent none, when it was malformed
+  or too large, when an older SDK on the way did not pass it on, and outside hosted mode. Context
+  from a caller you do not trust counts as missing.
+- **Trust is per hop.** An Agent that receives work from an application trusts that application to
+  have checked the original caller. The runtime passes the context on with every call it makes for
+  the work, and the Agent is the verified caller of those calls: an application that believes
+  context from the Agent believes it from everyone who may send the Agent work.
+
 ## Checklist for project authors
 
 - Give an Agent that serves people no grants of its own, or only what everyone who uses it may see.
@@ -420,4 +461,7 @@ for a delegated call, the person as the requester.
 - Do not retry a refused delegated call as the Agent.
 - Return business results to the model, never tokens, proofs or raw responses.
 - Declare only applications whose published skills you would let the Agent follow.
+- Make rules from caller context only when the caller that delivered it vouches for it, give
+  policies on such an Agent only to callers you trust to, and treat missing context as no external
+  user.
 - Review extensions: they run with the Agent's credentials.
