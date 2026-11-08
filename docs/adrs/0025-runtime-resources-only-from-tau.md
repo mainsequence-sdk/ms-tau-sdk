@@ -4,6 +4,10 @@ Status: Accepted — implemented
 
 Date: 2026-10-24
 
+Proposed amendment, 2026-11-08, not in effect: [ADR 0026](./0026-per-agent-runtime-resources-from-the-workflow-declaration.md)
+would let a per-Agent selection narrow what is read inside `.tau/`, with section 2's `TauPaths`
+also restricting the skill listing. Until it is accepted, this ADR stands as written.
+
 Amends:
 
 - [ADR 0003: Tau-native project configuration](./0003-tau-native-project-configuration.md) by
