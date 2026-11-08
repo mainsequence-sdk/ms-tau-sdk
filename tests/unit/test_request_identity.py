@@ -46,6 +46,10 @@ OTHER_UID = "5d4c3b2a-1f0e-4d9c-8b7a-6f5e4d3c2b1a"
 ADMIN_UID = "9a8b7c6d-5e4f-4a3b-8c2d-1e0f9a8b7c6d"
 OWNED_SESSION = "11111111-aaaa-4bbb-8ccc-222222222222"
 FOREIGN_SESSION = "33333333-dddd-4eee-8fff-444444444444"
+# A session the owner opened for one of its own people (ADR 0028).
+SUBOWNED_SESSION = "99999999-1111-4222-8333-444444444444"
+ISSUER_UID = "7c6b5a49-3829-4716-8f5e-4d3c2b1a0f9e"
+SUBOWNER_KEYS = ("mainsequence.app.gateway", "mainsequence.app.user")
 AGENT_CALLER_HEADERS = {
     "X-Caller-Kind": "agent",
     "X-Caller-Agent-UID": "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d",
@@ -63,6 +67,9 @@ def _session(uid: str, owner: str) -> AgentSession:
         llm_provider="openai",
         llm_model="gpt-5.4",
         created_by_user_uid=owner,
+        subowner=(
+            {"issuer_uid": ISSUER_UID, "subject": "person-42"} if uid == SUBOWNED_SESSION else None
+        ),
     )
 
 
@@ -118,7 +125,7 @@ class _Manager:
 
 
 def _client(config: TauSDKSettings) -> AsyncMock:
-    owners = {OWNED_SESSION: OWNER_UID, FOREIGN_SESSION: OTHER_UID}
+    owners = {OWNED_SESSION: OWNER_UID, FOREIGN_SESSION: OTHER_UID, SUBOWNED_SESSION: OWNER_UID}
     tasks = {
         "task-owned": _task("task-owned", OWNED_SESSION),
         "task-foreign": _task("task-foreign", FOREIGN_SESSION),
@@ -418,6 +425,118 @@ async def test_only_the_owner_or_an_organization_admin_addresses_a_session(
     client.get_agent_card.assert_not_awaited()
     client.list_tasks.assert_not_awaited()
     client.create_task.assert_not_awaited()
+
+
+def _baggage(issuer: str | None, subject: str | None) -> dict[str, str]:
+    members = [
+        f"{SUBOWNER_KEYS[0]}={issuer}" if issuer else "",
+        f"{SUBOWNER_KEYS[1]}={subject}" if subject else "",
+    ]
+    header = ",".join(member for member in members if member)
+    return {"baggage": header} if header else {}
+
+
+@pytest.mark.parametrize(
+    ("baggage", "admitted"),
+    [
+        (_baggage(ISSUER_UID, "person-42"), True),
+        (_baggage(ISSUER_UID.upper(), "person-42"), True),
+        (_baggage(ISSUER_UID, "person-43"), False),
+        (_baggage(OTHER_UID, "person-42"), False),
+        (_baggage(ISSUER_UID, None), False),
+        ({}, False),
+    ],
+    ids=["same_person", "issuer_case", "other_subject", "other_issuer", "half_a_pair", "none"],
+)
+async def test_with_declared_keys_a_subowned_session_needs_its_person_in_the_baggage(
+    served_platform_keys, tmp_path, asgi_client, baggage, admitted
+):
+    app, _client, manager = _hosted_app(
+        served_platform_keys, tmp_path, subowner_baggage_keys=SUBOWNER_KEYS
+    )
+
+    async with asgi_client(app) as http:
+        response = await http.post(
+            "/api/chat/session/cancel",
+            json={"sessionUid": SUBOWNED_SESSION},
+            headers={**_user_headers(served_platform_keys, OWNER_UID), **baggage},
+        )
+
+    if admitted:
+        assert response.status_code == 200, response.text
+        assert manager.cancelled == [SUBOWNED_SESSION]
+        return
+    assert response.status_code == 403, response.text
+    assert response.json()["detail"]["code"] == "subowner_mismatch"
+    assert manager.cancelled == []
+
+
+async def test_without_declared_keys_the_baggage_is_not_read_for_a_subowned_session(
+    served_platform_keys, tmp_path, asgi_client
+):
+    app, _client, manager = _hosted_app(served_platform_keys, tmp_path)
+
+    async with asgi_client(app) as http:
+        response = await http.post(
+            "/api/chat/session/cancel",
+            json={"sessionUid": SUBOWNED_SESSION},
+            headers={
+                **_user_headers(served_platform_keys, OWNER_UID),
+                **_baggage(OTHER_UID, "someone-else"),
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert manager.cancelled == [SUBOWNED_SESSION]
+
+
+async def test_a_session_without_a_subowner_is_not_checked_against_the_baggage(
+    served_platform_keys, tmp_path, asgi_client
+):
+    app, _client, manager = _hosted_app(
+        served_platform_keys, tmp_path, subowner_baggage_keys=SUBOWNER_KEYS
+    )
+
+    async with asgi_client(app) as http:
+        response = await http.post(
+            "/api/chat/session/cancel",
+            json={"sessionUid": OWNED_SESSION},
+            headers={
+                **_user_headers(served_platform_keys, OWNER_UID),
+                **_baggage(OTHER_UID, "someone-else"),
+            },
+        )
+
+    assert response.status_code == 200, response.text
+    assert manager.cancelled == [OWNED_SESSION]
+
+
+async def test_with_declared_keys_an_admin_is_checked_against_the_subowner_too(
+    served_platform_keys, tmp_path, asgi_client
+):
+    app, client, manager = _hosted_app(
+        served_platform_keys, tmp_path, subowner_baggage_keys=SUBOWNER_KEYS
+    )
+
+    async with asgi_client(app) as http:
+        refused = await http.post(
+            "/api/chat/session/cancel",
+            json={"sessionUid": SUBOWNED_SESSION},
+            headers=_user_headers(served_platform_keys, ADMIN_UID, admin=True),
+        )
+        admitted = await http.post(
+            "/api/chat/session/cancel",
+            json={"sessionUid": SUBOWNED_SESSION},
+            headers={
+                **_user_headers(served_platform_keys, ADMIN_UID, admin=True),
+                **_baggage(ISSUER_UID, "person-42"),
+            },
+        )
+
+    assert refused.status_code == 403, refused.text
+    assert admitted.status_code == 200, admitted.text
+    assert manager.cancelled == [SUBOWNED_SESSION]
+    client.get_session.assert_awaited()
 
 
 async def test_an_organization_admin_is_admitted_without_reading_the_session(

@@ -140,8 +140,9 @@ async def revenue_by_region(tool_call_id, arguments, signal=None, on_update=None
   application. The client obtains access with
   `POST /api/v1/resource-releases/<release_uid>/resolve-runtime-access/`, sent with the same three
   headers for a delegated call and without them otherwise, then calls the application's RPC URL
-  plus `path` with only `Authorization: Bearer <token>`. The application answers as the person for
-  a delegated call, and as the Agent otherwise. The platform gives access only to a caller whose
+  plus `path` with `Authorization: Bearer <token>` and, inside a turn,
+  `X-MainSequence-Agent-Session-UID` naming the turn's session. The application answers as the
+  person for a delegated call, and as the Agent otherwise. The platform gives access only to a caller whose
   policy on the application's release includes calling it, and checks that again on every call; see
   [calling other applications](./security-model.md#calling-other-applications). The client keeps
   the token for the turn while it is valid, replaces it shortly before it expires, and replaces it

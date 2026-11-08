@@ -25,6 +25,7 @@ from structlog.contextvars import (
     bound_contextvars,
     clear_contextvars,
     get_contextvars,
+    unbind_contextvars,
 )
 from tau_agent.tools import AgentTool, AgentToolResult
 from tau_agent.types import JSONValue
@@ -1283,6 +1284,7 @@ class SessionRuntimeManager:
                 provider_name=provider_runtime.name,
                 model=provider_runtime.model,
                 agent_uid=session.agent_uid,
+                subowner=session.subowner,
                 mcp_client=mcp_client,
                 runtime_config_sha256=str(session_extra.get("runtime_config_sha256", "")),
                 provider_control_schema=bootstrap.provider_control.schema_version,
@@ -1636,6 +1638,12 @@ class SessionRuntimeManager:
             caller_assertion=presented,
             caller_delivery_uid=delivery.uid if delivery is not None else None,
         )
+        if runtime.subowner is not None:
+            # Opaque ids, like the baggage keys the runtime already records (ADR 0028).
+            bind_contextvars(
+                subowner_issuer_uid=runtime.subowner.issuer_uid,
+                subowner_subject=runtime.subowner.subject,
+            )
         requester_binding = TurnRequesterBinding(
             session_uid=session_uid,
             requester=self._turn_requester(runtime, task_context),
@@ -1725,6 +1733,8 @@ class SessionRuntimeManager:
             # The requester's binding ends with the turn.
             unbind_turn_requester(requester_binding, requester_token)
             runtime.requester_user_uid = None
+            if runtime.subowner is not None:
+                unbind_contextvars("subowner_issuer_uid", "subowner_subject")
             if terminal_status == "completed" and observer.terminal_failure is not None:
                 failure = observer.terminal_failure
                 terminal_status = "cancelled" if failure.reason == "aborted" else "failed"

@@ -12,7 +12,7 @@ from tau_coding import CodingSession
 from tau_coding.reload import CodingReloadSummary
 
 from ms_tau_sdk.backend.mcp import MainSequenceMCPClient
-from ms_tau_sdk.backend.models import TauTurnCommit
+from ms_tau_sdk.backend.models import SessionSubowner, TauTurnCommit
 from ms_tau_sdk.resources.selection import ResolvedRuntimeResources
 from ms_tau_sdk.runtime.events import TauRuntimeEvent, translate_tau_event
 from ms_tau_sdk.runtime.extensions import ProjectExtensionState, log_project_resources
@@ -33,6 +33,9 @@ class ActiveSessionRuntime:
     model: str = ""
     # The Agent the session belongs to, as the platform named it when the session loaded.
     agent_uid: str | None = None
+    # The person the owner named when it created the session, as the platform returned it at
+    # load (ADR 0028). Stamped into each turn's provenance; never read for admission here.
+    subowner: SessionSubowner | None = None
     mcp_client: MainSequenceMCPClient | None = None
     lease_renew_task: asyncio.Task[None] | None = None
     persistence_task: asyncio.Task[object] | None = None
@@ -103,9 +106,13 @@ class ActiveSessionRuntime:
                 # the canonical entry contract, stays out of the model context,
                 # reloads as a first-class entry, and rides the turn's commit
                 # batch, so the send path gains no request.
-                await self.coding_session.append_custom_entry(
-                    PROVENANCE_NAMESPACE, dict(provenance)
-                )
+                stamp: dict[str, JSONValue] = dict(provenance)
+                if self.subowner is not None:
+                    # The platform's projection copies only the keys it knows; these stay in
+                    # the entry for the application's own projections and local history.
+                    stamp["subownerIssuerUid"] = self.subowner.issuer_uid
+                    stamp["subownerSubject"] = self.subowner.subject
+                await self.coding_session.append_custom_entry(PROVENANCE_NAMESPACE, stamp)
             if platform_event is not None:
                 namespace, payload = platform_event
                 await self.coding_session.append_custom_entry(namespace, dict(payload))

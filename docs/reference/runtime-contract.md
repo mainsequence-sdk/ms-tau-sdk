@@ -91,6 +91,29 @@ In hosted mode every request carries one platform-signed assertion in
 
 Outside hosted mode nothing is verified and every route behaves as before.
 
+### Session subowners
+
+A session the platform returns may carry `subowner: {issuer_uid, subject} | null`: the person the
+session's owner named when it created the session, an opaque pair the platform indexes and never
+interprets (platform ADR-042, runtime ADR 0028). The runtime treats it as follows.
+
+- **Admission is unchanged.** The owner rule above decides who may address the session. With
+  `TAU_SUBOWNER_BAGGAGE_KEYS` set, a request to a session with a subowner must also name the same
+  pair under those keys in its `baggage`, or it is refused with `403` and the JSON code
+  `subowner_mismatch`; an Organization admin is checked too, and the session is read for it. A
+  session without a subowner is never checked. Unset, nothing is read from baggage.
+- **Provenance names it.** The turn's stamp gains `subownerIssuerUid` and `subownerSubject`. The
+  platform's history projection copies only the keys it knows; local chat history keeps them.
+- **Applications are told the session.** Every call to a declared application made inside a turn,
+  over MCP or through `platform_client().call_release()`, carries
+  `X-MainSequence-Agent-Session-UID: <session uid>`. Project code cannot set it. It is the
+  runtime's statement on a channel the platform authenticated as the Agent's workload; an
+  application that trusts its own Agent's runtime may resolve the person from the session it
+  names, through its own record of that session or the platform's. It is never a delegation.
+- **Nothing else changes.** A turn for a subowner serves nobody on the platform: the requester is
+  `None`, delegated calls are refused, and application tokens are the Agent's own. The subowner is
+  bound to the turn's log context as `subowner_issuer_uid` and `subowner_subject`.
+
 ### Caller context
 
 In hosted mode, the W3C `traceparent` and `baggage` headers of a request whose assertion verified
@@ -205,7 +228,8 @@ section 9, and ADR 0021).
   A call to another application first sends
   `POST /api/v1/resource-releases/<release_uid>/resolve-runtime-access/`, with the delegation
   headers when the call carries the delegation and without them otherwise, then calls the returned
-  `access.rpc_url` with `Authorization: Bearer <access.token>` only.
+  `access.rpc_url` with `Authorization: Bearer <access.token>` and, inside a turn,
+  `X-MainSequence-Agent-Session-UID` (see [Session subowners](#session-subowners)).
 - **Housekeeping.** The runtime's own calls (the lease, turn activity, entries, snapshots and Task
   status) never carry a delegation.
 - **Refusal.** A 403 whose JSON `code` is `requester_binding_invalid` or starts with

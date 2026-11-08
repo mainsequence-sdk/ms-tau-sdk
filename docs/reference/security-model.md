@@ -452,6 +452,14 @@ page gives the key form, the limits and an example.
   have checked the original caller. The runtime passes the context on with every call it makes for
   the work, and the Agent is the verified caller of those calls: an application that believes
   context from the Agent believes it from everyone who may send the Agent work.
+- **A session may name its person; baggage never decides it.** An application that owns sessions
+  for its own people can give each one a subowner on the platform. The runtime keeps it, stamps it
+  into the turn's provenance, and names the turn's session to the application on every tool call,
+  so the application resolves the person from its own record of that session. With
+  `TAU_SUBOWNER_BAGGAGE_KEYS` set, the runtime also refuses a request whose baggage names another
+  person than the session's subowner. The subowner is a label the owner vouched for: it is not a
+  Main Sequence user, never the requester, and grants nothing. See
+  [session subowners](./runtime-contract.md#session-subowners).
 
 ## Checklist for project authors
 

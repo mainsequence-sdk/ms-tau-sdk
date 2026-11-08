@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- **Sessions may name the person they serve, and applications learn which session a tool call
+  serves.** A session the platform returns may carry `subowner: {issuer_uid, subject}`, the person
+  its owning application named when it created the session (platform ADR-042). The runtime keeps
+  it, stamps `subownerIssuerUid` and `subownerSubject` into each turn's provenance entry, binds
+  them to the turn's log context, and names the turn's session to every declared application in
+  `X-MainSequence-Agent-Session-UID`, over MCP and through `call_release()`, so the application can
+  resolve the person from its own record of that session; project code cannot set the header.
+  The new `TAU_SUBOWNER_BAGGAGE_KEYS` setting names the two caller-context keys an application
+  uses for its people; set, a request to a session with a subowner whose baggage names another
+  person is refused with `403 subowner_mismatch`. Unset, nothing changes and baggage keeps no
+  meaning. The subowner is never a requester and grants nothing on the platform. See
+  [session subowners](docs/reference/runtime-contract.md#session-subowners) and
+  [ADR 0028](docs/adrs/0028-session-subowners-in-the-runtime.md).
+
 - **Several Agents from one repository each load their own prompt, skills and tools.** An Agent's
   workflow declaration can select, in `harness_agent.spec.runtime_resources`, the system prompt
   file, the skills and the extensions its sessions load from `.tau/`. The platform returns the

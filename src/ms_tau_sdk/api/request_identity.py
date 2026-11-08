@@ -12,8 +12,10 @@ context, which is the caller's claim and never identity.
 
 A request that addresses an existing session must also come from the session's owner, from an
 Organization admin, or, for a delegated child session, from the workload User of the Agent that
-delegated to it; see ``require_session_access()``. Outside hosted mode nothing here changes how
-requests are handled.
+delegated to it; see ``require_session_access()``. When the Agent's operator declares which baggage
+keys name the person a call is for (``TAU_SUBOWNER_BAGGAGE_KEYS``, ADR 0028), a request to a
+session with a subowner must also name that same person in its baggage. Outside hosted mode
+nothing here changes how requests are handled.
 
 The raw caller assertion stays private to the request: ``request_caller_assertion()`` hands it
 only to the turn that request starts, which presents it when it marks the turn active.
@@ -27,6 +29,7 @@ from contextvars import ContextVar
 
 import structlog
 from fastapi import FastAPI, HTTPException, Request
+from opentelemetry import baggage as otel_baggage
 from pydantic import ValidationError
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
@@ -42,7 +45,7 @@ from ms_tau_sdk.backend.assertions import (
     VerifiedCaller,
 )
 from ms_tau_sdk.backend.client import MainSequenceClient
-from ms_tau_sdk.backend.models import AgentSession, DirectoryUser
+from ms_tau_sdk.backend.models import AgentSession, DirectoryUser, SessionSubowner
 from ms_tau_sdk.backend.team_memberships import (
     TeamMembershipCache,
     TeamMembershipScope,
@@ -88,6 +91,54 @@ _workload_lookups: ContextVar[dict[str, DirectoryUser | None] | None] = ContextV
     "ms_tau_sdk_workload_lookups",
     default=None,
 )
+
+
+SUBOWNER_MISMATCH_DETAIL = (
+    "The request's caller context names another person than the session's subowner."
+)
+SUBOWNER_MISMATCH_CODE = "subowner_mismatch"
+
+
+class SubownerMismatchError(HTTPException):
+    """The request addresses a session with a subowner and its baggage names someone else."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            status_code=403,
+            detail={"detail": SUBOWNER_MISMATCH_DETAIL, "code": SUBOWNER_MISMATCH_CODE},
+        )
+
+
+def _named_subowner(keys: tuple[str, str]) -> SessionSubowner | None:
+    """The person the current caller context names under the declared keys, or None."""
+
+    members = otel_baggage.get_all()
+    issuer = str(members.get(keys[0]) or "").strip().lower()
+    subject = str(members.get(keys[1]) or "").strip()
+    if not issuer or not subject:
+        return None
+    return SessionSubowner(issuer_uid=issuer, subject=subject)
+
+
+def _baggage_names_the_subowner(
+    settings: TauSDKSettings,
+    session: AgentSession,
+) -> bool:
+    """Whether the request may address ``session`` as far as its subowner is concerned.
+
+    True when no keys are declared, when the session has no subowner, or when the baggage names
+    the session's subowner exactly. Comparison of the issuer is case-insensitive, as UIDs are.
+    """
+
+    keys = settings.subowner_baggage_keys
+    if keys is None or session.subowner is None:
+        return True
+    named = _named_subowner(keys)
+    return (
+        named is not None
+        and named.issuer_uid == session.subowner.issuer_uid.strip().lower()
+        and named.subject == session.subowner.subject
+    )
 
 
 class SessionAccessDeniedError(HTTPException):
@@ -206,12 +257,17 @@ async def require_session_access(
     caller = current_caller()
     if caller is None or not session_uid:
         raise SessionAccessDeniedError()
-    if caller.is_organization_admin:
+    checks_subowner = client.settings.subowner_baggage_keys is not None
+    if caller.is_organization_admin and not checks_subowner:
         return None
     session = await client.get_session(session_uid)
-    if session.created_by_user_uid == caller.uid:
-        return session
-    if await _delegated_to_caller(client, session, caller):
+    if (
+        caller.is_organization_admin
+        or session.created_by_user_uid == caller.uid
+        or await _delegated_to_caller(client, session, caller)
+    ):
+        if not _baggage_names_the_subowner(client.settings, session):
+            raise SubownerMismatchError()
         return session
     raise SessionAccessDeniedError()
 
@@ -232,7 +288,8 @@ async def sessions_the_caller_may_address(
     caller = current_caller()
     if caller is None:
         return set()
-    if caller.is_organization_admin:
+    checks_subowner = client.settings.subowner_baggage_keys is not None
+    if caller.is_organization_admin and not checks_subowner:
         return None
     allowed: set[str] = set()
     for session_uid in set(session_uids):
@@ -242,9 +299,11 @@ async def sessions_the_caller_may_address(
             session = await client.get_session(session_uid)
         except SessionNotFoundError:
             continue
-        if session.created_by_user_uid == caller.uid or await _delegated_to_caller(
-            client, session, caller
-        ):
+        if (
+            caller.is_organization_admin
+            or session.created_by_user_uid == caller.uid
+            or await _delegated_to_caller(client, session, caller)
+        ) and _baggage_names_the_subowner(client.settings, session):
             allowed.add(session_uid)
     return allowed
 

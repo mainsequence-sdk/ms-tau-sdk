@@ -65,6 +65,7 @@ from ms_tau_sdk.runtime import requester as requester_module
 from ms_tau_sdk.runtime.events import TauRuntimeEvent
 from ms_tau_sdk.runtime.manager import RUNTIME_CAPABILITIES, SessionRuntimeManager
 from ms_tau_sdk.runtime.requester import (
+    AGENT_SESSION_HEADER,
     CallerDelivery,
     Requester,
     RequesterBindingError,
@@ -992,6 +993,9 @@ BINDING_HEADERS = {
     "x-mainsequence-lease-holder": HOLDER_ID,
     "x-mainsequence-lease-token": LEASE_TOKEN,
 }
+# Inside a turn an application is also told which session the call serves (ADR 0028). It is the
+# only X-MainSequence-* header an application ever receives, and it is not a secret.
+APPLICATION_SESSION_HEADER = {"x-mainsequence-agent-session-uid": SESSION_UID}
 
 
 class _RuntimeAuth:
@@ -1162,7 +1166,10 @@ async def test_a_call_without_the_delegation_is_the_agents_own(tmp_path, request
         f"/base/api/v1/resource-releases/{RELEASE_UID}/resolve-runtime-access/"
     )
     [sent] = application.requests
-    assert _secret_headers(sent) == {"authorization": f"Bearer {first_token}"}
+    assert _secret_headers(sent) == {
+        "authorization": f"Bearer {first_token}",
+        **APPLICATION_SESSION_HEADER,
+    }
 
 
 async def test_calls_for_the_work_carry_its_caller_context(tmp_path):
@@ -1301,9 +1308,42 @@ async def test_a_platform_call_never_leaves_its_origin(tmp_path, path):
     assert application.requests == []
 
 
+async def test_a_release_call_inside_a_turn_names_the_turns_session_to_the_application(tmp_path):
+    async with _bound_turn(tmp_path, requester=None) as (_platform, application, _binding, _auth):
+        await platform_client().call_release(RELEASE_UID, "GET", "/tables")
+
+    (request,) = application.requests
+    assert request.headers[AGENT_SESSION_HEADER] == SESSION_UID
+
+
+async def test_a_release_call_outside_a_turn_names_no_session(tmp_path):
+    async with _bound_turn(tmp_path, requester=None) as (platform, application, binding, _auth):
+        process_binding = TurnRequesterBinding(
+            session_uid=None,
+            requester=None,
+            lease_proof=None,
+            platform=binding._platform,
+            application_http=binding._application_http,
+        )
+        response = await process_binding.release_request(
+            RELEASE_UID, "GET", "/tables", {}, delegate=False
+        )
+
+    assert response.status_code == 200
+    (request,) = application.requests
+    assert AGENT_SESSION_HEADER not in request.headers
+    assert platform.requests[-1].url.path.endswith("/resolve-runtime-access/")
+
+
 @pytest.mark.parametrize(
     "header",
-    ["Authorization", "proxy-authorization", "X-MainSequence-Lease-Token", ASSERTION_HEADER],
+    [
+        "Authorization",
+        "proxy-authorization",
+        "X-MainSequence-Lease-Token",
+        "X-MainSequence-Agent-Session-UID",
+        ASSERTION_HEADER,
+    ],
 )
 async def test_a_tool_cannot_set_the_credential_or_the_binding(tmp_path, header):
     async with _bound_turn(tmp_path) as (platform, _application, _binding, _auth):
@@ -1343,8 +1383,12 @@ async def test_a_release_call_obtains_access_for_the_requester_and_sends_only_it
         f"{RPC_URL}/tables",
     ]
     for request in application.requests:
-        # The application receives only its own token: never the runtime credential or the proof.
-        assert _secret_headers(request) == {"authorization": f"Bearer {release_token}"}
+        # The application receives its own token and the turn's session: never the runtime
+        # credential or the proof.
+        assert _secret_headers(request) == {
+            "authorization": f"Bearer {release_token}",
+            **APPLICATION_SESSION_HEADER,
+        }
     assert json.loads(application.requests[0].content) == {"question": "revenue by region"}
     for answer in (first, second):
         assert _secret_headers(answer.request) == {}
@@ -1842,7 +1886,10 @@ async def test_a_hosted_turn_acts_for_its_requester_and_exposes_no_secret(
     }
     [application_call] = application_requests
     assert str(application_call.url) == "https://analyst-data.test/rpc/answers?q=revenue"
-    assert _secret_headers(application_call) == {"authorization": f"Bearer {release_token}"}
+    assert _secret_headers(application_call) == {
+        "authorization": f"Bearer {release_token}",
+        "x-mainsequence-agent-session-uid": SESSION_UID,
+    }
     # The model receives the business result only.
     tool_results = [
         message for message in model.calls[1][2] if type(message).__name__ == "ToolResultMessage"

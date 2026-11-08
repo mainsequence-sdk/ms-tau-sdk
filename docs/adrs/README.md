@@ -36,4 +36,4 @@ These records are the normative decisions for Main Sequence TAU SDK:
 - [ADR 0027: Custom provider credential hydrate endpoints](./0027-custom-provider-credential-hydrate-endpoints.md)
   (Proposed; not implemented)
 - [ADR 0028: Session subowners in the runtime](./0028-session-subowners-in-the-runtime.md)
-  (Proposed; not implemented)
+  (Accepted; implemented in the SDK, platform pending)

@@ -128,17 +128,24 @@ class _RequesterPlatform(Protocol):
     ) -> ReleaseRuntimeAccess: ...
 
 
+# The turn's session, named to a declared application on every call made inside a turn
+# (ADR 0028). The runtime sets it; project code cannot, as with every X-MainSequence-* header.
+AGENT_SESSION_HEADER = "X-MainSequence-Agent-Session-UID"
+
+
 @dataclass(frozen=True, slots=True)
 class _TurnApplicationAccess:
     """SDK-private: one application's RPC URL and a token for the turn's call.
 
     Never give the token to the model or to project code. ``renew`` obtains a new token for the
-    same turn, from any task.
+    same turn, from any task. ``session_uid`` is the turn's session, named to the application on
+    each call, or None outside a turn.
     """
 
     rpc_url: httpx.URL
     token: str = field(repr=False)
     renew: Callable[[], Awaitable[str]] = field(repr=False)
+    session_uid: str | None = None
 
 
 @dataclass(slots=True)
@@ -333,6 +340,11 @@ class TurnRequesterBinding:
         # client kept from another answer is sent with it. The caller context of the work goes
         # on with it, unless the call sets those headers itself.
         own_headers = dict(options.get("headers") or {})
+        # Inside a turn the call also names the turn's session, so that the application can
+        # resolve the person it serves from its own record of that session (ADR 0028).
+        session_headers = (
+            {AGENT_SESSION_HEADER: self.session_uid} if self.session_uid is not None else {}
+        )
         request = httpx.Request(
             method,
             url,
@@ -344,6 +356,7 @@ class TurnRequesterBinding:
             headers={
                 **outbound_headers(own_headers),
                 **own_headers,
+                **session_headers,
                 "Authorization": f"Bearer {token}",
             },
             extensions={"timeout": client.timeout.as_dict()},
@@ -683,7 +696,12 @@ async def _turn_application_access(
     async def renew() -> str:
         return (await obtain(refresh=True)).token.value
 
-    return _TurnApplicationAccess(rpc_url=access.rpc_url, token=access.token.value, renew=renew)
+    return _TurnApplicationAccess(
+        rpc_url=access.rpc_url,
+        token=access.token.value,
+        renew=renew,
+        session_uid=binding.session_uid,
+    )
 
 
 def _canonical_uid(value: str) -> str:
@@ -803,6 +821,7 @@ def _token_access(answer: ReleaseRuntimeAccess) -> _ReleaseAccess:
 
 
 __all__ = [
+    "AGENT_SESSION_HEADER",
     "CallerDelivery",
     "Delegation",
     "PlatformClient",

@@ -1,6 +1,6 @@
 # ADR 0028: Session Subowners In The Runtime
 
-Status: Proposed — not implemented
+Status: Accepted — implemented in the SDK on 2026-11-08; the platform side is tdag-django ADR-042
 
 Date: 2026-11-08
 
