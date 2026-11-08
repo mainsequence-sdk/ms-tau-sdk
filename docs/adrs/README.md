@@ -33,3 +33,5 @@ These records are the normative decisions for Main Sequence TAU SDK:
   (Accepted; implemented)
 - [ADR 0026: Per-Agent runtime resources from the workflow declaration](./0026-per-agent-runtime-resources-from-the-workflow-declaration.md)
   (Accepted; implemented in the SDK, platform pending)
+- [ADR 0027: External provider credential hydrate endpoints](./0027-external-provider-credential-hydrate-endpoints.md)
+  (Proposed; not implemented)
