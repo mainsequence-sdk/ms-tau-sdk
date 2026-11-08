@@ -49,6 +49,49 @@ because Tau names a skill by its folder. A group folder prefixes the published `
 a pack that was published from its own folder moves its skills directly into `.tau/skills` to keep
 its URIs. Development skills stay in `.agents/skills` and are never published.
 
+## Several Agents from one repository
+
+Each `harness_agent` resource of a branch deploys its own Agent from the same code and image. By
+default every one of them loads the whole `.tau/`. To give an Agent its own prompt, skills and
+tools, add `runtime_resources` to its `harness_agent.spec` in the workflow file:
+
+```yaml
+- key: research
+  kind: harness_agent
+  spec:
+    # The Agent's other settings.
+    runtime_resources:
+      system_prompt: .tau/system_prompts/research.md
+      skills: [market-research]
+      extensions: [research_tools]
+```
+
+- `system_prompt` is a `.md` file under `.tau/`, outside `skills/`, `prompts/` and
+  `extensions/`. It replaces `.tau/SYSTEM.md` for that Agent. Keep a folder such as
+  `.tau/system_prompts/` for these files.
+- `skills` lists skill folder names, wherever they sit under `.tau/skills/`.
+- `extensions` lists entries directly under `.tau/extensions/`: `name.py` files or extension
+  folders.
+- An omitted field loads every resource of its kind. An empty list loads none.
+- `.tau/APPEND_SYSTEM.md`, `.tau/AGENTS.md` and `.tau/prompts/` stay shared by every Agent. Put
+  only instructions every Agent should follow there.
+
+The unit of tool selection is the extension. Tau loads an extension's tools, hooks, commands and
+prompt sections together and cannot drop single tools. So split tools into extensions by the
+Agents that use them: when one Agent must not see `place_order`, move it out of the extension that
+holds the tools that Agent does get. Keep the business logic in the application package and the
+extensions as thin adapters, so splitting them moves no logic.
+
+A wrong selection fails the session load before any model call: a missing prompt, skill or
+extension, a symbolic link, a non-UTF-8 prompt, or an extension that fails to import. After
+changing a selection, check the `runtime.project_resources.load.completed` log of a session of
+that Agent: its `runtime_resources` field lists what was selected.
+
+A selection is not an access boundary. Every Agent of the repository runs the same code, and an
+unselected extension stays installed. When two Agents must differ in what they may touch, give
+each its own grants. Local `ms-tau` has no platform bootstrap and always loads the whole `.tau/`.
+See `docs/guides/multiple-agents-one-repository.md` in the SDK repository and ADR 0026.
+
 ## Agent artwork
 
 For optional icon composition and motion guidance, use `design-agent-icons-and-motion` from

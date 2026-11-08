@@ -4,6 +4,10 @@ Status: Accepted; implemented
 
 Date: 2026-09-24
 
+Amended 2026-11-08 by [ADR 0026](./0026-per-agent-runtime-resources-from-the-workflow-declaration.md): the Agent's declaration
+composes project tools by selecting extensions. The catalog checks below apply unchanged to the
+selected extensions, which count as the project's.
+
 Amended: 2026-10-05 — with base tools excluded, the SDK registers a `read` tool limited to the
 files of discovered Tau skills, so project skills stay available
 ([issue #54](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/54)).

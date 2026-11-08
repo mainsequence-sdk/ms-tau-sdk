@@ -14,7 +14,8 @@ To replace it, create:
 
 The project file is the effective general system prompt. The SDK does not require a companion file
 and does not maintain a separate prompt setting. Other Tau-native resource forms continue to follow
-the Tau version pinned by the SDK.
+the Tau version pinned by the SDK. An Agent whose declaration selects its own prompt file uses
+that file instead; see [several Agents from one repository](#several-agents-from-one-repository).
 
 ## Project resources
 
@@ -32,6 +33,27 @@ The runtime reads the Agent's resources from the workspace `.tau/` directory:
 
 Project resources participate in Tau diagnostics and reload. Extension session-start, tool hooks,
 and session-shutdown callbacks use Tau's normal lifecycle.
+
+## Several Agents from one repository
+
+Every `harness_agent` resource of a branch deploys its own Agent from the same code. By default
+each one loads the whole `.tau/`. An Agent's `harness_agent.spec.runtime_resources` selects its own
+system prompt file, skills and extensions from `.tau/`:
+
+```yaml
+runtime_resources:
+  system_prompt: .tau/system_prompts/research.md
+  skills: [market-research]
+  extensions: [research_tools]
+```
+
+An omitted field loads every resource of its kind, and an empty list loads none.
+`.tau/APPEND_SYSTEM.md`, `.tau/AGENTS.md` and `.tau/prompts/` stay shared. The unit of tool
+selection is the extension, so put each group of tools that some Agents must not see in its own
+extension. A selection limits what the model is given, not what each Agent may do: that is the
+job of each Agent's grants. The [multiple Agents guide](./multiple-agents-one-repository.md) has a
+complete example with diagrams, the checks the runtime makes and how to verify what an Agent
+loaded. See [ADR 0026](../adrs/0026-per-agent-runtime-resources-from-the-workflow-declaration.md).
 
 ## Two sets of instructions
 

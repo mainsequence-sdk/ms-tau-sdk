@@ -57,8 +57,15 @@ from ms_tau_sdk.logging import conversation_log_fields
 from ms_tau_sdk.protocols.caller_context import caller_context_scope
 from ms_tau_sdk.providers.factory import ProviderFactory
 from ms_tau_sdk.resources.loader import tau_resource_paths
+from ms_tau_sdk.resources.selection import (
+    RUNTIME_RESOURCES_SCHEMA_VERSION,
+    ResolvedRuntimeResources,
+    parse_runtime_resources,
+    resolve_runtime_resources,
+)
 from ms_tau_sdk.runtime.events import TauRuntimeEvent
 from ms_tau_sdk.runtime.extensions import (
+    PROJECT_EXTENSION_SOURCES,
     TASK_CONTROL_TOOL_NAMES,
     ProjectExtensionState,
     log_project_resources,
@@ -207,6 +214,8 @@ def _tool_category(coding_session: CodingSession, tool_name: str) -> tuple[str, 
     if owner is not None:
         metadata = _metadata_for_owner(coding_session, owner)
         source = str(getattr(metadata, "source", "unknown"))
+        if source in PROJECT_EXTENSION_SOURCES:
+            source = "project"
         return f"{source}_extension", metadata
     if tool_name in TASK_CONTROL_TOOL_NAMES:
         return "protocol", None
@@ -555,11 +564,11 @@ class SessionRuntimeManager:
         extensions: list[dict[str, object]] = []
         for item in metadata:
             path = getattr(item, "path", None)
-            is_project = item.source == "project"
+            is_project = item.source in PROJECT_EXTENSION_SOURCES
             extensions.append(
                 {
                     "name": item.name,
-                    "origin": item.source,
+                    "origin": "project" if is_project else item.source,
                     "hidden": item.hidden,
                     "entryPath": (
                         _repository_relative_path(path, cwd=self.settings.workspace)
@@ -621,6 +630,11 @@ class SessionRuntimeManager:
                 coding_session,
                 cwd=self.settings.workspace,
                 development_resources=self.settings.include_development_resources,
+                selection=(
+                    runtime.runtime_resources.summary()
+                    if runtime.runtime_resources is not None
+                    else None
+                ),
             ),
         }
 
@@ -632,7 +646,7 @@ class SessionRuntimeManager:
             (
                 item
                 for item in runtime.coding_session.extension_runtime.extension_metadata
-                if item.source == "project"
+                if item.source in PROJECT_EXTENSION_SOURCES
                 and item.path is not None
                 and _source_uid(session_uid, item.source_id) == source_uid
             ),
@@ -1032,6 +1046,7 @@ class SessionRuntimeManager:
                 bootstrap_request_uid=bootstrap_request_uid,
                 supported_snapshot_schema_versions=[SNAPSHOT_SCHEMA_VERSION],
                 supported_provider_control_schema_versions=[1],
+                supported_runtime_resources_schema_versions=[RUNTIME_RESOURCES_SCHEMA_VERSION],
                 tau_runtime_version=TAU_RUNTIME_VERSION,
             ),
         )
@@ -1140,6 +1155,15 @@ class SessionRuntimeManager:
                 None if self.settings.exclude_mainsequence_mcp else await self._get_mcp_client()
             )
             cwd = self._resolve_cwd()
+            # The Agent's own prompt, skills and extensions (ADR 0026), read and resolved before
+            # Tau runs any project code. Without a selection the Agent loads the whole `.tau/`.
+            selection = parse_runtime_resources(bootstrap.runtime_resources)
+            runtime_resources: ResolvedRuntimeResources | None = (
+                resolve_runtime_resources(selection, cwd=cwd) if selection is not None else None
+            )
+            selection_summary = (
+                runtime_resources.summary() if runtime_resources is not None else None
+            )
             project_extension_state = ProjectExtensionState(enabled=True)
             tools = []
             if self.settings.exclude_base_tools:
@@ -1184,6 +1208,8 @@ class SessionRuntimeManager:
                     require_complete_project_catalog=require_complete_project_catalog,
                     reserved_sdk_tool_names=reserved_sdk_tool_names,
                 )
+                if runtime_resources is not None:
+                    runtime_resources.verify(session)
 
             coding_session = await CodingSession.load(
                 CodingSessionConfig(
@@ -1204,8 +1230,26 @@ class SessionRuntimeManager:
                         cwd,
                         state_home=self.settings.tau_state_home,
                         include_development_resources=(self.settings.include_development_resources),
+                        skills=(
+                            runtime_resources.skill_names if runtime_resources is not None else None
+                        ),
                     ),
-                    project_extensions_enabled=True,
+                    custom_system_prompt=(
+                        runtime_resources.custom_system_prompt
+                        if runtime_resources is not None
+                        else None
+                    ),
+                    skills_enabled=(
+                        runtime_resources.skills_enabled if runtime_resources is not None else True
+                    ),
+                    project_extensions_enabled=(
+                        runtime_resources.project_extensions_enabled
+                        if runtime_resources is not None
+                        else True
+                    ),
+                    extension_paths=(
+                        runtime_resources.extension_paths if runtime_resources is not None else ()
+                    ),
                     trust_override="approve",
                 )
             )
@@ -1228,6 +1272,7 @@ class SessionRuntimeManager:
                 cwd=cwd,
                 development_resources=self.settings.include_development_resources,
                 phase="load",
+                selection=selection_summary,
             )
             runtime = ActiveSessionRuntime(
                 session_uid=session_uid,
@@ -1245,6 +1290,7 @@ class SessionRuntimeManager:
                 project_extension_state=project_extension_state,
                 validate_tool_catalog=check_catalog,
                 development_resources=self.settings.include_development_resources,
+                runtime_resources=runtime_resources,
             )
             state = bootstrap.runtime_state
             runtime.runtime_activity = state.runtime_activity or "loading"

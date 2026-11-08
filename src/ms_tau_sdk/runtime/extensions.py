@@ -14,6 +14,9 @@ from ms_tau_sdk.errors import ConfigurationError
 from ms_tau_sdk.runtime.snapshots import sha256_json
 
 TASK_CONTROL_TOOL_NAMES = frozenset({"task_request_input", "task_request_authorization"})
+# Tau marks the extensions of an Agent's selection `explicit`. The SDK passes explicit paths only
+# from that selection, all under `.tau/extensions/`, so they count as the project's (ADR 0026).
+PROJECT_EXTENSION_SOURCES = frozenset({"project", "explicit"})
 
 
 def validate_tool_catalog(
@@ -43,7 +46,7 @@ def validate_tool_catalog(
         metadata = session.extension_runtime.extension_metadata
         for owner in set(sources.values()):
             matches = [item for item in metadata if item.name == owner]
-            if len(matches) != 1 or matches[0].source != "project":
+            if len(matches) != 1 or matches[0].source not in PROJECT_EXTENSION_SOURCES:
                 raise ConfigurationError("Tool-only runtime includes a non-project extension tool")
     if require_complete_project_catalog and any(
         diagnostic.severity == "error" for diagnostic in session.extension_runtime.diagnostics
@@ -112,11 +115,22 @@ def _workspace_relative_path(path: Path | None, *, cwd: Path) -> str | None:
 
 
 def project_resources_summary(
-    session: CodingSession, *, cwd: Path, development_resources: bool
+    session: CodingSession,
+    *,
+    cwd: Path,
+    development_resources: bool,
+    selection: dict[str, JSONValue] | None = None,
 ) -> dict[str, JSONValue]:
-    """The Agent's resources Tau selected from the workspace (ADR 0025)."""
+    """The Agent's resources Tau selected from the workspace (ADRs 0025 and 0026).
+
+    `selection` is the Agent's own selection from session bootstrap, or `None` when the Agent
+    loads the whole `.tau/`. A selected system prompt is passed to Tau as content, so it is listed
+    here first, before the files Tau found itself.
+    """
+    selected_prompt = selection.get("systemPrompt") if selection is not None else None
     system_prompt_files: list[JSONValue] = [
-        _workspace_relative_path(path, cwd=cwd) for path in session.system_prompt_files
+        *([selected_prompt] if selected_prompt is not None else []),
+        *(_workspace_relative_path(path, cwd=cwd) for path in session.system_prompt_files),
     ]
     context_files: list[JSONValue] = [
         _workspace_relative_path(Path(context_file.path), cwd=cwd)
@@ -132,6 +146,7 @@ def project_resources_summary(
         "contextFiles": context_files,
         "skills": skills,
         "promptTemplates": prompt_templates,
+        "selection": selection,
     }
 
 
@@ -142,10 +157,11 @@ def log_project_resources(
     cwd: Path,
     development_resources: bool,
     phase: str,
+    selection: dict[str, JSONValue] | None = None,
 ) -> None:
     """Log what Tau selected and reported for the Agent's resources on load or reload."""
     summary = project_resources_summary(
-        session, cwd=cwd, development_resources=development_resources
+        session, cwd=cwd, development_resources=development_resources, selection=selection
     )
     _resources_logger.info(
         "runtime.project_resources.load.completed",
@@ -156,6 +172,7 @@ def log_project_resources(
         context_files=summary["contextFiles"],
         skill_count=len(session.skills),
         prompt_template_count=len(session.prompt_templates),
+        runtime_resources=selection,
     )
     workspace = str(cwd.resolve())
     for diagnostic in session.resource_diagnostics:

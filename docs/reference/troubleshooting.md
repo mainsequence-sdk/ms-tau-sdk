@@ -364,6 +364,23 @@ extension and its optional dependencies; the SDK does not install or repair them
 hosted runtime, every package an extension imports must be in the committed `requirements.txt`; see
 [hosted Agents](../getting-started/quickstart.md#hosted-agents).
 
+## A session fails to load with a selection error
+
+An Agent whose declaration has `runtime_resources` fails its session load, before any model call,
+when the selection does not match the branch. The error names the problem:
+
+| Message starts with | Fix |
+| --- | --- |
+| `Session bootstrap runtime_resources` | Correct `runtime_resources` in the workflow file; the message names the field. |
+| `Selected system prompt ... does not exist`, `is not a file`, `is not UTF-8` | Commit the prompt file at that path as UTF-8 Markdown. |
+| `Selected system prompt ... must not be a symbolic link` | Replace the link, or a linked folder on its path, with the real file. |
+| `Selected skills did not load` | Use the skill's folder name, and check its `SKILL.md` frontmatter loads. |
+| `Selected extension ... does not exist` or `is not an extension Tau discovers` | Name an entry directly under `.tau/extensions/`: a `.py` file, or a folder with `extension.py` or a `[tool.tau]` manifest. |
+| `Selected extensions did not load` or `failed to load` | Fix the extension's import error; its diagnostics are in the load logs. |
+
+The load log `runtime.project_resources.load.completed` shows what the Agent selected. See
+[several Agents from one repository](../guides/multiple-agents-one-repository.md#how-the-selection-reaches-the-session).
+
 ## Health is ready but no Main Sequence tools appear
 
 Check `mcp_tool_count`, `mcp_resource_count`, and startup dependency settings. Disabling startup

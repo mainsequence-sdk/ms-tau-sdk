@@ -4,6 +4,10 @@ Status: Accepted
 
 Date: 2026-09-16
 
+Amended 2026-11-08 by [ADR 0026](./0026-per-agent-runtime-resources-from-the-workflow-declaration.md): the platform selects, per
+Agent, the system prompt, skills and extensions its sessions load from `.tau/`. Project resources
+and extensions stay Tau-native.
+
 Amended by [ADR 0011](./0011-independent-base-tool-and-main-sequence-mcp-exclusion.md):
 the host may exclude SDK-provided coding tools and Main Sequence MCP through
 process settings. Project resource and extension configuration remains Tau-native.

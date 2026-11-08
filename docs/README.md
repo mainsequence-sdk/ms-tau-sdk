@@ -6,6 +6,7 @@ Start with the [quickstart](./getting-started/quickstart.md), then use the focus
 - [Settings and credentials](./reference/settings.md)
 - [Security and access guide](./reference/security-model.md)
 - [Tau project configuration and extensions](./guides/project-configuration.md)
+- [Several Agents from one repository](./guides/multiple-agents-one-repository.md)
 - [Application tool time limits](./guides/application-tool-time-limits.md)
 - [Runtime and HTTP contract](./reference/runtime-contract.md)
 - [Troubleshooting](./reference/troubleshooting.md)

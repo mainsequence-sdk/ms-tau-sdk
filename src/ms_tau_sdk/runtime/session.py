@@ -13,6 +13,7 @@ from tau_coding.reload import CodingReloadSummary
 
 from ms_tau_sdk.backend.mcp import MainSequenceMCPClient
 from ms_tau_sdk.backend.models import TauTurnCommit
+from ms_tau_sdk.resources.selection import ResolvedRuntimeResources
 from ms_tau_sdk.runtime.events import TauRuntimeEvent, translate_tau_event
 from ms_tau_sdk.runtime.extensions import ProjectExtensionState, log_project_resources
 from ms_tau_sdk.runtime.provenance import PROVENANCE_NAMESPACE, TurnProvenance
@@ -53,6 +54,8 @@ class ActiveSessionRuntime:
     project_extension_state: ProjectExtensionState | None = None
     validate_tool_catalog: Callable[[CodingSession], None] | None = None
     development_resources: bool = False
+    # The Agent's selection of `.tau` resources from session bootstrap (ADR 0026), if any.
+    runtime_resources: ResolvedRuntimeResources | None = None
 
     async def reload(self) -> CodingReloadSummary:
         """Reload Tau resources and reject an invalid replacement catalog."""
@@ -68,6 +71,9 @@ class ActiveSessionRuntime:
                 cwd=self.coding_session.cwd,
                 development_resources=self.development_resources,
                 phase="reload",
+                selection=(
+                    self.runtime_resources.summary() if self.runtime_resources is not None else None
+                ),
             )
             return summary
 

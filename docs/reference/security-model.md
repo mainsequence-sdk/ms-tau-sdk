@@ -14,7 +14,9 @@ This guide covers the current SDK development documentation. The application MCP
 2.0.7 and later SDK releases work only with that platform, and earlier SDK releases no longer act
 for people. [Caller context](#caller-context) first ships in
 [2.0.29](../../CHANGELOG.md#2029--2026-11-07); an Agent on an earlier release keeps working and
-carries no caller context. Check your installed SDK before relying on these features.
+carries no caller context. [Per-Agent runtime resources](../guides/multiple-agents-one-repository.md)
+first ship in 2.0.30 and need the matching platform change. Check your installed SDK before
+relying on these features.
 
 ## Who is who
 
@@ -349,6 +351,12 @@ and use those provider credentials, including the Secret values the workload may
 as code that holds these credentials. See
 [ownership and trust](../guides/project-configuration.md#ownership-and-trust).
 
+Several Agents deployed from one repository run the same code. An Agent's `runtime_resources`
+choose which prompt, skills and extensions its model is given; the rest stays installed in its
+image and reachable by code that runs there. Separate what two such Agents may do with each
+Agent's own grants, not with its selection. See
+[selection is not authority](../guides/multiple-agents-one-repository.md#selection-is-not-authority).
+
 ## Local mode
 
 Local mode signs in with your own Main Sequence login (`mainsequence login`) or a user token pair.
@@ -421,10 +429,10 @@ the platform's
 page gives the key form, the limits and an example.
 
 - **It is public, and it is never Main Sequence identity.** Context travels on downstream, to third
-  parties too, and the platform records it. Never put a secret, a credential or a proof in it, and
-  refer to a person by an opaque id that means nothing without your own records. A person it names
-  is not a Main Sequence user and never the requester: `current_requester()`, delegation and
-  session ownership never read it, and it grants nothing.
+  parties too, and the platform records it. Never put a secret, a credential or a proof in it.
+  What its keys and values mean, including whether one refers to a person, is up to whoever
+  designs the application. A person it names is not a Main Sequence user and never the requester:
+  `current_requester()`, delegation and session ownership never read it, and it grants nothing.
 - **It is worth as much as the caller that delivered it.** Anyone who can send the Agent work can
   send any context, and the platform never signs it or checks a value. Believe it only from
   callers you trust to vouch for it, checked against the verified caller at the hop where you read
@@ -465,3 +473,5 @@ page gives the key form, the limits and an example.
   policies on such an Agent only to callers you trust to, and treat missing context as no external
   user.
 - Review extensions: they run with the Agent's credentials.
+- When several Agents share a repository, give each its own grants. A selection of tools is not an
+  access boundary.

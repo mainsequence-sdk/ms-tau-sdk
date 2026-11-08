@@ -57,4 +57,5 @@ def test_active_adr_index_lists_the_complete_sdk_decision_set() -> None:
         "0023-skills-and-resources-of-declared-applications.md",
         "0024-chat-attachments-and-authorized-content-delivery.md",
         "0025-runtime-resources-only-from-tau.md",
+        "0026-per-agent-runtime-resources-from-the-workflow-declaration.md",
     }

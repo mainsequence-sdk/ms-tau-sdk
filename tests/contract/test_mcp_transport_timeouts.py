@@ -268,12 +268,14 @@ async def test_only_the_tool_response_read_uses_the_per_call_lifetime(http_mcp_s
         return real_client(**kwargs)
 
     monkeypatch.setattr(httpx2, "AsyncClient", observing_client)
-    client = await _connect(http_mcp_server)
+    # This test reads the timeout each request carries, not how long it waits. A wide default
+    # keeps a slow CI runner from timing out `initialize` before anything is observed.
+    client = await _connect(http_mcp_server, default_timeout=5.0)
     try:
         await client.call_tool("example.read", {}, timeout_seconds=0.8)
         await client.read_resource("example://resource")
         for method in ["initialize", "tools/list", "resources/list", "resources/read"]:
-            assert observed[method] == {"connect": 10.0, "read": 0.1, "write": 60.0, "pool": 10.0}
+            assert observed[method] == {"connect": 10.0, "read": 5.0, "write": 60.0, "pool": 10.0}
         assert observed["tools/call"] == {
             "connect": 10.0,
             "read": None,
