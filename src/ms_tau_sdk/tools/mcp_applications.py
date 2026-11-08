@@ -58,6 +58,7 @@ from ms_tau_sdk.errors import (
     ConfigurationError,
 )
 from ms_tau_sdk.runtime.requester import (
+    AGENT_SESSION_HEADER,
     RequesterBindingError,
     _turn_application_access,
     _TurnApplicationAccess,
@@ -84,11 +85,15 @@ class _ApplicationTokenAuth(httpx2.Auth):
     def __init__(self, access: _TurnApplicationAccess) -> None:
         self._token = access.token
         self._renew = access.renew
+        self._session_uid = access.session_uid
 
     async def async_auth_flow(
         self,
         request: httpx2.Request,
     ) -> AsyncGenerator[httpx2.Request, httpx2.Response]:
+        if self._session_uid is not None:
+            # The turn's session, for the application to resolve the person it serves (ADR 0028).
+            request.headers[AGENT_SESSION_HEADER] = self._session_uid
         request.headers["Authorization"] = f"Bearer {self._token}"
         response = yield request
         if response.status_code == 401:

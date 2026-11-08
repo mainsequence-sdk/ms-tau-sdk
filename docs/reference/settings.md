@@ -77,6 +77,14 @@ The default, `0`, reuses an answer only within its request. Set it in
 `harness_agent.spec.env_vars`, or in `TauSDKSettings.team_membership_cache_seconds`. See
 [Team membership](./runtime-contract.md#team-membership).
 
+`TAU_SUBOWNER_BAGGAGE_KEYS` is the application's own setting too: the two caller-context keys the
+application uses to name the person a call is for, the issuer's then the subject's, separated by a
+comma (for example `mainsequence.portal.gateway,mainsequence.portal.user`). Set, a hosted request
+that addresses a session with a subowner is refused with `403 subowner_mismatch` unless its
+`baggage` names that same pair. Unset, the default, the runtime gives baggage no meaning. One key,
+two equal keys or more than two is a configuration error. See
+[session subowners](./runtime-contract.md#session-subowners).
+
 ## Platform Message limit
 
 The platform also sets this variable when it hosts the runtime. It is a characteristic of the

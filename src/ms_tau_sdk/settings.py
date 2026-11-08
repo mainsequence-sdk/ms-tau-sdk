@@ -155,6 +155,13 @@ class TauSDKSettings(BaseSettings):
         allow_inf_nan=False,
         validation_alias="TAU_TEAM_MEMBERSHIP_CACHE_SECONDS",
     )
+    # The two baggage keys an application uses to name the person a call is for: the issuer's and
+    # the subject's (ADR 0028). Set, a request to a session with a subowner must name the same pair
+    # in its baggage. Unset, the runtime gives baggage no meaning, as ADR-0057 asks.
+    subowner_baggage_keys: tuple[str, str] | None = Field(
+        default=None,
+        validation_alias="TAU_SUBOWNER_BAGGAGE_KEYS",
+    )
     local_mode: bool = Field(default=False, validation_alias="TAU_LOCAL_MODE")
     exclude_base_tools: bool = Field(default=False, validation_alias="TAU_EXCLUDE_BASE_TOOLS")
     exclude_mainsequence_mcp: bool = Field(
@@ -391,6 +398,25 @@ class TauSDKSettings(BaseSettings):
     def parse_origins(cls, value: object) -> object:
         if isinstance(value, str):
             return tuple(item.strip() for item in value.split(",") if item.strip())
+        return value
+
+    @field_validator("subowner_baggage_keys", mode="before")
+    @classmethod
+    def parse_subowner_baggage_keys(cls, value: object) -> object:
+        if value is None:
+            return None
+        if isinstance(value, str):
+            if not value.strip():
+                return None
+            value = tuple(item.strip() for item in value.split(","))
+        if isinstance(value, list | tuple):
+            keys = tuple(str(item).strip() for item in value)
+            if len(keys) != 2 or not all(keys) or keys[0] == keys[1]:
+                raise ValueError(
+                    "TAU_SUBOWNER_BAGGAGE_KEYS names exactly two different baggage keys, "
+                    "the issuer's then the subject's, separated by a comma"
+                )
+            return keys
         return value
 
     @field_validator("workspace")

@@ -58,4 +58,6 @@ def test_active_adr_index_lists_the_complete_sdk_decision_set() -> None:
         "0024-chat-attachments-and-authorized-content-delivery.md",
         "0025-runtime-resources-only-from-tau.md",
         "0026-per-agent-runtime-resources-from-the-workflow-declaration.md",
+        "0027-custom-provider-credential-hydrate-endpoints.md",
+        "0028-session-subowners-in-the-runtime.md",
     }

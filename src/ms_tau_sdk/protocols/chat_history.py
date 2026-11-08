@@ -324,6 +324,16 @@ def normalized_provenance(data: object) -> dict[str, str] | None:
             actor_name = data.get("actorName")
             if actor_kind == "user" and isinstance(actor_name, str) and actor_name.strip():
                 normalized["actorName"] = actor_name.strip()[:255]
+    # The session's subowner, stamped by the runtime (ADR 0028): kept only as a complete pair.
+    subowner_issuer = _canonical_uuid(data.get("subownerIssuerUid"))
+    subowner_subject = data.get("subownerSubject")
+    if (
+        subowner_issuer is not None
+        and isinstance(subowner_subject, str)
+        and subowner_subject.strip()
+    ):
+        normalized["subownerIssuerUid"] = subowner_issuer
+        normalized["subownerSubject"] = subowner_subject.strip()[:255]
     return normalized or None
 
 

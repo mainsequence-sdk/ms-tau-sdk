@@ -7,6 +7,7 @@ from typing import Any
 from ms_tau_sdk.protocols.chat_history import (
     current_branch,
     latest_message_preview,
+    normalized_provenance,
     project_history,
 )
 from ms_tau_sdk.runtime.events import TauRuntimeEvent
@@ -438,3 +439,33 @@ def test_each_message_records_the_branch_entry_it_came_from():
 
     assert [message["id"] for message in projected.messages] == ["u_1", "a_1"]
     assert projected.source_indexes == [1, 3]
+
+
+def test_provenance_keeps_the_subowner_only_as_a_complete_canonical_pair():
+    complete = normalized_provenance(
+        {
+            "channel": "chat",
+            "origin": "user",
+            "subownerIssuerUid": "7c6b5a49-3829-4716-8f5e-4d3c2b1a0f9e",
+            "subownerSubject": "  person-42  ",
+        }
+    )
+    assert complete is not None
+    assert complete["subownerIssuerUid"] == "7c6b5a49-3829-4716-8f5e-4d3c2b1a0f9e"
+    assert complete["subownerSubject"] == "person-42"
+
+    # As for the actor, only a canonical lowercase UUID is kept as the issuer.
+    for incomplete in (
+        {"channel": "chat", "subownerIssuerUid": "7c6b5a49-3829-4716-8f5e-4d3c2b1a0f9e"},
+        {
+            "channel": "chat",
+            "subownerIssuerUid": "7C6B5A49-3829-4716-8F5E-4D3C2B1A0F9E",
+            "subownerSubject": "person-42",
+        },
+        {"channel": "chat", "subownerSubject": "person-42"},
+        {"channel": "chat", "subownerIssuerUid": "not-a-uuid", "subownerSubject": "person-42"},
+    ):
+        normalized = normalized_provenance(incomplete)
+        assert normalized is not None
+        assert "subownerIssuerUid" not in normalized
+        assert "subownerSubject" not in normalized

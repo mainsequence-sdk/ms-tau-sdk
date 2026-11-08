@@ -51,6 +51,18 @@ class BackendRequestModel(BackendModel):
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
 
+class SessionSubowner(BackendModel):
+    """The person a session serves, as the platform's owner named it (ADR 0028).
+
+    An opaque pair the owning application supplied when it created the session: the principal that
+    vouches for the person and the person's id in that principal's namespace. The platform indexes
+    it and never interprets it; it is never a User, a requester or a credential owner.
+    """
+
+    issuer_uid: str
+    subject: str
+
+
 class AgentSession(BackendModel):
     organization_environment_uid: str | None = None
     uid: str
@@ -74,6 +86,8 @@ class AgentSession(BackendModel):
     )
     status: str | None = None
     created_by_user_uid: str | None = None
+    # The person the owner named when it created the session, or None (ADR 0028).
+    subowner: SessionSubowner | None = None
     # The Agent of the parent session, or None for a session without a parent. The Agent that
     # delegated to a child session addresses it with its own workload User.
     parent_session_agent_uid: str | None = None

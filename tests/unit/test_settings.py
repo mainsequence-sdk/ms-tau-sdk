@@ -542,3 +542,30 @@ def test_managed_mode_ignores_the_cli_and_the_local_token_pair(
     )
 
     settings.validate_runtime_auth()
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("", None),
+        ("   ", None),
+        (
+            "mainsequence.app.gateway, mainsequence.app.user",
+            ("mainsequence.app.gateway", "mainsequence.app.user"),
+        ),
+    ],
+)
+def test_the_subowner_baggage_keys_are_two_names_or_unset(monkeypatch, tmp_path, value, expected):
+    monkeypatch.setenv("TAU_SUBOWNER_BAGGAGE_KEYS", value)
+
+    config = TauSDKSettings(_env_file=None, workspace=tmp_path)
+
+    assert config.subowner_baggage_keys == expected
+
+
+@pytest.mark.parametrize("value", ["one.key", "a,b,c", "same,same", ",subject"])
+def test_invalid_subowner_baggage_keys_are_a_settings_error(monkeypatch, tmp_path, value):
+    monkeypatch.setenv("TAU_SUBOWNER_BAGGAGE_KEYS", value)
+
+    with pytest.raises(ValueError, match="exactly two different baggage keys"):
+        TauSDKSettings(_env_file=None, workspace=tmp_path)

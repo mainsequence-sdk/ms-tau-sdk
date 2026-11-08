@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from ms_tau_sdk.backend.models import SessionSubowner
 from ms_tau_sdk.runtime.provenance import (
     PROVENANCE_NAMESPACE,
     CallerIdentityError,
@@ -79,6 +80,31 @@ async def test_prompt_writes_the_stamp_before_the_user_turn():
     )
     assert coding_session.calls[1] == ("prompt", "hello")
     assert "agent_settled" in events
+
+
+@pytest.mark.asyncio
+async def test_prompt_stamps_the_sessions_subowner_beside_the_actor():
+    coding_session = _RecordingCodingSession()
+    runtime = _runtime(coding_session)
+    runtime.subowner = SessionSubowner(
+        issuer_uid="7c6b5a49-3829-4716-8f5e-4d3c2b1a0f9e", subject="person-42"
+    )
+
+    await _run(runtime, {"channel": "chat", "origin": "user", "actorKind": "user"})
+
+    assert coding_session.calls[0] == (
+        "custom",
+        (
+            PROVENANCE_NAMESPACE,
+            {
+                "channel": "chat",
+                "origin": "user",
+                "actorKind": "user",
+                "subownerIssuerUid": "7c6b5a49-3829-4716-8f5e-4d3c2b1a0f9e",
+                "subownerSubject": "person-42",
+            },
+        ),
+    )
 
 
 @pytest.mark.asyncio

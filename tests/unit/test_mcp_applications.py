@@ -29,6 +29,7 @@ from ms_tau_sdk.backend.models import (
 )
 from ms_tau_sdk.errors import BackendError, BackendTimeoutError, ConfigurationError
 from ms_tau_sdk.runtime.requester import (
+    AGENT_SESSION_HEADER,
     Requester,
     RequesterBindingError,
     TurnRequesterBinding,
@@ -565,6 +566,36 @@ async def test_the_application_token_is_sent_and_renewed_once_on_401():
     assert response.status_code == 200
     assert seen == ["Bearer FIRST_TOKEN", "Bearer SECOND_TOKEN"]
     renew.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session_uid", ["session-1", None], ids=["inside_a_turn", "no_turn"])
+async def test_the_turns_session_is_named_to_the_application_only_inside_a_turn(session_uid):
+    auth = _ApplicationTokenAuth(
+        _TurnApplicationAccess(
+            rpc_url=httpx.URL("https://orders.apps.test/"),
+            token="FIRST_TOKEN",
+            renew=AsyncMock(return_value="SECOND_TOKEN"),
+            session_uid=session_uid,
+        )
+    )
+    seen: list[str | None] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request.headers.get(AGENT_SESSION_HEADER))
+        return httpx2.Response(200)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler), auth=auth) as http:
+        await http.post("https://orders.apps.test/mcp", json={})
+
+    assert seen == [session_uid]
+
+
+@pytest.mark.asyncio
+async def test_application_access_obtained_in_a_turn_names_the_turns_session(nobody):
+    access = await _turn_application_access(RELEASE_UID)
+
+    assert access.session_uid == "session-1"
 
 
 @pytest.mark.asyncio
