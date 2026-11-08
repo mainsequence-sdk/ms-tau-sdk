@@ -1148,6 +1148,8 @@ async def test_a_required_delegation_is_refused_before_anything_is_sent(tmp_path
 )
 async def test_a_call_without_the_delegation_is_the_agents_own(tmp_path, requester, delegation):
     async with _bound_turn(tmp_path, requester=requester) as (platform, application, _binding, _):
+        # The token the platform hands out; rebuilding it later could land on another second.
+        first_token = platform.release_tokens[0]
         client = platform_client(delegation=delegation)
         answer = await client.request("GET", "/api/v1/data-nodes/")
         await client.call_release(RELEASE_UID, "GET", "/tables")
@@ -1160,7 +1162,7 @@ async def test_a_call_without_the_delegation_is_the_agents_own(tmp_path, request
         f"/base/api/v1/resource-releases/{RELEASE_UID}/resolve-runtime-access/"
     )
     [sent] = application.requests
-    assert _secret_headers(sent) == {"authorization": f"Bearer {_release_token(marker='first')}"}
+    assert _secret_headers(sent) == {"authorization": f"Bearer {first_token}"}
 
 
 async def test_calls_for_the_work_carry_its_caller_context(tmp_path):
@@ -1351,10 +1353,10 @@ async def test_a_release_call_obtains_access_for_the_requester_and_sends_only_it
 
 async def test_a_release_token_near_its_expiry_is_replaced(tmp_path):
     async with _bound_turn(tmp_path) as (platform, application, _binding, _auth):
-        platform.release_tokens = [
-            _release_token(lifetime_seconds=5, marker="expiring"),
-            _release_token(marker="fresh"),
-        ]
+        # Each token carries the second it was made in, so compare against these exact ones.
+        expiring = _release_token(lifetime_seconds=5, marker="expiring")
+        fresh = _release_token(marker="fresh")
+        platform.release_tokens = [expiring, fresh]
         client = platform_client()
         await client.call_release(RELEASE_UID, "GET", "/tables")
         await client.call_release(RELEASE_UID, "GET", "/tables")
@@ -1362,9 +1364,9 @@ async def test_a_release_token_near_its_expiry_is_replaced(tmp_path):
 
     assert len(platform.requests) == 2
     assert [request.headers["authorization"] for request in application.requests] == [
-        f"Bearer {_release_token(lifetime_seconds=5, marker='expiring')}",
-        f"Bearer {_release_token(marker='fresh')}",
-        f"Bearer {_release_token(marker='fresh')}",
+        f"Bearer {expiring}",
+        f"Bearer {fresh}",
+        f"Bearer {fresh}",
     ]
 
 
