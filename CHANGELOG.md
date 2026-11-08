@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.30 — 2026-11-08
 
 - **Sessions may name the person they serve, and applications learn which session a tool call
   serves.** A session the platform returns may carry `subowner: {issuer_uid, subject}`, the person
