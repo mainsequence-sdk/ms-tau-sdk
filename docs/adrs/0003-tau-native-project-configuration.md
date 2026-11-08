@@ -4,9 +4,9 @@ Status: Accepted
 
 Date: 2026-09-16
 
-Proposed amendment, 2026-11-08, not in effect: [ADR 0026](./0026-per-agent-runtime-resources-from-the-workflow-declaration.md)
-would let the platform select, per Agent, the system prompt, skills and extensions its sessions
-load from `.tau/`. Until it is accepted, this ADR stands as written.
+Amended 2026-11-08 by [ADR 0026](./0026-per-agent-runtime-resources-from-the-workflow-declaration.md): the platform selects, per
+Agent, the system prompt, skills and extensions its sessions load from `.tau/`. Project resources
+and extensions stay Tau-native.
 
 Amended by [ADR 0011](./0011-independent-base-tool-and-main-sequence-mcp-exclusion.md):
 the host may exclude SDK-provided coding tools and Main Sequence MCP through

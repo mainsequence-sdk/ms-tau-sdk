@@ -32,4 +32,4 @@ These records are the normative decisions for Main Sequence TAU SDK:
 - [ADR 0025: The runtime reads its resources only from `.tau` by default](./0025-runtime-resources-only-from-tau.md)
   (Accepted; implemented)
 - [ADR 0026: Per-Agent runtime resources from the workflow declaration](./0026-per-agent-runtime-resources-from-the-workflow-declaration.md)
-  (Proposed; not implemented)
+  (Accepted; implemented in the SDK, platform pending)

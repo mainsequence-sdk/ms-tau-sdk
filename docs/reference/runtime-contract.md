@@ -290,6 +290,36 @@ risk, revocation, and the distinction between requester and workload authority, 
 [Security and access guide](./security-model.md#acting-for-the-person-acts_for_requester). Both
 need the matching platform change; see [availability](./security-model.md#availability).
 
+### Per-Agent runtime resources
+
+The session bootstrap request lists `supported_runtime_resources_schema_versions: [1]`. The
+bootstrap response may carry `runtime_resources`, which the platform resolves from the Agent's
+`harness_agent.spec.runtime_resources`:
+
+| Field | Type | Meaning |
+| --- | --- | --- |
+| `system_prompt` | string | A workspace-relative `.md` file under `.tau/`, outside `.tau/skills/`, `.tau/prompts/` and `.tau/extensions/`. Its content replaces `.tau/SYSTEM.md` and the packaged prompt. |
+| `skills` | list of strings | Skill folder names. Only these skills load. |
+| `extensions` | list of strings | Entries directly under `.tau/extensions/`. Only these extensions load. |
+
+An absent or `null` object or field selects every resource of its kind. An empty list selects
+none. The runtime validates the object strictly: an unknown field, a wrong type, a repeated name, a
+name with a path separator or an extension entry starting with `_` or `.` fails the session load.
+It reads the prompt file and resolves the extensions before Tau runs any project code, and the
+load fails when the prompt is missing, is not a regular UTF-8 file, or is or passes through a
+symbolic link. After Tau composes the session, and again after every reload and before every turn,
+the loaded skills and project extensions must equal the selection, and no selected extension may
+report a load error. A failed load releases the lease with reason `runtime_load_failed` before any
+model call.
+
+Tau marks selected extensions `explicit`. The runtime counts them as project extensions in the
+tool-only catalog check, the extension source view, diagnostics and counts. The load log
+`runtime.project_resources.load.completed` and the inspection payload's `resources.selection`
+report the selection with workspace-relative paths, or `null` without one. Local mode has no
+platform bootstrap and never has a selection. See
+[several Agents from one repository](../guides/multiple-agents-one-repository.md) and
+[ADR 0026](../adrs/0026-per-agent-runtime-resources-from-the-workflow-declaration.md).
+
 ### Chat turns and client disconnects
 
 A managed `/api/chat` turn is bound to the request that streams it: a client disconnect before the
@@ -561,7 +591,8 @@ does not infer missing history or correlation from events, timestamps, or text.
 Health reports safe process state: tool exclusion settings and source counts, session counts,
 readiness, MCP catalog counts, snapshot counts, project-extension counts and errors, the effective
 tool-catalog digest, Task recovery policy, and local pending/working/recovery counters. It never
-reports credential values or prompt content.
+reports credential values or prompt content. The resource load log reports an Agent's selection of
+`.tau` resources by path and name, never the prompt's content.
 
 In local mode `mainsequence_auth_source` names where the process takes its Main Sequence
 credentials from: `cli` for the Main Sequence CLI session, `environment` for a token pair handed

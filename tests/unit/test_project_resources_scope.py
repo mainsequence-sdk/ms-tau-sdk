@@ -215,6 +215,7 @@ async def test_the_selected_resources_are_logged_and_inspectable(tmp_path):
         "contextFiles": [".tau/AGENTS.md"],
         "skills": ["crm-core", "crm-prospecting"],
         "promptTemplates": sorted(template.name for template in session.prompt_templates),
+        "selection": None,
     }
 
     with patch("ms_tau_sdk.runtime.extensions._resources_logger") as structured_logger:
@@ -235,6 +236,7 @@ async def test_the_selected_resources_are_logged_and_inspectable(tmp_path):
         context_files=[".tau/AGENTS.md"],
         skill_count=2,
         prompt_template_count=len(session.prompt_templates),
+        runtime_resources=None,
     )
     excluded = [
         call.kwargs

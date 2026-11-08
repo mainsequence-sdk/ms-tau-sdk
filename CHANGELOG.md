@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- **Several Agents from one repository each load their own prompt, skills and tools.** An Agent's
+  workflow declaration can select, in `harness_agent.spec.runtime_resources`, the system prompt
+  file, the skills and the extensions its sessions load from `.tau/`. The platform returns the
+  selection at session bootstrap, and the runtime applies it on load and reload. An omitted field
+  loads every resource of its kind, an empty list loads none, and `.tau/APPEND_SYSTEM.md`,
+  `.tau/AGENTS.md` and `.tau/prompts/` stay shared. The runtime validates the selection strictly
+  and fails the session load, before any model call, when a selected file, skill or extension is
+  missing, is a symbolic link or does not load; selected extensions count as project extensions
+  in every catalog check. The bootstrap request now lists
+  `supported_runtime_resources_schema_versions: [1]`, and the load log and inspection payload
+  report the selection. A selection limits what the model is given, not what an Agent may do:
+  each Agent's grants still decide that. Without a selection nothing changes. It needs the
+  matching platform change. See
+  [several Agents from one repository](docs/guides/multiple-agents-one-repository.md) and
+  [ADR 0026](docs/adrs/0026-per-agent-runtime-resources-from-the-workflow-declaration.md).
+
 - **The Security and access guide sets no rule on what caller context holds.** It no longer says
   to refer to a person by an opaque id: what the keys and values mean, including whether one
   refers to a person, is up to whoever designs the application. Caller context stays public, so

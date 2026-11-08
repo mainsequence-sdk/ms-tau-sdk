@@ -14,7 +14,9 @@ This guide covers the current SDK development documentation. The application MCP
 2.0.7 and later SDK releases work only with that platform, and earlier SDK releases no longer act
 for people. [Caller context](#caller-context) first ships in
 [2.0.29](../../CHANGELOG.md#2029--2026-11-07); an Agent on an earlier release keeps working and
-carries no caller context. Check your installed SDK before relying on these features.
+carries no caller context. [Per-Agent runtime resources](../guides/multiple-agents-one-repository.md)
+first ship in 2.0.30 and need the matching platform change. Check your installed SDK before
+relying on these features.
 
 ## Who is who
 
@@ -349,6 +351,12 @@ and use those provider credentials, including the Secret values the workload may
 as code that holds these credentials. See
 [ownership and trust](../guides/project-configuration.md#ownership-and-trust).
 
+Several Agents deployed from one repository run the same code. An Agent's `runtime_resources`
+choose which prompt, skills and extensions its model is given; the rest stays installed in its
+image and reachable by code that runs there. Separate what two such Agents may do with each
+Agent's own grants, not with its selection. See
+[selection is not authority](../guides/multiple-agents-one-repository.md#selection-is-not-authority).
+
 ## Local mode
 
 Local mode signs in with your own Main Sequence login (`mainsequence login`) or a user token pair.
@@ -465,3 +473,5 @@ page gives the key form, the limits and an example.
   policies on such an Agent only to callers you trust to, and treat missing context as no external
   user.
 - Review extensions: they run with the Agent's credentials.
+- When several Agents share a repository, give each its own grants. A selection of tools is not an
+  access boundary.

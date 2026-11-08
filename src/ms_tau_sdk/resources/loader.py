@@ -23,13 +23,28 @@ class _SkillsDir(Path):
     Tau reads the folders directly in a skills directory, so the skills in a folder without a
     `SKILL.md`, such as `.tau/skills/<group>/<skill>/SKILL.md`, were skipped. Listing them
     beside the direct entries lets Tau read, index, reload and serve them like any other skill.
+
+    With an Agent's skill selection (ADR 0026, section 3) the listing holds only the selected
+    skill folders, whichever group folder holds them.
     """
+
+    selected: ClassVar[frozenset[str] | None] = None
 
     def iterdir(self) -> Generator[Self]:
         for entry in sorted(Path(self).iterdir()):
-            yield self.with_segments(entry)
+            if self._admits(entry):
+                yield self.with_segments(entry)
             if _is_group(entry):
-                yield from map(self.with_segments, _skill_folders(entry))
+                yield from map(self.with_segments, filter(self._admits, _skill_folders(entry)))
+
+    def _admits(self, entry: Path) -> bool:
+        if self.selected is None:
+            return True
+        return entry.name in self.selected and _is_skill(entry)
+
+
+def _is_skill(folder: Path) -> bool:
+    return folder.is_dir() and (folder / "SKILL.md").exists()
 
 
 def _is_group(folder: Path) -> bool:
@@ -59,12 +74,14 @@ class _RepositoryPaths(TauPaths):
 
     # Read by the project instruction filter of `context_compat`.
     reads_development_resources: ClassVar[bool] = True
+    # Replaced by a class that lists only an Agent's selected skills (ADR 0026, section 3).
+    skills_dir_class: ClassVar[type[_SkillsDir]] = _SkillsDir
 
     def project_skills_dir(self, cwd: Path) -> Path:
-        return _SkillsDir(super().project_skills_dir(cwd))
+        return self.skills_dir_class(super().project_skills_dir(cwd))
 
     def project_agents_skills_dir(self, cwd: Path) -> Path:
-        return _SkillsDir(super().project_agents_skills_dir(cwd))
+        return self.skills_dir_class(super().project_agents_skills_dir(cwd))
 
 
 class _TauOnlyPaths(_RepositoryPaths):
@@ -91,11 +108,23 @@ class _TauOnlyPaths(_RepositoryPaths):
         return self.project_prompts_dir(cwd)
 
 
+def _with_skill_selection(
+    paths_class: type[_RepositoryPaths], skills: frozenset[str]
+) -> type[_RepositoryPaths]:
+    skills_dir_class = type("_SelectedSkillsDir", (_SkillsDir,), {"selected": skills})
+    return type(
+        paths_class.__name__,
+        (paths_class,),
+        {"__slots__": (), "skills_dir_class": skills_dir_class},
+    )
+
+
 def tau_resource_paths(
     cwd: Path,
     *,
     state_home: Path,
     include_development_resources: bool = False,
+    skills: frozenset[str] | None = None,
 ) -> TauResourcePaths:
     """Return SDK defaults plus Tau-native project resource discovery.
 
@@ -109,9 +138,16 @@ def tau_resource_paths(
     also admits the repository's `AGENTS.md` files and `.agents/`. The version-locked
     filter that keeps Tau's `AGENTS.md` discovery to `.tau` is installed here, before
     the session that uses these paths loads; it fails on an unreviewed Tau version.
+
+    `skills`, an Agent's skill selection (ADR 0026), limits every project skill directory
+    the scope reads to the named skill folders. `None` lists every project skill.
     """
     install_project_context_filter()
-    paths_class = _RepositoryPaths if include_development_resources else _TauOnlyPaths
+    paths_class: type[_RepositoryPaths] = (
+        _RepositoryPaths if include_development_resources else _TauOnlyPaths
+    )
+    if skills is not None:
+        paths_class = _with_skill_selection(paths_class, skills)
     return TauResourcePaths(
         root=resource_root(),
         cwd=cwd,

@@ -341,6 +341,9 @@ class TauRuntimeBootstrapRequest(BackendRequestModel):
     history_after_sequence: int | None = Field(default=None, ge=0)
     supported_snapshot_schema_versions: list[int] = Field(default_factory=lambda: [2])
     supported_provider_control_schema_versions: list[int] = Field(default_factory=lambda: [1])
+    # A runtime that lists a version applies the Agent's `runtime_resources` (ADR 0026). The
+    # platform refuses to bootstrap an Agent that declares a selection for any other runtime.
+    supported_runtime_resources_schema_versions: list[int] = Field(default_factory=lambda: [1])
     tau_runtime_version: str
 
 
@@ -396,6 +399,10 @@ class TauRuntimeBootstrap(BackendModel):
     # Declaring an application registers its MCP; the platform resolves it in the Agent's
     # Environment, so the workflow file and the runtime never carry its UID or URL.
     mcp_applications: list[MCPApplication] = Field(default_factory=list)
+    # The Agent's selection of `.tau` resources, resolved by the platform from its workflow
+    # declaration (ADR 0026). It stays raw here and is validated strictly while the session loads,
+    # so a malformed selection fails the load and releases the lease.
+    runtime_resources: Any = None
 
 
 class TauResumeSnapshotUploadRequest(BackendRequestModel):

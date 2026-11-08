@@ -4,9 +4,8 @@ Status: Accepted — implemented
 
 Date: 2026-10-24
 
-Proposed amendment, 2026-11-08, not in effect: [ADR 0026](./0026-per-agent-runtime-resources-from-the-workflow-declaration.md)
-would let a per-Agent selection narrow what is read inside `.tau/`, with section 2's `TauPaths`
-also restricting the skill listing. Until it is accepted, this ADR stands as written.
+Amended 2026-11-08 by [ADR 0026](./0026-per-agent-runtime-resources-from-the-workflow-declaration.md): a per-Agent selection
+narrows what is read inside `.tau/`, and section 2's `TauPaths` also restrict the skill listing.
 
 Amends:
 

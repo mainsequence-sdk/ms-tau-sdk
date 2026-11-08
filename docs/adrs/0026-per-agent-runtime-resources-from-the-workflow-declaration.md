@@ -1,10 +1,10 @@
 # ADR 0026: Per-Agent Runtime Resources From the Workflow Declaration
 
-Status: Proposed — not implemented
+Status: Accepted — implemented in the SDK; the platform side is pending
 
 Date: 2026-11-08
 
-Amends, on acceptance:
+Amends:
 
 - [ADR 0003: Tau-native project configuration](./0003-tau-native-project-configuration.md). Project
   resources and extensions stay Tau-native, but the platform may select, for each Agent, which of
@@ -65,7 +65,9 @@ reload. No process setting, request, session or model response sets or changes i
 
 The SDK reads the selected file from the workspace and passes its content as
 `custom_system_prompt`. Session load fails before any model call when the file is missing,
-unreadable, not UTF-8, a symbolic link, or outside the allowed part of `.tau/`.
+unreadable, not UTF-8, a symbolic link, or outside the allowed part of `.tau/`. Tau keeps an
+explicit prompt for the life of the session, so a reload keeps the content read on load. A
+deployed workspace does not change between the two.
 
 `.tau/APPEND_SYSTEM.md` and `.tau/AGENTS.md` still apply. They are the branch-wide instructions
 shared by every Agent of the repository. The prompt the SDK appends itself, such as the Main
@@ -92,8 +94,11 @@ extension.
   extension diagnostics and counts. The source view still accepts only files under
   `.tau/extensions/`.
 - Session load fails when a selected entry does not exist, is a symbolic link, or produces Tau's
-  "no extensions found in explicit extension path" diagnostic. A selection never silently yields
-  a different catalog.
+  "no extensions found in explicit extension path" diagnostic. The SDK checks each entry against
+  Tau's own project discovery before any project code runs, so an entry Tau would not discover in
+  `.tau/extensions/` fails too. After Tau composes the session, each selected entry must have
+  loaded with no error diagnostic, and no other project extension may have loaded. A selection
+  never silently yields a different catalog.
 - The catalog checks of ADR 0011 run unchanged after Tau composes the tools. The reserved names
   stay reserved.
 
@@ -171,3 +176,10 @@ what it loads.
 - The bootstrap request carries `supported_runtime_resources_schema_versions`.
 - The runtime contract reference and the project configuration guide describe the selection, and
   the packaged `tau_project_customization` skill explains how to split tools into extensions.
+
+Implemented in the SDK for 2.0.30: `ms_tau_sdk.resources.selection` validates and resolves the
+selection, the session loader passes it to Tau, and `tests/unit/test_runtime_resource_selection.py`
+loads real Tau sessions for every case above. The
+[multiple Agents guide](../guides/multiple-agents-one-repository.md) documents it with a worked
+example. The platform side, which accepts `harness_agent.spec.runtime_resources`, returns it at
+bootstrap and refuses runtimes that do not list schema version 1, is pending.
