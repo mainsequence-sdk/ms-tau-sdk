@@ -321,6 +321,12 @@ person = baggage.get_baggage("mainsequence.advisor.person")  # None when the wor
 
 The SDK Security and access guide's **Caller context** section has the full rules.
 
+An application that owns sessions for its own people can name each session's person on the
+platform, and the runtime then tells the application which session a tool call serves. If you are
+building that, follow **Session subowners** in the SDK runtime contract
+(`docs/reference/runtime-contract.md`) and the matching bullet in the Security and access guide;
+nothing in this skill restates them.
+
 ## What never reaches the model
 
 Tool results, their `details`, and errors can reach the model provider and the session history.
