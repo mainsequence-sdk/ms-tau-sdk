@@ -26,6 +26,7 @@ import binascii
 import hashlib
 import json
 import re
+import time
 from collections.abc import AsyncGenerator, Mapping, Sequence
 from typing import Protocol
 
@@ -50,6 +51,7 @@ from ms_tau_sdk.backend.mcp import (
     raise_for_renewed_401,
 )
 from ms_tau_sdk.backend.models import MCPApplication
+from ms_tau_sdk.backend.release_readiness import deadline_headers, release_warmth
 from ms_tau_sdk.errors import (
     ApplicationReadinessTimeoutError,
     ApplicationWakingError,
@@ -61,6 +63,7 @@ from ms_tau_sdk.runtime.requester import (
     AGENT_SESSION_HEADER,
     RequesterBindingError,
     _turn_application_access,
+    _turn_application_starting,
     _TurnApplicationAccess,
 )
 from ms_tau_sdk.settings import TauSDKSettings
@@ -82,10 +85,13 @@ class ApplicationConnector(Protocol):
 class _ApplicationTokenAuth(httpx2.Auth):
     """Send the turn's application token; obtain a new one once when the application says 401."""
 
-    def __init__(self, access: _TurnApplicationAccess) -> None:
+    def __init__(self, access: _TurnApplicationAccess, release_uid: str | None = None) -> None:
         self._token = access.token
         self._renew = access.renew
         self._session_uid = access.session_uid
+        self._release_uid = release_uid
+        # The monotonic instant by which the tool call in flight must be answered, once known.
+        self.deadline: float | None = None
 
     async def async_auth_flow(
         self,
@@ -95,11 +101,15 @@ class _ApplicationTokenAuth(httpx2.Auth):
             # The turn's session, for the application to resolve the person it serves (ADR 0028).
             request.headers[AGENT_SESSION_HEADER] = self._session_uid
         request.headers["Authorization"] = f"Bearer {self._token}"
+        request.headers.update(deadline_headers(self.deadline))
         response = yield request
         if response.status_code == 401:
             self._token = await self._renew()
             request.headers["Authorization"] = f"Bearer {self._token}"
-            raise_for_renewed_401((yield request))
+            response = yield request
+            raise_for_renewed_401(response)
+        if response.status_code < 500 and self._release_uid is not None:
+            release_warmth.served(self._release_uid)
 
 
 def application_connector(settings: TauSDKSettings) -> ApplicationConnector:
@@ -110,14 +120,14 @@ def application_connector(settings: TauSDKSettings) -> ApplicationConnector:
     ) -> MCPConnectionClient:
         access = await _turn_application_access(
             application.resource_release_uid,
-            ready_timeout_seconds=settings.mcp_application_ready_timeout_seconds,
+            settings=settings,
             cancelled=signal.is_cancelled if signal is not None else None,
         )
         return await MCPConnectionClient(
             name=application.name,
             display_name=application.name,
             url=f"{str(access.rpc_url).rstrip('/')}/mcp",
-            auth=_ApplicationTokenAuth(access),
+            auth=_ApplicationTokenAuth(access, application.resource_release_uid),
             # The connection applies the tool's response deadline to its call; these HTTP limits
             # also bound initialization and catalog requests.
             timeout=httpx2.Timeout(
@@ -337,6 +347,7 @@ def _application_tools(
         *,
         mcp_tool: str | None = None,
         call_timeout_seconds: float | None = None,
+        held_by_start: bool = False,
     ) -> AgentToolResult:
         # A failure after the call was sent, which has a time limit by then, is the tool's;
         # a failure while the session opens is the application's.
@@ -348,6 +359,17 @@ def _application_tools(
                 call_timeout_seconds if call_timeout_seconds is not None else open_timeout_seconds
             ),
         )
+        if held_by_start:
+            text = (
+                f"The {name} application was starting and the tool {mcp_tool} did not answer "
+                f"within {call_timeout_seconds:g} seconds. The call may or may not have run."
+            )
+            failure = {
+                "failure": "cold_start_timeout",
+                "phase": "request",
+                "runtime_access_state": "waking",
+                "timeout_seconds": call_timeout_seconds,
+            }
         if mcp_tool is not None:
             failure["mcp_tool"] = mcp_tool
         logger.warning(
@@ -556,14 +578,27 @@ def _application_tools(
                     None,
                 )
                 call_timeout_seconds = declared if declared is not None else tool_timeout_seconds
+                auth = getattr(client, "_http_auth", None)
+                if isinstance(auth, _ApplicationTokenAuth):
+                    auth.deadline = time.monotonic() + call_timeout_seconds
                 result = await client.call_tool(
                     tool_name, dict(tool_arguments), timeout_seconds=call_timeout_seconds
                 )
             finally:
                 await client.aclose()
         except Exception as error:
+            held_by_start = (
+                call_timeout_seconds is not None
+                and _timed_out(error)
+                # Asked once, after the fact: a request held by a start is not the tool's fault.
+                and await _turn_application_starting(application.resource_release_uid)
+            )
             return failed(
-                "call_tool", error, mcp_tool=tool_name, call_timeout_seconds=call_timeout_seconds
+                "call_tool",
+                error,
+                mcp_tool=tool_name,
+                call_timeout_seconds=call_timeout_seconds,
+                held_by_start=held_by_start,
             )
         projected = mcp_tool_result(canonical_name=tool_name, result=result, display_name=name)
         details = dict(projected.details) if isinstance(projected.details, dict) else {}

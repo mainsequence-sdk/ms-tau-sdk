@@ -504,6 +504,9 @@ class ReleaseRuntimeAccess(BackendModel):
     resource_release_uid: str
     access: ReleaseAccessGrant | None = None
     runtime_access: dict[str, Any] = Field(default_factory=dict)
+    # How the release scales, when the platform states it: min_instances, idle_timeout_seconds,
+    # expected_cold_start_seconds, serving_since.
+    scaling: dict[str, Any] | None = None
 
 
 class AgentTask(BackendModel):

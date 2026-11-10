@@ -13,6 +13,11 @@ Amended 2026-10-11 for [#93](https://github.com/mainsequence-sdk/ms-tau-sdk/issu
 Sequence MCP tool waits for the time limit the platform declares for it, under the same `_meta`
 key as an application tool.
 
+Amended 2026-11-10 to follow the contract of mainsequence-sdk's ADR 0041 (cold-start-aware calls
+between releases): one readiness wait and limit rule, a warm rule for kept tokens, a timeout that
+names a start, and the caller's deadline header. See
+[the amendment](#amendment-one-readiness-contract-with-mainsequence-sdk).
+
 Amends:
 
 - [ADR 0021: MCP connections on the person's identity](./0021-mcp-connections-on-the-persons-identity.md),
@@ -145,6 +150,44 @@ Diagnostics log `runtime.application_access.waiting` with retry guidance, then
 `runtime.application_access.ready` on success, without credentials. MCP starts only after access is
 ready, and the tool's declared execution limit then applies. This amendment does not add retries
 for a sent tool call or change the existing one-renewal-on-401 behavior.
+
+### Amendment: one readiness contract with mainsequence-sdk
+
+mainsequence-sdk's ADR 0041 sets how a release is called when it may be scaled to zero. Tau does
+not depend on that SDK, so it follows the same contract in its own code,
+`ms_tau_sdk.backend.release_readiness`.
+
+**One wait.** Application access in a turn and the provider credential hydrate release
+([ADR 0027](./0027-custom-provider-credential-hydrate-endpoints.md)) use the same wait,
+`wait_until_ready`. Its log events keep their names.
+
+**One limit rule.** `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS`, when set, is the limit. Unset,
+the limit is twice the `scaling.expected_cold_start_seconds` the platform returns with a `waking`
+answer, at least 30 seconds, and 300 seconds when the platform states none. The default was 120
+seconds. The limit is fixed by the first `waking` answer of a wait. The remaining turn deadline
+and cancellation bound it as before.
+
+**A kept token is used only while the release is known warm.** A release is warm when its last
+sign of serving, a `ready` answer or a response below 500, is younger than its idle window less a
+margin (the larger of 10 seconds and 20% of the window), or when the platform reports
+`scaling.min_instances >= 1`. The window is `scaling.idle_timeout_seconds`, or 60 seconds when the
+platform states none. Otherwise the platform is asked again, which wakes the release, and the wait
+above applies before MCP opens. This is kept per process, in memory, and is never the truth: a
+wrong "warm" costs one held call, classified below.
+
+**A timeout names a start.** When a sent tool call times out, Tau asks the platform once. If the
+answer is `waking`, the call reports `failure: cold_start_timeout`, `phase: request`,
+`runtime_access_state: waking` and its `timeout_seconds`, with a message that the call may or may
+not have run. Otherwise it reports `failure: timeout` as before. Either way the call is not sent
+again. A start that finished before the question reads as `timeout`.
+
+**The caller's deadline travels.** A tool call sends `Mainsequence-Request-Timeout-Ms`, the
+milliseconds left of its time limit, on its requests to the application. `message:send` reads the
+same header from its caller: the shorter of it and the platform's Message limit bounds the
+request, and an absent or invalid value bounds nothing.
+
+Until the platform returns `scaling`, the defaults above apply. Whether the gateway forwards the
+header is not verified.
 
 ### 5. Scope
 

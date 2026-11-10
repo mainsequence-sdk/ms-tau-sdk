@@ -27,6 +27,7 @@ from ms_tau_sdk.backend.models import (
     ReleaseRuntimeAccess,
     TauRuntimeBootstrap,
 )
+from ms_tau_sdk.backend.release_readiness import DEADLINE_HEADER, release_warmth
 from ms_tau_sdk.errors import BackendError, BackendTimeoutError, ConfigurationError
 from ms_tau_sdk.runtime.requester import (
     AGENT_SESSION_HEADER,
@@ -1818,3 +1819,116 @@ async def test_a_server_error_on_the_newer_protocols_question_is_retried_once(pe
     assert result.text == "done"
     assert received.count("server/discover") == 2
     assert received.count("tools/call") == 1
+
+
+@pytest.mark.asyncio
+async def test_a_kept_token_is_reused_only_while_the_application_is_known_warm(person, mcp_server):
+    mcp_server(tools=[ORDERS_LIST], on_call=_slow(0))
+    tools = _connected_tools()
+
+    await tools["orders__call_tool"].execute("call-1", {"tool": "orders.list"})
+    await tools["orders__call_tool"].execute("call-2", {"tool": "orders.list"})
+    assert person.resolve_release_runtime_access.await_count == 1
+
+    # The application may have scaled to zero: the platform is asked again, which wakes it.
+    release_warmth.forget(RELEASE_UID)
+    result = await tools["orders__call_tool"].execute("call-3", {"tool": "orders.list"})
+
+    assert result.details["is_error"] is False
+    assert person.resolve_release_runtime_access.await_count == 2
+    assert release_warmth.is_warm(RELEASE_UID) is True
+
+
+@pytest.mark.asyncio
+async def test_the_expected_start_time_sets_the_readiness_limit_when_none_is_configured(
+    person, mcp_server
+):
+    mcp_server(tools=[ORDERS_LIST], on_call=_slow(0))
+    ready = person.resolve_release_runtime_access.return_value
+    waking = _waking(50)
+    waking.scaling = {"expected_cold_start_seconds": 200}
+    person.resolve_release_runtime_access.side_effect = [waking, ready]
+
+    with capture_logs() as logs:
+        result = await _finishes(
+            _connected_tools()["orders__call_tool"].execute("call-1", {"tool": "orders.list"})
+        )
+
+    assert result.details["is_error"] is False
+    waiting = [log for log in logs if log["event"] == "runtime.application_access.waiting"]
+    assert [log["ready_timeout_seconds"] for log in waiting] == [400]
+
+
+@pytest.mark.asyncio
+async def test_a_tool_timeout_while_the_application_starts_is_a_cold_start(person, mcp_server):
+    received = mcp_server(tools=[ORDERS_LIST], on_call=_slow(5))
+    ready = person.resolve_release_runtime_access.return_value
+    person.resolve_release_runtime_access.side_effect = [ready, _waking()]
+
+    with capture_logs() as logs:
+        result = await _finishes(
+            _connected_tools(mcp_tool_timeout_seconds=0.3)["orders__call_tool"].execute(
+                "call-1", {"tool": "orders.list"}
+            )
+        )
+
+    assert result.details == {
+        "application": "orders",
+        "mcp_tool": "orders.list",
+        "is_error": True,
+        "failure": "cold_start_timeout",
+        "phase": "request",
+        "runtime_access_state": "waking",
+        "timeout_seconds": 0.3,
+    }
+    assert result.text == (
+        "The orders application was starting and the tool orders.list did not answer within "
+        "0.3 seconds. The call may or may not have run."
+    )
+    # The call is never sent again.
+    assert received.count("tools/call") == 1
+    assert person.resolve_release_runtime_access.await_count == 2
+    assert release_warmth.is_warm(RELEASE_UID) is False
+    assert TOKEN not in json.dumps(logs, default=str)
+
+
+@pytest.mark.asyncio
+async def test_a_tool_timeout_on_a_serving_application_stays_the_tools(person, mcp_server):
+    mcp_server(tools=[ORDERS_LIST], on_call=_slow(5))
+
+    result = await _finishes(
+        _connected_tools(mcp_tool_timeout_seconds=0.3)["orders__call_tool"].execute(
+            "call-1", {"tool": "orders.list"}
+        )
+    )
+
+    assert result.details["failure"] == "timeout"
+    assert result.text == "The orders tool orders.list did not answer within 0.3 seconds."
+    # Asked once after the timeout, to tell a start from a slow tool.
+    assert person.resolve_release_runtime_access.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_the_tool_calls_remaining_time_is_sent_to_the_application():
+    auth = _ApplicationTokenAuth(
+        _TurnApplicationAccess(
+            rpc_url=httpx.URL("https://orders.apps.test/"),
+            token="FIRST_TOKEN",
+            renew=AsyncMock(return_value="SECOND_TOKEN"),
+        ),
+        RELEASE_UID,
+    )
+    seen: list[str | None] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        seen.append(request.headers.get(DEADLINE_HEADER))
+        return httpx2.Response(200)
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler), auth=auth) as http:
+        await http.post("https://orders.apps.test/mcp", json={})
+        auth.deadline = time.monotonic() + 5
+        await http.post("https://orders.apps.test/mcp", json={})
+
+    assert seen[0] is None
+    assert 4000 < int(seen[1]) <= 5000
+    assert release_warmth.is_warm(RELEASE_UID) is True

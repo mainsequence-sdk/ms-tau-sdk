@@ -335,8 +335,10 @@ class TauSDKSettings(BaseSettings):
         gt=0,
         validation_alias="TAU_MCP_TOOL_TIMEOUT_SECONDS",
     )
+    # How long a starting release is waited for when this is not set and the platform states no
+    # expected start time. Set, it is the limit; unset, the platform's expectation decides.
     mcp_application_ready_timeout_seconds: float = Field(
-        default=120.0,
+        default=300.0,
         gt=0,
         allow_inf_nan=False,
         validation_alias="TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS",

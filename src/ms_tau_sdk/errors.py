@@ -48,9 +48,16 @@ class BackendTimeoutError(BackendError):
 class ApplicationWakingError(BackendError):
     """The platform accepted access resolution but the application is still starting."""
 
-    def __init__(self, *, retry_after_seconds: float) -> None:
+    def __init__(
+        self,
+        *,
+        retry_after_seconds: float,
+        expected_cold_start_seconds: float | None = None,
+    ) -> None:
         super().__init__("Application is waking", detail={"runtime_access_state": "waking"})
         self.retry_after_seconds = retry_after_seconds
+        # The start time the platform expects, when it states one.
+        self.expected_cold_start_seconds = expected_cold_start_seconds
 
 
 class ApplicationReadinessTimeoutError(BackendError):
