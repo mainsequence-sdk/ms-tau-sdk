@@ -579,6 +579,31 @@ class MainSequenceClient:
             raise BackendError("Backend did not select the requested configured provider")
         return session
 
+    async def select_session_model(
+        self,
+        session_uid: str,
+        *,
+        provider: str,
+        model: str,
+        thinking_level: str | None,
+        holder_id: str,
+        custom_id: str | None = None,
+    ) -> AgentSession | None:
+        """Record the selection of a session that is not loaded, without hydrating it."""
+
+        del session_uid, provider, model, thinking_level, holder_id, custom_id
+        raise LocalModeUnsupportedError("Model selection requires TAU local mode")
+
+    async def restore_session_model(
+        self,
+        session_uid: str,
+        previous: AgentSession | None,
+    ) -> None:
+        """Undo ``select_session_model`` without hydrating."""
+
+        del session_uid, previous
+        raise LocalModeUnsupportedError("Model selection requires TAU local mode")
+
     async def get_agent_card(self, session_uid: str) -> AgentCardEnvelope:
         data = await self._request(
             "GET",

@@ -1389,3 +1389,88 @@ async def test_named_local_selection_retains_uid_and_environment_across_resume(t
             "openai", model="gpt-5.4", session_uid=session_uid, holder_id="resumed"
         )
     await resumed.aclose()
+
+
+@pytest.mark.asyncio
+async def test_selecting_the_model_of_an_unloaded_session_hydrates_nothing(tmp_path):
+    settings = _settings(tmp_path)
+    evidence = _evidence()
+    evidence.credential.model_provider_credential_uid = "credential-one"
+    evidence.credential.organization_environment_uid = "environment-one"
+    services = _services(evidence)
+    backend = LocalDevelopmentBackend(settings, services)
+    session_uid = settings.local_session_uid(None)
+    # Loaded once by this process, which still holds its lease.
+    await backend.bootstrap_tau_runtime(session_uid, _bootstrap("holder-1"))
+    services.hydrate_local_provider_credential.reset_mock()
+
+    # The same provider keeps the session's credential binding.
+    previous = await backend.select_session_model(
+        session_uid, provider="openai", model="gpt-5.5", thinking_level=None, holder_id="holder-1"
+    )
+    same_provider = await backend.get_session(session_uid)
+    # Another provider is bound again by the next load, on the credential it names.
+    await backend.select_session_model(
+        session_uid,
+        provider="anthropic",
+        model="claude-opus",
+        thinking_level="high",
+        holder_id="holder-1",
+        custom_id="work",
+    )
+    other_provider = await backend.get_session(session_uid)
+    await backend.restore_session_model(session_uid, previous)
+    restored = await backend.get_session(session_uid)
+
+    services.hydrate_local_provider_credential.assert_not_awaited()
+    assert previous is not None and previous.active_model == "gpt-5.4"
+    assert same_provider.active_model == "gpt-5.5"
+    assert same_provider.model_provider_credential_uid == "credential-one"
+    assert other_provider.active_provider == "anthropic"
+    assert other_provider.custom_id == "work"
+    assert other_provider.model_provider_credential_uid is None
+    assert other_provider.organization_environment_uid == "environment-one"
+    assert restored.model_dump() == previous.model_dump()
+    await backend.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_new_session_selected_and_restored_is_gone(tmp_path):
+    settings = _settings(tmp_path)
+    services = _services(_evidence())
+    backend = LocalDevelopmentBackend(settings, services)
+    session_uid = settings.local_session_uid("new-chat")
+
+    previous = await backend.select_session_model(
+        session_uid, provider="openai", model="gpt-5.5", thinking_level=None, holder_id="holder-1"
+    )
+    created = await backend.get_session(session_uid)
+    await backend.restore_session_model(session_uid, previous)
+
+    assert previous is None
+    assert created.active_model == "gpt-5.5"
+    assert created.model_provider_credential_uid is None
+    with pytest.raises(SessionNotFoundError):
+        await backend.get_session(session_uid)
+    services.hydrate_local_provider_credential.assert_not_awaited()
+    await backend.aclose()
+
+
+@pytest.mark.asyncio
+async def test_selecting_the_model_of_a_session_another_process_holds_is_refused(tmp_path):
+    settings = _settings(tmp_path)
+    backend = LocalDevelopmentBackend(settings, _services(_evidence()))
+    session_uid = settings.local_session_uid(None)
+    await backend.bootstrap_tau_runtime(session_uid, _bootstrap("other-process"))
+
+    with pytest.raises(BackendConflictError, match="another running process"):
+        await backend.select_session_model(
+            session_uid,
+            provider="openai",
+            model="gpt-5.5",
+            thinking_level=None,
+            holder_id="this-process",
+        )
+
+    assert (await backend.get_session(session_uid)).active_model == "gpt-5.4"
+    await backend.aclose()

@@ -22,6 +22,7 @@ from ms_tau_sdk.backend.models import (
     ProviderExecutionEvidence,
     TauRuntimeBootstrapRequest,
 )
+from ms_tau_sdk.errors import SessionNotFoundError
 from ms_tau_sdk.providers.factory import ProviderFactory, ProviderRuntime
 from ms_tau_sdk.runtime.manager import SessionRuntimeManager
 from ms_tau_sdk.settings import TauSDKSettings
@@ -274,8 +275,13 @@ def _endpoint_answer(model: str) -> dict[str, object]:
 
 
 @asynccontextmanager
-async def _local_address_app(tmp_path, fake_providers, *, answered_model=None):
-    """The app with the real client, hydrating from the developer's own loopback service."""
+async def _local_address_app(tmp_path, fake_providers, *, answered_model=None, recorded=None):
+    """The app with the real client, hydrating from the developer's own loopback service.
+
+    With ``recorded``, a mutable ``{"model": ...}``, the service answers only the selection it
+    recorded for the session and refuses any other, as an application that keeps its person's
+    model choice does.
+    """
 
     settings = TauSDKSettings(
         _env_file=None,
@@ -299,6 +305,14 @@ async def _local_address_app(tmp_path, fake_providers, *, answered_model=None):
     def endpoint(request: httpx.Request) -> httpx.Response:
         endpoint_requests.append(request)
         selected = json.loads(request.content)["execution_selection"]["model"]
+        if recorded is not None and selected != recorded["model"]:
+            return httpx.Response(
+                409,
+                json={
+                    "error_code": "model_provider_credential_unavailable",
+                    "error_detail": f"This session runs on {recorded['model']}.",
+                },
+            )
         return httpx.Response(200, json=_endpoint_answer(answered_model or selected))
 
     def platform(request: httpx.Request) -> httpx.Response:
@@ -393,3 +407,164 @@ async def test_a_selection_the_local_address_does_not_project_is_refused(asgi_cl
     assert {json.loads(request.content)["agent_session_uid"] for request in sent} == {
         settings.local_session_uid("new-chat")
     }
+
+
+def _hydrated(sent: list[httpx.Request]) -> list[dict[str, object]]:
+    return [json.loads(request.content) for request in sent]
+
+
+@pytest.mark.asyncio
+async def test_a_new_session_selected_with_a_custom_endpoint_hydrates_only_its_selection(
+    asgi_client, tmp_path
+):
+    # The service recorded the session on gpt-5.5 and refuses the configured gpt-5.4.
+    recorded = {"model": "gpt-5.5"}
+    fake_providers = {
+        "gpt-5.4": FakeProvider([]),
+        "gpt-5.5": FakeProvider([_turn("gpt-5.5", "Chosen model")]),
+    }
+    async with _local_address_app(tmp_path, fake_providers, recorded=recorded) as (
+        app,
+        settings,
+        sent,
+        _platform,
+    ):
+        async with asgi_client(app, lifespan=True) as http:
+            chosen = await http.put(
+                "/api/chat/session-model",
+                json={
+                    "sessionUid": "new-chat",
+                    "provider": "openai",
+                    "model": "gpt-5.5",
+                    "thinkingLevel": "medium",
+                },
+            )
+            selection = _hydrated(sent)
+            first = await http.post("/api/chat", json={"sessionUid": "new-chat", "message": "One"})
+
+    uid = settings.local_session_uid("new-chat")
+    assert chosen.status_code == 200, chosen.text
+    assert chosen.json()["model"]["model"] == "gpt-5.5"
+    [hydrate] = selection
+    assert hydrate["agent_session_uid"] == uid
+    assert hydrate["execution_selection"] == {
+        "provider": "openai",
+        "model": "gpt-5.5",
+        "thinking_level": "medium",
+    }
+    # The loaded session runs its first turn on that one hydrate.
+    assert len(sent) == 1
+    assert "Chosen model" in first.text
+    assert fake_providers["gpt-5.4"].calls == []
+
+
+@pytest.mark.asyncio
+async def test_an_unloaded_session_changes_model_without_hydrating_its_old_selection(
+    asgi_client, tmp_path
+):
+    recorded = {"model": "gpt-5.4"}
+    fake_providers = {
+        "gpt-5.4": FakeProvider([_turn("gpt-5.4", "Before switch")]),
+        "gpt-5.5": FakeProvider([_turn("gpt-5.5", "After switch")]),
+    }
+    async with _local_address_app(tmp_path, fake_providers, recorded=recorded) as (
+        app,
+        settings,
+        sent,
+        _platform,
+    ):
+        uid = settings.local_session_uid("board-chat")
+        async with asgi_client(app, lifespan=True) as http:
+            first = await http.post(
+                "/api/chat", json={"sessionUid": "board-chat", "message": "One"}
+            )
+            runtime = app.state.runtime_manager
+            await runtime.evict(uid)
+            assert runtime.running_thinking_level(uid) is None
+            # The application moved its record of the session to the new model.
+            recorded["model"] = "gpt-5.5"
+            sent.clear()
+            chosen = await http.put(
+                "/api/chat/session-model",
+                json={"sessionUid": "board-chat", "provider": "openai", "model": "gpt-5.5"},
+            )
+            selection = _hydrated(sent)
+            second = await http.post(
+                "/api/chat", json={"sessionUid": "board-chat", "message": "Two"}
+            )
+
+    assert "Before switch" in first.text
+    assert chosen.status_code == 200, chosen.text
+    assert [body["execution_selection"]["model"] for body in selection] == ["gpt-5.5"]
+    assert selection[0]["agent_session_uid"] == uid
+    assert "After switch" in second.text
+
+
+@pytest.mark.asyncio
+async def test_a_refused_selection_of_a_new_session_makes_no_fallback_hydrate(
+    asgi_client, tmp_path
+):
+    recorded = {"model": "gpt-5.4"}
+    fake_providers = {"gpt-5.4": FakeProvider([]), "gpt-5.5": FakeProvider([])}
+    async with _local_address_app(tmp_path, fake_providers, recorded=recorded) as (
+        app,
+        settings,
+        sent,
+        _platform,
+    ):
+        uid = settings.local_session_uid("new-chat")
+        async with asgi_client(app, lifespan=True) as http:
+            refused = await http.put(
+                "/api/chat/session-model",
+                json={"sessionUid": "new-chat", "provider": "openai", "model": "gpt-5.5"},
+            )
+            selected = await http.get("/api/chat/session-model", params={"sessionUid": "new-chat"})
+            with pytest.raises(SessionNotFoundError):
+                await app.state.backend.get_session(uid)
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["error"] == "backend_conflict"
+    assert refused.json()["detail"] == {
+        "error_code": "model_provider_credential_unavailable",
+        "error_detail": "This session runs on gpt-5.4.",
+    }
+    assert [body["execution_selection"]["model"] for body in _hydrated(sent)] == ["gpt-5.5"]
+    # The session was never created, so it still reports the configured model.
+    assert selected.json()["model"]["model"] == "gpt-5.4"
+
+
+@pytest.mark.asyncio
+async def test_a_refused_selection_of_an_unloaded_session_restores_it_without_hydrating(
+    asgi_client, tmp_path
+):
+    recorded = {"model": "gpt-5.4"}
+    fake_providers = {
+        "gpt-5.4": FakeProvider([_turn("gpt-5.4", "Before switch")]),
+        "gpt-5.5": FakeProvider([]),
+    }
+    async with _local_address_app(tmp_path, fake_providers, recorded=recorded) as (
+        app,
+        settings,
+        sent,
+        _platform,
+    ):
+        uid = settings.local_session_uid("board-chat")
+        async with asgi_client(app, lifespan=True) as http:
+            await http.post("/api/chat", json={"sessionUid": "board-chat", "message": "One"})
+            runtime = app.state.runtime_manager
+            await runtime.evict(uid)
+            sent.clear()
+            refused = await http.put(
+                "/api/chat/session-model",
+                json={"sessionUid": "board-chat", "provider": "openai", "model": "gpt-5.5"},
+            )
+            hydrated = _hydrated(sent)
+            session = await app.state.backend.get_session(uid)
+            loaded = runtime.running_thinking_level(uid)
+
+    assert refused.status_code == 409, refused.text
+    assert refused.json()["detail"]["error_detail"] == "This session runs on gpt-5.4."
+    assert [body["execution_selection"]["model"] for body in hydrated] == ["gpt-5.5"]
+    assert session.active_model == "gpt-5.4"
+    assert session.model_provider_credential_uid == "endpoint-credential"
+    assert loaded is None
