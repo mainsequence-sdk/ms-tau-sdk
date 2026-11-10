@@ -2407,7 +2407,15 @@ class SessionRuntimeManager:
         thinking_level: str | None,
         custom_id: str | None = None,
     ) -> None:
-        """Switch an idle session and reload it with backend-authorized evidence."""
+        """Switch an idle session and reload it with backend-authorized evidence.
+
+        A session this process has not loaded is never loaded on its previous selection, or on the
+        configured one when it does not exist yet: its selection is recorded without hydrating,
+        and one load hydrates only the new selection. A custom hydrate endpoint may refuse any
+        other (ADR 0027), and without one the old selection's hydrate is wasted work. When that
+        load fails, the previous selection is put back without hydrating it, and the caller gets
+        the new selection's failure.
+        """
         if not self.settings.local_mode:
             raise BackendConflictError("Board model selection requires local mode")
         async with self._registry_lock:
@@ -2415,7 +2423,14 @@ class SessionRuntimeManager:
         async with load_lock:
             runtime = self._runtimes.get(session_uid)
             if runtime is None:
-                runtime = await self._load(session_uid)
+                await self._select_unloaded_session_model(
+                    session_uid,
+                    provider=provider,
+                    model=model,
+                    thinking_level=thinking_level,
+                    custom_id=custom_id,
+                )
+                return
             async with runtime.lock:
                 if runtime.coding_session.is_running or runtime.runtime_activity == "working":
                     raise BackendConflictError("Cannot change a model while the session is working")
@@ -2441,17 +2456,9 @@ class SessionRuntimeManager:
                 await self._load(session_uid)
             except Exception:
                 try:
-                    await self.backend.update_session_config(
-                        session_uid,
-                        provider=previous.active_provider,
-                        model=previous.active_model,
-                        thinking_level=previous.active_thinking,
-                        **(
-                            {"custom_id": previous.custom_id}
-                            if previous.custom_id is not None
-                            else {}
-                        ),
-                    )
+                    # The previous selection and binding are put back as they were, without a
+                    # hydrate of their own; reloading the session it was running hydrates them.
+                    await self.backend.restore_session_model(session_uid, previous)
                     await self._load(session_uid)
                 except Exception:
                     logger.exception(
@@ -2466,6 +2473,50 @@ class SessionRuntimeManager:
                 model=model,
                 thinking_level=thinking_level,
             )
+
+    async def _select_unloaded_session_model(
+        self,
+        session_uid: str,
+        *,
+        provider: str,
+        model: str,
+        thinking_level: str | None,
+        custom_id: str | None,
+    ) -> None:
+        """Change the model of a session that is not loaded, under its load lock.
+
+        Its selection is recorded without hydrating, a new session being created on it, and one
+        load hydrates only that selection. When the load fails the previous selection is put back
+        without hydrating or loading it, since the session was not loaded, and the load's failure
+        is raised.
+        """
+
+        previous = await self.backend.select_session_model(
+            session_uid,
+            provider=provider,
+            model=model,
+            thinking_level=thinking_level,
+            holder_id=self.holder_id,
+            **({"custom_id": custom_id} if custom_id is not None else {}),
+        )
+        try:
+            await self._load(session_uid)
+        except Exception:
+            try:
+                await self.backend.restore_session_model(session_uid, previous)
+            except Exception:
+                logger.exception(
+                    "runtime.session.model_change_rollback_failed",
+                    session_uid=session_uid,
+                )
+            raise
+        logger.info(
+            "runtime.session.model_changed",
+            session_uid=session_uid,
+            provider=provider,
+            model=model,
+            thinking_level=thinking_level,
+        )
 
     async def _evict_with_context(self, session_uid: str, *, force: bool = False) -> None:
         runtime = self._runtimes.get(session_uid)

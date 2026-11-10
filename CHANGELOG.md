@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.31 — 2026-11-10
+
+- **A local session changes model without hydrating the model it leaves.** Selecting a model for a
+  session that is not loaded (`PUT /api/chat/session-model`) used to load it on its previous
+  selection first, which for a new session is `TAU_LOCAL_PROVIDER`'s, and hydrate that. A custom
+  hydrate endpoint that had recorded the session on the new model refused it, so the change
+  failed. Now an unloaded session is created or switched on the requested selection and loaded
+  once, so only that selection is hydrated, with or without a custom endpoint. A refused
+  selection restores the previous one without hydrating it, deletes a session created for the
+  change, and answers the refusal. A loaded session still switches only while idle.
+
 ## 2.0.30 — 2026-11-10
 
 - **Provider credentials can come from an application's own hydrate endpoint.** An application

@@ -760,6 +760,135 @@ class LocalDevelopmentBackend(MainSequenceClient):
         await self._run(operation)
         return await self.get_session(session_uid)
 
+    async def select_session_model(
+        self,
+        session_uid: str,
+        *,
+        provider: str,
+        model: str,
+        thinking_level: str | None,
+        holder_id: str,
+        custom_id: str | None = None,
+    ) -> AgentSession | None:
+        """Record the selection of a session this process has not loaded, without hydrating it.
+
+        The session's next load then hydrates only this selection, so neither its previous
+        selection nor the configured one is ever hydrated for the change. A session that does not
+        exist is created on the selection. An existing one keeps its credential binding when the
+        provider stays the same and no configured credential is named, as
+        ``update_session_config`` does; otherwise it is bound again by its next load. Returns the
+        session as it was, or None when it did not exist, for ``restore_session_model``.
+        """
+
+        if not provider or not model:
+            raise BackendConflictError("A provider and model are required")
+        selection = (provider, model, thinking_level)
+
+        def operation() -> AgentSession | None:
+            now = _utcnow()
+            with closing(self._connect()) as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                row = connection.execute(
+                    "SELECT * FROM sessions WHERE uid = ?", (session_uid,)
+                ).fetchone()
+                if row is None:
+                    # As if created on the configured selection and then switched.
+                    retained = custom_id is None and provider == self.settings.local_provider
+                    connection.execute(
+                        """
+                        INSERT INTO sessions(
+                            uid, provider, model, thinking, runtime_config_sha256,
+                            custom_id, created_at, updated_at
+                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        (
+                            session_uid,
+                            *selection,
+                            self._runtime_config_sha256(selection),
+                            self.settings.local_custom_id if retained else custom_id,
+                            _iso(now),
+                            _iso(now),
+                        ),
+                    )
+                    return None
+                if row["runtime_activity"] == "working":
+                    raise BackendConflictError("Cannot change a model while the session is working")
+                lease = connection.execute(
+                    "SELECT * FROM leases WHERE session_uid = ?", (session_uid,)
+                ).fetchone()
+                foreign_lease = (
+                    lease is not None
+                    and _from_iso(str(lease["expires_at"])) > now
+                    and str(lease["holder_id"]) != holder_id
+                )
+                if row["active_task_attempt_uid"] and (lease is None or foreign_lease):
+                    raise BackendConflictError(
+                        "Local Task turn recovery is pending before lease replacement"
+                    )
+                if foreign_lease:
+                    raise BackendConflictError("Local session is owned by another running process")
+                previous = self._session_from_row(row)
+                retained = custom_id is None and previous.active_provider == provider
+                connection.execute(
+                    "UPDATE sessions SET provider = ?, model = ?, thinking = ?, "
+                    "runtime_config_sha256 = ?, updated_at = ?, custom_id = ?, "
+                    "model_provider_credential_uid = ? WHERE uid = ?",
+                    (
+                        *selection,
+                        self._runtime_config_sha256(selection),
+                        _iso(now),
+                        previous.custom_id if retained else custom_id,
+                        previous.model_provider_credential_uid if retained else None,
+                        session_uid,
+                    ),
+                )
+                return previous
+
+        return await self._run(operation)
+
+    async def restore_session_model(
+        self,
+        session_uid: str,
+        previous: AgentSession | None,
+    ) -> None:
+        """Undo ``select_session_model`` after the load of the new selection failed.
+
+        Nothing is hydrated. A session the selection created is removed again while it holds no
+        entries; an existing one gets back its selection and credential binding.
+        """
+
+        def operation() -> None:
+            with closing(self._connect()) as connection, connection:
+                connection.execute("BEGIN IMMEDIATE")
+                if previous is None:
+                    connection.execute(
+                        "DELETE FROM sessions WHERE uid = ? AND next_sequence = 0",
+                        (session_uid,),
+                    )
+                    return
+                selection = (
+                    previous.active_provider or "",
+                    previous.active_model or "",
+                    previous.active_thinking,
+                )
+                connection.execute(
+                    "UPDATE sessions SET provider = ?, model = ?, thinking = ?, "
+                    "runtime_config_sha256 = ?, updated_at = ?, custom_id = ?, "
+                    "model_provider_credential_uid = ?, "
+                    "organization_environment_uid = ? WHERE uid = ?",
+                    (
+                        *selection,
+                        self._runtime_config_sha256(selection),
+                        _iso(_utcnow()),
+                        previous.custom_id,
+                        previous.model_provider_credential_uid,
+                        previous.organization_environment_uid,
+                        session_uid,
+                    ),
+                )
+
+        await self._run(operation)
+
     async def get_agent_card(self, session_uid: str) -> AgentCardEnvelope:
         context_id = self.settings.local_session_uid(session_uid)
         agent_uid = self.settings.local_agent_uid
