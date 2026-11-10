@@ -20,6 +20,7 @@ from ms_tau_sdk.errors import (
     BackendConflictError,
     BackendError,
     BackendTimeoutError,
+    ConfigurationError,
     LocalModeUnsupportedError,
     SessionNotFoundError,
 )
@@ -29,6 +30,11 @@ from ms_tau_sdk.settings import TauSDKSettings
 
 from .assertions import ASSERTION_HEADER
 from .auth import BackendAuth
+from .hydrate_endpoint import (
+    CustomHydrateEndpoint,
+    LocalAddressHydrateEndpoint,
+    ReleaseHydrateEndpoint,
+)
 from .models import (
     AgentCardEnvelope,
     AgentSession,
@@ -205,25 +211,68 @@ class MainSequenceClient:
         auth: BackendAuth,
         *,
         client: httpx.AsyncClient | None = None,
+        hydrate_client: httpx.AsyncClient | None = None,
     ) -> None:
         self.settings = settings
         self.auth = auth
         self._client = client or httpx.AsyncClient(
             base_url=settings.backend_url,
-            timeout=httpx.Timeout(
-                connect=settings.backend_connect_timeout_seconds,
-                read=settings.backend_read_timeout_seconds,
-                write=settings.backend_write_timeout_seconds,
-                pool=settings.backend_pool_timeout_seconds,
-            ),
+            timeout=self._timeout(settings),
             limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
         )
         self._owns_client = client is None
         self.auth.bind_client(self._client)
+        # A custom hydrate endpoint is called through its own client, never through the
+        # platform's, so no platform cookie or header can reach it (ADR 0027).
+        self._hydrate_http = hydrate_client
+        self._owns_hydrate_http = hydrate_client is None
+        self._hydrate_endpoint = self._custom_hydrate_endpoint()
+
+    @staticmethod
+    def _timeout(settings: TauSDKSettings) -> httpx.Timeout:
+        return httpx.Timeout(
+            connect=settings.backend_connect_timeout_seconds,
+            read=settings.backend_read_timeout_seconds,
+            write=settings.backend_write_timeout_seconds,
+            pool=settings.backend_pool_timeout_seconds,
+        )
+
+    def _custom_hydrate_endpoint(self) -> CustomHydrateEndpoint | None:
+        """The custom endpoint every hydration goes to instead of tdag-django, or None."""
+
+        release_uid = self.settings.provider_credential_hydrate_release_uid
+        if release_uid is not None:
+
+            async def resolve(uid: str) -> ReleaseRuntimeAccess:
+                # The runtime's own access, without a delegation: hydration serves the session.
+                return await self.resolve_release_runtime_access(uid, proof=None)
+
+            return ReleaseHydrateEndpoint(
+                self.settings,
+                release_uid,
+                resolve=resolve,
+                http=self._hydrate_http_client,
+            )
+        origin = self.settings.local_provider_credential_hydrate_url
+        if origin is not None and self.settings.local_mode:
+            return LocalAddressHydrateEndpoint(
+                self.settings, origin, http=self._hydrate_http_client
+            )
+        return None
+
+    def _hydrate_http_client(self) -> httpx.AsyncClient:
+        if self._hydrate_http is None:
+            self._hydrate_http = httpx.AsyncClient(
+                timeout=self._timeout(self.settings),
+                follow_redirects=False,
+            )
+        return self._hydrate_http
 
     async def aclose(self) -> None:
         if self._owns_client:
             await self._client.aclose()
+        if self._owns_hydrate_http and self._hydrate_http is not None:
+            await self._hydrate_http.aclose()
 
     async def begin_local_conversation_message(
         self,
@@ -882,13 +931,7 @@ class MainSequenceClient:
         }
         if custom_id is not None:
             payload["custom_id"] = custom_id
-        data = await self._request(
-            "POST",
-            model_provider_credentials("hydrate"),
-            json=payload,
-            idempotent=True,
-        )
-        evidence = self._provider_evidence(provider, data)
+        evidence = await self._hydrate(provider, model=model, payload=payload)
         if custom_id is not None and evidence.credential.custom_id != custom_id:
             raise BackendError("Backend did not hydrate the requested configured provider")
         return evidence
@@ -902,30 +945,110 @@ class MainSequenceClient:
         holder_id: str,
         custom_id: str | None = None,
         organization_environment_uid: str | None = None,
+        agent_session_uid: str | None = None,
     ) -> ProviderExecutionEvidence:
-        """Hydrate a selection the user's policies allow, using the backend's access checks."""
+        """Hydrate a selection the user's policies allow, using the backend's access checks.
+
+        With a custom hydrate endpoint the body also names ``agent_session_uid``, the local
+        session the hydration is for, so that the endpoint answers the credential of the person
+        that session serves (ADR 0027). Without one, the body is tdag-django's and never names a
+        session.
+        """
         selection: dict[str, str] = {"provider": provider, "model": model}
         if thinking_level:
             selection["thinking_level"] = thinking_level
-        payload: dict[str, Any] = {
-            "providers": [provider],
-            "holder_id": holder_id,
-            "supported_provider_control_schema_versions": [1],
-            "execution_selection": selection,
-        }
+        payload: dict[str, Any] = {}
+        if self._hydrate_endpoint is not None:
+            if not agent_session_uid:
+                raise ConfigurationError(
+                    "A custom provider credential hydrate endpoint hydrates only for a session"
+                )
+            payload["agent_session_uid"] = agent_session_uid
+        payload.update(
+            {
+                "providers": [provider],
+                "holder_id": holder_id,
+                "supported_provider_control_schema_versions": [1],
+                "execution_selection": selection,
+            }
+        )
         if organization_environment_uid is not None:
             payload["organization_environment_uid"] = organization_environment_uid
         if custom_id is not None:
             payload["custom_id"] = custom_id
-        data = await self._request(
-            "POST",
-            model_provider_credentials("hydrate"),
-            json=payload,
-            idempotent=True,
-        )
-        evidence = self._provider_evidence(provider, data)
+        evidence = await self._hydrate(provider, model=model, payload=payload)
         if custom_id is not None and evidence.credential.custom_id != custom_id:
             raise BackendError("Backend did not hydrate the requested configured provider")
+        return evidence
+
+    async def _hydrate(
+        self,
+        provider: str,
+        *,
+        model: str,
+        payload: Mapping[str, Any],
+    ) -> ProviderExecutionEvidence:
+        """Post one hydrate body to tdag-django, or to the custom endpoint when one is set."""
+
+        if self._hydrate_endpoint is None:
+            data = await self._request(
+                "POST",
+                model_provider_credentials("hydrate"),
+                json=payload,
+                idempotent=True,
+            )
+            return self._provider_evidence(provider, data)
+        data = await self._hydrate_endpoint.hydrate(payload)
+        return self._custom_provider_evidence(provider, model=model, data=data)
+
+    def _custom_provider_evidence(
+        self,
+        provider: str,
+        *,
+        model: str,
+        data: Mapping[str, Any],
+    ) -> ProviderExecutionEvidence:
+        """Check a custom endpoint's answer against tdag-django's contract (ADR 0027, section 3).
+
+        It holds exactly one credential, for the selected provider, with the endpoint's stable
+        ``uid``; nothing missing or revoked; and the provider control of the selected provider and
+        model. An error names fields, never their values.
+        """
+
+        source = "The provider credential hydrate endpoint"
+        credentials = data.get("credentials")
+        if not isinstance(credentials, Mapping) or list(credentials) != [provider]:
+            raise BackendError(f"{source} must answer exactly one credential, for {provider}")
+        if data.get("missing") or data.get("revoked"):
+            raise BackendError(f"{source} answered a missing or revoked credential")
+        hydrated = credentials[provider]
+        uid = hydrated.get("uid") if isinstance(hydrated, Mapping) else None
+        if not isinstance(uid, str) or not uid.strip():
+            raise BackendError(f"{source} must name the stable uid of its credential")
+        raw = hydrated.get("credential")
+        kind = hydrated.get("credential_kind")
+        if not isinstance(raw, Mapping):
+            raise BackendError(f"{source} answered an invalid credential for {provider}")
+        if kind is not None and raw.get("type") is not None and raw.get("type") != kind:
+            raise BackendError(f"{source} answered a credential whose type is not its kind")
+        evidence: ProviderExecutionEvidence | None = None
+        invalid_fields: list[str] = []
+        try:
+            evidence = self._provider_evidence(provider, data)
+        except ValidationError as error:
+            invalid_fields = sorted(
+                {".".join(str(part) for part in item["loc"]) for item in error.errors()}
+            )
+        if evidence is None:
+            # Raised outside the handler: a validation error repeats its input, a credential.
+            raise BackendError(
+                f"{source} answered invalid credential fields: {', '.join(invalid_fields)}"
+            )
+        control = evidence.provider_control
+        if control.provider != provider or control.model.model != model:
+            raise BackendConflictError(
+                f"{source}'s provider control does not match the session's selection"
+            )
         return evidence
 
     def _provider_evidence(self, provider: str, data: object) -> ProviderExecutionEvidence:

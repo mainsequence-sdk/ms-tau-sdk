@@ -529,6 +529,12 @@ class LocalDevelopmentBackend(MainSequenceClient):
         ).encode("utf-8")
         return "sha256:" + hashlib.sha256(payload).hexdigest()
 
+    @property
+    def _hydrates_from_custom_endpoint(self) -> bool:
+        """Whether a custom endpoint, not Main Sequence, hydrates provider credentials."""
+
+        return self.settings.provider_credential_source != "mainsequence"
+
     async def _hydrate_evidence(
         self,
         *,
@@ -537,6 +543,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
         custom_id: str | None = None,
         credential_uid: str | None = None,
         organization_environment_uid: str | None = None,
+        session_uid: str | None = None,
     ) -> ProviderExecutionEvidence:
         provider, model, thinking = selection or self._selection()
         options: dict[str, Any] = {}
@@ -549,6 +556,16 @@ class LocalDevelopmentBackend(MainSequenceClient):
             options["custom_id"] = custom_id
         if environment_uid is not None:
             options["organization_environment_uid"] = environment_uid
+        custom = self._hydrates_from_custom_endpoint
+        if custom:
+            # A custom endpoint answers the credential of the person the session serves, so every
+            # hydration names the local session it is for (ADR 0027, amended 2026-11-10).
+            if session_uid is None:
+                raise BackendConflictError(
+                    "A custom provider credential hydrate endpoint hydrates only for a session"
+                )
+            options["agent_session_uid"] = session_uid
+        source = "The provider credential hydrate endpoint" if custom else "Main Sequence"
         evidence = await self._services.hydrate_local_provider_credential(
             provider,
             model=model,
@@ -561,23 +578,38 @@ class LocalDevelopmentBackend(MainSequenceClient):
             or evidence.provider_control.model.model != model
         ):
             raise BackendConflictError(
-                "Main Sequence provider evidence does not match the local selection"
+                f"{source} provider evidence does not match the local selection"
             )
         if (
             credential_uid is not None
             and evidence.credential.model_provider_credential_uid != credential_uid
         ):
-            raise BackendConflictError("Main Sequence changed the local session credential")
-        if (
+            raise BackendConflictError(f"{source} changed the local session credential")
+        if custom:
+            # A custom endpoint need not answer the configured Environment, or any, but the
+            # session's stays the same across its refreshes.
+            if (
+                credential_uid is not None
+                and evidence.credential.organization_environment_uid != organization_environment_uid
+            ):
+                raise BackendConflictError(f"{source} changed the local session Environment")
+        elif (
             environment_uid is not None
             and evidence.credential.organization_environment_uid != environment_uid
         ):
-            raise BackendConflictError("Main Sequence changed the local session Environment")
+            raise BackendConflictError(f"{source} changed the local session Environment")
         return evidence
 
     async def prefetch_provider(self) -> None:
-        """Prove local provider authorization during readiness without creating a session."""
+        """Prove local provider authorization during readiness without creating a session.
 
+        A custom hydrate endpoint answers only for a session, and there is none at readiness, so
+        nothing is hydrated: each session hydrates from the endpoint when it loads or changes
+        model, before its first turn.
+        """
+
+        if self._hydrates_from_custom_endpoint:
+            return
         await self._hydrate_evidence(holder_id=f"local-startup-{self.settings.workspace_digest}")
 
     @staticmethod
@@ -661,6 +693,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
             custom_id=custom_id,
             credential_uid=credential_uid,
             organization_environment_uid=environment_uid,
+            session_uid=session_uid,
         )
 
     async def get_session(self, session_uid: str) -> AgentSession:
@@ -696,6 +729,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
             custom_id=previous.custom_id if retained else custom_id,
             credential_uid=previous.model_provider_credential_uid if retained else None,
             organization_environment_uid=previous.organization_environment_uid,
+            session_uid=session_uid,
         )
 
         def operation() -> None:
@@ -1690,6 +1724,7 @@ class LocalDevelopmentBackend(MainSequenceClient):
             custom_id=custom_id,
             credential_uid=credential_uid,
             organization_environment_uid=environment_uid,
+            session_uid=session_uid,
         )
 
         def operation() -> TauRuntimeBootstrap:
