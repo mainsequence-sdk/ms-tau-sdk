@@ -1,5 +1,27 @@
 # Changelog
 
+## Unreleased
+
+- **Provider credentials can come from an application's own hydrate endpoint.** An application
+  that serves people the platform does not know, and keeps their model credentials itself, can
+  serve tdag-django's hydrate contract, and the runtime then hydrates every session's credential
+  from it and none from the platform.
+  `MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID` names a FastAPI release, in hosted and
+  in local mode: the runtime obtains a short-lived token for it through `resolve-runtime-access`,
+  with its own credential and no delegation, and posts tdag-django's body to
+  `{rpc_url}/api/v1/model-provider-credentials/hydrate/` with that token alone. In local mode,
+  `TAU_LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL` may instead name the developer's own service on a
+  loopback origin, which receives no credential of any kind. In local mode with either, every
+  hydration names its session in `agent_session_uid`, readiness hydrates nothing, and a session
+  hydrates from the endpoint when it loads or its model is selected, before its first turn. A
+  hosted session still bootstraps from the platform, whose credential is dropped unread. The
+  runtime checks the answer's shape, its provider control against the session's and that its
+  credential `uid` stays the same across refreshes; a `409` reports its `error_code` and truncated
+  `error_detail`. `/health` reports `provider_credential_source`. Unset, every request is
+  unchanged. See
+  [custom hydrate endpoints](docs/reference/settings.md#custom-provider-credential-hydrate-endpoints)
+  and [ADR 0027](docs/adrs/0027-custom-provider-credential-hydrate-endpoints.md).
+
 ## 2.0.30 — 2026-11-08
 
 - **Sessions may name the person they serve, and applications learn which session a tool call

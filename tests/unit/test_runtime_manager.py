@@ -1281,3 +1281,237 @@ async def test_a_turn_ended_together_with_its_request_still_reports_its_time_lim
     ]
     manager._runtimes.clear()
     await manager.aclose()
+
+
+# Custom provider credential hydrate endpoints (ADR 0027, amended 2026-11-10)
+
+HYDRATE_RELEASE_UID = "7d1c2f4e-0b6a-4f0e-9a51-3c2d8e9b1a77"
+BOOTSTRAP_SECRET = "sk-bootstrap-credential-never-used"
+
+
+def _release_manager(tmp_path, bootstrap):
+    manager, backend, providers = _manager_dependencies(tmp_path, [bootstrap])
+    manager.settings = TauSDKSettings(
+        _env_file=None,
+        runtime_credential_id="credential-id",
+        workspace=tmp_path,
+        startup_dependencies_enabled=False,
+        provider_credential_hydrate_release_uid=HYDRATE_RELEASE_UID,
+    )
+    return manager, backend, providers
+
+
+def _bound_bootstrap(session_uid):
+    """A bootstrap tdag-django binds to the session owner's platform credential."""
+
+    bootstrap = _bootstrap(session_uid)
+    return bootstrap.model_copy(
+        update={
+            "session": bootstrap.session.model_copy(
+                update={"model_provider_credential_uid": "platform-credential"}
+            ),
+            "provider_credentials": {
+                "test-provider": {
+                    "uid": "platform-credential",
+                    "credential_kind": "api_key",
+                    "credential": {"type": "api_key", "api_key": BOOTSTRAP_SECRET},
+                }
+            },
+        }
+    )
+
+
+def _release_evidence(control):
+    from ms_tau_sdk.backend.models import ProviderExecutionEvidence
+
+    return ProviderExecutionEvidence(
+        credential=ProviderCredential(
+            provider="test-provider",
+            model_provider_credential_uid="release-credential",
+            api_key="release-secret",
+        ),
+        provider_control=control,
+    )
+
+
+def _load_patches(coding_session):
+    return (
+        patch(
+            "ms_tau_sdk.runtime.manager.MainSequenceMCPClient.connect",
+            AsyncMock(return_value=_mcp_client()),
+        ),
+        patch("ms_tau_sdk.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
+        patch("ms_tau_sdk.runtime.manager.create_coding_tools", return_value=[]),
+        patch(
+            "ms_tau_sdk.runtime.manager.CodingSession.load",
+            AsyncMock(side_effect=lambda config: _load_coding_session(coding_session, config)),
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_hosted_session_runs_on_the_release_credential_never_the_bootstraps(tmp_path):
+    bootstrap = _bound_bootstrap("session-1")
+    manager, backend, providers = _release_manager(tmp_path, bootstrap)
+    backend.hydrate_provider_credential.return_value = _release_evidence(bootstrap.provider_control)
+    connect, mcp_tools, coding_tools, load = _load_patches(_coding_session())
+
+    with capture_logs() as lines, connect, mcp_tools, coding_tools, load:
+        await manager.get("session-1")
+
+    backend.provider_credential_from_hydration.assert_not_called()
+    backend.hydrate_provider_credential.assert_awaited_once_with(
+        "test-provider",
+        model="test-model",
+        session_uid="session-1",
+        holder_id=manager.holder_id,
+    )
+    [call] = providers.for_session_credential.call_args_list
+    session = call.args[0]
+    evidence = call.kwargs["evidence"]
+    # The platform binding names a credential the session does not run on.
+    assert session.uid == "session-1"
+    assert session.model_provider_credential_uid is None
+    assert evidence.credential.model_provider_credential_uid == "release-credential"
+    assert evidence.provider_control == bootstrap.provider_control
+    assert BOOTSTRAP_SECRET not in str(lines)
+    [loaded] = [line for line in lines if line["event"] == "runtime.session.load.completed"]
+    assert loaded["provider_credential_source"] == "release"
+    manager._runtimes.clear()
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "control",
+    [
+        {"provider": "other-provider"},
+        {"model": {"model": "other-model"}},
+        {"model": {"input": ["text", "image"]}},
+    ],
+)
+async def test_a_release_answer_for_another_projection_fails_the_load(tmp_path, control):
+    bootstrap = _bound_bootstrap("session-1")
+    manager, backend, providers = _release_manager(tmp_path, bootstrap)
+    projected = bootstrap.provider_control.model_dump()
+    projected.update({key: value for key, value in control.items() if key != "model"})
+    projected["model"].update(control.get("model", {}))
+    backend.hydrate_provider_credential.return_value = _release_evidence(
+        ProviderControl.model_validate(projected)
+    )
+    connect, mcp_tools, coding_tools, load = _load_patches(_coding_session())
+
+    with connect, mcp_tools, coding_tools, load, pytest.raises(BackendConflictError):
+        await manager.get("session-1")
+
+    providers.for_session_credential.assert_not_called()
+    backend.release_runtime_lease.assert_awaited_once()
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_hosted_release_hydration_failure_fails_the_load_without_a_value(tmp_path):
+    manager, backend, providers = _release_manager(tmp_path, _bound_bootstrap("session-1"))
+    backend.hydrate_provider_credential.side_effect = BackendConflictError(
+        "The provider credential hydrate release refused the hydration",
+        status_code=409,
+        detail={"error_code": "model_provider_credential_unavailable"},
+    )
+    connect, mcp_tools, coding_tools, load = _load_patches(_coding_session())
+
+    with connect, mcp_tools, coding_tools, load, pytest.raises(BackendConflictError):
+        await manager.get("session-1")
+
+    providers.for_session_credential.assert_not_called()
+    backend.provider_credential_from_hydration.assert_not_called()
+    backend.release_runtime_lease.assert_awaited_once()
+    await manager.aclose()
+
+
+def _local_endpoint_settings(tmp_path, **endpoint):
+    return TauSDKSettings(
+        _env_file=None,
+        workspace=tmp_path,
+        local_state_root=tmp_path / "state",
+        backend_url="http://backend.test",
+        auth_mode="jwt",
+        local_mode=True,
+        access_token="mainsequence-access-token",
+        refresh_token="mainsequence-refresh-token",
+        local_provider="openai",
+        local_model="gpt-5.4",
+        exclude_mainsequence_mcp=True,
+        **endpoint,
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("endpoint", "source"),
+    [
+        ({"local_provider_credential_hydrate_url": "http://127.0.0.1:8611"}, "local_address"),
+        ({"provider_credential_hydrate_release_uid": HYDRATE_RELEASE_UID}, "release"),
+    ],
+)
+async def test_local_readiness_is_ready_without_a_provider_credential(tmp_path, endpoint, source):
+    settings = _local_endpoint_settings(tmp_path, **endpoint)
+    services = Mock(spec=MainSequenceClient)
+    services.auth = Mock(prefetch=AsyncMock())
+    services.hydrate_local_provider_credential = AsyncMock()
+    services.aclose = AsyncMock()
+    manager = SessionRuntimeManager(
+        settings=settings,
+        backend=LocalDevelopmentBackend(settings, services),
+        providers=Mock(),
+    )
+
+    await manager.start()
+    snapshot = manager.snapshot()
+
+    services.hydrate_local_provider_credential.assert_not_awaited()
+    assert manager.deployment_ready
+    assert snapshot["startup_ready"] is True
+    assert snapshot["provider_control_ready"] is None
+    assert snapshot["provider_credential_source"] == source
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_local_readiness_without_an_endpoint_still_proves_provider_control(tmp_path):
+    from ms_tau_sdk.backend.models import ProviderExecutionEvidence
+
+    settings = _local_endpoint_settings(tmp_path)
+    services = Mock(spec=MainSequenceClient)
+    services.auth = Mock(prefetch=AsyncMock())
+    services.hydrate_local_provider_credential = AsyncMock(
+        return_value=ProviderExecutionEvidence(
+            credential=ProviderCredential(provider="openai", api_key="secret"),
+            provider_control=ProviderControl(
+                schema_version=1,
+                catalog_digest=f"sha256:{'0' * 64}",
+                provider="openai",
+                model={
+                    "model": "gpt-5.4",
+                    "api": "openai-responses",
+                    "input": ["text"],
+                    "reasoning": False,
+                    "thinking_levels": [],
+                },
+            ),
+        )
+    )
+    services.aclose = AsyncMock()
+    manager = SessionRuntimeManager(
+        settings=settings,
+        backend=LocalDevelopmentBackend(settings, services),
+        providers=Mock(),
+    )
+
+    await manager.start()
+    snapshot = manager.snapshot()
+
+    services.hydrate_local_provider_credential.assert_awaited_once()
+    assert "agent_session_uid" not in services.hydrate_local_provider_credential.await_args.kwargs
+    assert snapshot["provider_control_ready"] is True
+    assert snapshot["provider_credential_source"] == "mainsequence"
+    await manager.aclose()

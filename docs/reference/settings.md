@@ -180,6 +180,45 @@ or the model setting is absent, if only one token is set, or if no token is set 
 Sequence CLI is found. Managed startup fails if `MAINSEQUENCE_RUNTIME_CREDENTIAL_ID` or
 `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE` is absent.
 
+## Custom provider credential hydrate endpoints
+
+By default the platform, tdag-django, hydrates every provider credential. An application that keeps
+its own people's model credentials can serve the same hydrate contract itself, and the process then
+hydrates every session's credential from it, and none from the platform
+([ADR 0027](../adrs/0027-custom-provider-credential-hydrate-endpoints.md)).
+
+| Environment variable | Meaning |
+| --- | --- |
+| `MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID` | The UID of the FastAPI release that serves hydrate, in hosted and in local mode. Unset or empty means tdag-django. A value that is not a UID fails startup and names the variable. |
+| `TAU_LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL` | Local mode only. The origin of the developer's own hydrate service, on `127.0.0.1`, `::1` or `localhost`, for example `http://127.0.0.1:8611`. Unset or empty means tdag-django. |
+
+Set at most one of them. Both set, the local address without `TAU_LOCAL_MODE=true`, or a local
+address that is not an `http` or `https` origin on a loopback host (with an optional port, and no
+path, query, fragment or user name) fails startup. The error names the variable and never repeats
+its value.
+
+- **A release.** The runtime asks the platform for a short-lived token for the release with
+  `resolve-runtime-access`, with its own Main Sequence credential and no delegation (in local mode,
+  the developer's), and posts to `{rpc_url}/api/v1/model-provider-credentials/hydrate/` with that
+  token alone. The runtime's workload, or the developer, needs `resource-releases.invoke` on the
+  release. It keeps the token in memory until it nears expiry, gets a new one once on `401`, and
+  waits for a waking release up to `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS`.
+- **A local address.** The runtime posts to `{origin}/api/v1/model-provider-credentials/hydrate/`
+  with no `Authorization` header and no Main Sequence credential, caller assertion, lease token,
+  caller context or `X-MainSequence-*` header. Nothing leaves the machine.
+
+The body is the one tdag-django receives in the same mode. In local mode it also names
+`agent_session_uid`, the local session's canonical uid, which `GET /api/chat/session-model` reports
+as `sessionUid`, so that the endpoint answers the credential of the person that session serves.
+With a custom endpoint, local readiness hydrates nothing: each session hydrates when it loads or
+its model is selected, before its first turn. A hosted session still bootstraps from the platform,
+whose credential is dropped unread. The answer is tdag-django's: one credential for the selected
+provider with a stable `uid`, and the provider control of the selected model. A `409` reports its
+`error_code` and its `error_detail` truncated to 500 characters; a `403`, another error status or a
+malformed answer fails the load or the turn without a value. The backend timeouts and
+`MAINSEQUENCE_TAU_BACKEND_MAX_RESPONSE_BYTES` apply. `/health` reports where credentials come from
+in `provider_credential_source`: `mainsequence`, `release` or `local_address`.
+
 ## Process and workspace
 
 | Environment variable | Default |

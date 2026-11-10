@@ -5,10 +5,12 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+import uuid
 from functools import lru_cache
 from hashlib import sha256
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, DotEnvSettingsSource, SettingsConfigDict
@@ -30,6 +32,13 @@ RESOURCE_RELEASE_UID_ENV = "APP_NAME"
 FASTAPI_PUBLIC_BASE_URL_ENV = "FASTAPI_PUBLIC_BASE_URL"
 ORGANIZATION_ENVIRONMENT_UID_ENV = "MAINSEQUENCE_ORGANIZATION_ENVIRONMENT_UID"
 A2A_MESSAGE_LIMIT_ENV = "MAINSEQUENCE_A2A_MESSAGE_LIMIT_SECONDS"
+# The two custom provider credential hydrate endpoints (ADR 0027): a FastAPI release, in hosted and
+# in local mode, or a loopback address of the developer's own, in local mode only.
+PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV = (
+    "MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID"
+)
+LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL_ENV = "TAU_LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL"
+LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 HOSTED_SIGNAL_ENVS = (
     RESOURCE_RELEASE_UID_ENV,
     FASTAPI_PUBLIC_BASE_URL_ENV,
@@ -38,6 +47,41 @@ HOSTED_SIGNAL_ENVS = (
 )
 LocalAuthSource = Literal["environment", "env_file", "cli"]
 RequestIdentityMode = Literal["assertion", "local"]
+# Where the process hydrates provider credentials: tdag-django, a release, or a loopback address.
+ProviderCredentialSource = Literal["mainsequence", "release", "local_address"]
+
+
+def _loopback_origin(value: str) -> str:
+    """Return the origin a local hydrate address names, or raise naming the setting.
+
+    The value is an ``http`` or ``https`` origin on a loopback host (``127.0.0.1``, ``::1`` or
+    ``localhost``) with an optional port, and no path other than ``/``, query, fragment or user
+    information. An error never repeats the value, which could hold a password.
+    """
+
+    def invalid(reason: str) -> ValueError:
+        return ValueError(f"{LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL_ENV} {reason}")
+
+    if any(character.isspace() for character in value) or "?" in value or "#" in value:
+        raise invalid("must be an origin without whitespace, query or fragment")
+    try:
+        parts = urlsplit(value)
+        port = parts.port
+    except ValueError:
+        raise invalid("is not a valid http or https origin") from None
+    if parts.scheme.lower() not in {"http", "https"}:
+        raise invalid("must use http or https")
+    if "@" in parts.netloc or parts.username is not None or parts.password is not None:
+        raise invalid("must not carry a user name or password")
+    host = (parts.hostname or "").lower()
+    if host not in LOOPBACK_HOSTS:
+        raise invalid("must name a loopback host: 127.0.0.1, ::1 or localhost")
+    if port == 0:
+        raise invalid("must name a port between 1 and 65535")
+    if parts.path not in {"", "/"}:
+        raise invalid("must be an origin, with no path")
+    netloc = f"[{host}]" if ":" in host else host
+    return f"{parts.scheme.lower()}://{netloc}" + (f":{port}" if port is not None else "")
 
 
 def _default_state_root() -> Path:
@@ -161,6 +205,18 @@ class TauSDKSettings(BaseSettings):
     subowner_baggage_keys: tuple[str, str] | None = Field(
         default=None,
         validation_alias="TAU_SUBOWNER_BAGGAGE_KEYS",
+    )
+    # The FastAPI release that serves provider credential hydration instead of tdag-django, in
+    # hosted and in local mode (ADR 0027). Unset means tdag-django.
+    provider_credential_hydrate_release_uid: str | None = Field(
+        default=None,
+        validation_alias=PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV,
+    )
+    # Local mode only: the developer's own loopback service that serves provider credential
+    # hydration instead of tdag-django (ADR 0027, amended 2026-11-10). Kept as its origin.
+    local_provider_credential_hydrate_url: str | None = Field(
+        default=None,
+        validation_alias=LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL_ENV,
     )
     local_mode: bool = Field(default=False, validation_alias="TAU_LOCAL_MODE")
     exclude_base_tools: bool = Field(default=False, validation_alias="TAU_EXCLUDE_BASE_TOOLS")
@@ -459,6 +515,33 @@ class TauSDKSettings(BaseSettings):
         # Only an empty value counts as unset. Any other value must be a number of seconds.
         return None if value == "" else value
 
+    @field_validator("provider_credential_hydrate_release_uid", mode="before")
+    @classmethod
+    def validate_hydrate_release_uid(cls, value: object) -> object:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        try:
+            canonical = str(uuid.UUID(text))
+        except ValueError:
+            canonical = ""
+        if canonical != text.lower():
+            raise ValueError(
+                f"{PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV} must be the UID of a FastAPI "
+                "release, such as 7d1c2f4e-0b6a-4f0e-9a51-3c2d8e9b1a77"
+            )
+        return canonical
+
+    @field_validator("local_provider_credential_hydrate_url", mode="before")
+    @classmethod
+    def validate_local_hydrate_url(cls, value: object) -> object:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return _loopback_origin(text) if text else None
+
     @field_validator("local_state_root", "state_root")
     @classmethod
     def normalize_state_roots(cls, value: Path) -> Path:
@@ -473,6 +556,18 @@ class TauSDKSettings(BaseSettings):
             )
         if not self.log_machine_sink and not self.log_human_sink:
             raise ValueError("At least one Main Sequence TAU SDK logging sink must be enabled")
+        if self.local_provider_credential_hydrate_url is not None:
+            if not self.local_mode:
+                raise ValueError(
+                    f"{LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL_ENV} is valid only with "
+                    "TAU_LOCAL_MODE=true"
+                )
+            if self.provider_credential_hydrate_release_uid is not None:
+                raise ValueError(
+                    f"{LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL_ENV} and "
+                    f"{PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV} both name a provider "
+                    "credential hydrate endpoint. Set one of them"
+                )
         if self.local_mode:
             if self.auth_mode != "jwt":
                 raise ValueError("TAU_LOCAL_MODE requires MAINSEQUENCE_AUTH_MODE=jwt")
@@ -605,6 +700,21 @@ class TauSDKSettings(BaseSettings):
             )
         )
         return "assertion" if hosted else "local"
+
+    @property
+    def provider_credential_source(self) -> ProviderCredentialSource:
+        """Name where provider credentials are hydrated from, never an address or a value.
+
+        ``mainsequence`` is tdag-django, the platform. ``release`` is the FastAPI release
+        ``MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID`` names. ``local_address`` is the
+        loopback service ``TAU_LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL`` names, in local mode.
+        """
+
+        if self.provider_credential_hydrate_release_uid is not None:
+            return "release"
+        if self.local_provider_credential_hydrate_url is not None:
+            return "local_address"
+        return "mainsequence"
 
     @property
     def workspace_digest(self) -> str:

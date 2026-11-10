@@ -623,6 +623,12 @@ credentials from: `cli` for the Main Sequence CLI session, `environment` for a t
 to the process, or `env_file` for a pair read from the project `.env`. It is a name, never a
 value, and it is `null` in managed mode.
 
+`provider_credential_source` names where provider credentials are hydrated from: `mainsequence`
+for the platform, `release` for a custom hydrate release, or `local_address` for a local hydrate
+address ([custom hydrate endpoints](./settings.md#custom-provider-credential-hydrate-endpoints)).
+With a custom endpoint, local readiness hydrates nothing and `provider_control_ready` is `null`;
+each session hydrates from the endpoint before its first turn.
+
 ## Failures
 
 SDK errors use a stable JSON envelope with `ok=false`, an error code, message, and safe detail.

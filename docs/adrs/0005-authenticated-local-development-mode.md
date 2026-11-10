@@ -46,6 +46,12 @@ credential only with the projected workload identity token in
 `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE`; the runtime credential secret is removed. Local mode is
 unchanged.
 
+Amended: 2026-11-10 by
+[ADR 0027](./0027-custom-provider-credential-hydrate-endpoints.md) — provider credential hydration
+is Main Sequence's only while no custom hydrate endpoint is configured: a FastAPI release, or, in
+local mode only, the developer's own service on a loopback address. With one, local readiness
+hydrates nothing and every local hydration names the local session it is for.
+
 Amends, when accepted:
 
 - [ADR 0002: Runtime and protocol contracts](./0002-runtime-and-protocol-contracts.md); and

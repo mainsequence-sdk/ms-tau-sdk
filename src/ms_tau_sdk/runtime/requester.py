@@ -16,7 +16,6 @@ credential or an application token to the tool, and a turn's delegation ends wit
 from __future__ import annotations
 
 import asyncio
-import math
 import time
 import uuid
 from collections.abc import Awaitable, Callable, Iterable, Mapping
@@ -28,9 +27,10 @@ from typing import Any, Literal, Protocol
 import httpx
 import structlog
 
-from ms_tau_sdk.backend.auth import AccessToken, _jwt_expiry
 from ms_tau_sdk.backend.client import LeaseProof, answer_without_request_credentials
 from ms_tau_sdk.backend.models import ReleaseRuntimeAccess
+from ms_tau_sdk.backend.release_access import ReleaseAccess as _ReleaseAccess
+from ms_tau_sdk.backend.release_access import release_access_from_answer as _token_access
 from ms_tau_sdk.backend.team_memberships import member_team_uids
 from ms_tau_sdk.errors import (
     ApplicationReadinessTimeoutError,
@@ -146,12 +146,6 @@ class _TurnApplicationAccess:
     token: str = field(repr=False)
     renew: Callable[[], Awaitable[str]] = field(repr=False)
     session_uid: str | None = None
-
-
-@dataclass(slots=True)
-class _ReleaseAccess:
-    rpc_url: httpx.URL
-    token: AccessToken
 
 
 class TurnRequesterBinding:
@@ -769,55 +763,6 @@ def _refuse_ended_binding(response: httpx.Response) -> None:
     except ValueError:
         return
     _refuse_ended_binding_detail(detail)
-
-
-def _token_access(answer: ReleaseRuntimeAccess) -> _ReleaseAccess:
-    grant = answer.access
-    if grant is None:
-        state = answer.runtime_access.get("state")
-        if state == "waking":
-            retry_ms = answer.runtime_access.get("retry_after_ms")
-            delay = 2.0
-            if isinstance(retry_ms, int | float) and not isinstance(retry_ms, bool):
-                try:
-                    seconds = float(retry_ms) / 1000
-                except OverflowError:
-                    seconds = float("inf")
-                if math.isfinite(seconds) and seconds >= 0:
-                    delay = max(seconds, 0.1)
-            raise ApplicationWakingError(retry_after_seconds=delay)
-        raise BackendError(
-            f"Release {answer.resource_release_uid} is not ready to be called"
-            + (f" (runtime access: {state})" if isinstance(state, str) else ""),
-            detail={"runtime_access_state": state if isinstance(state, str) else None},
-        )
-    token = grant.token.get_secret_value() if grant.token is not None else ""
-    if grant.mode != "token" or not token or not grant.rpc_url:
-        raise BackendError(
-            f"Release {answer.resource_release_uid} offers no token access to call it"
-        )
-    try:
-        rpc_url: httpx.URL | None = httpx.URL(grant.rpc_url)
-    except httpx.InvalidURL:
-        rpc_url = None
-    if (
-        rpc_url is None
-        or rpc_url.scheme not in {"https", "http"}
-        or not rpc_url.host
-        or rpc_url.userinfo
-    ):
-        raise BackendError("Backend release access names an invalid RPC URL")
-    expires_at = (
-        grant.expires_at.timestamp() if grant.expires_at is not None else _jwt_expiry(token)
-    )
-    return _ReleaseAccess(
-        rpc_url=rpc_url,
-        token=AccessToken(
-            value=token,
-            token_type="Bearer",
-            expires_at=float(expires_at) if expires_at is not None else None,
-        ),
-    )
 
 
 __all__ = [

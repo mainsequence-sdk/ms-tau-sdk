@@ -63,6 +63,20 @@ def no_hosted_environment(monkeypatch) -> None:
         monkeypatch.delenv(name, raising=False)
 
 
+# A custom provider credential hydrate endpoint moves every hydration off tdag-django (ADR 0027),
+# so no test inherits one from the environment that runs it.
+CUSTOM_HYDRATE_ENVIRONMENT = (
+    "MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID",
+    "TAU_LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL",
+)
+
+
+@pytest.fixture(autouse=True)
+def no_custom_hydrate_endpoint(monkeypatch) -> None:
+    for name in CUSTOM_HYDRATE_ENVIRONMENT:
+        monkeypatch.delenv(name, raising=False)
+
+
 @pytest.fixture(autouse=True)
 def isolated_tau_state_root(monkeypatch, tmp_path_factory) -> None:
     """Keep Tau runtime state out of the package tree and the developer's home.

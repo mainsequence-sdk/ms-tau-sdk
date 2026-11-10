@@ -37,6 +37,8 @@ from ms_tau_sdk.backend.client import LeaseProof, MainSequenceClient
 from ms_tau_sdk.backend.mcp import MainSequenceMCPClient
 from ms_tau_sdk.backend.models import (
     AgentRuntimeActivity,
+    AgentSession,
+    ProviderControl,
     ProviderExecutionEvidence,
     RuntimeActivityPatch,
     RuntimeLeaseReleaseRequest,
@@ -307,8 +309,13 @@ class SessionRuntimeManager:
             self._auth_ready = True
             prefetch_provider = getattr(self.backend, "prefetch_provider", None)
             if prefetch_provider is not None:
+                # With a custom hydrate endpoint there is no session to hydrate for at readiness:
+                # the process is ready without a provider credential, and each session hydrates
+                # from the endpoint before its first turn (ADR 0027, amended 2026-11-10).
                 await prefetch_provider()
-                self._provider_control_ready = True
+                self._provider_control_ready = (
+                    self.settings.provider_credential_source == "mainsequence"
+                )
             if not self.settings.exclude_mainsequence_mcp:
                 await self._get_mcp_client()
         self._startup_ready = True
@@ -356,8 +363,12 @@ class SessionRuntimeManager:
             "mainsequence_auth_ready": self._auth_ready,
             "mainsequence_auth_source": self._auth_source,
             "provider_control_ready": (
-                self._provider_control_ready if self.settings.local_mode else None
+                self._provider_control_ready
+                if self.settings.local_mode
+                and self.settings.provider_credential_source == "mainsequence"
+                else None
             ),
+            "provider_credential_source": self.settings.provider_credential_source,
             "mcp_connected": self._mcp_client is not None,
             "mcp_tool_count": len(self._mcp_client.tools) if self._mcp_client else 0,
             "mcp_resource_count": len(self._mcp_client.resources) if self._mcp_client else 0,
@@ -1061,6 +1072,14 @@ class SessionRuntimeManager:
                 "Backend does not advertise the complete Tau bootstrap v2 contract: "
                 + ", ".join(sorted(missing_capabilities))
             )
+        hydrates_from_release = (
+            not self.settings.local_mode and self.settings.provider_credential_source == "release"
+        )
+        if hydrates_from_release:
+            # The bootstrap still answers the session owner's platform credential, but the
+            # session never runs on it: it is dropped here, before anything reads or logs it
+            # (ADR 0027, section 7).
+            bootstrap = bootstrap.model_copy(update={"provider_credentials": {}})
         session = bootstrap.session
         session_extra = session.model_extra or {}
         if session.harness != "tau":
@@ -1140,17 +1159,24 @@ class SessionRuntimeManager:
                 initial_next_sequence=initial_next_sequence,
             )
             provider_name = session.active_provider or ""
-            credential = self.backend.provider_credential_from_hydration(
-                provider_name,
-                bootstrap.provider_credentials,
-            )
-            provider_runtime = self.providers.for_session_credential(
-                session,
-                holder_id=self.holder_id,
-                evidence=ProviderExecutionEvidence(
-                    credential=credential,
+            if hydrates_from_release:
+                provider_session, evidence = await self._hydrate_from_release(
+                    session,
                     provider_control=bootstrap.provider_control,
-                ),
+                )
+            else:
+                provider_session = session
+                evidence = ProviderExecutionEvidence(
+                    credential=self.backend.provider_credential_from_hydration(
+                        provider_name,
+                        bootstrap.provider_credentials,
+                    ),
+                    provider_control=bootstrap.provider_control,
+                )
+            provider_runtime = self.providers.for_session_credential(
+                provider_session,
+                holder_id=self.holder_id,
+                evidence=evidence,
             )
             mcp_client = (
                 None if self.settings.exclude_mainsequence_mcp else await self._get_mcp_client()
@@ -1328,6 +1354,7 @@ class SessionRuntimeManager:
                 extension_diagnostic_count=(project_extension_state.extension_diagnostic_count),
                 extension_error_count=project_extension_state.extension_error_count,
                 tool_catalog_digest=project_extension_state.tool_catalog_digest,
+                provider_credential_source=self.settings.provider_credential_source,
                 contract="tau-bootstrap-v2",
                 duration_ms=round((time.monotonic() - load_started_at) * 1000, 3),
             )
@@ -1343,6 +1370,48 @@ class SessionRuntimeManager:
                     ),
                 )
             raise
+
+    async def _hydrate_from_release(
+        self,
+        session: AgentSession,
+        *,
+        provider_control: ProviderControl,
+    ) -> tuple[AgentSession, ProviderExecutionEvidence]:
+        """Hydrate a hosted session from the custom hydrate release before its first turn.
+
+        The release must answer the provider control the bootstrap projected for the session. The
+        session's platform binding names the owner's platform credential, which the session does
+        not run on, so the provider is built from a copy without it; the release's credential uid
+        must instead stay the same across refreshes (ADR 0027, section 7).
+        """
+
+        provider_name = session.active_provider
+        model = session.active_model
+        if not provider_name or not model:
+            raise ConfigurationError(
+                f"Session {session.uid} does not have an active provider and model"
+            )
+        evidence = await self.backend.hydrate_provider_credential(
+            provider_name,
+            model=model,
+            session_uid=session.uid,
+            holder_id=self.holder_id,
+        )
+        if (
+            evidence.provider_control.provider != provider_control.provider
+            or evidence.provider_control.model != provider_control.model
+        ):
+            raise BackendConflictError(
+                "The provider credential hydrate release's provider control does not match "
+                "the session's"
+            )
+        return (
+            session.model_copy(update={"model_provider_credential_uid": None}),
+            ProviderExecutionEvidence(
+                credential=evidence.credential,
+                provider_control=provider_control,
+            ),
+        )
 
     @staticmethod
     def _log_project_extension_diagnostics(
