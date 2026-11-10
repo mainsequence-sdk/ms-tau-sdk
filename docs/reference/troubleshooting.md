@@ -244,6 +244,24 @@ The platform can publish a provider that the runtime's Tau release does not know
   an organization_custom credential nor its catalog definition` means the platform the runtime
   talks to does not offer that provider yet. Select another provider there.
 
+## A model is not in this runtime's Tau catalog
+
+The platform, or a custom hydrate endpoint, can offer a model that the runtime's Tau release does
+not list for a provider it knows, such as a Codex model newer than the pinned tau-ai release. From
+ms-tau-sdk 2.0.32 the runtime runs it from the hydrated provider control, on the provider's own
+transport and address, with the inputs and thinking levels the provider control projects
+([ADR 0029](../adrs/0029-models-tau-does-not-list-run-from-the-provider-control.md)). The load
+logs `providers.model_outside_tau_catalog` with the provider and the model.
+
+- A runtime on 2.0.31 or earlier refuses it with `Model is not configured for provider <name>:
+  <model>`. Update the Agent's runtime to 2.0.32 or later; until then, select a model the release
+  lists.
+- The projected thinking levels reach the provider as they are. A level the provider rejects fails
+  the turn with the provider's error, not the load; the platform or the endpoint should project
+  the levels the model accepts.
+- The context window is what the provider discovers. The Codex transport discovers it from the
+  account's own model list; the other transports run at Tau's default of 128,000 tokens.
+
 ## Reset or inspect local conversations
 
 Health reports the workspace digest. Local state lives under

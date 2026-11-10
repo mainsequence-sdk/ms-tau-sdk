@@ -37,3 +37,5 @@ These records are the normative decisions for Main Sequence TAU SDK:
   (Accepted; implemented)
 - [ADR 0028: Session subowners in the runtime](./0028-session-subowners-in-the-runtime.md)
   (Accepted; implemented in the SDK, platform pending)
+- [ADR 0029: Models Tau does not list run from the provider control](./0029-models-tau-does-not-list-run-from-the-provider-control.md)
+  (Accepted; implemented)

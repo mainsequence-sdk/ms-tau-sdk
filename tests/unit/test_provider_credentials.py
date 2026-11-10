@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock
 import httpx
 import pytest
 from pydantic import ValidationError
+from structlog.testing import capture_logs
 from tau_agent import ImageContent, TextContent, UserMessage
 from tau_ai import (
     AnthropicProvider,
@@ -516,15 +517,6 @@ def test_factory_rejects_all_noncanonical_execution_evidence():
             provider_name="openai",
             model="gpt-5.4",
             thinking_level="impossible",
-        )
-
-    unknown_model = _provider_control("openai", "gpt-5.4")
-    unknown_model.model.model = "unknown-model"
-    with pytest.raises(ConfigurationError, match="not configured"):
-        factory.validate_execution(
-            unknown_model,
-            provider_name="openai",
-            model="unknown-model",
         )
 
     contradictory_reasoning = _provider_control("openai", "gpt-4o")
@@ -1311,3 +1303,214 @@ async def test_factory_keeps_the_image_placeholder_for_a_text_only_model(
 
     assert f"see\n{NON_VISION_USER_IMAGE_PLACEHOLDER}" in nodes
     assert not any(isinstance(node, str) and "aW1hZ2U=" in node for node in nodes)
+
+
+def _unlisted_codex_control(
+    model: str = "gpt-6.1-sol",
+    *,
+    api: str = "openai-codex-responses",
+    inputs: list[str] | None = None,
+    reasoning: bool = True,
+    thinking_levels: list[str] | None = None,
+) -> ProviderControl:
+    """A provider control for a Codex model this Tau release does not list (issue #134)."""
+    codex = next(
+        provider for provider in BUILTIN_PROVIDER_CATALOG if provider.name == "openai-codex"
+    )
+    assert model not in codex.models
+    return ProviderControl(
+        schema_version=1,
+        catalog_digest=f"sha256:{'0' * 64}",
+        provider="openai-codex",
+        model={
+            "model": model,
+            "api": api,
+            "input": inputs if inputs is not None else ["text", "image"],
+            "reasoning": reasoning,
+            "thinking_levels": (
+                thinking_levels
+                if thinking_levels is not None
+                else ["low", "medium", "high", "xhigh"]
+            ),
+        },
+    )
+
+
+def _codex_credential() -> ProviderCredential:
+    return ProviderCredential(
+        provider="openai-codex",
+        credential_kind="oauth",
+        access_token="access-token",
+        account_id="account-id",
+    )
+
+
+@pytest.mark.asyncio
+async def test_factory_runs_a_model_tau_does_not_list_from_the_provider_control():
+    # Issue #134 / ADR 0029: this Tau lists no gpt-6 Codex model; the provider control does.
+    factory = ProviderFactory(backend=None)  # type: ignore[arg-type]
+    control = _unlisted_codex_control()
+
+    def run(thinking_level: str | None = None, media_types: set[str] | None = None) -> str:
+        return factory.validate_execution(
+            control,
+            provider_name="openai-codex",
+            model="gpt-6.1-sol",
+            thinking_level=thinking_level,
+            media_types=media_types,
+        )
+
+    assert run() == "medium"
+    assert run("xhigh") == "xhigh"
+    # A level the projection lacks falls back as it does for a provider Tau lacks.
+    assert run("max") == "medium"
+    assert run("high", {"image/png"}) == "high"
+    factory.validate_input_media(control, media_types={"image/png"})
+
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return _fake_provider_stream(request)
+
+    provider = factory.build(
+        _codex_credential(),
+        provider_control=control,
+        model="gpt-6.1-sol",
+        thinking_level=run("xhigh"),
+    )
+    assert isinstance(provider, OpenAICodexProvider)
+    assert provider._config.base_url == PROVIDER_DEFINITIONS["openai-codex"].base_url
+    assert provider._config.reasoning_effort == "xhigh"
+    assert provider._config.supports_images is True
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider._client = client
+        events = [
+            event
+            async for event in provider.stream_response(
+                model="gpt-6.1-sol",
+                system="system",
+                messages=[UserMessage(content="hello")],
+                tools=[],
+            )
+        ]
+
+    assert events[-1].type == "done"
+    [request] = requests
+    payload = json.loads(request.content)
+    assert str(request.url).startswith("https://chatgpt.com/backend-api/")
+    assert payload["model"] == "gpt-6.1-sol"
+    assert payload["reasoning"]["effort"] == "xhigh"
+
+
+def test_factory_still_refuses_contradictions_for_a_model_tau_does_not_list():
+    factory = ProviderFactory(backend=None)  # type: ignore[arg-type]
+
+    def validate(
+        control: ProviderControl,
+        thinking_level: str | None = None,
+        media_types: set[str] | None = None,
+    ) -> str:
+        return factory.validate_execution(
+            control,
+            provider_name=control.provider,
+            model=control.model.model,
+            thinking_level=thinking_level,
+            media_types=media_types,
+        )
+
+    with pytest.raises(ConfigurationError, match="contradictory Tau API transport"):
+        validate(_unlisted_codex_control(api="openai-responses"))
+    with pytest.raises(ConfigurationError, match="input capabilities are invalid for a model"):
+        validate(_unlisted_codex_control(inputs=["text", "audio"]))
+    with pytest.raises(ConfigurationError, match="input capabilities are invalid for a model"):
+        validate(_unlisted_codex_control(inputs=[]))
+    with pytest.raises(ConfigurationError, match="contradict the reasoning capability of a model"):
+        validate(_unlisted_codex_control(reasoning=False, thinking_levels=["low"]))
+    text_only = _unlisted_codex_control(inputs=["text"])
+    with pytest.raises(ConfigurationError, match="not enabled for image input"):
+        validate(text_only, media_types={"image/png"})
+    with pytest.raises(ConfigurationError, match="not enabled for image input"):
+        factory.validate_input_media(text_only, media_types={"image/png"})
+
+    # A model projected with reasoning but no levels runs without a reasoning parameter.
+    no_levels = _unlisted_codex_control(thinking_levels=[])
+    assert validate(no_levels, thinking_level="high") == "medium"
+    provider = factory.build(
+        _codex_credential(),
+        provider_control=no_levels,
+        model="gpt-6.1-sol",
+        thinking_level="medium",
+    )
+    assert isinstance(provider, OpenAICodexProvider)
+    assert provider._config.reasoning_effort is None
+
+
+def test_factory_runs_an_unlisted_model_of_an_openai_compatible_provider():
+    factory = ProviderFactory(backend=None)  # type: ignore[arg-type]
+    openrouter = next(
+        provider for provider in BUILTIN_PROVIDER_CATALOG if provider.name == "openrouter"
+    )
+    model = "thedrummer/rocinante-12b"
+    assert model not in openrouter.models
+    control = _custom_provider_control("openrouter", model, api="openai-completions")
+
+    assert factory.validate_execution(control, provider_name="openrouter", model=model) == "medium"
+    provider = factory.build(
+        ProviderCredential(provider="openrouter", api_key="api-key"),
+        provider_control=control,
+        model=model,
+        thinking_level="medium",
+    )
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider._config.base_url == openrouter.base_url
+    assert provider._config.reasoning_effort is None
+
+    with pytest.raises(ConfigurationError, match="contradictory Tau API transport"):
+        factory.validate_execution(
+            _custom_provider_control("openrouter", model, api="openai-responses"),
+            provider_name="openrouter",
+            model=model,
+        )
+
+
+def test_for_session_credential_logs_a_model_outside_tau_catalog_once():
+    factory = ProviderFactory(backend=AsyncMock())
+
+    def session(model: str) -> AgentSession:
+        return AgentSession(
+            uid="session-1",
+            harness="tau",
+            harness_protocol="tau-session-v1",
+            harness_version="0.4.2",
+            active_provider="openai-codex",
+            active_model=model,
+            created_by_user_uid="user-1",
+        )
+
+    with capture_logs() as logs:
+        runtime = factory.for_session_credential(
+            session("gpt-6.1-sol"),
+            holder_id="holder-1",
+            evidence=ProviderExecutionEvidence(
+                credential=_codex_credential(),
+                provider_control=_unlisted_codex_control(),
+            ),
+        )
+    [event] = [log for log in logs if log["event"] == "providers.model_outside_tau_catalog"]
+    assert runtime.thinking_level == "medium"
+    assert event["provider"] == "openai-codex"
+    assert event["model"] == "gpt-6.1-sol"
+    assert event["session_uid"] == "session-1"
+    assert "access-token" not in str(event) and "account-id" not in str(event)
+
+    with capture_logs() as logs:
+        factory.for_session_credential(
+            session("gpt-5.5"),
+            holder_id="holder-1",
+            evidence=ProviderExecutionEvidence(
+                credential=_codex_credential(),
+                provider_control=_provider_control("openai-codex", "gpt-5.5"),
+            ),
+        )
+    assert not [log for log in logs if log["event"] == "providers.model_outside_tau_catalog"]

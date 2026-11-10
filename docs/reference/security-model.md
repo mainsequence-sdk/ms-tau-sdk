@@ -312,6 +312,12 @@ Organization admin can accept that risk by enabling requester access.
   `http` or `https` URL, that carries a user name, password, query or fragment, or that names
   `localhost`, a cloud metadata host, or a loopback, link-local, multicast, reserved or unspecified
   IP address.
+- **Where requests for a model outside Tau's catalog go.** A model that the runtime's Tau release
+  does not list, of a provider it knows, runs on that provider's own Tau transport and address,
+  from the provider control the platform or the custom endpoint hydrated: the projection decides
+  the model's inputs and thinking levels, as it does for a provider Tau lacks. The credential's
+  own `base_url` and headers apply as they do for a listed model
+  ([ADR 0029](../adrs/0029-models-tau-does-not-list-run-from-the-provider-control.md)).
 
 ## What reaches the model
 

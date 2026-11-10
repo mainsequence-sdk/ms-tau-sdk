@@ -60,4 +60,5 @@ def test_active_adr_index_lists_the_complete_sdk_decision_set() -> None:
         "0026-per-agent-runtime-resources-from-the-workflow-declaration.md",
         "0027-custom-provider-credential-hydrate-endpoints.md",
         "0028-session-subowners-in-the-runtime.md",
+        "0029-models-tau-does-not-list-run-from-the-provider-control.md",
     }

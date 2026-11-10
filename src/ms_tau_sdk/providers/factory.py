@@ -171,6 +171,62 @@ class ProviderFactory:
             )
         )
 
+    @staticmethod
+    def model_outside_tau_catalog(provider_name: str, model: str) -> bool:
+        """Whether this runtime's Tau catalog lists neither the provider nor the model."""
+        provider = CATALOG_BY_NAME.get(provider_name)
+        return provider is None or model not in provider.models
+
+    def _validate_projected_execution(
+        self,
+        provider_control: ProviderControl,
+        *,
+        provider_name: str,
+        model: str,
+        thinking_level: str | None,
+        normalized_thinking: ThinkingLevel,
+        media_types: set[str] | None,
+        scope: str,
+    ) -> ThinkingLevel:
+        """Validate a model Tau has no metadata for from its provider control alone.
+
+        A provider this Tau does not know, and a model this Tau does not list of a provider it
+        knows (ADR 0029), run from the platform's projection: the inputs it projects, bounded by
+        what every Tau transport carries, and the thinking levels it projects. ``scope`` names
+        which of the two a refusal is about.
+        """
+        projected_inputs = set(provider_control.model.input)
+        if not projected_inputs or not projected_inputs.issubset(CUSTOM_INPUT_KINDS):
+            raise ConfigurationError(
+                f"Platform provider-control input capabilities are invalid for {scope}"
+            )
+        projected_thinking = set(provider_control.model.thinking_levels)
+        if not provider_control.model.reasoning and projected_thinking:
+            raise ConfigurationError(
+                "Platform provider-control thinking levels contradict the reasoning "
+                f"capability of {scope}"
+            )
+        self.validate_input_media(
+            provider_control,
+            media_types=media_types or set(),
+        )
+        if thinking_level and normalized_thinking in projected_thinking:
+            return normalized_thinking
+        if not projected_thinking or not provider_control.model.reasoning:
+            default = DEFAULT_THINKING_LEVEL
+        elif DEFAULT_THINKING_LEVEL in projected_thinking:
+            default = DEFAULT_THINKING_LEVEL
+        elif "off" in projected_thinking:
+            default = "off"
+        else:
+            default = provider_control.model.thinking_levels[0]
+        return _fall_back(
+            default,
+            selected=normalized_thinking if thinking_level else None,
+            provider_name=provider_name,
+            model=model,
+        )
+
     def validate_execution(
         self,
         provider_control: ProviderControl,
@@ -200,41 +256,14 @@ class ProviderFactory:
                     f"Provider {provider_name} is not in this runtime's Tau catalog and uses "
                     f"unsupported Tau API transport {projected_api}"
                 )
-            projected_inputs = set(provider_control.model.input)
-            if not projected_inputs or not projected_inputs.issubset(CUSTOM_INPUT_KINDS):
-                raise ConfigurationError(
-                    "Platform provider-control input capabilities are invalid for a provider "
-                    "not in this runtime's Tau catalog"
-                )
-            projected_thinking = set(provider_control.model.thinking_levels)
-            if not provider_control.model.reasoning and projected_thinking:
-                raise ConfigurationError(
-                    "Platform provider-control thinking levels contradict the reasoning "
-                    "capability of a model not in this runtime's Tau catalog"
-                )
-            self.validate_input_media(
+            return self._validate_projected_execution(
                 provider_control,
-                media_types=media_types or set(),
-            )
-            if thinking_level and normalized_thinking in projected_thinking:
-                return normalized_thinking
-            if not projected_thinking or not provider_control.model.reasoning:
-                default = DEFAULT_THINKING_LEVEL
-            elif DEFAULT_THINKING_LEVEL in projected_thinking:
-                default = DEFAULT_THINKING_LEVEL
-            elif "off" in projected_thinking:
-                default = "off"
-            else:
-                default = provider_control.model.thinking_levels[0]
-            return _fall_back(
-                default,
-                selected=normalized_thinking if thinking_level else None,
                 provider_name=provider_name,
                 model=model,
-            )
-        if model not in provider.models:
-            raise ConfigurationError(
-                f"Model is not configured for provider {provider_name}: {model}"
+                thinking_level=thinking_level,
+                normalized_thinking=normalized_thinking,
+                media_types=media_types,
+                scope="a provider not in this runtime's Tau catalog",
             )
         metadata = provider.model_metadata.get(model)
         tau_api = (
@@ -249,6 +278,19 @@ class ProviderFactory:
             raise ConfigurationError(
                 f"Provider {provider_name} uses unsupported or contradictory "
                 f"Tau API transport {projected_api}"
+            )
+        if model not in provider.models:
+            # A model this Tau does not list, of a provider it knows, runs on the provider's own
+            # transport from the provider control (ADR 0029): Tau has no metadata to bound the
+            # projection, so the projection is the authority, as for a provider Tau lacks.
+            return self._validate_projected_execution(
+                provider_control,
+                provider_name=provider_name,
+                model=model,
+                thinking_level=thinking_level,
+                normalized_thinking=normalized_thinking,
+                media_types=media_types,
+                scope="a model not in this runtime's Tau catalog",
             )
         tau_inputs = set(metadata.input if metadata is not None else ()) or {"text"}
         projected_inputs = set(provider_control.model.input)
@@ -299,9 +341,10 @@ class ProviderFactory:
                 f"Model {provider_name}:{model} is not enabled for image input"
             )
         provider = CATALOG_BY_NAME.get(provider_name)
-        if provider is None:
+        if provider is None or model not in provider.models:
+            # Tau has no metadata for the model; the projection, checked above, is the authority.
             return
-        metadata = provider.model_metadata.get(model) if provider is not None else None
+        metadata = provider.model_metadata.get(model)
         if metadata is None or "image" not in metadata.input:
             raise ConfigurationError(f"Model {provider_name}:{model} does not support image input")
 
@@ -332,6 +375,14 @@ class ProviderFactory:
             model=model,
             thinking_level=session.active_thinking,
         )
+        if self.model_outside_tau_catalog(provider_name, model):
+            # Once per load, with no credential value: the model runs from the provider control.
+            logger.info(
+                "providers.model_outside_tau_catalog",
+                provider=provider_name,
+                model=model,
+                session_uid=session.uid,
+            )
         cached_credential = credential
         cached_provider_control = evidence.provider_control
         credential_refresh_lock = asyncio.Lock()
@@ -413,6 +464,11 @@ class ProviderFactory:
         # A provider this Tau does not know runs only through Tau's OpenAI-compatible constructor,
         # as an Organization custom provider or as the platform's catalog defines it.
         outside_tau_catalog = catalog_provider is None
+        # A model this Tau does not list runs from the provider control alone, as a provider it
+        # does not know does (ADR 0029).
+        projection_is_authority = catalog_provider is None or (
+            model is not None and model not in catalog_provider.models
+        )
         is_custom_provider = (
             outside_tau_catalog and credential.credential_kind == "organization_custom"
         )
@@ -430,7 +486,7 @@ class ProviderFactory:
             normalize_thinking_level(thinking_level) if thinking_level is not None else None
         )
         if not provider_control.model.reasoning or (
-            outside_tau_catalog
+            projection_is_authority
             and normalized_thinking not in provider_control.model.thinking_levels
         ):
             normalized_thinking = None
