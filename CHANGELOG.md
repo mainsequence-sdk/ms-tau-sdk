@@ -1,5 +1,21 @@
 # Changelog
 
+## 2.0.32 — 2026-11-10
+
+- **A model Tau does not list runs from the provider control.** A session on a model that the
+  runtime's pinned tau-ai release does not list, of a provider it knows, used to fail its load
+  with `Model is not configured for provider <provider>: <model>` after its credential and
+  provider control had been hydrated, so every model a provider released waited for a tau-ai
+  release and a pin bump; tau-ai 0.4.10 still lists no `gpt-6` Codex model. Now such a model runs
+  on the provider's own Tau transport and address from the hydrated provider control, as a
+  provider Tau does not know already does: with the projected inputs, within text and image, and
+  the projected thinking levels, mapped at provider level. A projected transport other than the
+  provider's, inputs outside text and image, or thinking levels on a non-reasoning model are still
+  refused, and so is an image for a model whose projection lacks image input. A listed model is
+  validated exactly as before, with Tau's metadata. The load logs
+  `providers.model_outside_tau_catalog` once, without credential values. See
+  [ADR 0029](docs/adrs/0029-models-tau-does-not-list-run-from-the-provider-control.md).
+
 ## 2.0.31 — 2026-11-10
 
 - **A local session changes model without hydrating the model it leaves.** Selecting a model for a
