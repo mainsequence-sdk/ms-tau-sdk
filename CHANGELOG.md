@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.30 — 2026-11-10
 
 - **Provider credentials can come from an application's own hydrate endpoint.** An application
   that serves people the platform does not know, and keeps their model credentials itself, can
@@ -21,8 +21,6 @@
   unchanged. See
   [custom hydrate endpoints](docs/reference/settings.md#custom-provider-credential-hydrate-endpoints)
   and [ADR 0027](docs/adrs/0027-custom-provider-credential-hydrate-endpoints.md).
-
-## 2.0.30 — 2026-11-08
 
 - **Sessions may name the person they serve, and applications learn which session a tool call
   serves.** A session the platform returns may carry `subowner: {issuer_uid, subject}`, the person
