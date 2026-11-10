@@ -24,6 +24,7 @@ from ms_tau_sdk.backend.assertions import (
     PLATFORM_ASSERTION_TYPE,
     jwk_thumbprint,
 )
+from ms_tau_sdk.backend.release_readiness import release_warmth
 from ms_tau_sdk.settings import TauSDKSettings
 
 # Gateway-verified caller identity headers (ADR-28 amendment 2). Protected
@@ -343,3 +344,12 @@ def served_platform_keys(platform_keys: PlatformKeys) -> Iterator[PlatformKeys]:
     with respx.mock(assert_all_called=False) as router:
         router.get(platform_keys.jwks_url).mock(side_effect=platform_keys.respond)
         yield platform_keys
+
+
+@pytest.fixture(autouse=True)
+def _no_release_known_warm() -> Iterator[None]:
+    """What the process remembers of the releases it called never leaks between tests."""
+
+    release_warmth.clear()
+    yield
+    release_warmth.clear()

@@ -31,15 +31,16 @@ from ms_tau_sdk.backend.client import LeaseProof, answer_without_request_credent
 from ms_tau_sdk.backend.models import ReleaseRuntimeAccess
 from ms_tau_sdk.backend.release_access import ReleaseAccess as _ReleaseAccess
 from ms_tau_sdk.backend.release_access import release_access_from_answer as _token_access
+from ms_tau_sdk.backend.release_readiness import release_warmth, wait_until_ready
 from ms_tau_sdk.backend.team_memberships import member_team_uids
 from ms_tau_sdk.errors import (
-    ApplicationReadinessTimeoutError,
     ApplicationWakingError,
     BackendError,
     BackendTimeoutError,
     TauSDKError,
 )
 from ms_tau_sdk.protocols.caller_context import outbound_headers
+from ms_tau_sdk.settings import TauSDKSettings
 
 logger = structlog.get_logger(__name__)
 
@@ -289,7 +290,13 @@ class TurnRequesterBinding:
             proof = self._delegation(delegate)
             key = (release_uid, delegate)
             cached = self._release_access.get(key)
-            if cached is not None and not refresh and not cached.token.needs_refresh():
+            if (
+                cached is not None
+                and not refresh
+                and not cached.token.needs_refresh()
+                # A release that may have scaled to zero is asked about again, which wakes it.
+                and release_warmth.is_warm(release_uid)
+            ):
                 return cached
             self._release_access.pop(key, None)
             failure: BackendError | None = None
@@ -361,6 +368,12 @@ class TurnRequesterBinding:
             response = await client.send(request, follow_redirects=False)
         except httpx.HTTPError as error:
             failure = type(error).__name__
+            if isinstance(error, httpx.TimeoutException):
+                # The request may have been held by a start: ask the platform before the next.
+                release_warmth.forget(release_uid)
+        else:
+            if response.status_code < 500:
+                release_warmth.served(release_uid)
         finally:
             client.cookies.clear()
         if failure:
@@ -608,7 +621,7 @@ def _current_turn_binding() -> TurnRequesterBinding | None:
 async def _turn_application_access(
     release_uid: str,
     *,
-    ready_timeout_seconds: float = 120,
+    settings: TauSDKSettings | None = None,
     cancelled: Callable[[], bool] | None = None,
 ) -> _TurnApplicationAccess:
     """SDK-private: the current turn's access to one application.
@@ -628,42 +641,18 @@ async def _turn_application_access(
     async def resolve(*, refresh: bool) -> _ReleaseAccess:
         # Capture delegation once, including for renewal; an ended turn never falls back to the
         # Agent's own access. Each poll reacquires the binding lock and current lease proof.
-        started = asyncio.get_running_loop().time()
-        deadline = asyncio.timeout(None)
-        waiting = False
-        try:
-            async with deadline:
-                while True:
-                    if not binding.active:
-                        raise RequesterBindingError(
-                            "The turn ended while obtaining application access."
-                        )
-                    try:
-                        access = await binding._release_access_for(
-                            uid, refresh=refresh, delegate=delegate
-                        )
-                    except ApplicationWakingError as error:
-                        if not waiting:
-                            waiting = True
-                            deadline.reschedule(started + ready_timeout_seconds)
-                        logger.info(
-                            "runtime.application_access.waiting",
-                            resource_release_uid=uid,
-                            runtime_access_state="waking",
-                            retry_after_seconds=error.retry_after_seconds,
-                        )
-                        await asyncio.sleep(error.retry_after_seconds)
-                    else:
-                        if waiting:
-                            logger.info(
-                                "runtime.application_access.ready", resource_release_uid=uid
-                            )
-                        return access
-        except TimeoutError:
-            if not deadline.expired():
-                raise
+        def still_wanted() -> None:
+            if not binding.active:
+                raise RequesterBindingError("The turn ended while obtaining application access.")
+
         # No transport error or credential-bearing exception is retained as the cause.
-        raise ApplicationReadinessTimeoutError(timeout_seconds=ready_timeout_seconds)
+        return await wait_until_ready(
+            lambda: binding._release_access_for(uid, refresh=refresh, delegate=delegate),
+            settings=settings,
+            release_uid=uid,
+            event="runtime.application_access",
+            still_wanted=still_wanted,
+        )
 
     async def obtain(*, refresh: bool) -> _ReleaseAccess:
         # ToolCancellationToken exposes only is_cancelled(). Poll it while both the readiness
@@ -696,6 +685,27 @@ async def _turn_application_access(
         renew=renew,
         session_uid=binding.session_uid,
     )
+
+
+async def _turn_application_starting(release_uid: str) -> bool:
+    """SDK-private: whether the platform now reports the application as starting.
+
+    Asked once after a call timed out, to tell a request held by a start from a slow application.
+    Asking also wakes the application. Any failure to learn it reads as "not starting".
+    """
+
+    binding = _TURN_BINDING.get()
+    if binding is None or not binding.active:
+        return False
+    uid = _canonical_uid(release_uid)
+    release_warmth.forget(uid)
+    try:
+        await binding._release_access_for(uid, refresh=True, delegate=binding.serving)
+    except ApplicationWakingError:
+        return True
+    except Exception:
+        return False
+    return False
 
 
 def _canonical_uid(value: str) -> str:

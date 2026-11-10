@@ -1209,6 +1209,7 @@ async def _held_message_response(
     transport: str,
     client: AsyncMock | None = None,
     configuration: dict[str, object] | None = None,
+    caller_headers: dict[str, str] | None = None,
     **body_fields: object,
 ) -> httpx.Response:
     """Send one ``message:send`` over REST or JSON-RPC and return the HTTP response.
@@ -1233,7 +1234,11 @@ async def _held_message_response(
         "configuration": {"responseKind": "message", **(configuration or {})},
         **body_fields,
     }
-    headers = {"A2A-Extensions": RESPONSE_KIND_EXTENSION_URI, **USER_CALLER_HEADERS}
+    headers = {
+        "A2A-Extensions": RESPONSE_KIND_EXTENSION_URI,
+        **USER_CALLER_HEADERS,
+        **(caller_headers or {}),
+    }
     # An unhandled error must reach the client as the HTTP answer it would get, not as a raise.
     async with httpx.AsyncClient(
         transport=httpx.ASGITransport(app=app, raise_app_exceptions=False),
@@ -1321,6 +1326,39 @@ def _platform_limited_settings(tmp_path, limit_seconds: float, **values) -> TauS
         a2a_message_limit_seconds=limit_seconds,
         **values,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("platform_limit", "caller_ms", "limit"),
+    [(None, "200", "0.2"), (30, "200", "0.2"), (0.2, "30000", "0.2"), (0.2, "soon", "0.2")],
+    ids=["caller_only", "caller_shorter", "platform_shorter", "invalid_header"],
+)
+async def test_the_callers_remaining_wait_can_only_shorten_the_message_limit(
+    tmp_path, platform_limit, caller_ms, limit
+):
+    config = TauSDKSettings(
+        _env_file=None,
+        runtime_credential_id="credential-id",
+        workspace=tmp_path,
+        startup_dependencies_enabled=False,
+        a2a_message_limit_seconds=platform_limit,
+    )
+    coding_session = _UnansweredCodingSession()
+    manager = _loaded_runtime_manager(config, coding_session)
+    try:
+        response = await _held_message_response(
+            manager,
+            config,
+            transport="rest",
+            caller_headers={"Mainsequence-Request-Timeout-Ms": caller_ms},
+        )
+    finally:
+        manager._runtimes.clear()
+        await manager.aclose()
+
+    _assert_message_limit_answer(response, "rest", limit)
+    assert coding_session.cancelled == 1
 
 
 class _DeadlineRecordingManager(_TauEventManager):

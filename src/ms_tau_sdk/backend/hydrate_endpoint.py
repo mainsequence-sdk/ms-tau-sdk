@@ -26,8 +26,6 @@ import httpx
 import structlog
 
 from ms_tau_sdk.errors import (
-    ApplicationReadinessTimeoutError,
-    ApplicationWakingError,
     BackendConflictError,
     BackendError,
     BackendTimeoutError,
@@ -36,6 +34,7 @@ from ms_tau_sdk.settings import TauSDKSettings
 
 from .models import ReleaseRuntimeAccess
 from .release_access import ReleaseAccess, release_access_from_answer
+from .release_readiness import release_warmth, wait_until_ready
 from .routes import model_provider_credentials
 
 logger = structlog.get_logger(__name__)
@@ -260,16 +259,25 @@ class ReleaseHydrateEndpoint(CustomHydrateEndpoint):
         return f"ReleaseHydrateEndpoint(release_uid={self.release_uid!r})"
 
     async def hydrate(self, payload: Mapping[str, Any]) -> dict[str, Any]:
-        access = await self._release_access(stale=None)
-        response = await self._send(self._url(access), payload, authorization=access.token.value)
-        if response.status_code == 401:
-            # The token may have expired early or been revoked: obtain a new one, once.
-            access = await self._release_access(stale=access)
+        try:
+            access = await self._release_access(stale=None)
             response = await self._send(
                 self._url(access), payload, authorization=access.token.value
             )
             if response.status_code == 401:
-                raise BackendError(f"{self.description} refused its token", status_code=401)
+                # The token may have expired early or been revoked: obtain a new one, once.
+                access = await self._release_access(stale=access)
+                response = await self._send(
+                    self._url(access), payload, authorization=access.token.value
+                )
+                if response.status_code == 401:
+                    raise BackendError(f"{self.description} refused its token", status_code=401)
+        except BackendTimeoutError:
+            # The request may have been held by a start: ask the platform before the next.
+            release_warmth.forget(self.release_uid)
+            raise
+        if response.status_code < 500:
+            release_warmth.served(self.release_uid)
         return self._answer(response)
 
     def _url(self, access: ReleaseAccess) -> httpx.URL:
@@ -285,7 +293,13 @@ class ReleaseHydrateEndpoint(CustomHydrateEndpoint):
     async def _release_access(self, *, stale: ReleaseAccess | None) -> ReleaseAccess:
         async with self._lock:
             cached = self._access
-            if cached is not None and cached is not stale and not cached.token.needs_refresh():
+            if (
+                cached is not None
+                and cached is not stale
+                and not cached.token.needs_refresh()
+                # A release that may have scaled to zero is asked about again, which wakes it.
+                and release_warmth.is_warm(self.release_uid)
+            ):
                 return cached
             self._access = None
             access = await self._ready_access()
@@ -295,38 +309,15 @@ class ReleaseHydrateEndpoint(CustomHydrateEndpoint):
     async def _ready_access(self) -> ReleaseAccess:
         """Obtain token access, waiting while the release wakes, within the ready timeout."""
 
-        timeout_seconds = self.settings.mcp_application_ready_timeout_seconds
-        started = asyncio.get_running_loop().time()
-        deadline = asyncio.timeout(None)
-        waiting = False
-        try:
-            async with deadline:
-                while True:
-                    answer = await self._runtime_access()
-                    try:
-                        access = release_access_from_answer(answer)
-                    except ApplicationWakingError as error:
-                        if not waiting:
-                            waiting = True
-                            deadline.reschedule(started + timeout_seconds)
-                        logger.info(
-                            "runtime.provider_credential_release.waiting",
-                            resource_release_uid=self.release_uid,
-                            runtime_access_state="waking",
-                            retry_after_seconds=error.retry_after_seconds,
-                        )
-                        await asyncio.sleep(error.retry_after_seconds)
-                    else:
-                        if waiting:
-                            logger.info(
-                                "runtime.provider_credential_release.ready",
-                                resource_release_uid=self.release_uid,
-                            )
-                        return access
-        except TimeoutError:
-            if not deadline.expired():
-                raise
-        raise ApplicationReadinessTimeoutError(timeout_seconds=timeout_seconds)
+        async def obtain() -> ReleaseAccess:
+            return release_access_from_answer(await self._runtime_access())
+
+        return await wait_until_ready(
+            obtain,
+            settings=self.settings,
+            release_uid=self.release_uid,
+            event="runtime.provider_credential_release",
+        )
 
     async def _runtime_access(self) -> ReleaseRuntimeAccess:
         failure: BackendError

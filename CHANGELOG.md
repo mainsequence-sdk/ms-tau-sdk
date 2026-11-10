@@ -1,5 +1,33 @@
 # Changelog
 
+## 2.0.33 — 2026-11-10
+
+- **A call to an application that scaled to zero no longer spends its time limit on the start.**
+  Tau kept an application's token for the turn and used it without asking the platform, so a
+  call to an application that had since scaled to zero was held while it started and failed as a
+  tool timeout. Now the kept token is used only while the application is known warm: it answered,
+  or the platform reported it ready, within its idle window (60 seconds until the platform
+  states the application's own in `scaling.idle_timeout_seconds`, or always when
+  `scaling.min_instances` is at least 1). Otherwise Tau asks the platform again, which wakes the
+  application, and waits under the readiness limit before MCP opens. The provider credential
+  hydrate release follows the same rule and the same wait.
+  - **The readiness limit follows the platform's expectation.** When
+    `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` is not set, the limit is twice
+    `scaling.expected_cold_start_seconds`, at least 30 seconds, and `300` seconds when the
+    platform states none. The default was `120`. Set, the variable is the limit as before.
+  - **A timeout during a start says so.** After a sent tool call times out, Tau asks the platform
+    once; when the application is `waking` the result carries `failure: cold_start_timeout`,
+    `phase: request` and `runtime_access_state: waking`, and the message says the call may or may
+    not have run. It is never sent again.
+  - **The time left travels with the call.** A tool call sends
+    `Mainsequence-Request-Timeout-Ms`, and `message:send` reads it from its caller: the shorter
+    of it and the platform's Message limit bounds the request.
+
+  The contract is mainsequence-sdk's ADR 0041; see the amendment to
+  [ADR 0022](docs/adrs/0022-mcp-application-tool-call-limits-and-failures.md). The platform does
+  not return `scaling` yet as far as this SDK can tell, and nothing was tried against a deployed
+  application.
+
 ## 2.0.32 — 2026-11-10
 
 - **A model Tau does not list runs from the provider control.** A session on a model that the

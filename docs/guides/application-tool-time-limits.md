@@ -87,13 +87,21 @@ Tau waits for `retry_after_ms` before asking again, under the same turn and dele
 or invalid retry guidance means two seconds; guidance below 100 ms is bounded to 100 ms to avoid
 busy polling. A delay beyond the readiness deadline ends at the deadline instead of polling early.
 
-`TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` bounds this readiness wait (default `120`, a finite
-positive number). Set it in the Agent's workflow environment or with
-`TauSDKSettings(mcp_application_ready_timeout_seconds=...)`. The remaining turn deadline still
+`TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` bounds this readiness wait (a finite positive
+number). Set it in the Agent's workflow environment or with
+`TauSDKSettings(mcp_application_ready_timeout_seconds=...)`. When it is not set, the limit is
+twice the start time the platform expects for the application, at least 30 seconds, and `300`
+seconds when the platform states none. The remaining turn deadline still
 applies, and cancellation stops a pending delay or access request. The wait releases the access
 cache lock between polls. Access denial, ended delegation and terminal states are not retried.
 
-Once ready, Tau opens MCP, reads the tool's declared time limit and sends the call. Increasing a
+Tau keeps an application's token for the turn, and uses it without asking the platform only
+while the application is known warm: it answered, or the platform reported it ready, within its
+idle window (60 seconds until the platform states the application's own). After that Tau asks
+the platform again, which starts an application that scaled to zero, and waits as above.
+
+Once ready, Tau opens MCP, reads the tool's declared time limit and sends the call. The call
+carries `Mainsequence-Request-Timeout-Ms`, the milliseconds left of that limit. Increasing a
 tool's execution limit does not extend startup readiness. Token renewal uses the same bounded
 wait; a failed renewal does not restart the tool call. A readiness wait that expires returns
 `failure: readiness_timeout`, `phase: readiness`, `runtime_access_state: waking` and the wait's
@@ -125,6 +133,7 @@ bodies:
 | What happened | What the model reads |
 | --- | --- |
 | The tool did not answer within its limit | The `<name>` tool `<tool>` did not answer within `<N>` seconds. |
+| The tool did not answer within its limit and the platform then reports the application starting (`failure: cold_start_timeout`) | The `<name>` application was starting and the tool `<tool>` did not answer within `<N>` seconds. The call may or may not have run. |
 | Opening the session did not finish within its limit | The `<name>` application did not answer within `<N>` seconds. |
 | Application access remains `waking` past its readiness limit | The `<name>` application did not become ready within `<N>` seconds. It is still starting; try again shortly. |
 | The application or gateway reports a timeout (408, 504) | The `<name>` application or its gateway reported a timeout (`<status>`). |

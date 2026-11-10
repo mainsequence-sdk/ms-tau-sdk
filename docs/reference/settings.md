@@ -264,7 +264,7 @@ independent of `TAU_LOCAL_STATE_ROOT`, which only holds the local-mode database 
 | `MAINSEQUENCE_TAU_BACKEND_MAX_RESPONSE_BYTES` | `10485760` |
 | `MAINSEQUENCE_TAU_MCP_READ_CONCURRENCY` | `8` |
 | `TAU_MCP_TOOL_TIMEOUT_SECONDS` | `60`; how long a declared application's tool may run when the tool declares no limit of its own; see [Application tool time limits](../guides/application-tool-time-limits.md) |
-| `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` | `120`; finite positive limit for obtaining application access while its runtime is `waking`, separately from tool execution; cancellation and the remaining turn deadline still apply |
+| `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` | Unset: twice the start time the platform expects, at least 30 seconds, or `300` when it states none. Set: that value. A finite positive limit for obtaining application access while its runtime is `waking`, separately from tool execution; cancellation and the remaining turn deadline still apply |
 | `MAINSEQUENCE_TAU_SESSION_ENTRY_BATCH_MAX_ENTRIES` | `100` |
 | `MAINSEQUENCE_TAU_SESSION_ENTRY_BATCH_MAX_BYTES` | `8388608` |
 | `MAINSEQUENCE_TAU_SESSION_LEASE_TTL_SECONDS` | `90` |

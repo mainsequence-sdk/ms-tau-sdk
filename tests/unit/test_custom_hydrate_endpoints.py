@@ -1139,3 +1139,28 @@ async def test_an_unreachable_endpoint_is_retried_then_fails_without_its_token(
     assert raised.value.__context__ is None
     assert raised.value.__cause__ is None
     _no_secret(raised.value, raised.value.detail)
+
+
+@pytest.mark.asyncio
+async def test_a_kept_release_token_is_reused_only_while_the_release_is_known_warm(
+    runtime_identity_token_file,
+):
+    from ms_tau_sdk.backend.release_readiness import release_warmth
+
+    network = _Network()
+    network.access = [_access(), _access()]
+    network.hydrate = [_answer(), _answer(), _answer()]
+    settings = _hosted_settings(
+        runtime_identity_token_file, provider_credential_hydrate_release_uid=RELEASE_UID
+    )
+    async with _client(network, settings) as client:
+        await _hosted_hydrate(client)
+        await _hosted_hydrate(client)
+        asked_while_warm = len(network.sent(host="backend.test", path=ACCESS_PATH))
+        # The release may have scaled to zero: the platform is asked again, which wakes it.
+        release_warmth.forget(RELEASE_UID)
+        await _hosted_hydrate(client)
+
+    assert asked_while_warm == 1
+    assert len(network.sent(host="backend.test", path=ACCESS_PATH)) == 2
+    assert release_warmth.is_warm(RELEASE_UID) is True

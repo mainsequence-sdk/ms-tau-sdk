@@ -11,6 +11,7 @@ from ms_tau_sdk.errors import ApplicationWakingError, BackendError
 
 from .auth import AccessToken, _jwt_expiry
 from .models import ReleaseRuntimeAccess
+from .release_readiness import expected_cold_start_seconds, release_warmth
 
 
 @dataclass(slots=True)
@@ -42,7 +43,11 @@ def release_access_from_answer(answer: ReleaseRuntimeAccess) -> ReleaseAccess:
                     seconds = float("inf")
                 if math.isfinite(seconds) and seconds >= 0:
                     delay = max(seconds, 0.1)
-            raise ApplicationWakingError(retry_after_seconds=delay)
+            release_warmth.forget(answer.resource_release_uid)
+            raise ApplicationWakingError(
+                retry_after_seconds=delay,
+                expected_cold_start_seconds=expected_cold_start_seconds(answer.scaling),
+            )
         raise BackendError(
             f"Release {answer.resource_release_uid} is not ready to be called"
             + (f" (runtime access: {state})" if isinstance(state, str) else ""),
@@ -67,6 +72,8 @@ def release_access_from_answer(answer: ReleaseRuntimeAccess) -> ReleaseAccess:
     expires_at = (
         grant.expires_at.timestamp() if grant.expires_at is not None else _jwt_expiry(token)
     )
+    # A ready answer is a sign that the release serves now.
+    release_warmth.served(answer.resource_release_uid, answer.scaling)
     return ReleaseAccess(
         rpc_url=rpc_url,
         token=AccessToken(

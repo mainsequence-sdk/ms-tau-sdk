@@ -361,7 +361,7 @@ def test_application_readiness_wait_has_a_finite_positive_configurable_limit(
 ):
     assert (
         TauSDKSettings(_env_file=None, workspace=tmp_path).mcp_application_ready_timeout_seconds
-        == 120
+        == 300
     )
     monkeypatch.setenv("TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS", "180")
     assert (

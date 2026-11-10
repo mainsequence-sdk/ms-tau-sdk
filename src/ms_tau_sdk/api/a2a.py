@@ -27,6 +27,7 @@ from ms_tau_sdk.backend.models import (
     AgentTaskCreateResult,
     AgentTaskSnapshot,
 )
+from ms_tau_sdk.backend.release_readiness import DEADLINE_HEADER, caller_timeout_seconds
 from ms_tau_sdk.errors import BackendError, LeaseLostError, TaskTerminalizationUnknownError
 from ms_tau_sdk.logging import bind_request_log_fields
 from ms_tau_sdk.protocols.a2a_failure import (
@@ -2567,14 +2568,20 @@ async def _message_send(
 ) -> dict[str, Any]:
     """Answer one ``message:send``, for REST and JSON-RPC alike.
 
-    When the platform sets a Message limit, it runs from the moment the request arrives. It
+    When the platform sets a Message limit, or the caller states how long it will still wait
+    (``Mainsequence-Request-Timeout-Ms``), the shorter runs from the moment the request arrives. It
     bounds a Message-mode request as a whole, including output-contract repair turns, and it ends
     the wait of a Task-mode request that does not return immediately. A Message-mode request that
     reaches its limit, or its turn's own limit, raises ``_MessageLimitExceeded``, which each
     transport answers in its own form. A Task-mode request that fails after its Task was accepted
     raises ``_AcceptedTaskUnanswered``, which each transport answers with the Task named.
     """
-    platform_limit = config.a2a_message_limit_seconds
+    # The caller's own remaining wait, when it states one, can only shorten the platform's limit.
+    caller_limit = caller_timeout_seconds(request.headers.get(DEADLINE_HEADER))
+    limits = [
+        limit for limit in (config.a2a_message_limit_seconds, caller_limit) if limit is not None
+    ]
+    platform_limit = min(limits, default=None)
     deadline = (
         None if platform_limit is None else asyncio.get_running_loop().time() + platform_limit
     )
