@@ -260,11 +260,8 @@ logs `providers.model_outside_tau_catalog` with the provider and the model.
 - The projected thinking levels reach the provider as they are. A level the provider rejects fails
   the turn with the provider's error, not the load; the platform or the endpoint should project
   the levels the model accepts.
-- The context window is what the provider discovers. From 2.0.34 a Codex session runs at the
-  window its account's model list reports; on 2.0.33 or earlier it runs at Tau's default of
-  128,000 tokens, listed model or not. The other transports run at that default. When the Codex
-  model list cannot be fetched, the load logs `providers.codex_model_catalog_unavailable` and the
-  session runs at the default.
+- The context window is what the provider discovers. The Codex transport discovers it from the
+  account's own model list; the other transports run at Tau's default of 128,000 tokens.
 
 ## Reset or inspect local conversations
 

@@ -17,8 +17,6 @@ from tau_ai import (
     OpenAICompatibleProvider,
 )
 from tau_ai.content import NON_VISION_USER_IMAGE_PLACEHOLDER
-from tau_coding import CodingSession, CodingSessionConfig
-from tau_coding.context_window import DEFAULT_CONTEXT_WINDOW_TOKENS
 from tau_coding.provider_catalog import BUILTIN_PROVIDER_CATALOG
 
 from ms_tau_sdk.backend.auth import JWTAuth, RuntimeCredentialAuth
@@ -33,8 +31,6 @@ from ms_tau_sdk.backend.models import (
 from ms_tau_sdk.errors import ConfigurationError
 from ms_tau_sdk.providers.definitions import PROVIDER_DEFINITIONS
 from ms_tau_sdk.providers.factory import ProviderFactory
-from ms_tau_sdk.providers.tau_compat import codex_model_catalogs
-from ms_tau_sdk.resources.loader import tau_resource_paths
 from ms_tau_sdk.settings import TauSDKSettings
 
 
@@ -1518,141 +1514,3 @@ def test_for_session_credential_logs_a_model_outside_tau_catalog_once():
             ),
         )
     assert not [log for log in logs if log["event"] == "providers.model_outside_tau_catalog"]
-
-
-class _MemorySessionStorage:
-    def __init__(self) -> None:
-        self.entries: list[object] = []
-
-    async def append(self, entry: object) -> None:
-        self.entries.append(entry)
-
-    async def append_batch(self, entries: list[object]) -> None:
-        self.entries.extend(entries)
-
-    async def read_all(self) -> list[object]:
-        return list(self.entries)
-
-
-def _codex_backend(requests: list[httpx.Request], *, models_status: int = 200):
-    """Codex's model list, reporting a 400,000-token window, and its responses endpoint."""
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        requests.append(request)
-        if not request.url.path.endswith("/codex/models"):
-            return _fake_provider_stream(request)
-        if models_status != 200:
-            return httpx.Response(models_status)
-        return httpx.Response(
-            200,
-            json={
-                "models": [
-                    {"slug": slug, "visibility": "list", "context_window": 400_000}
-                    for slug in ("gpt-5.5", "gpt-6.1-sol")
-                ]
-            },
-        )
-
-    return handler
-
-
-def _codex_provider(model: str) -> OpenAICodexProvider:
-    control = (
-        _unlisted_codex_control(model)
-        if model == "gpt-6.1-sol"
-        else _provider_control("openai-codex", model)
-    )
-    provider = ProviderFactory(backend=None).build(  # type: ignore[arg-type]
-        _codex_credential(),
-        provider_control=control,
-        model=model,
-    )
-    assert isinstance(provider, OpenAICodexProvider)
-    return provider
-
-
-async def _load_codex_session(tmp_path, provider, model, runtime_model_catalogs):
-    return await CodingSession.load(
-        CodingSessionConfig(
-            provider=provider,
-            provider_name="openai-codex",
-            model=model,
-            storage=_MemorySessionStorage(),
-            cwd=tmp_path,
-            tools=[],
-            session_id="session-1",
-            resource_paths=tau_resource_paths(tmp_path, state_home=tmp_path / "tau-state"),
-            runtime_model_catalogs=runtime_model_catalogs,
-        )
-    )
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("model", ["gpt-5.5", "gpt-6.1-sol"])
-async def test_a_codex_session_runs_at_the_context_window_its_account_reports(tmp_path, model):
-    requests: list[httpx.Request] = []
-    provider = _codex_provider(model)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(_codex_backend(requests))) as client:
-        provider._client = client
-        catalogs = await codex_model_catalogs(provider, provider_name="openai-codex")
-        session = await _load_codex_session(tmp_path, provider, model, catalogs)
-        try:
-            assert session.context_window_tokens == 400_000
-            assert session.context_window_source == "provider live catalog"
-        finally:
-            await session.aclose()
-
-    # One model list, fetched before the load; Tau fetches none of its own.
-    assert [request.url.path for request in requests] == ["/backend-api/codex/models"]
-
-
-@pytest.mark.asyncio
-async def test_tau_drops_the_codex_limits_a_session_discovers_for_itself(tmp_path):
-    # tau-ai 0.4.2 resets the limits key while publishing the catalog it discovered. When a new
-    # pin fails this test, Tau keeps the limits: remove codex_model_catalogs and this test.
-    requests: list[httpx.Request] = []
-    provider = _codex_provider("gpt-5.5")
-    async with httpx.AsyncClient(transport=httpx.MockTransport(_codex_backend(requests))) as client:
-        provider._client = client
-        session = await _load_codex_session(tmp_path, provider, "gpt-5.5", {})
-        try:
-            assert session.context_window_tokens == DEFAULT_CONTEXT_WINDOW_TOKENS
-            assert session.context_window_source == "configured catalog"
-        finally:
-            await session.aclose()
-
-    assert [request.url.path for request in requests] == ["/backend-api/codex/models"]
-
-
-@pytest.mark.asyncio
-async def test_an_unavailable_codex_model_list_leaves_the_load_to_tau():
-    requests: list[httpx.Request] = []
-    provider = _codex_provider("gpt-6.1-sol")
-    transport = httpx.MockTransport(_codex_backend(requests, models_status=503))
-    async with httpx.AsyncClient(transport=transport) as client:
-        provider._client = client
-        with capture_logs() as logs:
-            assert await codex_model_catalogs(provider, provider_name="openai-codex") == {}
-
-    [event] = [log for log in logs if log["event"] == "providers.codex_model_catalog_unavailable"]
-    assert event["provider"] == "openai-codex"
-    assert event["error_type"] == "HTTPStatusError"
-    assert "access-token" not in str(event) and "account-id" not in str(event)
-
-
-@pytest.mark.asyncio
-async def test_only_an_online_codex_session_discovers_its_model_list_first(monkeypatch):
-    requests: list[httpx.Request] = []
-    compatible = ProviderFactory(backend=None).build(  # type: ignore[arg-type]
-        ProviderCredential(provider="openai", api_key="api-key"),
-        provider_control=_provider_control("openai", "gpt-5.4"),
-        model="gpt-5.4",
-    )
-    assert await codex_model_catalogs(compatible, provider_name="openai") == {}
-
-    provider = _codex_provider("gpt-5.5")
-    async with httpx.AsyncClient(transport=httpx.MockTransport(_codex_backend(requests))) as client:
-        provider._client = client
-        monkeypatch.setenv("TAU_OFFLINE", "1")
-        assert await codex_model_catalogs(provider, provider_name="openai-codex") == {}
-    assert requests == []
