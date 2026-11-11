@@ -8,10 +8,15 @@ provider stream, so we enrich the event at its construction boundary without
 replacing Tau's provider implementation.
 
 Upstream report: https://github.com/huggingface/tau/discussions/745
+
+``codex_model_catalogs`` works around a second defect without patching Tau: a session drops the
+model limits it discovers for itself, so the runtime discovers a Codex session's model catalog
+before Tau loads the session and hands it over through Tau's public session configuration.
 """
 
 from __future__ import annotations
 
+import os
 import sys
 import time
 import uuid
@@ -28,6 +33,7 @@ from tau_ai._provider_events import (
     ProviderEvent,
     ProviderRetryEvent,
 )
+from tau_ai.model_catalog import ModelCatalogProvider, RuntimeModelCatalog
 
 from ms_tau_sdk.logging import safe_log
 
@@ -182,8 +188,43 @@ def install_openai_compatible_provider_error_patch() -> None:
     provider_class._stream = patched_stream
 
 
+async def codex_model_catalogs(
+    provider: object,
+    *,
+    provider_name: str,
+) -> dict[str, RuntimeModelCatalog]:
+    """Discover a Codex session's model catalog before Tau loads the session.
+
+    A Tau session discovers its model's limits itself, and tau-ai 0.4.2 drops them: publishing
+    the discovered catalog resets the key the limits are kept under, so a session given a built
+    Codex provider runs at Tau's default context window, 128,000 tokens, whatever the account
+    reports. A catalog the session starts with takes Tau's cached path, which keeps them, and Tau
+    then fetches no model list of its own. When discovery fails here, Tau tries once more and the
+    session runs at its default window. Remove this once the pinned tau-ai keeps the limits it
+    discovers; ``test_tau_drops_the_codex_limits_a_session_discovers_for_itself`` fails then.
+    """
+    if provider_name != "openai-codex" or not isinstance(provider, ModelCatalogProvider):
+        return {}
+    if os.environ.get("TAU_OFFLINE") is not None:
+        # Tau discovers no Codex models offline either.
+        return {}
+    try:
+        catalog = await provider.discover_models()
+    except Exception as error:  # The session still loads, at Tau's default window.
+        safe_log(
+            _logger,
+            "warning",
+            "providers.codex_model_catalog_unavailable",
+            provider=provider_name,
+            error_type=type(error).__name__,
+        )
+        return {}
+    return {provider_name: catalog} if catalog.models else {}
+
+
 __all__ = [
     "AFFECTED_TAU_AI_VERSION",
     "UPSTREAM_REPORT_URL",
+    "codex_model_catalogs",
     "install_openai_compatible_provider_error_patch",
 ]

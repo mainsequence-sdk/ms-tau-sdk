@@ -1,5 +1,16 @@
 # Changelog
 
+## 2.0.34 — 2026-11-11
+
+- **A Codex session runs at the context window its account reports.** tau-ai 0.4.2 drops the model
+  limits a session discovers for itself, so every Codex session, on a listed model or not, ran at
+  Tau's default of 128,000 tokens and compacted early; the 2.0.32 notes said it used the
+  account's window. The runtime now fetches the account's Codex model list once before Tau loads
+  the session and hands it to Tau, which keeps that model's limits and fetches no list of its
+  own. When the list cannot be fetched, the load logs `providers.codex_model_catalog_unavailable`
+  with the error type and the session runs at the default, as before. See
+  [ADR 0029](docs/adrs/0029-models-tau-does-not-list-run-from-the-provider-control.md).
+
 ## 2.0.33 — 2026-11-10
 
 - **A call to an application that scaled to zero no longer spends its time limit on the start.**

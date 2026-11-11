@@ -59,6 +59,7 @@ from ms_tau_sdk.errors import (
 from ms_tau_sdk.logging import conversation_log_fields
 from ms_tau_sdk.protocols.caller_context import caller_context_scope
 from ms_tau_sdk.providers.factory import ProviderFactory
+from ms_tau_sdk.providers.tau_compat import codex_model_catalogs
 from ms_tau_sdk.resources.loader import tau_resource_paths
 from ms_tau_sdk.resources.selection import (
     RUNTIME_RESOURCES_SCHEMA_VERSION,
@@ -1238,12 +1239,19 @@ class SessionRuntimeManager:
                 if runtime_resources is not None:
                     runtime_resources.verify(session)
 
+            # Tau drops the context window a Codex session discovers for itself; a catalog the
+            # session starts with keeps it.
+            runtime_model_catalogs = await codex_model_catalogs(
+                provider_runtime.provider,
+                provider_name=provider_runtime.name,
+            )
             coding_session = await CodingSession.load(
                 CodingSessionConfig(
                     provider=provider_runtime.provider,
                     provider_name=provider_runtime.name,
                     model=provider_runtime.model,
                     thinking_level=provider_runtime.thinking_level,
+                    runtime_model_catalogs=runtime_model_catalogs,
                     storage=storage,
                     cwd=cwd,
                     tools=tools,

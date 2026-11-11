@@ -4,6 +4,11 @@ Status: Accepted — implemented 2026-11-10
 
 Date: 2026-11-10
 
+Amended: 2026-11-11, in 2.0.34. The Codex transport discovers a model's context window, but
+tau-ai 0.4.2 drops the limits a session discovers for itself, so every Codex session ran at Tau's
+default window. The runtime now discovers the Codex model list before Tau loads the session. The
+Context and section 5 are edited.
+
 Relates to:
 
 - [ADR 0027: Custom provider credential hydrate endpoints](./0027-custom-provider-credential-hydrate-endpoints.md).
@@ -35,8 +40,9 @@ levels from the projection.
 Two facts about context windows, established while deciding. The runtime gives Tau's session a
 built provider and no provider settings, so Tau's static `context_windows` are never read, and a
 model runs at Tau's default of 128,000 tokens unless its provider discovers its limits. The Codex
-transport does discover them, from the account's own model list, for listed and unlisted models
-alike.
+transport discovers them from the account's own model list, for listed and unlisted models alike,
+but tau-ai 0.4.2 drops the limits a session discovers for itself: publishing the discovered catalog
+resets the key they are kept under. Until 2.0.34, every Codex session ran at the default.
 
 ## Decisions
 
@@ -80,7 +86,10 @@ levels are the provider's own.
 
 The address is the provider-level `base_url` and headers, with the credential's overrides as
 today. The context window is what the provider discovers, else Tau's default; the provider control
-gains no field. An optional `context_window` in the projection would serve listed and unlisted
+gains no field. For `openai-codex`, the runtime discovers the account's model list once before Tau
+loads the session and hands it to Tau, which then keeps that model's limits and fetches no list of
+its own. When the list cannot be fetched, the load logs `providers.codex_model_catalog_unavailable`
+with the error type, and the session runs at Tau's default. An optional `context_window` in the projection would serve listed and unlisted
 models alike, since Tau's static windows are not read; that is a separate decision.
 
 ### 6. Diagnostics

@@ -1515,3 +1515,35 @@ async def test_local_readiness_without_an_endpoint_still_proves_provider_control
     assert snapshot["provider_control_ready"] is True
     assert snapshot["provider_credential_source"] == "mainsequence"
     await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_session_loads_with_the_codex_model_catalog_discovered_first(tmp_path):
+    manager, _backend, providers = _manager_dependencies(tmp_path, [_bootstrap("session-1")])
+    provider_runtime = providers.for_session_credential.return_value
+    loaded_session = _coding_session()
+    catalogs = {"openai-codex": object()}
+
+    with (
+        patch(
+            "ms_tau_sdk.runtime.manager.MainSequenceMCPClient.connect",
+            AsyncMock(return_value=_mcp_client()),
+        ),
+        patch("ms_tau_sdk.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
+        patch(
+            "ms_tau_sdk.runtime.manager.codex_model_catalogs",
+            AsyncMock(return_value=catalogs),
+        ) as discover,
+        patch(
+            "ms_tau_sdk.runtime.manager.CodingSession.load",
+            AsyncMock(side_effect=lambda config: _load_coding_session(loaded_session, config)),
+        ) as load_coding_session,
+    ):
+        await manager.get("session-1")
+
+    discover.assert_awaited_once_with(
+        provider_runtime.provider,
+        provider_name=provider_runtime.name,
+    )
+    assert load_coding_session.await_args.args[0].runtime_model_catalogs is catalogs
+    await manager.aclose()
