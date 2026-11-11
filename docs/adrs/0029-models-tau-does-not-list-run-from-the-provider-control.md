@@ -117,8 +117,9 @@ when the platform still offers it; the platform decides what a provider offers.
   need a catalog file of its own.
 - **Offering only models Tau lists**, in tdag-django and in custom endpoints. People could not use
   models their own subscription offers.
-- **Waiting for huggingface/tau to let a host run unlisted models.** Worth proposing upstream; the
-  runtime does not wait for it.
+- **Waiting for huggingface/tau to let a host run unlisted models.** Proposed upstream as
+  [huggingface/tau#796](https://github.com/huggingface/tau/issues/796); the runtime does not wait
+  for it.
 - **Bounding the projection by Tau's provider-level thinking levels.** They describe what Tau's own
   picker offers for the provider, not what a model accepts; the projection comes from the
   provider's catalog or its own model list.
