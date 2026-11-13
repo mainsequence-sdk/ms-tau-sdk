@@ -5,7 +5,8 @@ semantic versioning for these supported surfaces:
 
 - the exported Python API: `ms_tau_sdk.create_app`, `TauSDKSettings`, `__version__`,
   `current_requester`, `platform_client`, `register_deployment_readiness_hook`, and
-  `RUNTIME_HEALTH_ABI_VERSION` (see the [public API](./public-api.md));
+  `RUNTIME_HEALTH_ABI_VERSION`, and from 3.0.0 `ms_tau_sdk.model_relay` and its
+  `ms_tau_sdk.model_relay.contract` cases (see the [public API](./public-api.md));
 - the `ms-tau` command and its workspace-bound startup behavior;
 - documented `MAINSEQUENCE_TAU_*`, `MAINSEQUENCE_ENDPOINT`, `MAINSEQUENCE_AUTH_MODE`, and
   `MAINSEQUENCE_RUNTIME_CREDENTIAL_ID`, `MAINSEQUENCE_RUNTIME_IDENTITY_TOKEN_FILE`,
@@ -47,6 +48,26 @@ Declared-application MCP connections first shipped in [2.0.6](../../CHANGELOG.md
 The delegation envelope shipped in [2.0.7](../../CHANGELOG.md#207--2026-10-08), in one cutover with
 the matching platform change and with no transition: 2.0.7 and later releases work only with that
 platform, and earlier releases no longer act for people.
+
+## 3.0.0: hosted model calls through a relay
+
+3.0.0 is a breaking release with no transition and no setting to turn it off
+([ADR 0030](../adrs/0030-hosted-model-calls-go-through-a-relay.md)). A hosted runtime receives a
+session pass and a relay address instead of a model-provider secret, announces the relay in its
+bootstrap and hydrate requests, and refuses an answer without `relay_definition`. The platform
+refuses a hosted runtime that does not announce the relay. So a hosted runtime on 2.x cannot
+start a session on a platform that serves the relay, and a hosted runtime on 3.0.0 cannot start
+one on a platform, or a custom hydrate endpoint, that does not. Local mode is unchanged.
+
+Upgrade in this order:
+
+1. the platform serves its model relay;
+2. an application with its own hydrate endpoint serves its relay with `ms_tau_sdk.model_relay`
+   and answers hosted runtimes a pass and its relay address;
+3. hosted runtimes upgrade to 3.0.0.
+
+A dependency range such as `ms-tau-sdk>=2.0.32,<3` does not pick 3.0.0 up. Raise it when the
+first two steps are done for every place the Agent runs.
 
 ## Branch and Release Standard
 

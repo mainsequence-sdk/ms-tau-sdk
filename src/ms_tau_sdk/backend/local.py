@@ -3816,5 +3816,10 @@ class LocalDevelopmentBackend(MainSequenceClient):
     def provider_credential_from_hydration(
         provider: str,
         data: object,
+        *,
+        relayed: bool = False,
+        source: str = "Backend",
     ) -> ProviderCredential:
-        return MainSequenceClient.provider_credential_from_hydration(provider, data)
+        return MainSequenceClient.provider_credential_from_hydration(
+            provider, data, relayed=relayed, source=source
+        )

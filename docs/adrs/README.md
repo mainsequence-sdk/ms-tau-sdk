@@ -39,3 +39,5 @@ These records are the normative decisions for Main Sequence TAU SDK:
   (Accepted; implemented in the SDK, platform pending)
 - [ADR 0029: Models Tau does not list run from the provider control](./0029-models-tau-does-not-list-run-from-the-provider-control.md)
   (Accepted; implemented)
+- [ADR 0030: Hosted model calls go through a relay](./0030-hosted-model-calls-go-through-a-relay.md)
+  (Accepted; implemented in the SDK for 3.0.0, platform relay not yet deployed)

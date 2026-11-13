@@ -36,6 +36,7 @@ from .hydrate_endpoint import (
     ReleaseHydrateEndpoint,
 )
 from .models import (
+    MODEL_RELAY_VERSION,
     AgentCardEnvelope,
     AgentSession,
     AgentTask,
@@ -259,6 +260,15 @@ class MainSequenceClient:
                 self.settings, origin, http=self._hydrate_http_client
             )
         return None
+
+    @property
+    def relays_model_calls(self) -> bool:
+        """Whether this runtime's sessions call models only through a relay (ADR 0030).
+
+        A hosted runtime announces the relay in its bootstrap and hydrate requests and accepts
+        only a relayed credential. Local mode announces nothing and runs on the real credential.
+        """
+        return not self.settings.local_mode
 
     def _hydrate_http_client(self) -> httpx.AsyncClient:
         if self._hydrate_http is None:
@@ -954,6 +964,8 @@ class MainSequenceClient:
             "supported_provider_control_schema_versions": [1],
             "execution_selection": {"provider": provider, "model": model},
         }
+        if self.relays_model_calls:
+            payload["supported_model_relay_versions"] = [MODEL_RELAY_VERSION]
         if custom_id is not None:
             payload["custom_id"] = custom_id
         evidence = await self._hydrate(provider, model=model, payload=payload)
@@ -1013,8 +1025,13 @@ class MainSequenceClient:
         model: str,
         payload: Mapping[str, Any],
     ) -> ProviderExecutionEvidence:
-        """Post one hydrate body to tdag-django, or to the custom endpoint when one is set."""
+        """Post one hydrate body to tdag-django, or to the custom endpoint when one is set.
 
+        A body that announces the model relay accepts only a relayed answer, and one that does
+        not accepts none (ADR 0030).
+        """
+
+        relayed = MODEL_RELAY_VERSION in payload.get("supported_model_relay_versions", ())
         if self._hydrate_endpoint is None:
             data = await self._request(
                 "POST",
@@ -1022,9 +1039,9 @@ class MainSequenceClient:
                 json=payload,
                 idempotent=True,
             )
-            return self._provider_evidence(provider, data)
+            return self._provider_evidence(provider, data, relayed=relayed, source="Backend")
         data = await self._hydrate_endpoint.hydrate(payload)
-        return self._custom_provider_evidence(provider, model=model, data=data)
+        return self._custom_provider_evidence(provider, model=model, data=data, relayed=relayed)
 
     def _custom_provider_evidence(
         self,
@@ -1032,6 +1049,7 @@ class MainSequenceClient:
         *,
         model: str,
         data: Mapping[str, Any],
+        relayed: bool,
     ) -> ProviderExecutionEvidence:
         """Check a custom endpoint's answer against tdag-django's contract (ADR 0027, section 3).
 
@@ -1059,7 +1077,7 @@ class MainSequenceClient:
         evidence: ProviderExecutionEvidence | None = None
         invalid_fields: list[str] = []
         try:
-            evidence = self._provider_evidence(provider, data)
+            evidence = self._provider_evidence(provider, data, relayed=relayed, source=source)
         except ValidationError as error:
             invalid_fields = sorted(
                 {".".join(str(part) for part in item["loc"]) for item in error.errors()}
@@ -1076,7 +1094,14 @@ class MainSequenceClient:
             )
         return evidence
 
-    def _provider_evidence(self, provider: str, data: object) -> ProviderExecutionEvidence:
+    def _provider_evidence(
+        self,
+        provider: str,
+        data: object,
+        *,
+        relayed: bool,
+        source: str,
+    ) -> ProviderExecutionEvidence:
         if not isinstance(data, dict):
             raise BackendError("Backend provider hydration response is invalid")
         try:
@@ -1086,7 +1111,12 @@ class MainSequenceClient:
                 "Backend provider hydration omitted valid provider-control evidence"
             ) from error
         return ProviderExecutionEvidence(
-            credential=self.provider_credential_from_hydration(provider, data),
+            credential=self.provider_credential_from_hydration(
+                provider,
+                data,
+                relayed=relayed,
+                source=source,
+            ),
             provider_control=provider_control,
         )
 
@@ -1094,7 +1124,17 @@ class MainSequenceClient:
     def provider_credential_from_hydration(
         provider: str,
         data: object,
+        *,
+        relayed: bool = False,
+        source: str = "Backend",
     ) -> ProviderCredential:
+        """Parse one hydrated credential entry.
+
+        ``relayed`` says that the runtime announced the model relay, so the entry must be the
+        relayed one of ADR 0030: a session pass beside a ``relay_definition``, with no address or
+        headers. Without it the entry must carry no ``relay_definition``. An error names fields,
+        never their values.
+        """
         credentials = data.get("credentials", {}) if isinstance(data, dict) else {}
         hydrated = credentials.get(provider)
         if not isinstance(hydrated, dict):
@@ -1105,7 +1145,32 @@ class MainSequenceClient:
         credential_kind = str(hydrated.get("credential_kind") or raw.get("type") or "api_key")
         access_token = raw.get("access_token") or raw.get("access")
         account_id = raw.get("account_id")
-        if provider == "openai-codex" and isinstance(access_token, str) and not account_id:
+        relay_definition = hydrated.get("relay_definition")
+        if relayed:
+            relay_base_url = (
+                relay_definition.get("base_url") if isinstance(relay_definition, dict) else None
+            )
+            if not isinstance(relay_base_url, str) or not relay_base_url.strip():
+                raise ConfigurationError(
+                    f"{source} answered no relay_definition for {provider}: a hosted session "
+                    "calls models only through the model relay"
+                )
+            if raw.get("base_url") is not None or raw.get("headers"):
+                raise ConfigurationError(
+                    f"{source} answered a relayed credential for {provider} with base_url or "
+                    "headers"
+                )
+            # A pass is not a token: the account id is never read out of it.
+            if provider == "openai-codex" and not account_id:
+                raise ConfigurationError(
+                    f"{source} answered a relayed openai-codex credential without account_id"
+                )
+        elif relay_definition is not None:
+            raise ConfigurationError(
+                f"{source} answered relay_definition for {provider} to a runtime that does not "
+                "call models through the model relay"
+            )
+        elif provider == "openai-codex" and isinstance(access_token, str) and not account_id:
             account_id = account_id_from_access_token(access_token)
         return ProviderCredential.model_validate(
             {
@@ -1124,6 +1189,7 @@ class MainSequenceClient:
                 "api": raw.get("api"),
                 # Server-owned, beside the saved credential and never inside it.
                 "catalog_definition": hydrated.get("catalog_definition"),
+                "relay_definition": relay_definition,
                 "metadata": {
                     "version": hydrated.get("version"),
                     "credential_hash": hydrated.get("credential_hash"),

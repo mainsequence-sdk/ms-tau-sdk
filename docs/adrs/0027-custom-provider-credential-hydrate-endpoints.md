@@ -13,6 +13,12 @@ Amended: 2026-11-10 — two decisions of the owner, built with the ADR:
   names the local session it is for in `agent_session_uid`, and local readiness hydrates nothing.
   Sections 2, 3 and 7 and the acceptance criteria are edited.
 
+Amended: 2026-11-13 by
+[ADR 0030: Hosted model calls go through a relay](./0030-hosted-model-calls-go-through-a-relay.md),
+for 3.0.0. In a hosted session a custom endpoint answers a session pass and its own relay address,
+never a secret, and the application runs the relay. Sections 2 and 3 and Requirements of the
+platform are edited.
+
 Amends:
 
 - [ADR 0005: Authenticated local development mode](./0005-authenticated-local-development-mode.md).
@@ -127,6 +133,9 @@ In local mode with a custom endpoint the body is:
 The rest of the local body is unchanged: `organization_environment_uid` and `custom_id` when they
 are set. Without a custom endpoint, the local body is byte for byte what it was.
 
+From 3.0.0 the hosted body also carries `"supported_model_relay_versions": [1]`, as tdag-django's
+does (ADR 0030, amended 2026-11-13). The local body never carries it.
+
 The body never names a person. The endpoint decides whose credential answers from the session, as
 tdag-django derives it from the session's owner. In local mode it decides from the local session
 the body names: the developer's process that opened that session knows the person it serves. It
@@ -181,6 +190,16 @@ refuses a body that tries to choose the owner, as tdag-django refuses `created_b
   | `oauth` | `{"type": "oauth", "access": "<token>", "expires": <epoch milliseconds>, "account_id": "<id>"}`. `account_id` is optional; for `openai-codex` the runtime derives it from the token. |
   | `organization_custom` | `{"type": "organization_custom", "base_url": "<url>", "api": "<api>", "headers": {}, "api_key": "<key>"}`. `api_key` is optional and the runtime validates `base_url` as it does today. |
 
+- **In a hosted session, a pass and a relay (ADR 0030, amended 2026-11-13).** To a body that
+  carries `supported_model_relay_versions`, the endpoint answers the entry above with a session
+  pass in place of the secret (`key`, `access` or `api_key`) and its own relay's address in
+  `relay_definition.base_url` beside `credential`. An `oauth` entry carries no `expires` or
+  `refresh`, and `account_id` is required for `openai-codex`; an `organization_custom` entry
+  carries no `base_url` or `headers`. The runtime refuses a hosted answer without
+  `relay_definition` and never calls the provider with what it received. To a body without the
+  field, in local mode, the endpoint answers the real credential as the table says, and an answer
+  with `relay_definition` is refused. The application serves the relay with
+  `ms_tau_sdk.model_relay`.
 - **No refresh token.** A custom endpoint omits `refresh`. The runtime never reads it, so the
   refresh token stays with the endpoint.
 - **Identifiers.** `uid` is required: the endpoint's stable identifier of the credential it chose.
@@ -373,7 +392,9 @@ release.
 
 ## Requirements of the platform
 
-None. This ADR requires no change to tdag-django.
+None. This ADR requires no change to tdag-django. (Amended 2026-11-13: from 3.0.0 a hosted
+session's model calls go through a relay; for the platform's own credentials that requires the
+platform's relay, and for a custom endpoint's the application's. See ADR 0030.)
 
 ## Acceptance criteria
 
