@@ -225,6 +225,14 @@ Check the signed-in user, selected provider/model, configured credential, and En
   `missing_action` with `required_action` `model-provider-credentials.update` or
   `model-provider-credentials.revoke` and the `granting_policies` that include it. Ask an owner for
   `editor`, or ask an editor to do it.
+- `409` `provider_control_selection_invalid` with `The selected model is not published for this
+  provider.` or `The selected thinking level is not supported by this model.` means the selected
+  credential does not offer that model or level. For `openai-codex`, the models are the ones your
+  own ChatGPT plan lists for that credential, with each model's own thinking levels. The platform
+  reads them when you sign in and again each time it renews the sign-in; until it has read them
+  once, it offers its own published Codex list. The platform's model-provider list shows each
+  Codex credential's models and when they were last read. Select a model and level it lists, or
+  sign in again after OpenAI adds a model to your plan. OpenAI's `ultra` level is not offered.
 - If selection is correct, check that the deployed platform supports authenticated local provider
   use and that the provider publishes the selected model.
 
