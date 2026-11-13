@@ -702,3 +702,180 @@ def test_no_repr_holds_the_pass():
     credential = _relayed("openai")
     assert SESSION_PASS not in repr(credential)
     assert SESSION_PASS not in str(credential)
+
+
+# Sign-ins other than openai-codex are sent as Tau sends them, direct and relayed
+
+COPILOT_TOKEN = "tid=1;exp=2;proxy-ep=proxy.business.githubcopilot.com;sku=x"
+ANTHROPIC_TOKEN = "sk-ant-oat-sign-in-token-never-logged"
+
+
+def _sign_in(provider: str, token: str | None = None, **fields: Any) -> ProviderCredential:
+    """A sign-in credential: the real token in local mode, the pass in a hosted session."""
+    if token is None:
+        fields["relay_definition"] = ModelRelayDefinition(base_url=RELAY_BASE_URL)
+    return ProviderCredential(
+        provider=provider,
+        credential_kind="oauth",
+        access_token=token or SESSION_PASS,
+        **fields,
+    )
+
+
+async def _request_of(credential: ProviderCredential, model: str) -> httpx.Request:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return _sse(request)
+
+    provider = ProviderFactory(backend=None).build(  # type: ignore[arg-type]
+        credential,
+        provider_control=_provider_control(credential.provider, model),
+        model=model,
+    )
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        events = await _call(provider, model, client)
+    assert events[-1].type == "done"
+    [request] = requests
+    return request
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("token", "address", "secret"),
+    [
+        (ANTHROPIC_TOKEN, "https://api.anthropic.com/v1/messages", ANTHROPIC_TOKEN),
+        (None, f"{RELAY_BASE_URL}/v1/messages", SESSION_PASS),
+    ],
+    ids=["local", "relayed"],
+)
+async def test_an_anthropic_sign_in_is_sent_as_tau_sends_it(token, address, secret):
+    request = await _request_of(_sign_in("anthropic", token), "claude-sonnet-4-6")
+
+    assert str(request.url) == address
+    # A sign-in is a bearer token, never an API key, so a relay puts the token back as one.
+    assert request.headers["authorization"] == f"Bearer {secret}"
+    assert "x-api-key" not in request.headers
+    assert request.headers["anthropic-beta"] == "claude-code-20250219,oauth-2025-04-20"
+    assert request.headers["x-app"] == "cli"
+    assert request.headers["user-agent"] == "claude-cli/tau"
+    system = json.loads(request.content)["system"]
+    assert system[0]["text"] == "You are Claude Code, Anthropic's official CLI for Claude."
+
+
+@pytest.mark.asyncio
+async def test_an_anthropic_api_key_is_still_sent_as_one():
+    request = await _request_of(
+        ProviderCredential(provider="anthropic", api_key=PROVIDER_SECRET), "claude-sonnet-4-6"
+    )
+
+    assert request.headers["x-api-key"] == PROVIDER_SECRET
+    assert "authorization" not in request.headers
+    assert "anthropic-beta" not in request.headers
+    assert "Claude Code" not in request.content.decode()
+
+
+COPILOT_MODELS = [
+    pytest.param("gpt-5-mini", "/responses", id="responses"),
+    pytest.param("claude-fable-5", "/chat/completions", id="completions"),
+    pytest.param("claude-haiku-4.5", "/v1/messages", id="claude"),
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("model", "path"), COPILOT_MODELS)
+async def test_a_local_copilot_sign_in_calls_the_address_its_token_names(model, path):
+    request = await _request_of(_sign_in("github-copilot", COPILOT_TOKEN), model)
+
+    assert str(request.url) == f"https://api.business.githubcopilot.com{path}"
+    assert request.headers["authorization"] == f"Bearer {COPILOT_TOKEN}"
+    assert "x-api-key" not in request.headers
+    assert request.headers["copilot-integration-id"] == "vscode-chat"
+    assert request.headers["editor-version"].startswith("vscode/")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("model", "path"), COPILOT_MODELS)
+async def test_a_relayed_copilot_sign_in_calls_the_relay_and_reads_nothing_from_the_pass(
+    model, path
+):
+    # A pass that looks like a Copilot token names no address: the relay owns it.
+    credential = _sign_in("github-copilot").model_copy(
+        update={"access_token": SecretStr("tid=1;proxy-ep=proxy.elsewhere.test")}
+    )
+    request = await _request_of(credential, model)
+
+    assert str(request.url) == f"{RELAY_BASE_URL}{path}"
+    assert request.headers["authorization"] == "Bearer tid=1;proxy-ep=proxy.elsewhere.test"
+    assert "x-api-key" not in request.headers
+    assert request.headers["copilot-integration-id"] == "vscode-chat"
+
+
+def test_a_copilot_token_that_names_a_prohibited_host_is_refused():
+    with pytest.raises(ConfigurationError, match="Sign-in credential") as raised:
+        ProviderFactory(backend=None).build(  # type: ignore[arg-type]
+            _sign_in("github-copilot", "tid=1;proxy-ep=proxy.localhost"),
+            provider_control=_provider_control("github-copilot", "gpt-5-mini"),
+            model="gpt-5-mini",
+        )
+    assert "tid=1" not in str(raised.value)
+
+
+@pytest.mark.asyncio
+async def test_a_refreshed_local_copilot_sign_in_moves_to_its_new_token_and_address():
+    from datetime import UTC, datetime, timedelta
+    from unittest.mock import AsyncMock
+
+    control = _provider_control("github-copilot", "gpt-5-mini")
+    expired = datetime.now(UTC) - timedelta(seconds=1)
+    refreshed_token = "tid=2;proxy-ep=proxy.enterprise.githubcopilot.com"
+    backend = AsyncMock()
+    backend.hydrate_provider_credential.return_value = ProviderExecutionEvidence(
+        credential=_sign_in("github-copilot", refreshed_token), provider_control=control
+    )
+    session = _session().model_copy(
+        update={"active_provider": "github-copilot", "active_model": "gpt-5-mini"}
+    )
+    runtime = ProviderFactory(backend).for_session_credential(
+        session,
+        holder_id="holder-1",
+        evidence=ProviderExecutionEvidence(
+            credential=_sign_in("github-copilot", COPILOT_TOKEN, expires_at=expired),
+            provider_control=control,
+        ),
+    )
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return _sse(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        await _call(runtime.provider, "gpt-5-mini", client)
+
+    [request] = requests
+    assert str(request.url) == "https://api.enterprise.githubcopilot.com/responses"
+    assert request.headers["authorization"] == f"Bearer {refreshed_token}"
+
+
+@pytest.mark.asyncio
+async def test_an_anthropic_sign_in_reaches_the_provider_through_the_sdk_relay():
+    received: list[httpx.Request] = []
+    relayed = ProviderFactory(backend=None).build(  # type: ignore[arg-type]
+        _sign_in("anthropic"),
+        provider_control=_provider_control("anthropic", "claude-sonnet-4-6"),
+        model="claude-sonnet-4-6",
+    )
+    async with _through_the_relay(
+        received, api="anthropic-messages", base_url="https://api.anthropic.com", account_id=None
+    ) as client:
+        events = await _call(relayed, "claude-sonnet-4-6", client)
+
+    assert events[-1].type == "done"
+    [request] = received
+    assert str(request.url) == "https://api.anthropic.com/v1/messages"
+    assert request.headers["authorization"] == f"Bearer {PROVIDER_SECRET}"
+    assert "x-api-key" not in request.headers
+    assert request.headers["anthropic-beta"] == "claude-code-20250219,oauth-2025-04-20"
+    assert SESSION_PASS not in str(request.headers)

@@ -12,7 +12,12 @@ from urllib.parse import urlsplit
 import structlog
 from tau_agent.provider import ModelProvider
 from tau_ai.anthropic import AnthropicProvider
-from tau_ai.env import AnthropicConfig, OpenAICompatibleConfig
+from tau_ai.env import (
+    AnthropicConfig,
+    OpenAICompatibleConfig,
+    RuntimeProviderAuth,
+    RuntimeProviderAuthResolver,
+)
 from tau_ai.google import GoogleGenerativeAIProvider
 from tau_ai.mistral import MistralConversationsProvider
 from tau_ai.openai_cache import is_direct_openai_url
@@ -22,6 +27,9 @@ from tau_ai.openai_codex import (
     OpenAICodexProvider,
 )
 from tau_ai.openai_compatible import OpenAICompatibleProvider
+from tau_coding.credentials import OAuthCredential
+from tau_coding.oauth_registry import get_oauth_provider
+from tau_coding.oauth_types import OAuthRuntimeAuth
 from tau_coding.provider_catalog import BUILTIN_PROVIDER_CATALOG, ProviderCatalogEntry
 from tau_coding.thinking import (
     DEFAULT_THINKING_LEVEL,
@@ -70,6 +78,9 @@ BLOCKED_CUSTOM_PROVIDER_HOSTS = frozenset(
         "metadata.google.internal",
     }
 )
+
+# The first system block Tau sends with an Anthropic sign-in, which Anthropic requires of one.
+ANTHROPIC_SIGN_IN_SYSTEM_PROMPT = "You are Claude Code, Anthropic's official CLI for Claude."
 
 logger = structlog.get_logger(__name__)
 
@@ -151,6 +162,45 @@ class ProviderFactory:
             or address.is_unspecified
         ):
             raise ConfigurationError(f"{source} base_url targets a prohibited address")
+
+    @staticmethod
+    def _sign_in_auth(credential: ProviderCredential) -> OAuthRuntimeAuth | None:
+        """How Tau sends this credential when it is a sign-in Tau has its own rules for.
+
+        Tau sends an Anthropic or GitHub Copilot sign-in with headers of its own, and takes
+        Copilot's address from the token. None for an API key, for a provider Tau has no sign-in
+        for, and for ``openai-codex``, whose transport does this itself.
+
+        In a hosted session the credential is a pass (ADR 0030): nothing is read out of it, so the
+        answer then carries Tau's headers and no address. The relay owns the address.
+        """
+        if credential.credential_kind != "oauth" or credential.provider == "openai-codex":
+            return None
+        oauth_provider = get_oauth_provider(credential.provider)
+        if oauth_provider is None:
+            return None
+        relayed = credential.relay_definition is not None
+        auth = oauth_provider.runtime_auth(
+            OAuthCredential(
+                access="" if relayed else credential.secret(),
+                refresh="",
+                expires=0,
+                account_id=credential.account_id,
+            )
+        )
+        base_url = None if relayed else auth.base_url
+        if base_url is not None:
+            ProviderFactory._validate_custom_base_url(base_url, source="Sign-in credential")
+        return OAuthRuntimeAuth(
+            api_key=credential.secret(),
+            base_url=base_url,
+            # The transport sends the secret itself, in the place its protocol uses.
+            headers={
+                name: value
+                for name, value in (auth.headers or {}).items()
+                if name.casefold() != "authorization"
+            },
+        )
 
     @staticmethod
     def _thinking_levels(
@@ -589,6 +639,29 @@ class ProviderFactory:
                 f"Backend returned no usable credential for {credential.provider}"
             )
 
+        sign_in = self._sign_in_auth(credential)
+        sign_in_resolver: RuntimeProviderAuthResolver | None = None
+        if sign_in is not None:
+            base_url = sign_in.base_url or base_url
+            headers = {**headers, **(sign_in.headers or {})}
+
+            async def resolve_sign_in() -> RuntimeProviderAuth:
+                # Before each request, as Tau does: a refreshed sign-in may carry a new token and,
+                # for GitHub Copilot, a new address.
+                current = (
+                    await credential_resolver() if credential_resolver is not None else credential
+                )
+                auth = self._sign_in_auth(current)
+                if auth is None or not auth.api_key:
+                    raise ConfigurationError(
+                        f"Backend returned no usable credential for {credential.provider}"
+                    )
+                return RuntimeProviderAuth(
+                    api_key=auth.api_key, base_url=auth.base_url, headers=auth.headers
+                )
+
+            sign_in_resolver = resolve_sign_in
+
         if api == "openai-codex-responses":
             if not credential.access_token or not credential.account_id:
                 raise ConfigurationError(
@@ -626,11 +699,22 @@ class ProviderFactory:
             anthropic_base_url = base_url.rstrip("/")
             if not anthropic_base_url.endswith("/v1"):
                 anthropic_base_url = f"{anthropic_base_url}/v1"
+            # Tau sends a key as `x-api-key` only to a provider that is Anthropic's own kind. A
+            # sign-in, and a Claude model on another kind of provider such as GitHub Copilot,
+            # goes as a bearer token.
+            anthropic_kind = catalog_provider is not None and catalog_provider.kind == "anthropic"
             return AnthropicProvider(
                 AnthropicConfig(
                     api_key=secret,
                     base_url=anthropic_base_url,
                     headers=headers,
+                    bearer_auth=sign_in is not None or not anthropic_kind,
+                    oauth_system_prompt=(
+                        ANTHROPIC_SIGN_IN_SYSTEM_PROMPT
+                        if sign_in is not None and anthropic_kind
+                        else None
+                    ),
+                    credential_resolver=sign_in_resolver,
                     provider_name=credential.provider,
                     timeout_seconds=timeout_seconds,
                     max_tokens=max_tokens,
@@ -649,6 +733,7 @@ class ProviderFactory:
             headers=headers,
             api=api,
             provider_name=credential.provider,
+            credential_resolver=sign_in_resolver,
             omit_authorization_header=is_custom_provider and not bool(secret),
             max_tokens=max_tokens,
             supports_images=supports_images,

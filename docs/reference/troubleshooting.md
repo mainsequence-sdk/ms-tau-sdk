@@ -281,6 +281,7 @@ mode is not affected.
 | `Model relay definition base_url targets a prohibited host` or `... invalid base_url` | The relay address is `localhost`, a metadata host, a link-local address, or not a plain `http`/`https` URL. Answer an address the runtime reaches on the network. |
 | `Credential refresh changed the model relay` | A refresh answered another relay address than the session loaded with. Answer the same address for the whole run. |
 | A turn fails with a provider `403` whose `detail` names the session pass or the credential | The relay refused the call: the run no longer holds the session, the owner lost access to the credential, or the path is not one the provider's transport uses. It is not retried. Start a new turn; if it repeats, check the session owner's access to the provider. |
+| `Sign-in credential base_url targets a prohibited host` in local mode | A GitHub Copilot token names an address (`proxy-ep`) that the address checks refuse. Sign in again; the token is not one GitHub issued for a public Copilot address. |
 | A turn fails with a provider `502` | The relay could not reach the provider. Tau retries it like any `5xx`. |
 | A local session fails with `... answered relay_definition for <provider> to a runtime that does not call models through the model relay` | A local hydrate endpoint answered a relayed entry. In local mode it must answer the real credential. |
 

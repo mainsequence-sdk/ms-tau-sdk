@@ -325,7 +325,8 @@ Organization admin can accept that risk by enabling requester access.
   listed model or not. An `api_key` or `oauth` credential defines no address or headers, so a
   `base_url` or `headers` that a hydrate answer carries in one is ignored. Only an
   `organization_custom` credential sets its own address and headers, and its address passes the
-  checks above. Every address that does not come from Tau's catalog passes those checks. This is
+  checks above. A GitHub Copilot sign-in's address is the one its token names, and passes them
+  too. Every address that does not come from Tau's catalog passes those checks. This is
   where requests go in local mode; a hosted session sends them all to its relay.
 
 ### Hosted sessions hold a pass, not a secret
@@ -347,6 +348,10 @@ too.
   hydrate endpoint. It never calls a provider with what it received instead. A relayed entry that
   carries a `base_url` or `headers`, or a relayed `openai-codex` entry without its `account_id`,
   is refused too.
+- **Sign-ins travel as passes too.** An OpenAI Codex, Anthropic or GitHub Copilot sign-in reaches
+  a hosted runtime as a pass and is sent the way Tau sends that sign-in. For GitHub Copilot the
+  account's address is in the real token, so the relay derives it; the runtime reads nothing out
+  of a pass.
 - **The relay address passes the address checks above.** A relay on `localhost`, a metadata host
   or a link-local address is refused like any other address.
 - **Local mode is unchanged.** It announces no relay, receives the real credential and refuses a

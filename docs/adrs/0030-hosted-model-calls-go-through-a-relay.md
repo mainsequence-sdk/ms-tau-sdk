@@ -122,6 +122,19 @@ six. The Anthropic transport expects a base that ends in `/v1`, which Tau's own 
 adds and the SDK did not; the SDK now adds it, so an Anthropic-protocol call reaches the relay as
 `<relay>/v1/messages` (amended 2026-11-13, found after the first implementation).
 
+A sign-in other than `openai-codex` is built as Tau's own configuration builds it, which the SDK
+did not do before (amended 2026-11-13, owner decision of that day: build these sign-ins, do not
+refuse them in hosted sessions):
+
+- An Anthropic sign-in is sent as a bearer token with Tau's sign-in headers and first system
+  block. The pass therefore reaches the relay as a bearer token, and the relay's rule, the secret
+  goes where the pass arrived, puts the access token back as one.
+- A GitHub Copilot sign-in is sent with Tau's Copilot headers; its Claude models go as a bearer
+  token to `/v1/messages`. Tau takes Copilot's address from the token. In a hosted session the
+  runtime holds a pass and reads nothing out of it, so the relay derives the address from the
+  real token. In local mode the SDK derives it, and the address passes the prohibited-host
+  checks.
+
 The Codex transport keeps asking for the credential before each request. In a relayed session
 that returns the same pass, and re-hydrates only if the platform answers an expiry.
 
@@ -232,6 +245,10 @@ Where the built contract differs from, or adds to, the draft:
 - The relay returns a redirect without following it; the draft said it follows none to another
   host.
 - The relay reads the request body with no framework cap (section 8).
+- The draft assumed that the SDK sends a provider what Tau sends, so that moving the address was
+  the whole change. It did not hold for the Anthropic protocol's `/v1` or for sign-ins other than
+  `openai-codex`; section 4 records both corrections. For GitHub Copilot the relay, not the
+  catalog, decides the upstream address, from the real token.
 
 Decided in this repository:
 

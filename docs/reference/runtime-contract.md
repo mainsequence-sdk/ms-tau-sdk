@@ -66,6 +66,12 @@ Anthropic-protocol call is `<relay>/v1/messages`. `provider_control`,
 `uid`, `organization_environment_uid`, the refresh rule and `catalog_definition`'s `compat` are
 unchanged; `catalog_definition.base_url` is not used.
 
+A sign-in is sent as Tau sends it, with the pass in the token's place: `openai-codex` as a bearer
+token with `chatgpt-account-id`; an Anthropic sign-in as a bearer token with `anthropic-beta`,
+`user-agent` and `x-app`; a GitHub Copilot sign-in as a bearer token with Copilot's editor
+headers, to `/chat/completions`, `/responses` or, for its Claude models, `/v1/messages`. The relay
+of a GitHub Copilot sign-in takes the upstream address from the real token.
+
 The runtime refuses, with a configuration error that names the field and never a value, an entry
 without `relay_definition`, a relayed entry that carries `base_url` or `headers`, a relayed
 `openai-codex` entry without `account_id`, and a refresh that answers a different relay. The same

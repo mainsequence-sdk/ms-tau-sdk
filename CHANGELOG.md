@@ -44,6 +44,24 @@ order below before raising a `<3` range.
   it, in local mode and through the relay, where the call is `<relay>/v1/messages`. Found by
   capturing the request; nothing was called against a provider.
 
+- **Anthropic and GitHub Copilot sign-ins are sent as Tau sends them.** The SDK sent every
+  sign-in other than `openai-codex` as if its token were an API key. Now, in local mode and
+  through the relay:
+  - an Anthropic sign-in goes as `Authorization: Bearer`, never `x-api-key`, with Tau's sign-in
+    headers (`anthropic-beta: claude-code-20250219,oauth-2025-04-20`, `user-agent`, `x-app`) and
+    the first system block Anthropic requires of a sign-in. An Anthropic API key is sent as
+    before;
+  - a GitHub Copilot sign-in carries Tau's Copilot headers on every call, and its Claude models
+    go as a bearer token. In local mode the address is the one the Copilot token names
+    (`proxy-ep`), after the custom-provider address checks; in a hosted session it is the relay's,
+    nothing is read out of the pass, and the relay derives the account's address from the real
+    token;
+  - a refreshed sign-in is used from the next request, with its new token and address.
+
+  Tau's one-hour prompt-cache retention for sign-ins is not carried over; requests keep the
+  default retention. Checked against captured requests only: no call was made to Anthropic or
+  GitHub, and no such sign-in is configured on the development platform.
+
   Upgrade order: the platform's relay first, then each application with its own hydrate endpoint
   ships its relay, then hosted runtimes upgrade to 3.0.0. A 2.x hosted runtime cannot start a
   session on a platform that relays, and a 3.0.0 hosted runtime cannot start one on a platform or

@@ -417,6 +417,41 @@ def _cases() -> tuple[RelayContractCase, ...]:
             ),
         )
     )
+    anthropic = next(
+        transport for transport in _TRANSPORTS if transport.api == "anthropic-messages"
+    )
+    sign_in_headers = {
+        "anthropic-beta": "claude-code-20250219,oauth-2025-04-20",
+        "anthropic-version": "2023-06-01",
+        "content-type": "application/json",
+        "x-app": "cli",
+    }
+    cases.append(
+        RelayContractCase(
+            # A runtime sends a sign-in, and a Claude model of a provider that is not
+            # Anthropic's own kind, as a bearer token. The secret goes back as one.
+            name="anthropic-messages: a sign-in arrives as a bearer token and is forwarded as one",
+            api=anthropic.api,
+            provider_base_url=anthropic.provider_base_url,
+            request=RelayRequest(
+                method="POST",
+                path=anthropic.path,
+                headers={"authorization": "Bearer {pass}", **sign_in_headers},
+                body=_REQUEST_BODY,
+            ),
+            provider_answer=ProviderAnswer(status=200, headers=_SSE, body=anthropic.stream),
+            expect=RelayExpectation(
+                status=200,
+                provider_call=ExpectedProviderCall(
+                    method="POST",
+                    url=anthropic.provider_url,
+                    headers={"authorization": "Bearer {secret}", **sign_in_headers},
+                    absent_headers=("x-api-key",),
+                ),
+                body=anthropic.stream,
+            ),
+        )
+    )
     return tuple(cases)
 
 
