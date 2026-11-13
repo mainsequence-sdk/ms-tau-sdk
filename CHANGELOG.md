@@ -36,6 +36,14 @@ order below before raising a `<3` range.
     a query parameter, and httpx's request line put it in the runtime's logs. The log sanitizer
     now replaces a `key` query value with `[REDACTED]`, for every logger.
 
+- **Anthropic-protocol providers are called under `/v1`.** For `anthropic`, `minimax`,
+  `minimax-cn`, `fireworks`, `vercel-ai-gateway` and GitHub Copilot's Claude models the runtime
+  called `<address>/messages`, for example `https://api.anthropic.com/messages`, which no provider
+  serves: Tau's catalog addresses for this protocol carry no `/v1`, Tau's own configuration
+  appends it, and the SDK did not. Now the SDK appends `/v1` unless the address already ends in
+  it, in local mode and through the relay, where the call is `<relay>/v1/messages`. Found by
+  capturing the request; nothing was called against a provider.
+
   Upgrade order: the platform's relay first, then each application with its own hydrate endpoint
   ships its relay, then hosted runtimes upgrade to 3.0.0. A 2.x hosted runtime cannot start a
   session on a platform that relays, and a 3.0.0 hosted runtime cannot start one on a platform or

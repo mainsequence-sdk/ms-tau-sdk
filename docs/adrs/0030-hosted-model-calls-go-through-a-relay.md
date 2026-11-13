@@ -118,7 +118,9 @@ the relay's host, so for a provider whose own address is OpenAI's the SDK states
 defaults in `compat`, and the provider receives what it would without the relay. Nothing else in the build changes: the transport is chosen
 from the provider control as today, and thinking, inputs, timeouts and `compat` are applied as
 today. Each transport appends its own path to the base it is given, so one relay base serves all
-six.
+six. The Anthropic transport expects a base that ends in `/v1`, which Tau's own configuration
+adds and the SDK did not; the SDK now adds it, so an Anthropic-protocol call reaches the relay as
+`<relay>/v1/messages` (amended 2026-11-13, found after the first implementation).
 
 The Codex transport keeps asking for the credential before each request. In a relayed session
 that returns the same pass, and re-hydrates only if the platform answers an expiry.

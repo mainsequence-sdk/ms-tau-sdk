@@ -621,10 +621,15 @@ class ProviderFactory:
             )
 
         if api == "anthropic-messages":
+            # Tau's Anthropic transport calls `<base>/messages` and expects a base that ends in
+            # /v1. Tau's own configuration appends it to a catalog address, which has none.
+            anthropic_base_url = base_url.rstrip("/")
+            if not anthropic_base_url.endswith("/v1"):
+                anthropic_base_url = f"{anthropic_base_url}/v1"
             return AnthropicProvider(
                 AnthropicConfig(
                     api_key=secret,
-                    base_url=base_url,
+                    base_url=anthropic_base_url,
                     headers=headers,
                     provider_name=credential.provider,
                     timeout_seconds=timeout_seconds,

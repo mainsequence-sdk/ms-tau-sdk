@@ -145,9 +145,10 @@ _TRANSPORTS = (
     ),
     _Transport(
         api="anthropic-messages",
-        provider_base_url="https://anthropic.provider.test/v1",
+        # The runtime adds /v1 to an Anthropic address; this provider address does not end in it.
+        provider_base_url="https://anthropic.provider.test",
         method="POST",
-        path="/messages",
+        path="/v1/messages",
         provider_url="https://anthropic.provider.test/v1/messages",
         pass_place="x-api-key",
         stream=(

@@ -62,7 +62,7 @@ TRANSPORTS = [
         "claude-sonnet-4-6",
         AnthropicProvider,
         "x-api-key",
-        "/messages",
+        "/v1/messages",
         id="anthropic",
     ),
     pytest.param(
@@ -224,7 +224,8 @@ def test_a_relayed_entry_keeps_no_credential_address_or_header(
         carrying, provider_control=_provider_control(provider_name, model), model=model
     )
 
-    assert provider._config.base_url == RELAY_BASE_URL
+    # Only the Anthropic transport is given a base that ends in /v1.
+    assert provider._config.base_url.removesuffix("/v1") == RELAY_BASE_URL
     assert "X-Extra" not in provider._config.headers
 
 
@@ -364,6 +365,54 @@ def test_a_relayed_entry_with_an_address_or_headers_is_refused(credential):
             relayed=True,
         )
     assert SESSION_PASS not in str(raised.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_name", "model", "endpoint"),
+    [
+        ("anthropic", "claude-sonnet-4-6", "https://api.anthropic.com/v1/messages"),
+        ("minimax", "MiniMax-M2.7", "https://api.minimax.io/anthropic/v1/messages"),
+        (
+            "fireworks",
+            "accounts/fireworks/models/deepseek-v4-flash",
+            "https://api.fireworks.ai/inference/v1/messages",
+        ),
+    ],
+)
+async def test_an_anthropic_protocol_provider_is_called_under_v1(provider_name, model, endpoint):
+    # Tau's catalog addresses for the Anthropic protocol have no /v1, and its transport adds
+    # none: without it the call goes to `<base>/messages`, which no provider serves.
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return _sse(request)
+
+    control = _provider_control(provider_name, model)
+    for credential, expected in (
+        (ProviderCredential(provider=provider_name, api_key=PROVIDER_SECRET), endpoint),
+        (_relayed(provider_name), f"{RELAY_BASE_URL}/v1/messages"),
+    ):
+        provider = ProviderFactory(backend=None).build(  # type: ignore[arg-type]
+            credential, provider_control=control, model=model
+        )
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            await _call(provider, model, client)
+        assert str(requests[-1].url) == expected
+
+
+def test_an_anthropic_address_that_ends_in_v1_is_kept():
+    control = _provider_control("anthropic", "claude-sonnet-4-6")
+    provider = ProviderFactory(backend=None).build(  # type: ignore[arg-type]
+        _relayed("anthropic").model_copy(
+            update={"relay_definition": ModelRelayDefinition(base_url=f"{RELAY_BASE_URL}/v1/")}
+        ),
+        provider_control=control,
+        model="claude-sonnet-4-6",
+    )
+
+    assert provider._config.base_url == f"{RELAY_BASE_URL}/v1"
 
 
 # Section 5: a refusal by the relay reaches the runtime once, as an authorization failure

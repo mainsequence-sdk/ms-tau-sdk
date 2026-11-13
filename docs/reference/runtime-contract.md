@@ -61,7 +61,8 @@ Each credential entry the runtime receives is then relayed:
 
 The pass is opaque to the runtime. Every Tau transport is built on `relay_definition.base_url`,
 after the same address checks as a custom provider's address, with the pass where the secret
-goes and only Tau's catalog headers; each transport appends its own path. `provider_control`,
+goes and only Tau's catalog headers; each transport appends its own path, and an
+Anthropic-protocol call is `<relay>/v1/messages`. `provider_control`,
 `uid`, `organization_environment_uid`, the refresh rule and `catalog_definition`'s `compat` are
 unchanged; `catalog_definition.base_url` is not used.
 
