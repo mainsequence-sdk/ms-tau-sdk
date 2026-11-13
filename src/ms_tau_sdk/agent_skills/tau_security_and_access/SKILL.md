@@ -236,9 +236,13 @@ directly or through a team:
   with the `granting_policies` that would allow it.
 
 Holding `user` delivers the credential, or the endpoint's stored authentication, to the holder's own
-runtime, including local Tau, where it can be copied; removing the policy stops later deliveries,
-not copies already made. To let a team run an Agent on one credential, its owner gives the team
-`user`.
+local Tau, where it can be copied; removing the policy stops later deliveries, not copies already
+made. To let a team run an Agent on one credential, its owner gives the team `user`.
+
+From ms-tau-sdk 3.0.0 a hosted session never receives the secret: it receives a session pass and a
+relay address, and every model call goes through the relay, which holds the secret. The pass works
+only at that relay and only while the run holds the session. An application with its own hydrate
+endpoint serves its relay with `ms_tau_sdk.model_relay` (ADR 0030).
 
 ## Agents
 

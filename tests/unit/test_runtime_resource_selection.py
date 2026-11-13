@@ -222,6 +222,23 @@ async def test_without_a_selection_the_agent_loads_the_whole_tau_directory(tmp_p
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("relays", "announced"), [(True, [1]), (False, [])])
+async def test_the_bootstrap_announces_the_model_relay_only_when_hosted(
+    tmp_path, relays, announced
+):
+    # ADR 0030: a hosted runtime lists the relay and parses a relayed entry; local mode does not.
+    workspace = _workspace(tmp_path)
+    manager, backend = _manager(workspace, tmp_path / "state", _bootstrap(None))
+    backend.relays_model_calls = relays
+    await manager.get("session-1")
+
+    request = backend.bootstrap_tau_runtime.await_args.args[1]
+    assert request.supported_model_relay_versions == announced
+    assert backend.provider_credential_from_hydration.call_args.kwargs == {"relayed": relays}
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
 async def test_two_agents_of_one_repository_load_different_prompts_skills_and_tools(tmp_path):
     workspace = _workspace(tmp_path)
     full = {

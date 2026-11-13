@@ -1685,7 +1685,11 @@ class _HostedPlatform:
             "resume_snapshot": None,
             "provider_credentials": {
                 "credentials": {
-                    "openai": {"credential_kind": "api_key", "credential": {"api_key": "pk"}}
+                    "openai": {
+                        "credential_kind": "api_key",
+                        "credential": {"type": "api_key", "key": "pk"},
+                        "relay_definition": {"base_url": "https://relay.example.test/model-relay"},
+                    }
                 }
             },
             "provider_control": _provider_control().model_dump(mode="json"),

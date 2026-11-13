@@ -36,6 +36,7 @@ from ms_tau_sdk.backend.assertions import CallerAssertion
 from ms_tau_sdk.backend.client import LeaseProof, MainSequenceClient
 from ms_tau_sdk.backend.mcp import MainSequenceMCPClient
 from ms_tau_sdk.backend.models import (
+    MODEL_RELAY_VERSION,
     AgentRuntimeActivity,
     AgentSession,
     ProviderControl,
@@ -1059,6 +1060,9 @@ class SessionRuntimeManager:
                 supported_snapshot_schema_versions=[SNAPSHOT_SCHEMA_VERSION],
                 supported_provider_control_schema_versions=[1],
                 supported_runtime_resources_schema_versions=[RUNTIME_RESOURCES_SCHEMA_VERSION],
+                supported_model_relay_versions=(
+                    [MODEL_RELAY_VERSION] if self.backend.relays_model_calls else []
+                ),
                 tau_runtime_version=TAU_RUNTIME_VERSION,
             ),
         )
@@ -1170,6 +1174,7 @@ class SessionRuntimeManager:
                     credential=self.backend.provider_credential_from_hydration(
                         provider_name,
                         bootstrap.provider_credentials,
+                        relayed=self.backend.relays_model_calls,
                     ),
                     provider_control=bootstrap.provider_control,
                 )

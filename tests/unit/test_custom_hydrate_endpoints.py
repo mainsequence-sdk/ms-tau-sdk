@@ -1,4 +1,4 @@
-"""Custom provider credential hydrate endpoints (ADR 0027, amended 2026-11-10)."""
+"""Custom provider credential hydrate endpoints (ADR 0027, amended 2026-11-10 and by ADR 0030)."""
 
 from __future__ import annotations
 
@@ -49,6 +49,8 @@ HYDRATE_PATH = "/api/v1/model-provider-credentials/hydrate/"
 ACCESS_PATH = f"/api/v1/resource-releases/{RELEASE_UID}/resolve-runtime-access/"
 PROVIDER_SECRET = "sk-provider-secret-never-logged"
 BOOTSTRAP_SECRET = "sk-bootstrap-secret-never-used"
+SESSION_PASS = "session-pass-never-logged"
+RELAY_BASE_URL = "https://relay.example.test/model-relay"
 
 
 def _provider_control(provider_name: str = "openai", model: str = "gpt-5.4") -> ProviderControl:
@@ -125,6 +127,27 @@ def _answer(
     }
 
 
+def _relayed(answer: dict[str, Any]) -> dict[str, Any]:
+    """The same answer as an endpoint gives a runtime that announces the relay (ADR 0030).
+
+    The pass takes the secret's place and nothing else is corrected, so a malformed answer stays
+    malformed.
+    """
+
+    relayed = json.loads(json.dumps(answer))
+    for entry in relayed.get("credentials", {}).values():
+        credential = entry.get("credential")
+        if isinstance(credential, dict):
+            for field in ("key", "api_key", "access", "access_token"):
+                if field in credential:
+                    credential[field] = SESSION_PASS
+            if entry.get("credential_kind") == "organization_custom":
+                credential.pop("base_url", None)
+                credential.pop("headers", None)
+        entry["relay_definition"] = {"base_url": RELAY_BASE_URL}
+    return relayed
+
+
 def _access(token: str = "release-token-1", *, expires_in: timedelta | None = None) -> dict:
     access: dict[str, Any] = {"mode": "token", "token": token, "rpc_url": RPC_URL}
     if expires_in is not None:
@@ -161,10 +184,17 @@ class _Network:
         self.platform_hydrate: list[dict | httpx.Response] = [_answer()]
 
     @staticmethod
-    def _next(queue: list[dict | httpx.Response]) -> httpx.Response:
+    def _next(
+        queue: list[dict | httpx.Response], request: httpx.Request | None = None
+    ) -> httpx.Response:
         answer = queue.pop(0) if len(queue) > 1 else queue[0]
         if isinstance(answer, httpx.Response):
             return answer
+        # A hydrate source relays exactly the runtimes that announce the relay.
+        if request is not None and 1 in json.loads(request.content).get(
+            "supported_model_relay_versions", []
+        ):
+            answer = _relayed(answer)
         return httpx.Response(200, json=answer)
 
     def handle(self, request: httpx.Request) -> httpx.Response:
@@ -175,9 +205,9 @@ class _Network:
             if request.url.path == ACCESS_PATH:
                 return self._next(self.access)
             if request.url.path == HYDRATE_PATH:
-                return self._next(self.platform_hydrate)
+                return self._next(self.platform_hydrate, request)
             return httpx.Response(404, json={"detail": "not found"})
-        return self._next(self.hydrate)
+        return self._next(self.hydrate, request)
 
     def sent(self, *, host: str, path: str | None = None) -> list[httpx.Request]:
         return [
@@ -244,6 +274,7 @@ async def _hosted_hydrate(client: MainSequenceClient, model: str = "gpt-5.4", pr
 def _no_secret(*values: object) -> None:
     for value in values:
         assert PROVIDER_SECRET not in str(value)
+        assert SESSION_PASS not in str(value)
         assert "release-token" not in str(value)
 
 
@@ -356,7 +387,8 @@ async def test_unset_hydrates_from_tdag_django_and_reaches_no_other_host(
     async with _client(network, _hosted_settings(runtime_identity_token_file)) as client:
         evidence = await _hosted_hydrate(client)
 
-    assert evidence.credential.secret() == PROVIDER_SECRET
+    assert evidence.credential.secret() == SESSION_PASS
+    assert evidence.credential.relay_definition.base_url == RELAY_BASE_URL
     assert {request.url.host for request in network.requests} == {"backend.test"}
     assert [request.url.path for request in network.hydrations()] == [HYDRATE_PATH]
     assert network.sent(host="backend.test", path=ACCESS_PATH) == []
@@ -382,7 +414,7 @@ async def test_a_hosted_release_receives_tdag_djangos_body_and_only_its_token(
         otel_context.detach(attached)
 
     assert evidence.credential.model_provider_credential_uid == "release-credential-1"
-    assert evidence.credential.secret() == PROVIDER_SECRET
+    assert evidence.credential.secret() == SESSION_PASS
     # The token comes from the release's runtime access, with the runtime's own credential and
     # without a delegation.
     [access] = network.sent(host="backend.test", path=ACCESS_PATH)
@@ -401,6 +433,7 @@ async def test_a_hosted_release_receives_tdag_djangos_body_and_only_its_token(
         "holder_id": "holder-1",
         "supported_provider_control_schema_versions": [1],
         "execution_selection": {"provider": "openai", "model": "gpt-5.4"},
+        "supported_model_relay_versions": [1],
     }
     assert hydrate.headers["authorization"] == "Bearer release-token-1"
     assert hydrate.headers["content-type"] == "application/json"
@@ -462,7 +495,7 @@ async def test_a_401_gets_a_new_token_once(runtime_identity_token_file):
     async with _client(network, settings) as client:
         evidence = await _hosted_hydrate(client)
 
-    assert evidence.credential.secret() == PROVIDER_SECRET
+    assert evidence.credential.secret() == SESSION_PASS
     assert len(network.sent(host="backend.test", path=ACCESS_PATH)) == 2
     assert [request.headers["authorization"] for request in network.hydrations()] == [
         "Bearer release-token-1",
@@ -601,7 +634,9 @@ def _missing() -> dict[str, Any]:
         (_without_uid(), BackendError),
         (_missing(), BackendError),
         (_answer(kind="oauth"), BackendError),
-        (_bad_credential_answer(), BackendError),
+        # A relayed credential carries no headers at all (ADR 0030).
+        (_bad_credential_answer(), ConfigurationError),
+        (httpx.Response(200, json=_answer()), ConfigurationError),
     ],
 )
 async def test_a_malformed_answer_is_a_hydration_failure_without_a_value(
@@ -636,7 +671,7 @@ async def test_a_server_error_is_retried_as_tdag_djangos_is(
     async with _client(network, settings) as client:
         evidence = await _hosted_hydrate(client)
 
-    assert evidence.credential.secret() == PROVIDER_SECRET
+    assert evidence.credential.secret() == SESSION_PASS
     assert len(network.hydrations()) == 2
 
 
@@ -650,7 +685,7 @@ async def test_a_waking_release_is_waited_for(runtime_identity_token_file):
     async with _client(network, settings) as client:
         evidence = await _hosted_hydrate(client)
 
-    assert evidence.credential.secret() == PROVIDER_SECRET
+    assert evidence.credential.secret() == SESSION_PASS
     assert len(network.sent(host="backend.test", path=ACCESS_PATH)) == 3
 
 
@@ -704,7 +739,7 @@ def _session(provider: str, model: str) -> AgentSession:
                 credential={
                     "type": "oauth",
                     "access": _codex_token(),
-                    "expires": int((datetime.now(UTC) + timedelta(hours=1)).timestamp() * 1000),
+                    "account_id": "account-id",
                 },
             ),
             OpenAICodexProvider,
@@ -757,6 +792,7 @@ def _expiring_codex(*, uid: str = "release-credential-1", environment: str | Non
         credential={
             "type": "oauth",
             "access": _codex_token(),
+            "account_id": "account-id",
             "expires": int((datetime.now(UTC) - timedelta(seconds=1)).timestamp() * 1000),
         },
     )
@@ -892,6 +928,26 @@ async def test_a_local_address_receives_the_local_body_with_the_session_and_no_c
     assert "authorization" not in names
     assert not [name for name in names if name.startswith("x-mainsequence-")]
     assert {"baggage", "traceparent", "cookie"}.isdisjoint(names)
+
+
+@pytest.mark.asyncio
+async def test_a_local_endpoint_that_answers_a_relayed_entry_is_refused(tmp_path):
+    # Local mode announces no relay, so a relayed answer is refused, not run (ADR 0030).
+    network = _Network()
+    settings = _local_settings(tmp_path, local_provider_credential_hydrate_url=LOCAL_ORIGIN)
+    network.hydrate = [httpx.Response(200, json=_relayed(_answer()))]
+    async with _client(network, settings) as client:
+        with pytest.raises(ConfigurationError, match="relay_definition") as raised:
+            await client.hydrate_local_provider_credential(
+                "openai",
+                model="gpt-5.4",
+                thinking_level="high",
+                holder_id="local-process",
+                agent_session_uid="local-abc-default",
+            )
+
+    _no_secret(raised.value)
+    assert "supported_model_relay_versions" not in json.loads(network.requests[0].content)
 
 
 @pytest.mark.asyncio

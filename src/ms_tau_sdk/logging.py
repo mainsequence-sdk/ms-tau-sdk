@@ -64,6 +64,9 @@ SENSITIVE_EXACT_KEYS = {
     "user_agent",
 }
 BEARER_PATTERN = re.compile(r"(?i)\bbearer\s+(?!bearer\b)[A-Za-z0-9._~+/=-]+")
+# Google's transport sends its key, and in a hosted session the relay pass, as a query parameter,
+# so a logged request URL such as httpx's request line would carry it (ADR 0030).
+KEY_QUERY_PATTERN = re.compile(r"(?i)([?&]key=)(?!\[REDACTED\])[^&#\s\"'()]+")
 CALLSITE_PARAMETERS = {
     structlog.processors.CallsiteParameter.PATHNAME,
     structlog.processors.CallsiteParameter.FILENAME,
@@ -139,7 +142,9 @@ def _sanitize(value: object, *, key: str = "") -> object:
     if isinstance(value, list | tuple | set):
         return [_sanitize(child) for child in value]
     if isinstance(value, str):
-        return BEARER_PATTERN.sub("Bearer [REDACTED]", value)
+        return KEY_QUERY_PATTERN.sub(
+            r"\1[REDACTED]", BEARER_PATTERN.sub("Bearer [REDACTED]", value)
+        )
     return value
 
 

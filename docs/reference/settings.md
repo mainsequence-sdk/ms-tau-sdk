@@ -219,6 +219,17 @@ malformed answer fails the load or the turn without a value. The backend timeout
 `MAINSEQUENCE_TAU_BACKEND_MAX_RESPONSE_BYTES` apply. `/health` reports where credentials come from
 in `provider_credential_source`: `mainsequence`, `release` or `local_address`.
 
+From 3.0.0 a hosted runtime's hydrate body also sends `supported_model_relay_versions: [1]`, and a
+release must answer it a session pass and its own relay address in `relay_definition`, never the
+person's secret; an answer without `relay_definition` fails the load. Serve the relay with
+`ms_tau_sdk.model_relay` before the runtime upgrades. In local mode, with a release or a local
+address, the body announces no relay and the endpoint answers the real credential
+([ADR 0030](../adrs/0030-hosted-model-calls-go-through-a-relay.md),
+[model calls of a hosted session](./runtime-contract.md#model-calls-of-a-hosted-session)).
+
+No setting turns the relay off: a hosted runtime always calls models through it, and local mode
+never does.
+
 ## Process and workspace
 
 | Environment variable | Default |

@@ -263,6 +263,28 @@ logs `providers.model_outside_tau_catalog` with the provider and the model.
 - The context window is what the provider discovers. The Codex transport discovers it from the
   account's own model list; the other transports run at Tau's default of 128,000 tokens.
 
+## A hosted session fails to load over the model relay
+
+From ms-tau-sdk 3.0.0 a hosted runtime calls models only through a relay
+([ADR 0030](../adrs/0030-hosted-model-calls-go-through-a-relay.md),
+[model calls of a hosted session](./runtime-contract.md#model-calls-of-a-hosted-session)). Local
+mode is not affected.
+
+| What you see | Cause and fix |
+| --- | --- |
+| A 2.x hosted runtime's bootstrap fails with `tau_runtime_version_unsupported` and a field error on `supported_model_relay_versions`, or its hydration with `409` `provider_control_contract_unsupported` | The platform serves the relay and refuses runtimes that do not announce it. Upgrade the Agent's runtime to 3.0.0. |
+| Hydration answers `409` `model_provider_credential_unavailable` with "The model relay is not deployed" | The platform has no relay yet, so no hosted session can call a model. Nothing in the Agent fixes it; the platform must deploy its relay. |
+| `Backend answered no relay_definition for <provider>: a hosted session calls models only through the model relay` | A 3.0.0 runtime talks to a platform that does not relay yet. Keep the runtime on 2.x until the platform serves the relay. |
+| `The provider credential hydrate endpoint answered no relay_definition for <provider>` | The application's own hydrate endpoint still answers the secret. Serve `ms_tau_sdk.model_relay` and answer a pass and `relay_definition`, or keep the runtime on 2.x. |
+| `... answered a relayed credential for <provider> with base_url or headers` | A relayed entry carries the provider's address or headers, which belong to the relay. Remove them from the answer. |
+| `... answered a relayed openai-codex credential without account_id` | A pass is not a token, so the account id cannot be read from it. Answer `account_id` beside the pass. |
+| `Model relay definition base_url targets a prohibited host` or `... invalid base_url` | The relay address is `localhost`, a metadata host, a link-local address, or not a plain `http`/`https` URL. Answer an address the runtime reaches on the network. |
+| `Credential refresh changed the model relay` | A refresh answered another relay address than the session loaded with. Answer the same address for the whole run. |
+| A turn fails with a provider `403` whose `detail` names the session pass or the credential | The relay refused the call: the run no longer holds the session, the owner lost access to the credential, or the path is not one the provider's transport uses. It is not retried. Start a new turn; if it repeats, check the session owner's access to the provider. |
+| `Sign-in credential names an address that is not its provider's` in local mode | A GitHub Copilot token names an address (`proxy-ep`) outside `githubcopilot.com`. Sign in again; if GitHub issued the token for another Copilot host, such as a GitHub Enterprise one, report it: that host is not supported yet. |
+| A turn fails with a provider `502` | The relay could not reach the provider. Tau retries it like any `5xx`. |
+| A local session fails with `... answered relay_definition for <provider> to a runtime that does not call models through the model relay` | A local hydrate endpoint answered a relayed entry. In local mode it must answer the real credential. |
+
 ## Reset or inspect local conversations
 
 Health reports the workspace digest. Local state lives under

@@ -102,8 +102,9 @@ async def test_hydration_uses_platform_tau_credential_contract(runtime_identity_
                         "credential_hash": "sha256:test",
                         "credential": {
                             "type": "api_key",
-                            "api_key": "provider-secret",
+                            "key": "session-pass",
                         },
+                        "relay_definition": {"base_url": "https://relay.example.test/model-relay"},
                     }
                 },
                 "missing": [],
@@ -133,7 +134,9 @@ async def test_hydration_uses_platform_tau_credential_contract(runtime_identity_
         )
 
     assert evidence.credential.provider == "openai"
-    assert evidence.credential.secret() == "provider-secret"
+    assert evidence.credential.secret() == "session-pass"
+    assert evidence.credential.relay_definition is not None
+    assert evidence.credential.relay_definition.base_url == "https://relay.example.test/model-relay"
     assert evidence.provider_control.model.model == "gpt-5.4"
     assert requests == [
         {
@@ -141,6 +144,7 @@ async def test_hydration_uses_platform_tau_credential_contract(runtime_identity_
             "providers": ["openai"],
             "holder_id": "test",
             "supported_provider_control_schema_versions": [1],
+            "supported_model_relay_versions": [1],
             "execution_selection": {
                 "provider": "openai",
                 "model": "gpt-5.4",
@@ -215,10 +219,24 @@ async def test_local_hydration_uses_authenticated_user_without_agent_identity(tm
     ]
 
 
-@pytest.mark.asyncio
-async def test_hydration_derives_openai_codex_account_id_from_access_token(
-    runtime_identity_token_file,
-):
+def _codex_hydration(credential: dict[str, object], **entry: object) -> dict[str, object]:
+    return {
+        "credentials": {
+            "openai-codex": {
+                "status": "active",
+                "credential_kind": "oauth",
+                "version": 1,
+                "credential_hash": "sha256:test",
+                "credential": credential,
+                **entry,
+            }
+        },
+        "missing": [],
+        "revoked": [],
+    }
+
+
+def test_local_hydration_derives_openai_codex_account_id_from_access_token():
     payload = (
         base64.urlsafe_b64encode(
             json.dumps(
@@ -234,57 +252,46 @@ async def test_hydration_derives_openai_codex_account_id_from_access_token(
     )
     access_token = f"header.{payload}.signature"
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        if request.url.path.endswith("/runtime-credentials/token/"):
-            return httpx.Response(200, json={"access": "runtime-token"})
-        return httpx.Response(
-            200,
-            json={
-                "credentials": {
-                    "openai-codex": {
-                        "status": "active",
-                        "credential_kind": "oauth",
-                        "version": 1,
-                        "credential_hash": "sha256:test",
-                        "credential": {
-                            "type": "oauth",
-                            "access": access_token,
-                            "refresh": "refresh-token",
-                            "expires": 1_770_000_000_000,
-                        },
-                    }
-                },
-                "missing": [],
-                "revoked": [],
-                "provider_control": _provider_control("openai-codex", "gpt-5.5").model_dump(
-                    mode="json"
-                ),
-            },
-        )
-
-    settings = TauSDKSettings(
-        _env_file=None,
-        backend_url="http://backend.test",
-        runtime_credential_id="id",
-        runtime_identity_token_file=runtime_identity_token_file,
+    credential = MainSequenceClient.provider_credential_from_hydration(
+        "openai-codex",
+        _codex_hydration(
+            {
+                "type": "oauth",
+                "access": access_token,
+                "refresh": "refresh-token",
+                "expires": 1_770_000_000_000,
+            }
+        ),
     )
-    transport = httpx.MockTransport(handler)
-    async with httpx.AsyncClient(
-        base_url=settings.backend_url,
-        transport=transport,
-    ) as http:
-        auth = RuntimeCredentialAuth(settings, exchange_client=http)
-        client = MainSequenceClient(settings, auth, client=http)
-        evidence = await client.hydrate_provider_credential(
-            "openai-codex",
-            model="gpt-5.5",
-            session_uid="session-1",
-            holder_id="test",
-        )
 
-    assert evidence.credential.secret() == access_token
-    assert evidence.credential.account_id == "account-id"
-    assert evidence.credential.expires_at == datetime.fromtimestamp(1_770_000_000, UTC)
+    assert credential.secret() == access_token
+    assert credential.account_id == "account-id"
+    assert credential.expires_at == datetime.fromtimestamp(1_770_000_000, UTC)
+
+
+def test_a_relayed_openai_codex_credential_needs_its_account_id():
+    # A pass is not a token: the account id is never read out of it (ADR 0030).
+    with pytest.raises(ConfigurationError, match="without account_id") as raised:
+        MainSequenceClient.provider_credential_from_hydration(
+            "openai-codex",
+            _codex_hydration(
+                {"type": "oauth", "access": "header.e30.signature"},
+                relay_definition={"base_url": "https://relay.example.test/model-relay"},
+            ),
+            relayed=True,
+        )
+    assert "header.e30.signature" not in str(raised.value)
+
+    credential = MainSequenceClient.provider_credential_from_hydration(
+        "openai-codex",
+        _codex_hydration(
+            {"type": "oauth", "access": "session-pass", "account_id": "account-id"},
+            relay_definition={"base_url": "https://relay.example.test/model-relay"},
+        ),
+        relayed=True,
+    )
+    assert credential.account_id == "account-id"
+    assert credential.secret() == "session-pass"
 
 
 def test_hydration_parses_organization_custom_credential_without_user_lifecycle_fields():
