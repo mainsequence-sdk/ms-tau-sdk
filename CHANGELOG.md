@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 3.0.0 — 2026-11-13
 
 Breaking: 3.0.0 is a hard cut with no transition and no setting to turn it off. Read the upgrade
 order below before raising a `<3` range.
