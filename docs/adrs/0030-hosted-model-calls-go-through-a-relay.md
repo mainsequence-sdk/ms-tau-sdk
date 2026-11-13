@@ -132,8 +132,10 @@ refuse them in hosted sessions):
 - A GitHub Copilot sign-in is sent with Tau's Copilot headers; its Claude models go as a bearer
   token to `/v1/messages`. Tau takes Copilot's address from the token. In a hosted session the
   runtime holds a pass and reads nothing out of it, so the relay derives the address from the
-  real token. In local mode the SDK derives it, and the address passes the prohibited-host
-  checks.
+  real token. In local mode the SDK derives it and accepts only a host under
+  `githubcopilot.com`: a sign-in credential can be saved by a person and shared, so its token
+  must not choose where a conversation goes. A relay that derives the address needs the same
+  limit.
 
 The Codex transport keeps asking for the credential before each request. In a relayed session
 that returns the same pass, and re-hydrates only if the platform answers an expiry.

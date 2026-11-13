@@ -812,10 +812,15 @@ async def test_a_relayed_copilot_sign_in_calls_the_relay_and_reads_nothing_from_
     assert request.headers["copilot-integration-id"] == "vscode-chat"
 
 
-def test_a_copilot_token_that_names_a_prohibited_host_is_refused():
+@pytest.mark.parametrize(
+    "host",
+    ["proxy.localhost", "proxy.attacker.example", "proxy.githubcopilot.com.attacker.example"],
+)
+def test_a_copilot_token_that_names_a_host_that_is_not_githubs_is_refused(host):
+    # A saved sign-in credential can be shared: its token must not choose where a conversation goes.
     with pytest.raises(ConfigurationError, match="Sign-in credential") as raised:
         ProviderFactory(backend=None).build(  # type: ignore[arg-type]
-            _sign_in("github-copilot", "tid=1;proxy-ep=proxy.localhost"),
+            _sign_in("github-copilot", f"tid=1;proxy-ep={host}"),
             provider_control=_provider_control("github-copilot", "gpt-5-mini"),
             model="gpt-5-mini",
         )

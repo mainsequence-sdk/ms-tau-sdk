@@ -53,7 +53,8 @@ order below before raising a `<3` range.
     before;
   - a GitHub Copilot sign-in carries Tau's Copilot headers on every call, and its Claude models
     go as a bearer token. In local mode the address is the one the Copilot token names
-    (`proxy-ep`), after the custom-provider address checks; in a hosted session it is the relay's,
+    (`proxy-ep`), and only a host under `githubcopilot.com` is accepted, because a saved sign-in
+    can be shared and its token must not choose where a conversation goes; in a hosted session it is the relay's,
     nothing is read out of the pass, and the relay derives the account's address from the real
     token;
   - a refreshed sign-in is used from the next request, with its new token and address.

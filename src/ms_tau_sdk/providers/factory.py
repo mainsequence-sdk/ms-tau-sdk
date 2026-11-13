@@ -79,6 +79,10 @@ BLOCKED_CUSTOM_PROVIDER_HOSTS = frozenset(
     }
 )
 
+# The hosts a sign-in's own token may name as its provider's address. A sign-in credential can be
+# saved by a person and shared, so a token that names any other host is refused: it would send
+# the conversation and the token there.
+SIGN_IN_ADDRESS_HOST_SUFFIXES = {"github-copilot": (".githubcopilot.com",)}
 # The first system block Tau sends with an Anthropic sign-in, which Anthropic requires of one.
 ANTHROPIC_SIGN_IN_SYSTEM_PROMPT = "You are Claude Code, Anthropic's official CLI for Claude."
 
@@ -191,6 +195,11 @@ class ProviderFactory:
         base_url = None if relayed else auth.base_url
         if base_url is not None:
             ProviderFactory._validate_custom_base_url(base_url, source="Sign-in credential")
+            hostname = str(urlsplit(base_url).hostname or "").casefold()
+            if not hostname.endswith(SIGN_IN_ADDRESS_HOST_SUFFIXES.get(credential.provider, ())):
+                raise ConfigurationError(
+                    "Sign-in credential names an address that is not its provider's"
+                )
         return OAuthRuntimeAuth(
             api_key=credential.secret(),
             base_url=base_url,

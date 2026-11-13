@@ -325,8 +325,8 @@ Organization admin can accept that risk by enabling requester access.
   listed model or not. An `api_key` or `oauth` credential defines no address or headers, so a
   `base_url` or `headers` that a hydrate answer carries in one is ignored. Only an
   `organization_custom` credential sets its own address and headers, and its address passes the
-  checks above. A GitHub Copilot sign-in's address is the one its token names, and passes them
-  too. Every address that does not come from Tau's catalog passes those checks. This is
+  checks above. A GitHub Copilot sign-in's address is the one its token names, and only a host
+  under `githubcopilot.com` is accepted. Every address that does not come from Tau's catalog passes those checks. This is
   where requests go in local mode; a hosted session sends them all to its relay.
 
 ### Hosted sessions hold a pass, not a secret

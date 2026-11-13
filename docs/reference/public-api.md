@@ -262,7 +262,8 @@ beside a credential that carries the pass, as the
   neither the secret nor the headers.
   For a GitHub Copilot sign-in, `base_url` is the address the real Copilot token names, which
   `tau_coding.oauth_github_copilot.github_copilot_base_url(token)` returns; the runtime cannot
-  derive it from a pass.
+  derive it from a pass. Accept only GitHub's own Copilot hosts there: a token a person saved
+  must not choose where the relay sends a conversation.
 - `RelayRefused(detail)` answers `403` `{"detail": detail}`. Never put a pass or a secret in it.
 - `RELAY_PATHS` maps each wire protocol to the methods and paths the relay forwards.
 
