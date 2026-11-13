@@ -1,10 +1,11 @@
 # ADR 0030: Hosted Model Calls Go Through A Relay
 
-Status: Proposed — draft of 2026-11-13, nothing implemented
+Status: Accepted — implemented in the SDK 2026-11-13 for 3.0.0; the platform's relay is built but
+not yet deployed
 
 Date: 2026-11-13
 
-Owner decisions of 2026-11-13 that this draft records:
+Owner decisions of 2026-11-13 that this ADR records:
 
 1. In a hosted session the runtime never receives a model-provider secret. It receives a session
    pass and a relay address, and the relay holds the secret.
@@ -14,10 +15,10 @@ Owner decisions of 2026-11-13 that this draft records:
 5. An application with its own hydrate endpoint follows the same rule and runs its own relay.
 
 The field names, the pass and the relay's routes are defined by the platform's side of this
-change, which is itself a proposal. Where this draft uses a name, it is the proposed one and it is
-marked in [section 10](#10-open-until-the-platforms-proposal-is-accepted).
+change. The owner approved the names on 2026-11-13 and the platform built them; section 10 records
+what that settled and where the built contract differs from this ADR's draft.
 
-Amends, when accepted:
+Amends:
 
 - [ADR 0027: Custom provider credential hydrate endpoints](./0027-custom-provider-credential-hydrate-endpoints.md).
   Section 3, the answer: in a hosted session a custom endpoint answers a pass and a relay address,
@@ -83,9 +84,10 @@ changes:
 ```
 
 - For `oauth`, the pass is in `access`, and `account_id` is present for `openai-codex`. There is no
-  `refresh` and no `expires` the runtime must act on.
-- For `organization_custom`, the entry carries the pass and `api`. It carries no `base_url` and no
-  `headers`: the provider's address and headers stay with whoever serves the relay.
+  `refresh` and no `expires`.
+- For `organization_custom`, the pass is in `api_key`, beside `api`. The entry carries no
+  `base_url` and no `headers`: the provider's address and headers stay with whoever serves the
+  relay.
 - `catalog_definition`, when present, still gives the `compat` settings. Its `base_url` is not
   used for a relayed entry.
 - `uid`, `organization_environment_uid` and the refresh rule that compares them are unchanged.
@@ -96,7 +98,10 @@ changes:
   where it sends `supported_provider_control_schema_versions` today.
 - In a hosted session the SDK refuses a credential entry that has no `relay_definition`, with a
   configuration error that names the field and never a value. It does not fall back to calling
-  the provider with what it received.
+  the provider with what it received. It also refuses a relayed entry that carries `base_url` or
+  `headers`, and a refresh that answers a different `relay_definition`.
+- A runtime that did not announce the relay refuses an entry that carries `relay_definition`. A
+  request announces the relay exactly when it expects a relayed answer.
 - The platform refuses a runtime that does not announce support. So there is no mixed state: an
   older SDK cannot start a hosted session, and a newer SDK cannot be handed a secret.
 
@@ -107,7 +112,10 @@ changes:
 - the address is `relay_definition.base_url`, after the existing prohibited-host checks;
 - the secret is the pass.
 
-Headers come from Tau's catalog only. Nothing else in the build changes: the transport is chosen
+Headers come from Tau's catalog only. Tau turns OpenAI prompt-cache keys, and session-affinity
+headers on the Responses API, on by default only for OpenAI's own host; behind the relay it sees
+the relay's host, so for a provider whose own address is OpenAI's the SDK states those two
+defaults in `compat`, and the provider receives what it would without the relay. Nothing else in the build changes: the transport is chosen
 from the provider control as today, and thinking, inputs, timeouts and `compat` are applied as
 today. Each transport appends its own path to the base it is given, so one relay base serves all
 six.
@@ -122,8 +130,9 @@ handling, all six transports, models Tau does not list (ADR 0029), providers Tau
 Organization custom providers, session selection, and credential refresh for Codex.
 
 A provider's error answer reaches the runtime unchanged through the relay, so the existing error
-parsing applies. A refusal by the relay itself is a `403` with a `detail`; the SDK reports it as a
-provider authorization failure and does not retry it.
+parsing applies. A refusal by the relay itself is a `403` with a `detail`; Tau reports it as a
+provider failure and does not retry it, as it retries no `403`. An unreachable provider is a
+`502`, which Tau retries like any `5xx`.
 
 ### 6. Local mode is unchanged
 
@@ -151,24 +160,37 @@ An application must have its relay running before it upgrades to the breaking re
 ### 8. The SDK ships the relay as a component
 
 The relay is the same code for every application, and it is the code where a mistake exposes
-secrets. The SDK ships it once.
+secrets. The SDK ships it once, as `ms_tau_sdk.model_relay.create_model_relay_router`, a FastAPI
+router the application includes under the address its hydrate endpoint answers.
 
-An application supplies three things and mounts the component in its FastAPI release:
+An application supplies two things:
 
-1. **Resolve a pass**: the session it names, or a refusal.
-2. **Fetch the secret**: the provider, the address and the secret for that session, or a refusal.
-3. **The providers it serves**: the transport and the allowed paths of each.
+1. **Resolve a pass** (`resolve_pass`): the session it names, or `RelayRefused`.
+2. **The provider call** (`resolve_upstream`): for that session, a `RelayUpstream` with the
+   session's wire protocol, the provider's address, the secret and, for Codex, the account id; or
+   `RelayRefused`.
+
+The draft had the application also list the paths of each provider it serves. The paths belong to
+Tau's transports, not to the application, so they are fixed in the SDK (`RELAY_PATHS`), the same
+as the platform's, and the application only names the session's wire protocol.
 
 The component does the rest, and none of it is configurable:
 
-- it accepts the pass in the place each transport puts the secret, and removes it;
-- it forwards the method, the path under the provider's base, the query without the secret, the
-  body and the request headers without hop-by-hop headers;
+- it accepts the pass in the place each transport puts the secret (a bearer token, `x-api-key` or
+  the `key` query parameter), removes it, and puts the secret back in that place;
+- it forwards the method, the path under the provider's base, the query without `key`, the body and
+  the request headers without hop-by-hop headers, `Cookie`, `Forwarded`, `X-Real-IP` and
+  `X-Forwarded-*`. A leading `/v1` in the path is the transport's own and is dropped when the
+  provider's address already ends in `/v1`;
 - it takes the upstream address only from the application's answer to step 2, never from the
-  request, and follows no redirect to another host;
-- it refuses a path the provider's transport does not use;
+  request, and returns a redirect without following it;
+- it refuses a path the session's transport does not use, with `403` and a `detail`; an
+  unreachable provider is `502`;
 - it returns the provider's status, headers and body as they arrive, streamed;
-- it logs no pass, no secret and no request URL.
+- it reads the body whole and sets no size limit, because a call with images is larger than any
+  framework default; the server in front of it sets the limit;
+- it logs no pass, no secret, no request URL and no path, and keeps httpx's own request line,
+  which holds the URL, out of the logs while it calls a provider.
 
 The platform's own relay is not part of the SDK and is not described here. The two must behave
 the same towards a runtime, and the contract tests of section 9 are what holds them together.
@@ -184,21 +206,38 @@ the same towards a runtime, and the contract tests of section 9 are what holds t
   holds provider credentials becomes true for local mode only.
 - The changelog names the upgrade order: the platform's relay first, then applications with their
   own endpoint ship their relay, then runtimes upgrade.
+- The SDK's log sanitizer redacts a `key` query value in every log line, so the httpx request line
+  of a Google call never carries the pass, or in local mode the key.
 
-### 10. Open until the platform's proposal is accepted
+### 10. Settled with the platform's contract
 
-Proposed there, and used in this draft as written:
+Approved by the owner on 2026-11-13 and built by the platform as this ADR uses them:
 
-1. The field name `relay_definition` and its shape.
-2. The request field `supported_model_relay_versions`.
-3. The pass: its format and length. The SDK treats it as an opaque string in either case.
-4. The relay's path prefix.
+1. `relay_definition`, holding `{"base_url": ...}`, beside `credential`.
+2. The request field `supported_model_relay_versions`, a list that includes `1`, sent where
+   `supported_provider_control_schema_versions` is sent.
+3. The pass is an opaque string to the SDK.
+4. The relay's path prefix is `/model-relay`, with one route for every path below it.
 
-Open in this repository:
+Where the built contract differs from, or adds to, the draft:
 
-5. Whether the component of section 8 is a FastAPI router, an ASGI application, or both.
-6. Whether a custom endpoint's relay may run in a different release from its hydrate endpoint. If
-   it may, the relay address must pass the prohibited-host checks like the platform's.
+- The `organization_custom` pass is in `api_key` (section 2); the draft did not name the field.
+- The platform's refusals of a runtime that does not announce the relay: the bootstrap answers
+  `tau_runtime_version_unsupported` with a field error on `supported_model_relay_versions`, and a
+  hydration answers `409` `provider_control_contract_unsupported`. While no relay is deployed, a
+  hosted hydration answers `409` `model_provider_credential_unavailable`. A person's own
+  hydration is never relayed.
+- The relay returns a redirect without following it; the draft said it follows none to another
+  host.
+- The relay reads the request body with no framework cap (section 8).
+
+Decided in this repository:
+
+5. The component is a FastAPI router. An application that wants it as its own ASGI application
+   includes the router in an empty `FastAPI()`.
+6. A custom endpoint's relay may run in a different release from its hydrate endpoint. Its
+   address passes the same prohibited-host checks as the platform's relay, so a relay on a
+   loopback, link-local or metadata address is refused either way.
 
 ## Consequences
 
@@ -210,6 +249,9 @@ Open in this repository:
   relay.
 - An application with its own endpoint cannot take `3.0.0` until it runs a relay. One such
   application is known.
+- An application's relay takes the provider's address from the application and calls it as
+  given. It does not resolve the address and refuse a private one, as a relay that calls
+  addresses chosen by other people would have to: the application chooses its own addresses.
 - For Google the pass travels in the request URL, so a relay and everything in front of it must
   not log URLs. The component of section 8 enforces that for itself only.
 
@@ -239,6 +281,24 @@ Open in this repository:
 - One contract test suite runs against the component and is published for the platform's relay to
   run.
 - No test, log line, `repr()` or error message contains a pass or a secret.
+
+## Implementation
+
+Implemented in the SDK for 3.0.0:
+
+- `backend/client.py` announces the relay in hosted hydrate requests and, through
+  `provider_credential_from_hydration(relayed=...)`, accepts only a relayed entry from a request
+  that announced it and none from one that did not, for the platform and a custom endpoint alike;
+  `runtime/manager.py` announces it in the bootstrap request.
+- `providers/factory.py` builds every transport on `relay_definition.base_url` and the pass.
+- `model_relay/` is the component of section 8, and `model_relay/contract.py` the published
+  contract cases.
+
+The acceptance criteria are covered by `tests/unit/test_hosted_model_relay.py` (every transport
+through a fake relay and end to end through the component, refusals, local mode, Codex),
+`tests/unit/test_model_relay_component.py` (every contract case and the component's own rules),
+`tests/unit/test_custom_hydrate_endpoints.py` (custom endpoints in hosted and local mode) and
+`tests/unit/test_logging.py` (a `key` in a logged URL). Nothing was run against a deployed relay.
 
 ## Rejected
 

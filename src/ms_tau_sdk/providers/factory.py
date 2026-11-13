@@ -15,6 +15,7 @@ from tau_ai.anthropic import AnthropicProvider
 from tau_ai.env import AnthropicConfig, OpenAICompatibleConfig
 from tau_ai.google import GoogleGenerativeAIProvider
 from tau_ai.mistral import MistralConversationsProvider
+from tau_ai.openai_cache import is_direct_openai_url
 from tau_ai.openai_codex import (
     OpenAICodexConfig,
     OpenAICodexCredentials,
@@ -419,6 +420,9 @@ class ProviderFactory:
                         raise ConfigurationError(
                             "Credential refresh changed the configured provider"
                         )
+                    # The transport was built on the first answer's address (ADR 0030).
+                    if refreshed.credential.relay_definition != cached_credential.relay_definition:
+                        raise ConfigurationError("Credential refresh changed the model relay")
                     cached_credential = refreshed.credential
                 return cached_credential
 
@@ -472,6 +476,9 @@ class ProviderFactory:
         is_custom_provider = (
             outside_tau_catalog and credential.credential_kind == "organization_custom"
         )
+        # A hosted session holds a pass for the relay, never a secret (ADR 0030). The provider's
+        # address and headers stay with whoever serves the relay.
+        relay = credential.relay_definition
         catalog_definition = (
             credential.catalog_definition
             if outside_tau_catalog and not is_custom_provider
@@ -513,16 +520,18 @@ class ProviderFactory:
                         "Custom provider credential transport does not match "
                         "Platform provider-control evidence"
                     )
-                if not credential.base_url:
-                    raise ConfigurationError(
-                        "Custom provider credential requires an explicit base_url"
-                    )
-                self._validate_custom_base_url(credential.base_url)
+                if relay is None:
+                    if not credential.base_url:
+                        raise ConfigurationError(
+                            "Custom provider credential requires an explicit base_url"
+                        )
+                    self._validate_custom_base_url(credential.base_url)
             elif catalog_definition is not None:
-                self._validate_custom_base_url(
-                    catalog_definition.base_url,
-                    source="Platform catalog definition",
-                )
+                if relay is None:
+                    self._validate_custom_base_url(
+                        catalog_definition.base_url,
+                        source="Platform catalog definition",
+                    )
             else:
                 raise ConfigurationError(
                     f"Provider {credential.provider} is not in this runtime's Tau catalog, and "
@@ -551,8 +560,31 @@ class ProviderFactory:
                 **(model_metadata.headers if model_metadata is not None else {}),
                 **(credential.headers if credential_connection else {}),
             }
+        compat = (
+            catalog_definition.compat
+            if catalog_definition is not None
+            else model_metadata.compat
+            if model_metadata is not None
+            else {}
+        )
+        if relay is not None:
+            self._validate_custom_base_url(relay.base_url, source="Model relay definition")
+            # Tau sends prompt-cache keys and, on the Responses API, session-affinity headers by
+            # default only to OpenAI's own host. Behind the relay it sees the relay's host, so
+            # the provider's own address decides, as it would without the relay.
+            if not is_custom_provider and is_direct_openai_url(base_url):
+                compat = {
+                    "supportsPromptCacheKey": True,
+                    **({"sendSessionAffinityHeaders": True} if api == "openai-responses" else {}),
+                    **compat,
+                }
+            base_url = relay.base_url
+            headers = {
+                **(catalog_provider.headers if catalog_provider is not None else {}),
+                **(model_metadata.headers if model_metadata is not None else {}),
+            }
         secret = credential.secret()
-        if not secret and not is_custom_provider:
+        if not secret and (relay is not None or not is_custom_provider):
             raise ConfigurationError(
                 f"Backend returned no usable credential for {credential.provider}"
             )
@@ -623,13 +655,7 @@ class ProviderFactory:
                 and catalog_provider.thinking_parameter in {"reasoning_effort", "reasoning.effort"}
                 else "reasoning_effort"
             ),
-            compat=(
-                catalog_definition.compat
-                if catalog_definition is not None
-                else model_metadata.compat
-                if model_metadata is not None
-                else {}
-            ),
+            compat=compat,
         )
         if api == "google-generative-ai":
             return GoogleGenerativeAIProvider(config)

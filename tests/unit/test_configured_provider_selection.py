@@ -9,6 +9,13 @@ from ms_tau_sdk.errors import BackendError
 from ms_tau_sdk.settings import TauSDKSettings
 
 
+def _relay_for(body):
+    """A hosted body announces the model relay and is answered a relayed entry (ADR 0030)."""
+    if 1 in body.get("supported_model_relay_versions", []):
+        return {"relay_definition": {"base_url": "https://relay.example.test/model-relay"}}
+    return {}
+
+
 @pytest.mark.parametrize("local", [False, True])
 @pytest.mark.parametrize("selected", [None, "openai-work"])
 async def test_optional_subscription_hydration(local, selected):
@@ -26,6 +33,7 @@ async def test_optional_subscription_hydration(local, selected):
                         "organization_environment_uid": "22222222-2222-4222-8222-222222222222",
                         "user_uid": "33333333-3333-4333-8333-333333333333",
                         "credential": {"type": "api_key", "key": "test-key"},
+                        **_relay_for(bodies[-1]),
                     }
                 },
                 "provider_control": {
@@ -88,6 +96,7 @@ async def test_explicit_custom_id_cannot_be_ignored_or_substituted(local, resolv
                 "openai": {
                     "custom_id": resolved,
                     "credential": {"type": "api_key", "key": "test-key"},
+                    **_relay_for(kwargs["json"]),
                 }
             },
             "provider_control": {

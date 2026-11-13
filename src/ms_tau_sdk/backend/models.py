@@ -43,6 +43,10 @@ type AgentTaskStatus = Literal[
 type A2ATaskMessage = dict[str, Any]
 
 
+# The model relay contract version a hosted runtime announces (ADR 0030).
+MODEL_RELAY_VERSION = 1
+
+
 class BackendModel(BaseModel):
     model_config = ConfigDict(extra="allow", populate_by_name=True)
 
@@ -358,6 +362,9 @@ class TauRuntimeBootstrapRequest(BackendRequestModel):
     # A runtime that lists a version applies the Agent's `runtime_resources` (ADR 0026). The
     # platform refuses to bootstrap an Agent that declares a selection for any other runtime.
     supported_runtime_resources_schema_versions: list[int] = Field(default_factory=lambda: [1])
+    # A hosted runtime lists MODEL_RELAY_VERSION and calls models only through the relay
+    # (ADR 0030). The platform refuses a hosted runtime that does not; local mode lists none.
+    supported_model_relay_versions: list[int] = Field(default_factory=list)
     tau_runtime_version: str
 
 
@@ -454,6 +461,16 @@ class ProviderCatalogDefinition(BackendModel):
     compat: dict[str, Any] = Field(default_factory=dict)
 
 
+class ModelRelayDefinition(BackendModel):
+    """Where a hosted runtime sends its model calls, beside a relayed credential (ADR 0030).
+
+    The credential then holds a session pass, never a provider secret. Each Tau transport appends
+    its own path to ``base_url``.
+    """
+
+    base_url: str
+
+
 class ProviderCredential(BackendModel):
     provider: str
     custom_id: str | None = None
@@ -471,6 +488,8 @@ class ProviderCredential(BackendModel):
     # in repr() or str().
     headers: dict[str, str] = Field(default_factory=dict, repr=False)
     catalog_definition: ProviderCatalogDefinition | None = None
+    # Server-owned, beside the credential: present exactly when the credential is a session pass.
+    relay_definition: ModelRelayDefinition | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
 
     def secret(self) -> str:

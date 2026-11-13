@@ -15,8 +15,11 @@ This guide covers the current SDK development documentation. The application MCP
 for people. [Caller context](#caller-context) first ships in
 [2.0.29](../../CHANGELOG.md#2029--2026-11-07); an Agent on an earlier release keeps working and
 carries no caller context. [Per-Agent runtime resources](../guides/multiple-agents-one-repository.md)
-first ship in 2.0.30 and need the matching platform change. Check your installed SDK before
-relying on these features.
+first ship in 2.0.30 and need the matching platform change.
+[Hosted model calls through a relay](#hosted-sessions-hold-a-pass-not-a-secret) ship in 3.0.0, in
+one cutover with the platform: 3.0.0 and later hosted runtimes work only with a platform that
+serves the model relay, and the platform refuses earlier hosted runtimes. Check your installed SDK
+before relying on these features.
 
 ## Who is who
 
@@ -295,10 +298,11 @@ Organization admin can accept that risk by enabling requester access.
   session uses against the session owner, never the Agent's workload, and for a delegated child
   session against its parent's owner. A policy given only to an Agent's workload does not reach
   people's sessions.
-- **`user` delivers the credential.** Its holder receives the credential, or the endpoint's stored
-  authentication, in their own runtime, including local Tau, and can copy it there. Removing the
-  policy stops future delivery; it cannot recall what was already received. Give it only to people
-  and workload operators you trust.
+- **`user` delivers the credential to local Tau.** Its holder receives the credential, or the
+  endpoint's stored authentication, in their own local runtime and can copy it there. A hosted
+  session receives a session pass instead (see below). Removing the policy stops future delivery;
+  it cannot recall what was already received. Give it only to people and workload operators you
+  trust.
 - **A refusal names the policies to ask for.** A change the caller's policies do not allow answers
   `403` `missing_action` with the `required_action`, for example
   `model-provider-credentials.revoke`, and the `granting_policies` that include it. A record the
@@ -321,7 +325,54 @@ Organization admin can accept that risk by enabling requester access.
   listed model or not. An `api_key` or `oauth` credential defines no address or headers, so a
   `base_url` or `headers` that a hydrate answer carries in one is ignored. Only an
   `organization_custom` credential sets its own address and headers, and its address passes the
-  checks above. Every address that does not come from Tau's catalog passes those checks.
+  checks above. Every address that does not come from Tau's catalog passes those checks. This is
+  where requests go in local mode; a hosted session sends them all to its relay.
+
+### Hosted sessions hold a pass, not a secret
+
+From 3.0.0 a hosted runtime never receives a model-provider secret
+([ADR 0030](../adrs/0030-hosted-model-calls-go-through-a-relay.md)). For its session's provider it
+receives a **session pass**, where the credential's secret used to be, and a **relay address** in
+`relay_definition.base_url` beside it. Every model call goes to the relay with the pass; the relay
+checks the pass, puts the real secret into the request and forwards it to the provider's own
+address. The provider's address and an Organization custom provider's headers stay with the relay
+too.
+
+- **What the pass is worth.** It works only at the relay that issued it, and only while the run
+  that received it holds the session. Code in the runtime that copies it gets nothing it can use
+  elsewhere or later, and every call it makes through the relay is still the session's, on the
+  session owner's credential.
+- **No fallback.** A hosted runtime announces the relay in `supported_model_relay_versions` and
+  refuses a credential entry without `relay_definition`, from the platform and from a custom
+  hydrate endpoint. It never calls a provider with what it received instead. A relayed entry that
+  carries a `base_url` or `headers`, or a relayed `openai-codex` entry without its `account_id`,
+  is refused too.
+- **The relay address passes the address checks above.** A relay on `localhost`, a metadata host
+  or a link-local address is refused like any other address.
+- **Local mode is unchanged.** It announces no relay, receives the real credential and refuses a
+  relayed answer. It is the only place the SDK still builds a provider from a real secret.
+
+### Running your own relay
+
+An application whose own hydrate endpoint
+([ADR 0027](../adrs/0027-custom-provider-credential-hydrate-endpoints.md)) answers hosted
+sessions must answer a pass and its own relay address too, because only it holds those secrets.
+`ms_tau_sdk.model_relay` ships the relay as a FastAPI router; the
+[public API](./public-api.md#ms_tau_sdkmodel_relay) shows how to mount it. The application
+supplies who a pass belongs to and the provider, address and secret for that session; everything
+else is fixed, and the router passes the same contract cases as the platform's relay.
+
+- Mint passes that are long and random, tie each to one session's run, and stop accepting it when
+  that run ends. A pass is all a caller needs to spend the session owner's credential.
+- Answer a relay address the runtime can reach and that the address checks accept: a public
+  `https` address, never `localhost`.
+- For Google the pass travels in the request URL, as Google's key does. The router logs no URL,
+  and the SDK's own logs redact a `key` query value, but the server in front of the relay and its
+  access logs must not log request URLs either.
+- The router reads request bodies whole and sets no size limit, because a call with images is
+  large. Set the limit on the server in front of it.
+- Run the relay before upgrading the runtime to 3.0.0: a 3.0.0 hosted runtime refuses an answer
+  without `relay_definition`.
 
 ## What reaches the model
 
@@ -352,11 +403,14 @@ The SDK does not sandbox code that runs in the Agent's process:
 - the `bash`, `read`, `write` and `edit` tools run with the runtime's own operating-system access
   and environment;
 - project extensions run as Python in the same process; and
-- the process holds the Agent's platform identity and the model-provider credentials the platform
-  delivered to it.
+- the process holds the Agent's platform identity and, for its sessions, model-provider session
+  passes, never the provider secrets themselves (from 3.0.0, see
+  [hosted sessions hold a pass](#hosted-sessions-hold-a-pass-not-a-secret)). In local mode it holds
+  the real provider credential.
 
 Commands the model chooses and every extension can therefore act with the Agent's workload identity
-and use those provider credentials, including the Secret values the workload may read.
+and call the session's model through the relay while the session runs, and can read the Secret
+values the workload may read.
 `TAU_EXCLUDE_BASE_TOOLS` removes the coding tools from the model, but it does not sandbox extensions. Review extension code
 as code that holds these credentials. See
 [ownership and trust](../guides/project-configuration.md#ownership-and-trust).
@@ -491,5 +545,7 @@ page gives the key form, the limits and an example.
   policies on such an Agent only to callers you trust to, and treat missing context as no external
   user.
 - Review extensions: they run with the Agent's credentials.
+- If your application serves its own hydrate endpoint, serve `ms_tau_sdk.model_relay` before
+  upgrading hosted runtimes to 3.0.0, and keep request URLs out of its server's logs.
 - When several Agents share a repository, give each its own grants. A selection of tools is not an
   access boundary.

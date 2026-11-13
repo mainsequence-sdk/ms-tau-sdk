@@ -70,6 +70,7 @@ ALLOWED_PACKAGE_ENTRIES = {
     "cli.py",
     "errors.py",
     "logging.py",
+    "model_relay",
     "protocols",
     "providers",
     "resources",

@@ -11,6 +11,7 @@ Durable execution:
 ```text
 request with session uid
   -> authenticated bootstrap, lease, provider evidence, history/snapshot
+  -> provider built on the model relay's address and the session pass
   -> workspace-bound Tau CodingSession
   -> Tau events translated to the selected HTTP/SSE/A2A transport
   -> atomic entry batches and turn settlement
@@ -29,6 +30,52 @@ chat or public A2A request with a local context
 Local state defaults to `~/.tau/mainsequence/<workspace-hash>/runtime.sqlite3`. It is never
 uploaded when local mode is disabled. Main Sequence authentication, provider hydration, and model
 inference remain remote. When MCP is enabled, its side effects are real platform side effects.
+
+## Model calls of a hosted session
+
+A hosted runtime calls models only through a model relay
+([ADR 0030](../adrs/0030-hosted-model-calls-go-through-a-relay.md)). Its bootstrap and hydrate
+requests send `supported_model_relay_versions: [1]` beside
+`supported_provider_control_schema_versions`, and the platform refuses a hosted runtime that does
+not: the bootstrap with `tau_runtime_version_unsupported` and a field error on
+`supported_model_relay_versions`, a hydration with `409` `provider_control_contract_unsupported`.
+While the platform serves no relay, a hydration answers `409`
+`model_provider_credential_unavailable`.
+
+Each credential entry the runtime receives is then relayed:
+
+```json
+{
+  "uid": "<credential id>",
+  "credential_kind": "api_key",
+  "credential": {"type": "api_key", "key": "<session pass>"},
+  "relay_definition": {"base_url": "https://<relay host>/model-relay"}
+}
+```
+
+| `credential_kind` | `credential` |
+| --- | --- |
+| `api_key` | `{"type": "api_key", "key": "<pass>"}` |
+| `oauth` | `{"type": "oauth", "access": "<pass>", "account_id": "<id>"}`, with no `expires` or `refresh`. `account_id` is required for `openai-codex`. |
+| `organization_custom` | `{"type": "organization_custom", "api": "<api>", "api_key": "<pass>"}`, with no `base_url` or `headers`. |
+
+The pass is opaque to the runtime. Every Tau transport is built on `relay_definition.base_url`,
+after the same address checks as a custom provider's address, with the pass where the secret
+goes and only Tau's catalog headers; each transport appends its own path. `provider_control`,
+`uid`, `organization_environment_uid`, the refresh rule and `catalog_definition`'s `compat` are
+unchanged; `catalog_definition.base_url` is not used.
+
+The runtime refuses, with a configuration error that names the field and never a value, an entry
+without `relay_definition`, a relayed entry that carries `base_url` or `headers`, a relayed
+`openai-codex` entry without `account_id`, and a refresh that answers a different relay. The same
+rules apply to a custom hydrate endpoint's answer. A refusal by the relay itself is `403` with a
+`detail`; Tau reports it as a provider failure and does not retry it.
+
+Local mode sends no `supported_model_relay_versions`, receives the real credential, and refuses an
+entry that carries `relay_definition`.
+
+`ms_tau_sdk.model_relay` is the relay an application with its own hydrate endpoint serves; see
+the [public API](./public-api.md#ms_tau_sdkmodel_relay).
 
 ## Hosted Agent deployments
 

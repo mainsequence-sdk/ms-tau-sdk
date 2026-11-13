@@ -2,6 +2,10 @@
 
 Status: Accepted — implemented 2026-11-10
 
+Amended: 2026-11-13 by
+[ADR 0030: Hosted model calls go through a relay](./0030-hosted-model-calls-go-through-a-relay.md),
+for 3.0.0. Section 5: in a hosted session the address is the relay's.
+
 Date: 2026-11-10
 
 Relates to:
@@ -82,7 +86,10 @@ The address is the provider-level `base_url` and headers from Tau's catalog. A c
 overrides them only when it is `organization_custom`, the one kind ADR 0027 gives an address, and
 then its address passes the custom-provider checks; an `api_key` or `oauth` credential's
 `base_url` and headers are ignored
-([#138](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/138)). The context window is what the provider discovers, else Tau's default; the provider control
+([#138](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/138)). In a hosted session, from
+3.0.0, every call goes instead to the relay address the credential entry carries, with the
+session pass, and the relay forwards it to the provider's address (ADR 0030, amended 2026-11-13);
+the rest of this section describes where the relay, or local mode, sends it. The context window is what the provider discovers, else Tau's default; the provider control
 gains no field. An optional `context_window` in the projection would serve listed and unlisted
 models alike, since Tau's static windows are not read; that is a separate decision.
 

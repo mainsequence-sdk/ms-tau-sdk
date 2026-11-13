@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased
+
+Breaking: 3.0.0 is a hard cut with no transition and no setting to turn it off. Read the upgrade
+order below before raising a `<3` range.
+
+- **A hosted session never receives a model-provider secret.** A hosted runtime used to receive
+  the session owner's API key, or a sign-in's access token, and call the provider itself, so any
+  code in the Agent's process could copy the secret and use it anywhere until it was rotated. Now
+  it receives a session pass where the secret was, and the relay's address in a new
+  `relay_definition.base_url` beside the credential. Every model call, on all six Tau transports,
+  goes to the relay with the pass; the relay checks the pass, puts the real secret in and forwards
+  the provider's own protocol, so streaming, tool calls, thinking, images, model discovery, retries,
+  error handling, Organization custom providers and models Tau does not list work as before. The
+  pass works only at that relay and only while the run holds the session
+  ([ADR 0030](docs/adrs/0030-hosted-model-calls-go-through-a-relay.md)).
+  - **The requests announce the relay.** A hosted runtime sends `supported_model_relay_versions:
+    [1]` in its bootstrap and hydrate requests, and the platform refuses one that does not.
+  - **A hosted answer without a relay is refused.** An entry without `relay_definition`, a relayed
+    entry that carries `base_url` or `headers`, a relayed `openai-codex` entry without
+    `account_id` (a pass is not a token, so it is never decoded), a relay address the
+    custom-provider address checks refuse, and a refresh that moves the relay each fail the load
+    with a configuration error that names the field and never a value. The runtime never falls
+    back to calling the provider with what it received.
+  - **Local mode is unchanged.** It announces nothing, runs on the real credential, and refuses a
+    relayed answer.
+  - **Applications with their own hydrate endpoint serve a relay.** A custom hydrate endpoint
+    (ADR 0027) must answer hosted runtimes a pass and its own relay address too. The new
+    `ms_tau_sdk.model_relay` is that relay as a FastAPI router: the application says who a pass
+    belongs to and the provider, address and secret for that session, and the router does the
+    rest exactly as the platform's relay does. `ms_tau_sdk.model_relay.contract` publishes the
+    relay contract as cases that the SDK's router passes and any other relay can run. See the
+    [public API](docs/reference/public-api.md#ms_tau_sdkmodel_relay).
+  - **A `key` in a logged URL is redacted.** Google's transport sends its key, and now the pass, as
+    a query parameter, and httpx's request line put it in the runtime's logs. The log sanitizer
+    now replaces a `key` query value with `[REDACTED]`, for every logger.
+
+  Upgrade order: the platform's relay first, then each application with its own hydrate endpoint
+  ships its relay, then hosted runtimes upgrade to 3.0.0. A 2.x hosted runtime cannot start a
+  session on a platform that relays, and a 3.0.0 hosted runtime cannot start one on a platform or
+  endpoint that does not. Nothing here was tried against a deployed relay.
+
 ## 2.0.34 — 2026-11-13
 
 - **A hydrated credential no longer moves a provider Tau knows.** For a provider in Tau's

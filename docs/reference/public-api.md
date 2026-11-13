@@ -208,6 +208,75 @@ The exported version identifier for the SDK's readiness integration with the pla
 `create_app()` publishes it automatically. Consumers may inspect it for compatibility diagnostics;
 leave its value and the launcher's reserved health routes to the SDK/platform integration.
 
+## `ms_tau_sdk.model_relay`
+
+From 3.0.0. The model relay an application serves when its own hydrate endpoint
+([ADR 0027](../adrs/0027-custom-provider-credential-hydrate-endpoints.md)) answers hosted
+sessions: it answers them a session pass and this relay's address, and the relay holds the
+secrets ([ADR 0030](../adrs/0030-hosted-model-calls-go-through-a-relay.md)).
+
+```python
+from fastapi import FastAPI
+from pydantic import SecretStr
+
+from ms_tau_sdk.model_relay import RelayRefused, RelayUpstream, create_model_relay_router
+
+app = FastAPI()
+
+
+async def resolve_pass(session_pass: str) -> Session:
+    session = await sessions.running_session_for_pass(session_pass)
+    if session is None:
+        raise RelayRefused("The session pass is not valid for a running session.")
+    return session
+
+
+async def resolve_upstream(session: Session) -> RelayUpstream:
+    credential = await credentials.for_session(session)
+    return RelayUpstream(
+        api=credential.api,  # the session's wire protocol, for example "openai-responses"
+        base_url=credential.provider_base_url,
+        secret=SecretStr(credential.secret),
+        account_id=credential.account_id,  # openai-codex only
+    )
+
+
+app.include_router(
+    create_model_relay_router(resolve_pass=resolve_pass, resolve_upstream=resolve_upstream),
+    prefix="/model-relay",
+)
+```
+
+The hydrate endpoint then answers `relay_definition: {"base_url": "https://<host>/model-relay"}`
+beside a credential that carries the pass, as the
+[runtime contract](./runtime-contract.md#model-calls-of-a-hosted-session) shows.
+
+- `create_model_relay_router(*, resolve_pass, resolve_upstream, http=None)` returns a FastAPI
+  router with one route for every path below it. `resolve_pass` answers the session a pass names
+  and `resolve_upstream` the provider call for that session; either raises `RelayRefused` to
+  refuse. `http` replaces the `httpx.AsyncClient` the relay calls providers with; it must not
+  follow redirects, and its owner closes it.
+- `RelayUpstream(api, base_url, secret=None, headers={}, account_id=None)`: `api` is a key of
+  `RELAY_PATHS`; `secret` goes where the pass arrived; `headers` are added to every call;
+  `account_id` is sent as `chatgpt-account-id` for `openai-codex-responses`. Its `repr()` holds
+  neither the secret nor the headers.
+- `RelayRefused(detail)` answers `403` `{"detail": detail}`. Never put a pass or a secret in it.
+- `RELAY_PATHS` maps each wire protocol to the methods and paths the relay forwards.
+
+What the router does is fixed: it reads the pass where the runtime's transport put it (an
+`Authorization` bearer token, `x-api-key`, or the `key` query parameter) and puts the secret back
+there; it takes the provider's address only from `resolve_upstream`; it forwards the method, the
+path, the query without `key`, the body, and the request headers without hop-by-hop headers,
+`Cookie`, `Forwarded`, `X-Real-IP` and `X-Forwarded-*`; it streams the provider's status, headers
+and body back, returns a redirect without following it, and answers `502` when the provider
+cannot be reached. It reads bodies whole and sets no size limit, and it logs no pass, secret or
+URL. The [Security and access guide](./security-model.md#running-your-own-relay) lists what the
+application still owns.
+
+`ms_tau_sdk.model_relay.contract.RELAY_CONTRACT_CASES` is the relay contract as data: for each wire
+protocol, the call a runtime makes, the provider's answer and what a relay must do. The SDK's
+router runs every case in its tests, and any other relay can run the same cases.
+
 ## `__version__`
 
 The installed distribution version. Runtime health/version reporting reads the same package

@@ -414,13 +414,19 @@ async def test_python_client_matches_canonical_provider_and_task_contract(
         if path == "/api/v1/runtime-credentials/token/":
             return httpx.Response(200, json={"access": "runtime-token"})
         if path == "/api/v1/model-provider-credentials/hydrate/":
+            # A hosted runtime announces the model relay and is answered a session pass beside
+            # the relay's address, never the provider secret (ADR 0030).
+            assert payload["supported_model_relay_versions"] == [1]
             return httpx.Response(
                 200,
                 json={
                     "credentials": {
                         "openai": {
                             "credential_kind": "api_key",
-                            "credential": {"api_key": "provider-secret"},
+                            "credential": {"type": "api_key", "key": "session-pass"},
+                            "relay_definition": {
+                                "base_url": "https://platform.example.test/model-relay"
+                            },
                         }
                     },
                     "provider_control": {
@@ -669,7 +675,8 @@ async def test_python_client_matches_canonical_provider_and_task_contract(
         )
         cancelled = await client.cancel_task("task-uid-1")
 
-    assert evidence.credential.secret() == "provider-secret"
+    assert evidence.credential.secret() == "session-pass"
+    assert evidence.credential.relay_definition is not None
     assert evidence.provider_control.model.model == "gpt-5.4"
     assert created.created is True
     assert created.task.uid == found.uid == "task-uid-1"

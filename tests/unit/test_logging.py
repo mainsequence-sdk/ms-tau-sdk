@@ -106,6 +106,25 @@ def test_structlog_json_matches_backend_fields_and_redacts(capsys):
     assert foreign["request_id"] == "request-1"
 
 
+def test_a_key_in_a_logged_url_is_redacted(capsys):
+    # Google's transport puts its key, or a hosted session's relay pass, in the request URL, and
+    # httpx logs that URL in its request line (ADR 0030).
+    configure_logging("INFO", machine_sink=True, human_sink=False)
+
+    logging.getLogger("httpx").info(
+        'HTTP Request: %s %s "%s %d %s"',
+        "POST",
+        "https://relay.test/model-relay/models/m:streamGenerateContent?alt=sse&key=private-pass",
+        "HTTP/1.1",
+        200,
+        "OK",
+    )
+
+    output = capsys.readouterr().out
+    assert "private-pass" not in output
+    assert "alt=sse&key=[REDACTED]" in output
+
+
 def test_google_cloud_trace_fields_are_derived_from_otel_context(
     capsys,
     monkeypatch,
