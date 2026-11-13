@@ -917,6 +917,126 @@ def test_providers_tau_knows_ignore_the_catalog_definition():
     )
 
 
+@pytest.mark.asyncio
+async def test_a_hydrated_credential_does_not_move_a_provider_tau_knows():
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=(
+                'data: {"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n'
+                "data: [DONE]\n\n"
+            ),
+        )
+
+    credential = MainSequenceClient.provider_credential_from_hydration(
+        "openrouter",
+        {
+            "credentials": {
+                "openrouter": {
+                    "credential_kind": "api_key",
+                    "credential": {
+                        "type": "api_key",
+                        "key": "openrouter-secret",
+                        "base_url": "https://collector.example.test/v1",
+                        "headers": {"X-Extra": "1"},
+                    },
+                }
+            }
+        },
+    )
+    model = "qwen/qwen3.7-max"
+    provider = ProviderFactory(backend=None).build(  # type: ignore[arg-type]
+        credential,
+        provider_control=_provider_control("openrouter", model),
+        model=model,
+    )
+    assert isinstance(provider, OpenAICompatibleProvider)
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        provider._client = client
+        events = [
+            event
+            async for event in provider.stream_response(
+                model=model,
+                system="system",
+                messages=[UserMessage(content="hello")],
+                tools=[],
+            )
+        ]
+
+    assert events[-1].type == "done"
+    [request] = requests
+    assert request.url.host == "openrouter.ai"
+    assert request.headers["authorization"] == "Bearer openrouter-secret"
+    assert "x-extra" not in request.headers
+
+
+@pytest.mark.parametrize(
+    ("provider_name", "model", "provider_type"),
+    [
+        ("openai-codex", "gpt-5.5", OpenAICodexProvider),
+        ("anthropic", "claude-sonnet-4-6", AnthropicProvider),
+        ("deepseek", "deepseek-v4-pro", OpenAICompatibleProvider),
+    ],
+)
+@pytest.mark.parametrize("base_url", ["https://collector.example.test/v1", None])
+def test_providers_tau_knows_ignore_the_credential_address_and_headers(
+    provider_name, model, provider_type, base_url
+):
+    factory = ProviderFactory(backend=None)  # type: ignore[arg-type]
+    control = _provider_control(provider_name, model)
+    plain = ProviderCredential(
+        provider=provider_name,
+        credential_kind="oauth" if provider_name == "openai-codex" else "api_key",
+        api_key="api-key",
+        access_token="access-token",
+        account_id="account-id",
+    )
+    carrying = plain.model_copy(
+        update={
+            "base_url": base_url or PROVIDER_DEFINITIONS[provider_name].base_url,
+            "headers": {"X-Extra": "1"},
+        }
+    )
+
+    expected = factory.build(plain, provider_control=control, model=model)
+    provider = factory.build(carrying, provider_control=control, model=model)
+
+    assert isinstance(provider, provider_type)
+    assert provider._config.base_url == expected._config.base_url
+    assert provider._config.base_url != "https://collector.example.test/v1"
+    assert provider._config.headers == expected._config.headers
+    assert "X-Extra" not in provider._config.headers
+
+
+def test_an_organization_custom_address_for_a_provider_tau_knows_passes_the_checks():
+    factory = ProviderFactory(backend=None)  # type: ignore[arg-type]
+    control = _provider_control("deepseek", "deepseek-v4-pro")
+    credential = ProviderCredential(
+        provider="deepseek",
+        credential_kind="organization_custom",
+        api="openai-completions",
+        api_key="api-key",
+        base_url="https://models.example.test/v1",
+        headers={"X-Extra": "1"},
+    )
+
+    provider = factory.build(credential, provider_control=control, model="deepseek-v4-pro")
+
+    assert isinstance(provider, OpenAICompatibleProvider)
+    assert provider._config.base_url == "https://models.example.test/v1"
+    assert provider._config.headers["X-Extra"] == "1"
+    with pytest.raises(ConfigurationError, match="prohibited address"):
+        factory.build(
+            credential.model_copy(update={"base_url": "http://169.254.169.254/latest"}),
+            provider_control=control,
+            model="deepseek-v4-pro",
+        )
+
+
 @pytest.mark.parametrize(
     ("base_url", "refusal"),
     [

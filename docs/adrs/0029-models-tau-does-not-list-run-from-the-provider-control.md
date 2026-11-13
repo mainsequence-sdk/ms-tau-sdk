@@ -78,8 +78,11 @@ levels are the provider's own.
 
 ### 5. Address and context window
 
-The address is the provider-level `base_url` and headers, with the credential's overrides as
-today. The context window is what the provider discovers, else Tau's default; the provider control
+The address is the provider-level `base_url` and headers from Tau's catalog. A credential
+overrides them only when it is `organization_custom`, the one kind ADR 0027 gives an address, and
+then its address passes the custom-provider checks; an `api_key` or `oauth` credential's
+`base_url` and headers are ignored
+([#138](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/138)). The context window is what the provider discovers, else Tau's default; the provider control
 gains no field. An optional `context_window` in the projection would serve listed and unlisted
 models alike, since Tau's static windows are not read; that is a separate decision.
 
