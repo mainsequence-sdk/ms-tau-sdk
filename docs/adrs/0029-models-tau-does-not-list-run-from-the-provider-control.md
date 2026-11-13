@@ -78,8 +78,11 @@ levels are the provider's own.
 
 ### 5. Address and context window
 
-The address is the provider-level `base_url` and headers, with the credential's overrides as
-today. The context window is what the provider discovers, else Tau's default; the provider control
+The address is the provider-level `base_url` and headers from Tau's catalog. A credential
+overrides them only when it is `organization_custom`, the one kind ADR 0027 gives an address, and
+then its address passes the custom-provider checks; an `api_key` or `oauth` credential's
+`base_url` and headers are ignored
+([#138](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/138)). The context window is what the provider discovers, else Tau's default; the provider control
 gains no field. An optional `context_window` in the projection would serve listed and unlisted
 models alike, since Tau's static windows are not read; that is a separate decision.
 
@@ -117,8 +120,9 @@ when the platform still offers it; the platform decides what a provider offers.
   need a catalog file of its own.
 - **Offering only models Tau lists**, in tdag-django and in custom endpoints. People could not use
   models their own subscription offers.
-- **Waiting for huggingface/tau to let a host run unlisted models.** Worth proposing upstream; the
-  runtime does not wait for it.
+- **Waiting for huggingface/tau to let a host run unlisted models.** Proposed upstream as
+  [huggingface/tau#796](https://github.com/huggingface/tau/issues/796); the runtime does not wait
+  for it.
 - **Bounding the projection by Tau's provider-level thinking levels.** They describe what Tau's own
   picker offers for the provider, not what a model accepts; the projection comes from the
   provider's catalog or its own model list.

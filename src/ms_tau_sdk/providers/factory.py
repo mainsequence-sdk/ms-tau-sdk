@@ -529,12 +529,17 @@ class ProviderFactory:
                     "the platform sent neither an organization_custom credential nor its "
                     "catalog definition"
                 )
+        # Only an organization_custom credential defines an address and headers (ADR 0027); any
+        # other kind's are ignored, not refused, since they may repeat the provider's default.
+        credential_connection = credential.credential_kind == "organization_custom"
+        if credential_connection and credential.base_url and not outside_tau_catalog:
+            self._validate_custom_base_url(credential.base_url)
         if catalog_definition is not None:
             # The address comes from the platform's catalog, never from the saved credential.
             base_url = catalog_definition.base_url
             headers: dict[str, str] = {}
         else:
-            base_url = credential.base_url or (
+            base_url = (credential.base_url if credential_connection else None) or (
                 model_metadata.base_url
                 if model_metadata is not None and model_metadata.base_url
                 else definition.base_url
@@ -544,7 +549,7 @@ class ProviderFactory:
             headers = {
                 **(catalog_provider.headers if catalog_provider is not None else {}),
                 **(model_metadata.headers if model_metadata is not None else {}),
-                **credential.headers,
+                **(credential.headers if credential_connection else {}),
             }
         secret = credential.secret()
         if not secret and not is_custom_provider:

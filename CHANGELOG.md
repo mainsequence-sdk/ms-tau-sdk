@@ -1,5 +1,19 @@
 # Changelog
 
+## 2.0.34 — 2026-11-13
+
+- **A hydrated credential no longer moves a provider Tau knows.** For a provider in Tau's
+  catalog, the runtime took the address from the hydrated credential's `base_url` and added its
+  `headers` to every request, on all three transports, without the checks a custom provider's
+  address passes. The hydrate contract (ADR 0027) gives an `api_key` or `oauth` credential no
+  address or headers, so whatever a hydrate answer carried there decided where a session's model
+  calls went, with the key and the conversation. Now those fields are ignored, not refused, so a
+  credential that repeats the provider's default address still loads; the address and headers
+  come from Tau's catalog. An `organization_custom` credential still sets its own, and its
+  address now passes the custom-provider checks for a provider Tau knows too. Found by reading
+  the code; no deployed hydrate source is known to rely on the override
+  ([#138](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/138)).
+
 ## 2.0.33 — 2026-11-10
 
 - **A call to an application that scaled to zero no longer spends its time limit on the start.**

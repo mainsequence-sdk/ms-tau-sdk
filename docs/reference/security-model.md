@@ -315,9 +315,13 @@ Organization admin can accept that risk by enabling requester access.
 - **Where requests for a model outside Tau's catalog go.** A model that the runtime's Tau release
   does not list, of a provider it knows, runs on that provider's own Tau transport and address,
   from the provider control the platform or the custom endpoint hydrated: the projection decides
-  the model's inputs and thinking levels, as it does for a provider Tau lacks. The credential's
-  own `base_url` and headers apply as they do for a listed model
+  the model's inputs and thinking levels, as it does for a provider Tau lacks
   ([ADR 0029](../adrs/0029-models-tau-does-not-list-run-from-the-provider-control.md)).
+- **Where requests to a provider Tau knows go.** The address and headers come from Tau's catalog,
+  listed model or not. An `api_key` or `oauth` credential defines no address or headers, so a
+  `base_url` or `headers` that a hydrate answer carries in one is ignored. Only an
+  `organization_custom` credential sets its own address and headers, and its address passes the
+  checks above. Every address that does not come from Tau's catalog passes those checks.
 
 ## What reaches the model
 

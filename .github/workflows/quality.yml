@@ -32,7 +32,20 @@ jobs:
       - name: Sync locked workspace
         run: uv sync --frozen --extra tau-board
       - name: Install runtime tool dependencies
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ripgrep
+        # ripgrep comes from its GitHub release, checksum pinned, not apt: Ubuntu's package mirrors
+        # are not reachable from every runner, and when they are not, nothing is tested or published.
+        env:
+          RIPGREP_VERSION: "15.1.0"
+          RIPGREP_SHA256: 1c9297be4a084eea7ecaedf93eb03d058d6faae29bbc57ecdaf5063921491599
+        run: |
+          archive="ripgrep-${RIPGREP_VERSION}-x86_64-unknown-linux-musl"
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
+            --output "$RUNNER_TEMP/$archive.tar.gz" \
+            "https://github.com/BurntSushi/ripgrep/releases/download/${RIPGREP_VERSION}/$archive.tar.gz"
+          echo "$RIPGREP_SHA256  $RUNNER_TEMP/$archive.tar.gz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$archive.tar.gz" -C "$RUNNER_TEMP"
+          sudo install -m 0755 "$RUNNER_TEMP/$archive/rg" /usr/local/bin/rg
+          rg --version
       - name: Check formatting
         run: uv run ruff format --check src tests scripts packages/tau-board/src packages/tau-board/tests
       - name: Lint
