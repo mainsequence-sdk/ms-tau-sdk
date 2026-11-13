@@ -176,7 +176,7 @@ same `failure`, `status` and `timeout_seconds`, with the application, tool and e
 | The `<name>` application answered with a server error (`<status>`). | The application or its gateway failed; check the application's logs and gateway. |
 | The `<name>` application refused this call (`<status>`). | The caller lacks access on the application; see [An application refuses the Agent's own calls](#an-application-refuses-the-agents-own-calls). |
 | The `<name>` application could not be reached. | No connection could be made twice. Check that the release is deployed and its address resolves. |
-| Main Sequence could not provide access to the `<name>` application. | The platform did not answer the request for the application's address and token; check platform status. |
+| Main Sequence could not provide access to the `<name>` application. | The platform did not provide the application's address and token (`failure: access_unavailable`). Either it did not answer, so check platform status, or it reported the application's deployed runtime unavailable, for example because the application has no running deployment after its latest deployment failed to start. Check the application's latest deployment and redeploy it. |
 
 ## Conversation or Task access is denied
 
