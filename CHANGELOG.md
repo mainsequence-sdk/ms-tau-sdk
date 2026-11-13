@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 2.0.34 — 2026-11-13
 
 - **A hydrated credential no longer moves a provider Tau knows.** For a provider in Tau's
   catalog, the runtime took the address from the hydrated credential's `base_url` and added its
