@@ -1,6 +1,6 @@
 ---
 name: tau-security-and-access
-description: Build and review project tools that call the platform or other applications for the person a turn serves, including tools that use a person's Secret without exposing it or read the caller context another application sends, and explain how delegation and policies decide what those tools can reach.
+description: Build and review project tools that call the platform or other applications for the person a turn serves, including tools that use a person's Secret without exposing it or read the caller context another application sends, and explain how delegation and policies decide what those tools can reach. Also serve the model relay of an application that hydrates its own people's model credentials.
 ---
 
 # TAU Security and Access
@@ -241,8 +241,33 @@ made. To let a team run an Agent on one credential, its owner gives the team `us
 
 From ms-tau-sdk 3.0.0 a hosted session never receives the secret: it receives a session pass and a
 relay address, and every model call goes through the relay, which holds the secret. The pass works
-only at that relay and only while the run holds the session. An application with its own hydrate
-endpoint serves its relay with `ms_tau_sdk.model_relay` (ADR 0030).
+only at that relay and only while the run holds the session.
+
+### Serving the relay of your own hydrate endpoint
+
+An application whose own hydrate endpoint (ADR 0027) answers its people's model credentials, named
+by `MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID`, must serve the relay for those
+credentials too, because only it holds them. Use ms-tau-sdk 3.0.1 or later on the runtime: in
+3.0.0 a model call carried only the pass, the application's request identity refused it for
+having no Main Sequence caller, and no hosted session could call a model.
+
+- Mount `ms_tau_sdk.model_relay.create_model_relay_router` on the hydrate release itself, as an
+  ordinary route behind its request identity, for example under `/model-relay`. Do not make it a
+  public route: request identity strips `Authorization` from a public call.
+- In the hosted hydrate answer, give a session pass where the secret goes and
+  `relay_definition: {"base_url": "<the release's RPC URL>/model-relay"}`. The runtime sends the
+  release's token with every model call, as with the hydrate call, and only under that RPC URL: it
+  refuses a relay on another host or path. Never put `base_url` or `headers` in a relayed entry.
+- The runtime moves the pass into `X-Model-Relay-Pass`, with `X-Model-Relay-Pass-Place`, and the
+  router reads it from there. Do not read the pass yourself.
+- In `resolve_pass`, refuse a caller that is not your own Agent: `User.get_logged_user()` is the
+  verified runtime. Then refuse a pass that names no running session, with `RelayRefused` and a
+  detail that holds no pass or secret.
+- In `resolve_upstream`, answer the provider's own address and the real secret for that session.
+- In local mode the endpoint answers the real credential and no relay is called.
+
+The public API page shows the full example, and the Security and access guide's "Running your
+own relay" lists what the application still owns: pass lifetime, URL logging and body size.
 
 ## Agents
 
@@ -375,3 +400,5 @@ Patch the extension module's `current_requester` and `platform_client` with fake
   absence is refused, never read as everyone.
 - The Agent's workload holds no grants it does not need, and none on people's Secrets; `user` is
   enough on an Agent it only sends work to.
+- A hydrate release's model relay is a route of that release behind request identity, its
+  address is under the release's RPC URL, and `resolve_pass` checks the caller and the pass.

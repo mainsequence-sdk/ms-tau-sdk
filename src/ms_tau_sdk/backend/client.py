@@ -229,6 +229,13 @@ class MainSequenceClient:
         self._owns_hydrate_http = hydrate_client is None
         self._hydrate_endpoint = self._custom_hydrate_endpoint()
 
+    @property
+    def model_relay_release(self) -> ReleaseHydrateEndpoint | None:
+        """The hydrate release, which serves the model relay of the sessions it hydrates."""
+
+        endpoint = self._hydrate_endpoint
+        return endpoint if isinstance(endpoint, ReleaseHydrateEndpoint) else None
+
     @staticmethod
     def _timeout(settings: TauSDKSettings) -> httpx.Timeout:
         return httpx.Timeout(

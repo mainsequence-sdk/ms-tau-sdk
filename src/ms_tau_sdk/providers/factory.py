@@ -7,6 +7,7 @@ import ipaddress
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from urllib.parse import urlsplit
 
 import structlog
@@ -19,6 +20,7 @@ from tau_ai.env import (
     RuntimeProviderAuthResolver,
 )
 from tau_ai.google import GoogleGenerativeAIProvider
+from tau_ai.http import create_async_client
 from tau_ai.mistral import MistralConversationsProvider
 from tau_ai.openai_cache import is_direct_openai_url
 from tau_ai.openai_codex import (
@@ -40,6 +42,7 @@ from tau_coding.thinking import (
 )
 
 from ms_tau_sdk.backend.client import MainSequenceClient
+from ms_tau_sdk.backend.hydrate_endpoint import ReleaseRelayAuth
 from ms_tau_sdk.backend.models import (
     AgentSession,
     ProviderControl,
@@ -522,6 +525,42 @@ class ProviderFactory:
     ) -> ModelProvider:
         if timeout_seconds is None:
             timeout_seconds = self.provider_timeout_seconds
+        provider = self._build(
+            credential,
+            provider_control=provider_control,
+            model=model,
+            credential_resolver=credential_resolver,
+            thinking_level=thinking_level,
+            max_tokens=max_tokens,
+            timeout_seconds=timeout_seconds,
+        )
+        release = getattr(self.backend, "model_relay_release", None)
+        if credential.relay_definition is not None and release is not None:
+            # The hydrate release serves this relay behind request identity, which admits its
+            # model calls by the release token, as it admits the hydrate call (ADR 0030, section
+            # 7). Tau's transports take no auth of their own, so each owns a client that has it.
+            transport: Any = provider
+            if not hasattr(transport, "_owns_client"):
+                raise ConfigurationError(
+                    f"Provider {credential.provider} cannot call the hydrate release's relay"
+                )
+            transport._client = create_async_client(
+                timeout=timeout_seconds, auth=ReleaseRelayAuth(release)
+            )
+            transport._owns_client = True
+        return provider
+
+    def _build(
+        self,
+        credential: ProviderCredential,
+        *,
+        provider_control: ProviderControl,
+        model: str | None,
+        credential_resolver: CredentialResolver | None,
+        thinking_level: str | None,
+        max_tokens: int | None,
+        timeout_seconds: float,
+    ) -> ModelProvider:
         definition = PROVIDER_DEFINITIONS.get(credential.provider)
         catalog_provider = CATALOG_BY_NAME.get(credential.provider)
         # A provider this Tau does not know runs only through Tau's OpenAI-compatible constructor,

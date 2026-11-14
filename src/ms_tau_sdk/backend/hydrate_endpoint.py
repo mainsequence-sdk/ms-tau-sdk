@@ -13,14 +13,19 @@ custom endpoint implements the same contract for people the platform does not kn
 Only the token, to the release, crosses: never the runtime's Main Sequence credential, a caller
 assertion, a lease token, caller context or an ``X-MainSequence-*`` header. No answer, token or
 credential value is logged or kept in an error.
+
+In a hosted session the release also serves the model relay (ADR 0030, section 7). Its model calls
+are admitted as the hydrate call is: ``ReleaseRelayAuth`` sends the same token, only to an address
+under the release's RPC URL, and moves the session pass into its own header.
 """
 
 from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import Awaitable, Callable, Mapping
+from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping
 from typing import Any
+from urllib.parse import unquote
 
 import httpx
 import structlog
@@ -29,7 +34,9 @@ from ms_tau_sdk.errors import (
     BackendConflictError,
     BackendError,
     BackendTimeoutError,
+    ConfigurationError,
 )
+from ms_tau_sdk.model_relay import RELAY_PASS_HEADER, RELAY_PASS_PLACE_HEADER
 from ms_tau_sdk.settings import TauSDKSettings
 
 from .models import ReleaseRuntimeAccess
@@ -66,6 +73,25 @@ def _refusal_detail(response: httpx.Response) -> dict[str, str] | None:
     if isinstance(text, str):
         detail["error_detail"] = text[:_ERROR_DETAIL_LIMIT]
     return detail or None
+
+
+def on_release(url: httpx.URL | str, rpc_url: httpx.URL) -> bool:
+    """Whether ``url`` is the release's RPC URL or below it, the only place its token may go."""
+
+    url = httpx.URL(url)
+    if (
+        url.scheme,
+        url.host,
+        url.port,
+        url.username,
+        url.password,
+    ) != (rpc_url.scheme, rpc_url.host, rpc_url.port, "", ""):
+        return False
+    # httpx resolves literal dot segments, not encoded ones, which a server may resolve later.
+    if any(unquote(segment) in {".", ".."} for segment in url.raw_path.decode().split("/")):
+        return False
+    base = rpc_url.path.rstrip("/")
+    return url.path == base or url.path.startswith(f"{base}/")
 
 
 def _log_fields(detail: Mapping[str, str] | None) -> dict[str, str]:
@@ -278,7 +304,30 @@ class ReleaseHydrateEndpoint(CustomHydrateEndpoint):
             raise
         if response.status_code < 500:
             release_warmth.served(self.release_uid)
-        return self._answer(response)
+        data = self._answer(response)
+        self._refuse_relays_elsewhere(data, access)
+        return data
+
+    async def relay_access(self, *, stale: ReleaseAccess | None = None) -> ReleaseAccess:
+        """The token and RPC URL a model call to this release's relay uses, as hydration does."""
+
+        return await self._release_access(stale=stale)
+
+    @staticmethod
+    def _refuse_relays_elsewhere(data: Mapping[str, Any], access: ReleaseAccess) -> None:
+        """Refuse a relay that is not the release's own: its token would follow the model calls."""
+
+        credentials = data.get("credentials")
+        if not isinstance(credentials, Mapping):
+            return
+        for entry in credentials.values():
+            relay = entry.get("relay_definition") if isinstance(entry, Mapping) else None
+            base_url = relay.get("base_url") if isinstance(relay, Mapping) else None
+            if isinstance(base_url, str) and not on_release(base_url, access.rpc_url):
+                raise ConfigurationError(
+                    "The provider credential hydrate release answered a relay_definition "
+                    "that is not under its own address"
+                )
 
     def _url(self, access: ReleaseAccess) -> httpx.URL:
         url = httpx.URL(str(access.rpc_url).rstrip("/") + HYDRATE_PATH)
@@ -335,9 +384,71 @@ class ReleaseHydrateEndpoint(CustomHydrateEndpoint):
         raise failure
 
 
+class ReleaseRelayAuth(httpx.Auth):
+    """Admit a model call at the relay the hydrate release serves, as its hydrate call is admitted.
+
+    Request identity admits a call by its ``Authorization``, so the transport's pass moves to
+    ``X-Model-Relay-Pass``, with its place, and ``Authorization`` carries the release token. The
+    token goes only to an address under the release's RPC URL; a call anywhere else is refused
+    before it is sent. A ``401`` gets a new token once.
+    """
+
+    requires_request_body = True
+
+    def __init__(self, release: ReleaseHydrateEndpoint) -> None:
+        self._release = release
+
+    def __repr__(self) -> str:
+        return f"ReleaseRelayAuth(release_uid={self._release.release_uid!r})"
+
+    async def async_auth_flow(
+        self,
+        request: httpx.Request,
+    ) -> AsyncGenerator[httpx.Request, httpx.Response]:
+        self._move_pass(request)
+        access = await self._release.relay_access()
+        self._authorize(request, access)
+        response = yield request
+        if response.status_code == 401:
+            access = await self._release.relay_access(stale=access)
+            self._authorize(request, access)
+            response = yield request
+        if response.status_code < 500:
+            release_warmth.served(self._release.release_uid)
+
+    @staticmethod
+    def _move_pass(request: httpx.Request) -> None:
+        """Move the pass from where the transport put a secret, in the relay's order."""
+
+        authorization = request.headers.get("authorization", "")
+        if authorization[:7].lower() == "bearer " and authorization[7:].strip():
+            place, session_pass = "bearer", authorization[7:].strip()
+            del request.headers["authorization"]
+        elif request.headers.get("x-api-key"):
+            place, session_pass = "x-api-key", request.headers["x-api-key"]
+            del request.headers["x-api-key"]
+        elif request.url.params.get("key"):
+            place, session_pass = "query", request.url.params["key"]
+            request.url = request.url.copy_remove_param("key")
+        else:
+            raise ConfigurationError("A model call to the hydrate release carries no session pass")
+        request.headers[RELAY_PASS_HEADER] = session_pass
+        request.headers[RELAY_PASS_PLACE_HEADER] = place
+
+    @staticmethod
+    def _authorize(request: httpx.Request, access: ReleaseAccess) -> None:
+        if not on_release(request.url, access.rpc_url):
+            raise ConfigurationError(
+                "The model relay is not under the provider credential hydrate release's address"
+            )
+        request.headers["Authorization"] = f"Bearer {access.token.value}"
+
+
 __all__ = [
     "HYDRATE_PATH",
     "CustomHydrateEndpoint",
     "LocalAddressHydrateEndpoint",
     "ReleaseHydrateEndpoint",
+    "ReleaseRelayAuth",
+    "on_release",
 ]

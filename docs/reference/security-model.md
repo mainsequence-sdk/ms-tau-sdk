@@ -369,15 +369,23 @@ else is fixed, and the router passes the same contract cases as the platform's r
 
 - Mint passes that are long and random, tie each to one session's run, and stop accepting it when
   that run ends. A pass is all a caller needs to spend the session owner's credential.
-- Answer a relay address the runtime can reach and that the address checks accept: a public
-  `https` address, never `localhost`.
+- Serve the relay from the hydrate release itself, behind its request identity, and answer its
+  address under the release's RPC URL, for example `<rpc url>/model-relay`. From 3.0.1 the runtime
+  calls it as it calls the hydrate endpoint: with the token the platform minted for that release
+  in `Authorization`, and the pass in `X-Model-Relay-Pass`. The runtime sends that token nowhere
+  else, so it refuses an answer whose relay is on another host or path. Do not make the relay a
+  public route; request identity strips `Authorization` from a public call. In 3.0.0 a model call
+  carried only the pass and was refused by request identity
+  ([#142](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/142)).
+- In `resolve_pass`, check the verified caller too: `User.get_logged_user()` is the runtime that
+  called, and it should be your own Agent's.
 - For Google the pass travels in the request URL, as Google's key does. The router logs no URL,
   and the SDK's own logs redact a `key` query value, but the server in front of the relay and its
   access logs must not log request URLs either.
 - The router reads request bodies whole and sets no size limit, because a call with images is
   large. Set the limit on the server in front of it.
-- Run the relay before upgrading the runtime to 3.0.0: a 3.0.0 hosted runtime refuses an answer
-  without `relay_definition`.
+- Run the relay before upgrading the runtime to 3.0.1: a hosted runtime refuses an answer
+  without `relay_definition`, and 3.0.0 cannot reach a relay behind request identity.
 
 ## What reaches the model
 

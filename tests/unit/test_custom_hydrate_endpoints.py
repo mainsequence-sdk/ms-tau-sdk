@@ -6,6 +6,8 @@ import base64
 import json
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -13,22 +15,27 @@ from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from opentelemetry import baggage
 from opentelemetry import context as otel_context
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 from structlog.testing import capture_logs
+from tau_agent import UserMessage
 from tau_ai import OpenAICodexProvider, OpenAICompatibleProvider
 from tau_coding.provider_catalog import BUILTIN_PROVIDER_CATALOG
 
 from ms_tau_sdk.backend.assertions import ASSERTION_HEADER
 from ms_tau_sdk.backend.auth import JWTAuth, RuntimeCredentialAuth
 from ms_tau_sdk.backend.client import MainSequenceClient
+from ms_tau_sdk.backend.hydrate_endpoint import ReleaseRelayAuth
 from ms_tau_sdk.backend.local import LocalDevelopmentBackend
 from ms_tau_sdk.backend.models import (
     AgentSession,
     ProviderControl,
     TauRuntimeBootstrapRequest,
 )
+from ms_tau_sdk.backend.release_readiness import release_warmth
 from ms_tau_sdk.errors import (
     ApplicationReadinessTimeoutError,
     BackendConflictError,
@@ -37,6 +44,7 @@ from ms_tau_sdk.errors import (
     ConfigurationError,
     SessionNotFoundError,
 )
+from ms_tau_sdk.model_relay import RelayRefused, RelayUpstream, create_model_relay_router
 from ms_tau_sdk.providers.factory import ProviderFactory
 from ms_tau_sdk.settings import TauSDKSettings
 
@@ -50,7 +58,7 @@ ACCESS_PATH = f"/api/v1/resource-releases/{RELEASE_UID}/resolve-runtime-access/"
 PROVIDER_SECRET = "sk-provider-secret-never-logged"
 BOOTSTRAP_SECRET = "sk-bootstrap-secret-never-used"
 SESSION_PASS = "session-pass-never-logged"
-RELAY_BASE_URL = "https://relay.example.test/model-relay"
+RELAY_BASE_URL = f"{RPC_URL}/model-relay"
 
 
 def _provider_control(provider_name: str = "openai", model: str = "gpt-5.4") -> ProviderControl:
@@ -1220,3 +1228,320 @@ async def test_a_kept_release_token_is_reused_only_while_the_release_is_known_wa
     assert asked_while_warm == 1
     assert len(network.sent(host="backend.test", path=ACCESS_PATH)) == 2
     assert release_warmth.is_warm(RELEASE_UID) is True
+
+
+# The release's model relay, behind request identity (ADR 0030, section 7)
+
+_CALLER: ContextVar[str | None] = ContextVar("relay_test_caller", default=None)
+
+
+class _RequestIdentity:
+    """Request identity as mainsequence-sdk applies it to the release.
+
+    A call without a token the platform minted for this release has no Main Sequence caller and is
+    refused before any route runs; an admitted call reaches the route without ``Authorization``.
+    """
+
+    def __init__(self, app: Any, *, tokens: set[str]) -> None:
+        self.app = app
+        self.tokens = tokens
+        self.seen: list[str] = []
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        authorization = dict(scope["headers"]).get(b"authorization", b"").decode()
+        self.seen.append(authorization)
+        if authorization.removeprefix("Bearer ") not in self.tokens:
+            refusal = JSONResponse({"detail": "No Main Sequence caller."}, status_code=401)
+            await refusal(scope, receive, send)
+            return
+        admitted = [(name, value) for name, value in scope["headers"] if name != b"authorization"]
+        caller = _CALLER.set("agent-runtime")
+        try:
+            await self.app({**scope, "headers": admitted}, receive, send)
+        finally:
+            _CALLER.reset(caller)
+
+
+def _provider_sse(request: httpx.Request) -> httpx.Response:
+    """A minimal completed stream on any Tau transport."""
+
+    path = request.url.path
+    if path.endswith("/messages"):
+        events = [
+            '{"type":"message_start","message":{"usage":{"input_tokens":1}}}',
+            '{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ok"}}',
+            '{"type":"message_delta","delta":{"stop_reason":"end_turn"},'
+            '"usage":{"output_tokens":1}}',
+        ]
+    elif ":streamGenerateContent" in path:
+        events = ['{"candidates":[{"content":{"parts":[{"text":"ok"}]},"finishReason":"STOP"}]}']
+    else:
+        events = [
+            '{"type":"response.output_text.delta","delta":"ok"}',
+            '{"type":"response.completed","response":{"status":"completed","usage":'
+            '{"input_tokens":1,"output_tokens":1}}}',
+        ]
+    body = "".join(f"data: {event}\n\n" for event in events)
+    return httpx.Response(
+        200, headers={"content-type": "text/event-stream"}, stream=httpx.ByteStream(body.encode())
+    )
+
+
+@dataclass
+class _ReleaseRelay:
+    identity: _RequestIdentity
+    passes: list[tuple[str, str | None]]
+    provider_calls: list[httpx.Request]
+
+
+@asynccontextmanager
+async def _release_relay(
+    api: str, provider_base_url: str, *, tokens: set[str]
+) -> AsyncIterator[_ReleaseRelay]:
+    """The hydrate release's relay, served with the SDK's component under its RPC URL."""
+
+    passes: list[tuple[str, str | None]] = []
+    provider_calls: list[httpx.Request] = []
+
+    async def resolve_pass(value: str) -> str:
+        passes.append((value, _CALLER.get()))
+        if value != SESSION_PASS:
+            raise RelayRefused("The session pass is not valid for a running session.")
+        return "session-1"
+
+    async def resolve_upstream(session: str) -> RelayUpstream:
+        return RelayUpstream(
+            api=api,
+            base_url=provider_base_url,
+            secret=SecretStr(PROVIDER_SECRET),
+            account_id="account-id" if api == "openai-codex-responses" else None,
+        )
+
+    def provider(request: httpx.Request) -> httpx.Response:
+        provider_calls.append(request)
+        return _provider_sse(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(provider)) as provider_http:
+        app = FastAPI()
+        app.include_router(
+            create_model_relay_router(
+                resolve_pass=resolve_pass, resolve_upstream=resolve_upstream, http=provider_http
+            ),
+            prefix=httpx.URL(RELAY_BASE_URL).path,
+        )
+        yield _ReleaseRelay(_RequestIdentity(app, tokens=tokens), passes, provider_calls)
+
+
+async def _turn(provider: Any, model: str, app: Any, *, auth: httpx.Auth | None) -> list[Any]:
+    """One model call of the provider, sent to the relay app with the given client auth."""
+
+    if provider._client is not None:
+        await provider._client.aclose()
+    provider._client = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), auth=auth)
+    try:
+        return [
+            event
+            async for event in provider.stream_response(
+                model=model, system="system", messages=[UserMessage(content="hello")], tools=[]
+            )
+        ]
+    finally:
+        await provider._client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("provider_name", "model", "credential", "provider_base_url", "place"),
+    [
+        pytest.param(
+            "openai", "gpt-5.4", None, "https://api.openai.com/v1", "bearer", id="responses"
+        ),
+        pytest.param(
+            "anthropic",
+            "claude-sonnet-4-6",
+            None,
+            "https://api.anthropic.com",
+            "x-api-key",
+            id="anthropic",
+        ),
+        pytest.param(
+            "google",
+            "gemini-flash-latest",
+            None,
+            "https://generativelanguage.googleapis.com/v1beta",
+            "query",
+            id="google",
+        ),
+        pytest.param(
+            "openai-codex",
+            "gpt-5.5",
+            {"type": "oauth", "access": _codex_token(), "account_id": "account-id"},
+            "https://chatgpt.com/backend-api",
+            "bearer",
+            id="codex",
+        ),
+    ],
+)
+async def test_a_model_call_reaches_the_release_relay_as_the_hydrate_call_does(
+    runtime_identity_token_file, provider_name, model, credential, provider_base_url, place
+):
+    network = _Network()
+    network.hydrate = [
+        _answer(
+            provider_name, model, kind="oauth" if credential else "api_key", credential=credential
+        )
+    ]
+    settings = _hosted_settings(
+        runtime_identity_token_file, provider_credential_hydrate_release_uid=RELEASE_UID
+    )
+    async with _client(network, settings) as client:
+        evidence = await _hosted_hydrate(client, model=model, provider=provider_name)
+        runtime = ProviderFactory(client).for_session_credential(
+            _session(provider_name, model), holder_id="holder-1", evidence=evidence
+        )
+        auth = runtime.provider._client.auth
+        assert isinstance(auth, ReleaseRelayAuth)
+        api = evidence.provider_control.model.api
+        async with _release_relay(api, provider_base_url, tokens={"release-token-1"}) as relay:
+            events = await _turn(runtime.provider, model, relay.identity, auth=auth)
+
+    assert events[-1].type == "done"
+    # Request identity admitted the call by the release token, as it admits the hydrate call.
+    [hydrate] = network.hydrations()
+    assert hydrate.headers["authorization"] == "Bearer release-token-1"
+    assert relay.identity.seen == ["Bearer release-token-1"]
+    # The relay read the pass from its own header and saw the verified caller.
+    assert relay.passes == [(SESSION_PASS, "agent-runtime")]
+    [call] = relay.provider_calls
+    assert str(call.url).startswith(provider_base_url)
+    if place == "bearer":
+        assert call.headers["authorization"] == f"Bearer {PROVIDER_SECRET}"
+    elif place == "x-api-key":
+        assert call.headers["x-api-key"] == PROVIDER_SECRET
+    else:
+        assert call.url.params["key"] == PROVIDER_SECRET
+    sent = (str(call.headers) + str(call.url)).lower()
+    assert SESSION_PASS not in sent
+    assert "release-token" not in sent
+    assert "x-model-relay" not in sent
+
+
+@pytest.mark.asyncio
+async def test_without_the_release_token_request_identity_refuses_the_model_call(
+    runtime_identity_token_file,
+):
+    """3.0.0 sent only the pass, which gives request identity no Main Sequence caller (#142)."""
+
+    network = _Network()
+    settings = _hosted_settings(
+        runtime_identity_token_file, provider_credential_hydrate_release_uid=RELEASE_UID
+    )
+    async with _client(network, settings) as client:
+        evidence = await _hosted_hydrate(client)
+        provider = ProviderFactory(backend=None).build(  # type: ignore[arg-type]
+            evidence.credential, provider_control=evidence.provider_control, model="gpt-5.4"
+        )
+        async with _release_relay(
+            "openai-responses", "https://api.openai.com/v1", tokens={"release-token-1"}
+        ) as relay:
+            events = await _turn(provider, "gpt-5.4", relay.identity, auth=None)
+
+    assert events[-1].type == "error"
+    assert relay.identity.seen == [f"Bearer {SESSION_PASS}"]
+    assert relay.passes == []
+    assert relay.provider_calls == []
+
+
+@pytest.mark.asyncio
+async def test_a_refused_release_token_is_renewed_once_for_a_model_call(
+    runtime_identity_token_file,
+):
+    network = _Network()
+    network.access = [_access("release-token-1"), _access("release-token-2")]
+    settings = _hosted_settings(
+        runtime_identity_token_file, provider_credential_hydrate_release_uid=RELEASE_UID
+    )
+    async with _client(network, settings) as client:
+        evidence = await _hosted_hydrate(client)
+        runtime = ProviderFactory(client).for_session_credential(
+            _session("openai", "gpt-5.4"), holder_id="holder-1", evidence=evidence
+        )
+        auth = runtime.provider._client.auth
+        async with _release_relay(
+            "openai-responses", "https://api.openai.com/v1", tokens={"release-token-2"}
+        ) as relay:
+            events = await _turn(runtime.provider, "gpt-5.4", relay.identity, auth=auth)
+
+    assert events[-1].type == "done"
+    assert relay.identity.seen == ["Bearer release-token-1", "Bearer release-token-2"]
+    assert relay.passes == [(SESSION_PASS, "agent-runtime")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "relay_base_url",
+    [
+        "https://relay.example.test/model-relay",
+        "https://hydrate.example.test/releases/other/model-relay",
+        "https://hydrate.example.test/releases/hunch-other/model-relay",
+        "https://hydrate.example.test/releases/hunch/%2e%2e/other/model-relay",
+        "http://hydrate.example.test/releases/hunch/model-relay",
+        "https://hydrate.example.test:8443/releases/hunch/model-relay",
+    ],
+)
+async def test_a_release_that_answers_a_relay_outside_its_address_is_refused(
+    runtime_identity_token_file, relay_base_url
+):
+    answer = _relayed(_answer())
+    answer["credentials"]["openai"]["relay_definition"] = {"base_url": relay_base_url}
+    network = _Network()
+    network.hydrate = [httpx.Response(200, json=answer)]
+    settings = _hosted_settings(
+        runtime_identity_token_file, provider_credential_hydrate_release_uid=RELEASE_UID
+    )
+    async with _client(network, settings) as client:
+        with pytest.raises(ConfigurationError, match="not under its own address") as raised:
+            await _hosted_hydrate(client)
+
+    _no_secret(raised.value)
+
+
+@pytest.mark.asyncio
+async def test_the_release_token_never_leaves_for_another_address(runtime_identity_token_file):
+    network = _Network()
+    settings = _hosted_settings(
+        runtime_identity_token_file, provider_credential_hydrate_release_uid=RELEASE_UID
+    )
+    sent: list[httpx.Request] = []
+
+    def anywhere(request: httpx.Request) -> httpx.Response:
+        sent.append(request)
+        return _provider_sse(request)
+
+    async with _client(network, settings) as client:
+        evidence = await _hosted_hydrate(client)
+        runtime = ProviderFactory(client).for_session_credential(
+            _session("openai", "gpt-5.4"), holder_id="holder-1", evidence=evidence
+        )
+        auth = runtime.provider._client.auth
+        # The platform moved the release after the hydrate: the relay is no longer under it.
+        moved = _access("release-token-2")
+        moved["access"]["rpc_url"] = "https://moved.example.test/releases/hunch"
+        network.access = [moved]
+        release_warmth.forget(RELEASE_UID)
+        await runtime.provider._client.aclose()
+        runtime.provider._client = httpx.AsyncClient(
+            transport=httpx.MockTransport(anywhere), auth=auth
+        )
+        with pytest.raises(ConfigurationError, match="not under") as raised:
+            async for _ in runtime.provider.stream_response(
+                model="gpt-5.4", system="system", messages=[UserMessage(content="hi")], tools=[]
+            ):
+                pass
+        await runtime.provider._client.aclose()
+
+    assert sent == []
+    _no_secret(raised.value)

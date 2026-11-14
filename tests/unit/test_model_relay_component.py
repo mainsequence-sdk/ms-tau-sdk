@@ -13,7 +13,13 @@ from fastapi import FastAPI
 from pydantic import SecretStr
 from structlog.testing import capture_logs
 
-from ms_tau_sdk.model_relay import RelayRefused, RelayUpstream, create_model_relay_router
+from ms_tau_sdk.model_relay import (
+    RELAY_PASS_HEADER,
+    RELAY_PASS_PLACE_HEADER,
+    RelayRefused,
+    RelayUpstream,
+    create_model_relay_router,
+)
 from ms_tau_sdk.model_relay.contract import (
     CONTRACT_ACCOUNT_ID,
     CONTRACT_PASS,
@@ -343,3 +349,78 @@ def test_an_upstream_repr_holds_no_secret_or_header():
 
     assert CONTRACT_SECRET not in repr(upstream)
     assert "org-header" not in repr(upstream)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("place", "api", "path", "provider_base_url"),
+    [
+        ("bearer", "openai-responses", "/responses", "https://api.openai.com/v1"),
+        ("x-api-key", "anthropic-messages", "/v1/messages", "https://api.anthropic.com"),
+        (
+            "query",
+            "google-generative-ai",
+            "/models/gemini-flash-latest:streamGenerateContent?alt=sse",
+            "https://generativelanguage.googleapis.com/v1beta",
+        ),
+    ],
+)
+async def test_the_pass_header_beside_a_release_token_is_the_pass(
+    place, api, path, provider_base_url
+):
+    provider = _Provider(httpx.Response(200, content=b"ok"))
+    upstream = RelayUpstream(api=api, base_url=provider_base_url, secret=SecretStr("secret"))
+    async with _relay(provider, upstream=upstream) as runtime:
+        answer = await runtime.post(
+            RELAY_PREFIX + path,
+            headers={
+                # What request identity admitted the call by; it is never the pass.
+                "Authorization": "Bearer release-token",
+                RELAY_PASS_HEADER: CONTRACT_PASS,
+                RELAY_PASS_PLACE_HEADER: place,
+            },
+            content=b"{}",
+        )
+        await answer.aread()
+
+    assert answer.status_code == 200
+    [call] = provider.calls
+    if place == "bearer":
+        assert call.headers["authorization"] == "Bearer secret"
+    elif place == "x-api-key":
+        assert call.headers["x-api-key"] == "secret"
+        assert "authorization" not in call.headers
+    else:
+        assert call.url.params["key"] == "secret"
+        assert "authorization" not in call.headers
+    forwarded = str(call.headers) + str(call.url)
+    for value in ("release-token", CONTRACT_PASS, RELAY_PASS_HEADER.lower()):
+        assert value not in forwarded.lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {RELAY_PASS_HEADER: CONTRACT_PASS},
+        {RELAY_PASS_HEADER: CONTRACT_PASS, RELAY_PASS_PLACE_HEADER: "cookie"},
+        {RELAY_PASS_HEADER: " ", RELAY_PASS_PLACE_HEADER: "bearer"},
+    ],
+    ids=["no-place", "unknown-place", "empty-pass"],
+)
+async def test_a_pass_header_without_a_known_place_is_refused(headers):
+    provider = _Provider(httpx.Response(200, content=b"ok"))
+    upstream = RelayUpstream(
+        api="openai-responses", base_url="https://api.openai.com/v1", secret=SecretStr("secret")
+    )
+    async with _relay(provider, upstream=upstream) as runtime:
+        # A pass in Authorization does not stand in for a malformed pass header.
+        answer = await runtime.post(
+            f"{RELAY_PREFIX}/responses",
+            headers={"Authorization": f"Bearer {CONTRACT_PASS}", **headers},
+            content=b"{}",
+        )
+
+    assert answer.status_code == 403
+    assert answer.json() == {"detail": "The call carries no session pass."}
+    assert provider.calls == []
