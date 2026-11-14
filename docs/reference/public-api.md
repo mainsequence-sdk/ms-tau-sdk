@@ -217,14 +217,18 @@ secrets ([ADR 0030](../adrs/0030-hosted-model-calls-go-through-a-relay.md)).
 
 ```python
 from fastapi import FastAPI
+from mainsequence.client.models_user import User
 from pydantic import SecretStr
 
 from ms_tau_sdk.model_relay import RelayRefused, RelayUpstream, create_model_relay_router
 
-app = FastAPI()
+app = FastAPI()  # the hydrate release's app, behind its request identity
 
 
 async def resolve_pass(session_pass: str) -> Session:
+    # Request identity admitted the call by the runtime's token for this release.
+    if not is_our_agent(User.get_logged_user()):
+        raise RelayRefused("The caller is not this application's Agent.")
     session = await sessions.running_session_for_pass(session_pass)
     if session is None:
         raise RelayRefused("The session pass is not valid for a running session.")
@@ -247,9 +251,12 @@ app.include_router(
 )
 ```
 
-The hydrate endpoint then answers `relay_definition: {"base_url": "https://<host>/model-relay"}`
+The hydrate endpoint then answers `relay_definition: {"base_url": "<rpc url>/model-relay"}`
 beside a credential that carries the pass, as the
-[runtime contract](./runtime-contract.md#model-calls-of-a-hosted-session) shows.
+[runtime contract](./runtime-contract.md#model-calls-of-a-hosted-session) shows. The relay must
+be on the same release as the hydrate endpoint, under the RPC URL the platform gives the runtime
+for it: the runtime sends the release's token with every model call, as it does with the hydrate
+call, and only there. It needs no public route.
 
 - `create_model_relay_router(*, resolve_pass, resolve_upstream, http=None)` returns a FastAPI
   router with one route for every path below it. `resolve_pass` answers the session a pass names
@@ -266,10 +273,15 @@ beside a credential that carries the pass, as the
   must not choose where the relay sends a conversation.
 - `RelayRefused(detail)` answers `403` `{"detail": detail}`. Never put a pass or a secret in it.
 - `RELAY_PATHS` maps each wire protocol to the methods and paths the relay forwards.
+- `RELAY_PASS_HEADER` (`X-Model-Relay-Pass`) and `RELAY_PASS_PLACE_HEADER`
+  (`X-Model-Relay-Pass-Place`) are where a runtime sends the pass to a release's relay, and the
+  place its transport put it: `bearer`, `x-api-key` or `query`. From 3.0.1.
 
-What the router does is fixed: it reads the pass where the runtime's transport put it (an
-`Authorization` bearer token, `x-api-key`, or the `key` query parameter) and puts the secret back
-there; it takes the provider's address only from `resolve_upstream`; it forwards the method, the
+What the router does is fixed: it reads the pass from `X-Model-Relay-Pass`, or without it where
+the runtime's transport put it (an `Authorization` bearer token, `x-api-key`, or the `key` query
+parameter), and puts the secret back in that place; `resolve_pass` and `resolve_upstream` run
+inside the request, after request identity admitted it, so `User.get_logged_user()` is the
+verified caller; it never forwards `Authorization` or the pass headers; it takes the provider's address only from `resolve_upstream`; it forwards the method, the
 path, the query without `key`, the body, and the request headers without hop-by-hop headers,
 `Cookie`, `Forwarded`, `X-Real-IP` and `X-Forwarded-*`; it streams the provider's status, headers
 and body back, returns a redirect without following it, and answers `502` when the provider

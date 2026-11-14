@@ -56,6 +56,9 @@ An application that keeps its own people's model credentials can hydrate them in
 `TAU_LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL` to its service on a loopback origin such as
 `http://127.0.0.1:8611`. Every hydration then names the local session in `agent_session_uid`, and
 readiness hydrates nothing. A loopback address receives no credential of any kind. See ADR 0027.
+In local mode the endpoint answers the real credential. A hosted session receives a pass instead,
+and the release must also serve the model relay under its own RPC URL; the
+`tau_security_and_access` skill says how (ADR 0030).
 
 ## Exact local/remote boundary
 

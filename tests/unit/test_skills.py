@@ -55,6 +55,10 @@ def test_security_skill_teaches_delegated_tools_and_secrets() -> None:
         "Whoever holds `editor` or `owner` on a Secret sets its value",
         "That is a choice of the tool, not a platform rule",
         "it cannot call the platform as that person",
+        "as an ordinary route behind its request identity",
+        "Do not make it a public route",
+        "only under that RPC URL",
+        "`User.get_logged_user()` is the verified runtime",
     )
     for term in required_terms:
         assert term in normalized

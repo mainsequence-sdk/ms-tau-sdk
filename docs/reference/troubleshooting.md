@@ -225,6 +225,14 @@ Check the signed-in user, selected provider/model, configured credential, and En
   `missing_action` with `required_action` `model-provider-credentials.update` or
   `model-provider-credentials.revoke` and the `granting_policies` that include it. Ask an owner for
   `editor`, or ask an editor to do it.
+- `409` `provider_control_selection_invalid` with `The selected model is not published for this
+  provider.` or `The selected thinking level is not supported by this model.` means the selected
+  credential does not offer that model or level. For `openai-codex`, the models are the ones your
+  own ChatGPT plan lists for that credential, with each model's own thinking levels. The platform
+  reads them when you sign in and again each time it renews the sign-in; until it has read them
+  once, it offers its own published Codex list. The platform's model-provider list shows each
+  Codex credential's models and when they were last read. Select a model and level it lists, or
+  sign in again after OpenAI adds a model to your plan. OpenAI's `ultra` level is not offered.
 - If selection is correct, check that the deployed platform supports authenticated local provider
   use and that the provider publishes the selected model.
 
@@ -279,6 +287,9 @@ mode is not affected.
 | `... answered a relayed credential for <provider> with base_url or headers` | A relayed entry carries the provider's address or headers, which belong to the relay. Remove them from the answer. |
 | `... answered a relayed openai-codex credential without account_id` | A pass is not a token, so the account id cannot be read from it. Answer `account_id` beside the pass. |
 | `Model relay definition base_url targets a prohibited host` or `... invalid base_url` | The relay address is `localhost`, a metadata host, a link-local address, or not a plain `http`/`https` URL. Answer an address the runtime reaches on the network. |
+| A hosted turn fails with a provider `401` "No Main Sequence caller", or the application's logs show its request identity refusing calls to its relay | A 3.0.0 runtime sends only the pass to a relay, and request identity refuses it ([#142](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/142)). Upgrade the runtime to 3.0.1, which sends the release's token as on the hydrate call. |
+| `The provider credential hydrate release answered a relay_definition that is not under its own address` | The hydrate release answered a relay on another host, port, scheme or path. Serve the relay from the same release and answer its address under the release's RPC URL, for example `<rpc url>/model-relay`. |
+| `The model relay is not under the provider credential hydrate release's address` | The platform now gives the release another RPC URL than the one the session loaded with. Start a new session. |
 | `Credential refresh changed the model relay` | A refresh answered another relay address than the session loaded with. Answer the same address for the whole run. |
 | A turn fails with a provider `403` whose `detail` names the session pass or the credential | The relay refused the call: the run no longer holds the session, the owner lost access to the credential, or the path is not one the provider's transport uses. It is not retried. Start a new turn; if it repeats, check the session owner's access to the provider. |
 | `Sign-in credential names an address that is not its provider's` in local mode | A GitHub Copilot token names an address (`proxy-ep`) outside `githubcopilot.com`. Sign in again; if GitHub issued the token for another Copilot host, such as a GitHub Enterprise one, report it: that host is not supported yet. |

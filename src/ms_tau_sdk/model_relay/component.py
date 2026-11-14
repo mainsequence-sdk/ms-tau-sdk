@@ -9,9 +9,13 @@ The application supplies two things: who a pass belongs to, and the provider, ad
 for that session. Everything else is fixed here and behaves as the platform's relay does towards a
 runtime:
 
-- the pass is read where the runtime's transport puts a secret: an ``Authorization`` bearer
-  token, ``x-api-key``, or the ``key`` query parameter. The real secret goes back in the place the
-  pass arrived, and the pass is never forwarded;
+- the pass is read from ``X-Model-Relay-Pass``, with the place the transport put it in
+  ``X-Model-Relay-Pass-Place``. A runtime sends it there when the relay is served by its hydrate
+  release, because ``Authorization`` then carries the release token that request identity admits,
+  as on the hydrate call. Without those headers the pass is read where the transport puts a
+  secret: an ``Authorization`` bearer token, ``x-api-key``, or the ``key`` query parameter. The
+  real secret goes back in the place the pass was put, and neither the pass nor ``Authorization``
+  is ever forwarded;
 - the upstream address comes only from the application's answer, never from the request;
 - only the methods and paths the session's wire protocol uses are forwarded. A leading ``/v1`` in
   the request path is the transport's own;
@@ -46,6 +50,11 @@ logger = structlog.get_logger(__name__)
 RELAY_CONNECT_TIMEOUT_SECONDS = 10
 RELAY_READ_TIMEOUT_SECONDS = 180
 RELAY_METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
+# Where a runtime sends the pass to a relay its hydrate release serves, and the place its transport
+# put it: "bearer", "x-api-key" or "query" (ADR 0030, section 7).
+RELAY_PASS_HEADER = "X-Model-Relay-Pass"
+RELAY_PASS_PLACE_HEADER = "X-Model-Relay-Pass-Place"
+RELAY_PASS_PLACES = frozenset({"bearer", "x-api-key", "query"})
 
 # The methods and paths each Tau wire protocol calls, after a leading /v1. The platform's relay
 # allows the same ones.
@@ -80,6 +89,8 @@ _NOT_FORWARDED = _HOP_BY_HOP | frozenset(
         "cookie",
         "forwarded",
         "x-real-ip",
+        RELAY_PASS_HEADER.lower(),
+        RELAY_PASS_PLACE_HEADER.lower(),
     }
 )
 _NOT_RETURNED = _HOP_BY_HOP | frozenset({"content-length", "set-cookie"})
@@ -138,8 +149,17 @@ def _refusal(detail: str) -> JSONResponse:
 def _session_pass(
     headers: Mapping[str, str], query: Mapping[str, str]
 ) -> tuple[str, str] | tuple[None, None]:
-    """Where the runtime's transport put the pass, and the pass, in the platform's order."""
+    """Where the runtime's transport put the pass, and the pass, in the platform's order.
 
+    The pass header comes first: beside it, ``Authorization`` carries the release token.
+    """
+
+    if RELAY_PASS_HEADER.lower() in headers:
+        place = str(headers.get(RELAY_PASS_PLACE_HEADER.lower()) or "")
+        relayed_pass = str(headers[RELAY_PASS_HEADER.lower()]).strip()
+        if place in RELAY_PASS_PLACES and relayed_pass:
+            return place, relayed_pass
+        return None, None
     authorization = str(headers.get("authorization") or "")
     if authorization[:7].lower() == "bearer " and authorization[7:].strip():
         return "bearer", authorization[7:].strip()
@@ -226,8 +246,11 @@ def create_model_relay_router[SessionT](
     for example ``app.include_router(router, prefix="/model-relay")``.
 
     ``resolve_pass`` answers the session a pass names and ``resolve_upstream`` the provider call
-    for that session; either raises ``RelayRefused`` to refuse the call. ``http`` replaces the
-    client the relay calls providers with; it must not follow redirects. The caller owns it.
+    for that session; either raises ``RelayRefused`` to refuse the call. Both run inside the
+    request, after request identity admitted it, so ``resolve_pass`` can check the verified
+    caller, for example that ``User.get_logged_user()`` is the application's own Agent. ``http``
+    replaces the client the relay calls providers with; it must not follow redirects. The caller
+    owns it.
     """
 
     for name in ("httpx", "httpcore"):

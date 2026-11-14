@@ -174,6 +174,27 @@ a person's secret to a hosted runtime. So:
 
 An application must have its relay running before it upgrades to the breaking release.
 
+**The release's relay is called as its hydrate endpoint is** (amended 2026-11-14,
+[#142](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/142): in 3.0.0 a model call carried
+only the pass, and request identity refuses a call that has no Main Sequence caller before any
+route runs, so no application could serve its relay to a hosted session):
+
+- The relay is an ordinary route of the hydrate release, behind its request identity. It needs no
+  public route.
+- A model call to it carries the token the runtime sends on the hydrate call: the one the
+  platform mints for that release (`resolve-runtime-access`, without a delegation), in
+  `Authorization`. It is renewed once on a `401`, and a release that may have scaled to zero is
+  woken first, as for the hydrate call. The call is the runtime's own, not the person's, because
+  a model call is not always inside a turn: the Codex transport reads its model list when a
+  session loads.
+- The pass moves out of `Authorization`, `x-api-key` or the `key` query parameter, wherever the
+  transport put it, into `X-Model-Relay-Pass`, and the place goes in `X-Model-Relay-Pass-Place`
+  (`bearer`, `x-api-key` or `query`), so the relay puts the secret back there.
+- The token goes only to the release. `relay_definition.base_url` must be the release's RPC URL
+  or below it, with the same scheme, host and port and no dot segment. A hydrate answer naming any
+  other relay is refused, and a model call to any other address is refused before it is sent.
+- The platform's relay is unchanged: a call to it carries the pass where the transport puts it.
+
 ### 8. The SDK ships the relay as a component
 
 The relay is the same code for every application, and it is the code where a mistake exposes
@@ -193,8 +214,13 @@ as the platform's, and the application only names the session's wire protocol.
 
 The component does the rest, and none of it is configurable:
 
-- it accepts the pass in the place each transport puts the secret (a bearer token, `x-api-key` or
-  the `key` query parameter), removes it, and puts the secret back in that place;
+- it accepts the pass from `X-Model-Relay-Pass`, with its place in `X-Model-Relay-Pass-Place`,
+  which is how a runtime sends it to a release's relay (section 7); otherwise in the place each
+  transport puts the secret (a bearer token, `x-api-key` or the `key` query parameter). It
+  removes the pass and puts the secret back in that place. It never forwards `Authorization` or
+  the pass headers;
+- `resolve_pass` runs inside the request, after request identity admitted it, so the application
+  can check the verified caller, for example that it is its own Agent's runtime;
 - it forwards the method, the path under the provider's base, the query without `key`, the body and
   the request headers without hop-by-hop headers, `Cookie`, `Forwarded`, `X-Real-IP` and
   `X-Forwarded-*`. A leading `/v1` in the path is the transport's own and is dropped when the

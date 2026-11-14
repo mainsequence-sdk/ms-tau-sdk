@@ -1,5 +1,28 @@
 # Changelog
 
+## 3.0.1 — 2026-11-14
+
+- **An application's own model relay can be reached from a hosted session.** In 3.0.0 a model
+  call to the relay an application with its own hydrate endpoint serves carried only the session
+  pass. The application's request identity refuses a call with no Main Sequence caller before any
+  route runs, so the relay never ran and no hosted session of such an application could call a
+  model ([#142](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/142)). Now the runtime calls
+  that relay as it calls the hydrate endpoint: with the token the platform mints for the hydrate
+  release in `Authorization`, renewed once on a `401`, after waking a release that may have scaled
+  to zero. The pass moves to `X-Model-Relay-Pass`, with `X-Model-Relay-Pass-Place` naming where
+  the transport put it, and `create_model_relay_router` reads it from there. `resolve_pass` runs
+  after request identity, so it can check that `User.get_logged_user()` is the application's own
+  Agent. The relay stays an ordinary route behind request identity, with no public route.
+  - **The token goes only to the hydrate release.** A hosted hydrate answer whose
+    `relay_definition.base_url` is not the release's RPC URL or below it is refused, and a model
+    call to any other address is refused before it is sent. An application that answered a relay
+    on another host must move it onto the hydrate release.
+  - **The platform's relay is unchanged.**
+
+  Tested against the SDK's relay component behind a stand-in for request identity, on the Responses,
+  Anthropic, Google and Codex transports; nothing was tried against a deployed application. See
+  the amendment to [ADR 0030](docs/adrs/0030-hosted-model-calls-go-through-a-relay.md), section 7.
+
 ## 3.0.0 — 2026-11-13
 
 Breaking: 3.0.0 is a hard cut with no transition and no setting to turn it off. Read the upgrade
