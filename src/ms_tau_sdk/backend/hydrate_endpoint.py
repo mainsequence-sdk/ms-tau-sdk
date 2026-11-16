@@ -3,7 +3,7 @@
 tdag-django's ``POST /api/v1/model-provider-credentials/hydrate/`` defines the hydrate contract. A
 custom endpoint implements the same contract for people the platform does not know:
 
-- a FastAPI release that ``MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID`` names, in
+- a FastAPI release that ``TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID`` names, in
   hosted and in local mode. The runtime calls it with a short-lived token the platform mints for
   that release (``resolve-runtime-access``, without a delegation); and
 - in local mode only, the developer's own loopback service that

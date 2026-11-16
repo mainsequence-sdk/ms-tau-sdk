@@ -189,7 +189,7 @@ hydrates every session's credential from it, and none from the platform
 
 | Environment variable | Meaning |
 | --- | --- |
-| `MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID` | The UID of the FastAPI release that serves hydrate, in hosted and in local mode. Unset or empty means tdag-django. A value that is not a UID fails startup and names the variable. |
+| `TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID` | The UID of the FastAPI release that serves hydrate, in hosted and in local mode. Unset or empty means tdag-django. A value that is not a UID fails startup and names the variable. A hosted Agent declares it in its workflow file's `spec.env_vars`; the platform refuses a workflow that declares a `MAINSEQUENCE_` name. Before 3.0.2 it was `MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID`, which is still read when the `TAU_` name is unset. |
 | `TAU_LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL` | Local mode only. The origin of the developer's own hydrate service, on `127.0.0.1`, `::1` or `localhost`, for example `http://127.0.0.1:8611`. Unset or empty means tdag-django. |
 
 Set at most one of them. Both set, the local address without `TAU_LOCAL_MODE=true`, or a local

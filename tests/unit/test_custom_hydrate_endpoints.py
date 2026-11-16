@@ -46,7 +46,11 @@ from ms_tau_sdk.errors import (
 )
 from ms_tau_sdk.model_relay import RelayRefused, RelayUpstream, create_model_relay_router
 from ms_tau_sdk.providers.factory import ProviderFactory
-from ms_tau_sdk.settings import TauSDKSettings
+from ms_tau_sdk.settings import (
+    LEGACY_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV,
+    PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV,
+    TauSDKSettings,
+)
 
 RELEASE_UID = "7d1c2f4e-0b6a-4f0e-9a51-3c2d8e9b1a77"
 RPC_URL = "https://hydrate.example.test/releases/hunch"
@@ -308,13 +312,73 @@ def test_a_release_setting_that_is_not_a_uid_fails_startup_naming_it(value):
     with pytest.raises(ValidationError) as raised:
         TauSDKSettings(_env_file=None, provider_credential_hydrate_release_uid=value)
 
-    assert "MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID" in str(raised.value)
+    assert "TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID" in str(raised.value)
 
 
-def test_the_release_setting_is_read_from_its_environment_variable(monkeypatch):
-    monkeypatch.setenv("MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID", "not-a-uid")
-    with pytest.raises(ValidationError, match="HYDRATE_RELEASE_UID"):
+def test_the_release_setting_has_a_name_a_workflow_file_may_declare(monkeypatch):
+    # The platform reserves MAINSEQUENCE_ and MAIN_SEQUENCE_ for what it issues itself (#144).
+    assert (
+        PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV == "TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID"
+    )
+    assert not PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV.startswith(
+        ("MAINSEQUENCE_", "MAIN_SEQUENCE_")
+    )
+    monkeypatch.setenv(PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV, RELEASE_UID.upper())
+
+    settings = TauSDKSettings(_env_file=None)
+
+    assert settings.provider_credential_hydrate_release_uid == RELEASE_UID
+    assert settings.provider_credential_source == "release"
+
+
+@pytest.mark.asyncio
+async def test_a_hosted_runtime_hydrates_from_the_release_its_workflow_declares(
+    monkeypatch, runtime_identity_token_file
+):
+    # A harness_agent's spec.env_vars reaches the runtime as its environment.
+    monkeypatch.setenv(PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV, RELEASE_UID)
+    network = _Network()
+    async with _client(network, _hosted_settings(runtime_identity_token_file)) as client:
+        evidence = await _hosted_hydrate(client)
+
+    assert evidence.credential.secret() == SESSION_PASS
+    assert network.sent(host="backend.test", path=HYDRATE_PATH) == []
+    [hydrate] = network.hydrations()
+    assert hydrate.url.host == RELEASE_HOST
+
+
+def test_the_earlier_release_setting_name_is_still_read(monkeypatch, tmp_path):
+    monkeypatch.setenv(LEGACY_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV, RELEASE_UID)
+    assert TauSDKSettings(_env_file=None).provider_credential_hydrate_release_uid == RELEASE_UID
+    monkeypatch.delenv(LEGACY_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV)
+    env_file = tmp_path / ".env"
+    env_file.write_text(f"{LEGACY_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV}={RELEASE_UID}\n")
+    assert TauSDKSettings(_env_file=env_file).provider_credential_hydrate_release_uid == RELEASE_UID
+
+
+def test_the_tau_release_setting_wins_over_the_earlier_name(monkeypatch):
+    monkeypatch.setenv(
+        LEGACY_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV, "11111111-2222-4333-8444-555555555555"
+    )
+    monkeypatch.setenv(PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV, RELEASE_UID)
+
+    assert TauSDKSettings(_env_file=None).provider_credential_hydrate_release_uid == RELEASE_UID
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID",
+        "MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID",
+    ],
+)
+def test_the_release_setting_is_read_from_its_environment_variable(monkeypatch, name):
+    monkeypatch.setenv(name, "not-a-uid")
+    with pytest.raises(ValidationError) as raised:
         TauSDKSettings(_env_file=None)
+
+    assert PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV in str(raised.value)
+    assert LEGACY_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV in str(raised.value)
 
 
 @pytest.mark.parametrize(
@@ -381,7 +445,7 @@ def test_a_local_hydrate_address_and_a_hydrate_release_are_exclusive(tmp_path):
         )
 
     assert "TAU_LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL" in str(raised.value)
-    assert "MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID" in str(raised.value)
+    assert "TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID" in str(raised.value)
 
 
 # Hosted mode, with and without the release
