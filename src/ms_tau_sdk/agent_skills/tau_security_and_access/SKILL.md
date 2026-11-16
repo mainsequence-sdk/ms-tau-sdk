@@ -246,7 +246,7 @@ only at that relay and only while the run holds the session.
 ### Serving the relay of your own hydrate endpoint
 
 An application whose own hydrate endpoint (ADR 0027) answers its people's model credentials, named
-by `MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID`, must serve the relay for those
+by `TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID`, must serve the relay for those
 credentials too, because only it holds them. Use ms-tau-sdk 3.0.1 or later on the runtime: in
 3.0.0 a model call carried only the pass, the application's request identity refused it for
 having no Main Sequence caller, and no hosted session could call a model.

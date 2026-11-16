@@ -1,5 +1,17 @@
 # Changelog
 
+## 3.0.2 — 2026-11-16
+
+- **A hosted Agent can name its hydrate release.** The setting that names the FastAPI release
+  serving provider credential hydration (ADR 0027) was read only from
+  `MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID`. The platform reserves every
+  `MAINSEQUENCE_` and `MAIN_SEQUENCE_` name for values it issues, and refuses a whole workflow file
+  that declares one in `spec.env_vars`, so a hosted `harness_agent` could not be given the setting
+  ([#144](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/144)). It is now
+  `TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID`, beside `TAU_LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL`.
+  The earlier name is still read when the new one is unset, so a local `.env` keeps working; the
+  new name wins when both are set. Not tried against the platform's workflow validation.
+
 ## 3.0.1 — 2026-11-14
 
 - **An application's own model relay can be reached from a hosted session.** In 3.0.0 a model

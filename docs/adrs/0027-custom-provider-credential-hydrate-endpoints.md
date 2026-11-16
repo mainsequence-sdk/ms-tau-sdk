@@ -61,8 +61,14 @@ implementation. This ADR changes nothing in tdag-django.
 A custom hydrate endpoint implements the same contract and does, for its own people, the
 credential management tdag-django does for platform Users (section 6). It is one of two:
 
-- **A release.** `MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID` names a FastAPI release
-  that serves hydrate, in hosted and in local mode.
+- **A release.** `TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID` names a FastAPI release that
+  serves hydrate, in hosted and in local mode (amended 2026-11-16,
+  [#144](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/144)). It was
+  `MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID`, but the platform reserves every
+  `MAINSEQUENCE_` and `MAIN_SEQUENCE_` name for values it issues, and a workflow file that
+  declares one is refused whole, so a hosted Agent could not be given the setting. The earlier
+  name is still read where nothing reserves it, as in a local `.env`; the `TAU_` name wins when
+  both are set.
 - **A local address** (amended 2026-11-10). In local mode only,
   `TAU_LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL` names the developer's own service on a loopback
   address. Local mode has no release of its own, and the platform cannot mint a token for a
@@ -371,7 +377,7 @@ sequenceDiagram
 
 | Setting | Meaning |
 | --- | --- |
-| `MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID` | The FastAPI release that serves hydrate, in hosted and in local mode. Unset or empty means tdag-django. A value that is not a UID fails startup. |
+| `TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID` | The FastAPI release that serves hydrate, in hosted and in local mode. Unset or empty means tdag-django. A value that is not a UID fails startup. A hosted Agent declares it in its workflow file's `spec.env_vars`. `MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID`, the name before 3.0.2, is read when the `TAU_` name is unset (amended 2026-11-16). |
 | `TAU_LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL` | Local mode only (amended 2026-11-10): the loopback origin of the developer's own hydrate service. Unset or empty means tdag-django. Any value that is not a loopback origin, the setting without `TAU_LOCAL_MODE=true`, or both settings set, fails startup. |
 
 The backend timeouts and `MAINSEQUENCE_TAU_BACKEND_MAX_RESPONSE_BYTES` apply to either endpoint as

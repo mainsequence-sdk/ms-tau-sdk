@@ -67,6 +67,7 @@ def no_hosted_environment(monkeypatch) -> None:
 # A custom provider credential hydrate endpoint moves every hydration off tdag-django (ADR 0027),
 # so no test inherits one from the environment that runs it.
 CUSTOM_HYDRATE_ENVIRONMENT = (
+    "TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID",
     "MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID",
     "TAU_LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL",
 )

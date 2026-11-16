@@ -72,7 +72,7 @@ token with `chatgpt-account-id`; an Anthropic sign-in as a bearer token with `an
 headers, to `/chat/completions`, `/responses` or, for its Claude models, `/v1/messages`. The relay
 of a GitHub Copilot sign-in takes the upstream address from the real token.
 
-A relay that a hydrate release serves (`MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID`)
+A relay that a hydrate release serves (`TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID`)
 is called as that release's hydrate endpoint is, from 3.0.1: every model call carries the
 release's token in `Authorization`, and the pass moves to `X-Model-Relay-Pass`, with
 `X-Model-Relay-Pass-Place` naming where the transport put it (`bearer`, `x-api-key` or `query`).

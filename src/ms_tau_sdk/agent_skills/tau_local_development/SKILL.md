@@ -52,7 +52,9 @@ the provider credential used for inference. Provider secrets are neither environ
 local state.
 
 An application that keeps its own people's model credentials can hydrate them instead: set
-`MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID` to its release, or, in local mode only,
+`TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID` to its release (a hosted Agent declares it in its
+workflow file's `spec.env_vars`; never a `MAINSEQUENCE_` name, which the platform reserves and
+refuses), or, in local mode only,
 `TAU_LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL` to its service on a loopback origin such as
 `http://127.0.0.1:8611`. Every hydration then names the local session in `agent_session_uid`, and
 readiness hydrates nothing. A loopback address receives no credential of any kind. See ADR 0027.

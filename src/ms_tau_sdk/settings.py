@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Literal
 from urllib.parse import urlsplit
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, DotEnvSettingsSource, SettingsConfigDict
 
 from .errors import ConfigurationError
@@ -33,8 +33,11 @@ FASTAPI_PUBLIC_BASE_URL_ENV = "FASTAPI_PUBLIC_BASE_URL"
 ORGANIZATION_ENVIRONMENT_UID_ENV = "MAINSEQUENCE_ORGANIZATION_ENVIRONMENT_UID"
 A2A_MESSAGE_LIMIT_ENV = "MAINSEQUENCE_A2A_MESSAGE_LIMIT_SECONDS"
 # The two custom provider credential hydrate endpoints (ADR 0027): a FastAPI release, in hosted and
-# in local mode, or a loopback address of the developer's own, in local mode only.
-PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV = (
+# in local mode, or a loopback address of the developer's own, in local mode only. The release is
+# named in TAU_, which a workflow file may declare; the platform reserves MAINSEQUENCE_ for what it
+# issues, so the earlier name is read only as a fallback, where nothing reserves it (#144).
+PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV = "TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID"
+LEGACY_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV = (
     "MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID"
 )
 LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL_ENV = "TAU_LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL"
@@ -210,7 +213,10 @@ class TauSDKSettings(BaseSettings):
     # hosted and in local mode (ADR 0027). Unset means tdag-django.
     provider_credential_hydrate_release_uid: str | None = Field(
         default=None,
-        validation_alias=PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV,
+        validation_alias=AliasChoices(
+            PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV,
+            LEGACY_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV,
+        ),
     )
     # Local mode only: the developer's own loopback service that serves provider credential
     # hydration instead of tdag-django (ADR 0027, amended 2026-11-10). Kept as its origin.
@@ -531,8 +537,9 @@ class TauSDKSettings(BaseSettings):
             canonical = ""
         if canonical != text.lower():
             raise ValueError(
-                f"{PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV} must be the UID of a FastAPI "
-                "release, such as 7d1c2f4e-0b6a-4f0e-9a51-3c2d8e9b1a77"
+                f"{PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV} (or "
+                f"{LEGACY_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV}) must be the UID of a "
+                "FastAPI release, such as 7d1c2f4e-0b6a-4f0e-9a51-3c2d8e9b1a77"
             )
         return canonical
 
@@ -708,7 +715,7 @@ class TauSDKSettings(BaseSettings):
         """Name where provider credentials are hydrated from, never an address or a value.
 
         ``mainsequence`` is tdag-django, the platform. ``release`` is the FastAPI release
-        ``MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID`` names. ``local_address`` is the
+        ``TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID`` names. ``local_address`` is the
         loopback service ``TAU_LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL`` names, in local mode.
         """
 
