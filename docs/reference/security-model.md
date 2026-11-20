@@ -354,6 +354,11 @@ too.
   of a pass.
 - **The relay address passes the address checks above.** A relay on `localhost`, a metadata host
   or a link-local address is refused like any other address.
+- **The platform chooses its relay's address.** It is the platform API's own address plus
+  `/model-relay`, unless the platform's operators name a relay workload of its own with the
+  backend setting `MODEL_RELAY_BASE_URL`, such as `https://model-relay.platform.example.com` (an
+  example host). Nothing in an Agent, a workflow or an application sets it. An application with
+  its own hydrate endpoint names its own relay instead, as the next section says.
 - **Local mode is unchanged.** It announces no relay, receives the real credential and refuses a
   relayed answer. It is the only place the SDK still builds a provider from a real secret.
 

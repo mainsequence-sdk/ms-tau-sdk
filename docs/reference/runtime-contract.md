@@ -39,8 +39,13 @@ requests send `supported_model_relay_versions: [1]` beside
 `supported_provider_control_schema_versions`, and the platform refuses a hosted runtime that does
 not: the bootstrap with `tau_runtime_version_unsupported` and a field error on
 `supported_model_relay_versions`, a hydration with `409` `provider_control_contract_unsupported`.
-While the platform serves no relay, a hydration answers `409`
-`model_provider_credential_unavailable`.
+The platform answers its relay's address. By default that is the platform API's own address plus
+`/model-relay`, at the address the runtime called it on. The platform's operators can name a relay
+workload of its own with the backend setting `MODEL_RELAY_BASE_URL`, for example
+`https://model-relay.platform.example.com` (an example host), and every hosted runtime then
+receives `https://model-relay.platform.example.com/model-relay`. It is not a runtime setting: an
+Agent or application that declares `MODEL_RELAY_BASE_URL` changes nothing. A platform whose
+relay has no address answers a hydration `409` `model_provider_credential_unavailable`.
 
 Each credential entry the runtime receives is then relayed:
 

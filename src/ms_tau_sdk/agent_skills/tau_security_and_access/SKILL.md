@@ -243,6 +243,21 @@ From ms-tau-sdk 3.0.0 a hosted session never receives the secret: it receives a 
 relay address, and every model call goes through the relay, which holds the secret. The pass works
 only at that relay and only while the run holds the session.
 
+Who chooses the relay address depends on who hydrates:
+
+- **The platform hydrates** (no `TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID`): the platform's
+  relay. Its address is the platform API's own address plus `/model-relay`, unless the platform's
+  operators set the backend setting `MODEL_RELAY_BASE_URL` to a relay workload of its own, for
+  example `MODEL_RELAY_BASE_URL=https://model-relay.platform.example.com`, which makes runtimes
+  call `https://model-relay.platform.example.com/model-relay`. That host is an example.
+- **Your own hydrate endpoint hydrates**: your relay, at the address your answer gives, as the
+  next section says.
+
+`MODEL_RELAY_BASE_URL` is never yours to set. Do not declare it in a workflow's `spec.env_vars`,
+an application's environment or a `.env`: no runtime or application reads it. If hydration
+answers `409` `model_provider_credential_unavailable` saying the relay has no address, the
+platform has to fix it.
+
 ### Serving the relay of your own hydrate endpoint
 
 An application whose own hydrate endpoint (ADR 0027) answers its people's model credentials, named
