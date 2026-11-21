@@ -1,5 +1,15 @@
 # Changelog
 
+## 3.0.3 — 2026-11-20
+
+- **Where the platform's model relay is.** The runtime contract, Security and access and
+  troubleshooting pages, and the `tau_security_and_access` and `tau_local_development` skills, now
+  say who chooses a hosted session's relay address. The platform answers its API's own address
+  plus `/model-relay`, unless its operators name a relay workload with the backend setting
+  `MODEL_RELAY_BASE_URL`, with a made-up example. Declaring that setting in an Agent's workflow or
+  an application's environment does nothing; an application with its own hydrate endpoint names its
+  own relay. Documentation only.
+
 ## 3.0.2 — 2026-11-16
 
 - **A hosted Agent can name its hydrate release.** The setting that names the FastAPI release

@@ -60,7 +60,10 @@ refuses), or, in local mode only,
 readiness hydrates nothing. A loopback address receives no credential of any kind. See ADR 0027.
 In local mode the endpoint answers the real credential. A hosted session receives a pass instead,
 and the release must also serve the model relay under its own RPC URL; the
-`tau_security_and_access` skill says how (ADR 0030).
+`tau_security_and_access` skill says how (ADR 0030). The platform's relay address is chosen by
+the platform's backend setting `MODEL_RELAY_BASE_URL`, or is the platform API's own address when
+that is empty; no Agent or application setting changes it, so never add `MODEL_RELAY_BASE_URL`
+to a `.env` or workflow.
 
 ## Exact local/remote boundary
 
