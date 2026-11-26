@@ -57,7 +57,7 @@ from ms_tau_sdk.errors import (
     ToolValidationError,
     ToolWorkbenchError,
 )
-from ms_tau_sdk.logging import conversation_log_fields
+from ms_tau_sdk.logging import TraceSpan, conversation_log_fields
 from ms_tau_sdk.protocols.caller_context import caller_context_scope
 from ms_tau_sdk.providers.factory import ProviderFactory
 from ms_tau_sdk.resources.loader import tau_resource_paths
@@ -1482,12 +1482,16 @@ class SessionRuntimeManager:
         agent_uid = await self._session_agent_uid(session_uid)
         agent_run_uid = str(uuid.uuid4())
         resolved_turn_uid = turn_uid or str(uuid.uuid4())
-        with bound_contextvars(
-            session_uid=session_uid,
-            agent_session_uid=session_uid,
-            agent_run_uid=agent_run_uid,
-            turn_uid=resolved_turn_uid,
-            agent_uid=agent_uid,
+        with (
+            bound_contextvars(
+                session_uid=session_uid,
+                agent_session_uid=session_uid,
+                agent_run_uid=agent_run_uid,
+                turn_uid=resolved_turn_uid,
+                agent_uid=agent_uid,
+            ),
+            # The run's span: its ``agent.run.*`` lines record it (ADR 0031).
+            TraceSpan(),
         ):
             async for event in self._prompt_with_context(
                 session_uid,
@@ -1749,6 +1753,11 @@ class SessionRuntimeManager:
             model=runtime.model,
             is_streaming=True,
         )
+        limit_at = asyncio.get_running_loop().time() + self.settings.turn_timeout_seconds
+        turn_limit = asyncio.timeout_at(limit_at if deadline is None else min(limit_at, deadline))
+        requester_token = bind_turn_requester(requester_binding)
+        # The turn's span, inside the run's: its ``agent.turn.*`` lines record it (ADR 0031).
+        turn_span = TraceSpan().open()
         logger.info(
             "agent.turn.started",
             message="Started Tau turn",
@@ -1758,9 +1767,6 @@ class SessionRuntimeManager:
             model=runtime.model,
             is_streaming=True,
         )
-        limit_at = asyncio.get_running_loop().time() + self.settings.turn_timeout_seconds
-        turn_limit = asyncio.timeout_at(limit_at if deadline is None else min(limit_at, deadline))
-        requester_token = bind_turn_requester(requester_binding)
         try:
             try:
                 async with turn_limit:
@@ -1848,11 +1854,13 @@ class SessionRuntimeManager:
                 ),
                 **observer.terminal_fields(),
             }
+            observer.close()
             log(
                 f"agent.turn.{terminal_event}",
                 message="Finished Tau turn",
                 **terminal_fields,
             )
+            turn_span.close()
             log(
                 f"agent.run.{terminal_event}",
                 message="Finished Tau agent run",
@@ -2193,8 +2201,11 @@ class SessionRuntimeManager:
             operation_uid=operation_uid or str(uuid.uuid4()),
             causation_event_id=parent.get("causation_event_id"),
             origin_request_id=parent.get("request_id"),
-            parent_span_id=parent.get("span_id"),
-            span_id=uuid.uuid4().hex[:16],
+            # Detached work writes no terminal line of its own, so it is no span of its own: the
+            # spans inside it are children of the span that started it (ADR 0031).
+            span_id=parent.get("span_id"),
+            parent_span_id=parent.get("parent_span_id"),
+            trace_sampled=parent.get("trace_sampled"),
         )
 
         async def run_detached() -> object:

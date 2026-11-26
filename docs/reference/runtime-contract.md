@@ -198,12 +198,15 @@ person = baggage.get_baggage("mainsequence.advisor.person")  # None when the cal
   skipped, and at most 180 members are read. A malformed member is skipped and never fails the
   request. The platform carries only keys of the form `mainsequence.<application>.<name>` into the
   work a call creates, such as a Task.
-- A rejected request, an `OPTIONS` request, and every request outside hosted mode carry none.
-- The calls the runtime makes for the work carry the current `traceparent` and `baggage`: its own
-  platform calls, the Main Sequence MCP tools (A2A sends included), application tools, and
-  `platform_client()` calls. A header that project code sets on a `platform_client()` call wins.
-  The runtime adds nothing to requests to model providers or to calls that project code makes with
-  its own HTTP client.
+- A rejected request, an `OPTIONS` request, and every request outside hosted mode carry no
+  baggage.
+- The calls the runtime makes for the work carry the current `baggage`, and a `traceparent` that
+  names the runtime's own span as their parent: its own platform calls, the Main Sequence MCP
+  tools (A2A sends included), application tools, and `platform_client()` calls. The request's own
+  `traceparent` is recorded as the parent of the request's span and is not sent on; see
+  [Distributed tracing](#distributed-tracing). A header that project code sets on a
+  `platform_client()` call wins. The runtime adds nothing to requests to model providers or to
+  calls that project code makes with its own HTTP client.
 - Log lines written in the context carry its `mainsequence.` keys as a `baggage` field, the
   request's `http.request.completed` line included. Other keys and the raw header are not logged.
 
@@ -211,6 +214,43 @@ A Task's context arrives with its dispatch; see
 [managed AgentTask execution](#managed-agenttask-execution). The context is the caller's claim,
 never identity: read the [Security and access guide](./security-model.md#caller-context) before
 making a rule from it.
+
+### Distributed tracing
+
+A trace is the set of runtime log lines that share one W3C trace id. Each span is the terminal
+log line of one lifecycle, with `trace_id` (32 lowercase hex digits), `span_id` (16 lowercase hex
+digits), `parent_span_id` and `duration_ms`; the lifecycle's other lines, such as its `.started`
+line and what is logged while it runs, carry the same `span_id`. The runtime writes no other line
+for tracing and exports nothing: it has no OpenTelemetry exporter or `TracerProvider`, reads no
+`OTEL_*` variable, and its spans are the log lines it writes to stdout. Main Sequence reads a trace
+from the runtime logs by its trace id.
+
+| Span | Terminal line | Parent |
+| --- | --- | --- |
+| Request | `http.request.completed`, `.failed` or `.cancelled` | The request's `traceparent`; none when it has none |
+| Run (`agent_run_uid`) | `agent.run.completed`, `.failed` or `.cancelled` | The request's span |
+| Turn (`turn_uid`) | `agent.turn.completed`, `.failed` or `.cancelled` | The run |
+| Model call, one span per attempt (`model_call_uid`) | `agent.model.completed` or `.failed` | The turn |
+| Tool call (`tool_call_uid`) | `agent.tool.completed` or `.failed` | The turn |
+| Handoff (`handoff_uid`) | `agent.handoff.completed` or `.failed` | The turn |
+| Platform or application call, one span per attempt | `dependency.call.completed` or `.failed` | The span it is made in |
+
+- **A request without a `traceparent`** starts a trace. Its `trace_id` is sent on with the sampled
+  flag `01`, and its line says `trace_sampled: true`. A caller's sampled flag, and its
+  `tracestate`, are sent on as they arrived.
+- **Calls name the span they are made in.** A platform or application call names its own span. A
+  call a tool makes through the Main Sequence MCP tools, A2A sends included, names the tool call's
+  span. Model providers, the model relay, provider credential hydration and lease renewals are
+  sent no `traceparent` and no `baggage`, so a model call's span is recorded only by its own line.
+- **A Task attempt and other detached work** write no terminal line of their own, so they are no
+  span of their own: the spans inside them are children of the span that started them. A
+  dispatched Task's attempt runs in the span of the dispatch request, whose parent is the
+  `traceparent` stored with the Task. Work the runtime starts on its own, such as a lease renewal
+  or a recovery scan, is in no trace.
+- **The uids stay what they are.** A span id is a separate value; nothing persisted changes.
+- **Instrumentation wins.** When project code installs OpenTelemetry instrumentation that records
+  a span for the request, that span stays current and the runtime's calls name it instead.
+- Log lines carry no cloud provider's trace field.
 
 ### Team membership
 

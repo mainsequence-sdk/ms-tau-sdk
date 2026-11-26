@@ -3,11 +3,12 @@
 
 Date: 2026-11-26
 
-Status: Proposed. Not accepted, not implemented.
+Status: Accepted on 2026-11-26, by the owner's instruction to implement it. Implemented in the SDK
+on 2026-11-26 for 3.0.4, with the changes that [Implementation](#implementation) records.
 
 Related: ADR 0013 (failure observability), ADR 0014 (attempt-to-turn
-correlation), ADR 0027 (hydrate endpoints carry no context), ADR 0028 (caller
-context in the runtime), [runtime contract: Caller
+correlation), ADR 0027 (hydrate endpoints carry no context), ADR 0028 (session
+subowners, which reads the caller context's baggage), [runtime contract: Caller
 context](../reference/runtime-contract.md#caller-context).
 
 ## Context
@@ -116,3 +117,37 @@ to stdout.
   saying spans follow the log redaction rules and model calls carry no
   context.
 - `CHANGELOG.md`, and the `tau_security_and_access` skill.
+
+## Implementation
+
+Implemented as decided, except where reading the code showed a part could not work as written.
+Each change is listed with its reason.
+
+1. **A Task attempt and a background task are no span of their own.** Neither writes a terminal
+   line: an attempt logs only a failure, and background work only `runtime.background.failed`. A
+   span id minted for them would be a parent that no line describes, and every span inside would
+   hang from it. Today the background span was visible only because the `agent.run.*` lines
+   inside it carried it; with the run its own span, nothing would. So detached work stays in the
+   span that started it: its lines carry that span's `span_id` and `parent_span_id`, and the spans
+   inside it are that span's children. A dispatched Task's attempt therefore runs in the dispatch
+   request's span, whose parent is the dispatch signal's `traceparent`, and its run is a child of
+   that request. The `attempt_uid` stays on the attempt's lines. A Task attempt span would need a
+   new terminal line, which this ADR rules out.
+2. **Model call lines gain `duration_ms`.** `agent.model.completed` and `.failed` gave their
+   duration only as `model_duration_ms`, and a span's duration is `duration_ms`. Both now carry
+   it, with the same value. This adds a field to existing lines, and no line.
+3. **Handoffs and MCP calls.** A handoff's span is a child of the span it starts in, the turn, and
+   is never the current span: handoff events may overlap, and no runtime code runs between them
+   outside a tool call. An MCP call writes no `dependency.call.*` line, so it is no span of its
+   own and names the tool call's span. Platform calls and application calls through
+   `platform_client()` write `dependency.call.*` lines and are each a span, one per attempt.
+4. **The request span everywhere.** The request span is current for every HTTP request, outside
+   hosted mode too, where requests carry no baggage. A WebSocket has no request span, so
+   `request_context()` still makes its `traceparent` the trace parent. A span that
+   instrumentation records stays current, and the runtime's log ids stay its own.
+5. **A trace the runtime starts says so.** Its terminal line now says `trace_sampled: true`, to
+   match the sampled flag `01` it is sent on with. A caller's flag and `tracestate` are kept.
+
+The span table, with each span's terminal line, is in the runtime contract's
+[Distributed tracing](../reference/runtime-contract.md#distributed-tracing) section.
+

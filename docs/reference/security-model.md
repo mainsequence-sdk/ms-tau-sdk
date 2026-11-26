@@ -543,6 +543,14 @@ page gives the key form, the limits and an example.
   Main Sequence user, never the requester, and grants nothing. See
   [session subowners](./runtime-contract.md#session-subowners).
 
+The Agent's own hops are spans of the caller's trace: the runtime records the request, run, turn,
+and each model, tool and platform call as its log lines, and the calls it makes name its own span
+as their parent instead of the caller's. Spans are those log lines, so the same redaction applies:
+they carry ids, durations and outcomes, the `mainsequence.` baggage keys, and never a prompt, a
+tool's arguments or result, a credential or a raw header. Model calls are sent no `traceparent` and
+no `baggage`, and neither are the model relay, provider credential hydration or lease renewals.
+See [distributed tracing](./runtime-contract.md#distributed-tracing).
+
 ## Checklist for project authors
 
 - Give an Agent that serves people no grants of its own, or only what everyone who uses it may see.

@@ -125,29 +125,6 @@ def test_a_key_in_a_logged_url_is_redacted(capsys):
     assert "alt=sse&key=[REDACTED]" in output
 
 
-def test_google_cloud_trace_fields_are_derived_from_otel_context(
-    capsys,
-    monkeypatch,
-):
-    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
-    configure_logging("INFO", machine_sink=True, human_sink=False)
-
-    structlog.get_logger("ms_tau_sdk.trace").info(
-        "trace.event",
-        otelTraceID="abc123",
-        otelSpanID="def456",
-        otelTraceSampled=True,
-    )
-
-    event = _json_events(capsys.readouterr().out)[-1]
-    assert event["logging.googleapis.com/trace"] == "projects/test-project/traces/abc123"
-    assert event["logging.googleapis.com/spanId"] == "def456"
-    assert event["logging.googleapis.com/trace_sampled"] is True
-    assert "otelTraceID" not in event
-    assert "otelSpanID" not in event
-    assert "otelTraceSampled" not in event
-
-
 def test_structlog_human_sink_uses_console_renderer_and_source(capsys):
     configure_logging("INFO", machine_sink=False, human_sink=True)
 

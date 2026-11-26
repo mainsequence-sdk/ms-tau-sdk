@@ -11,6 +11,8 @@ from typing import Any
 import httpx
 import pytest
 from fastapi import FastAPI
+from opentelemetry import baggage, trace
+from opentelemetry.trace import NonRecordingSpan, SpanContext
 from pydantic import SecretStr
 from structlog.testing import capture_logs
 from tau_agent import UserMessage
@@ -34,6 +36,7 @@ from ms_tau_sdk.backend.models import (
 )
 from ms_tau_sdk.errors import ConfigurationError
 from ms_tau_sdk.model_relay import RelayRefused, RelayUpstream, create_model_relay_router
+from ms_tau_sdk.protocols.caller_context import caller_context_scope
 from ms_tau_sdk.providers.factory import ProviderFactory
 from ms_tau_sdk.settings import TauSDKSettings
 
@@ -195,13 +198,22 @@ async def test_every_transport_calls_the_relay_with_the_pass(
         model=model,
     )
     assert isinstance(provider, built)
-    async with httpx.AsyncClient(transport=httpx.MockTransport(relay)) as client:
-        events = await _call(provider, model, client)
+    # The call is made inside a span, with the caller's baggage current (ADR 0031).
+    span = NonRecordingSpan(
+        SpanContext(0x4BF92F3577B34DA6A3CE929D0E0E4736, 0x00F067AA0BA902B7, is_remote=False)
+    )
+    with caller_context_scope(
+        baggage.set_baggage("mainsequence.portal.user", "u-81", trace.set_span_in_context(span))
+    ):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(relay)) as client:
+            events = await _call(provider, model, client)
 
     assert events[-1].type == "done"
     [request] = requests
     assert str(request.url).startswith(f"{RELAY_BASE_URL}{path}")
     assert _pass_from(request, place) == SESSION_PASS
+    # A model call carries no caller context: no span, no baggage.
+    assert {"traceparent", "tracestate", "baggage"}.isdisjoint(request.headers)
     if provider_name == "openai-codex":
         assert request.headers["chatgpt-account-id"] == "account-id"
 

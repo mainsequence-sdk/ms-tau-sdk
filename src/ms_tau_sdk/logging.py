@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
 import os
@@ -23,12 +24,18 @@ from structlog.contextvars import (
     bind_contextvars,
     clear_contextvars,
     get_contextvars,
+    reset_contextvars,
     unbind_contextvars,
 )
 from structlog.typing import EventDict, Processor, WrappedLogger
 
 from ms_tau_sdk import __version__
-from ms_tau_sdk.protocols.caller_context import recorded_baggage
+from ms_tau_sdk.protocols.caller_context import (
+    caller_context_scope,
+    recorded_baggage,
+    span_scope,
+    trace_parent_context,
+)
 
 SENSITIVE_EXACT_KEYS = {
     "api_key",
@@ -162,6 +169,73 @@ def safe_log(
         return
 
 
+def new_span_id() -> str:
+    """A W3C span id: 16 lowercase hex digits."""
+
+    return uuid.uuid4().hex[:16]
+
+
+class TraceSpan:
+    """One span of the current trace, a child of the span the work is in (ADR 0031).
+
+    A span exists only inside a trace: work whose log context holds no ``trace_id`` and
+    ``span_id``, such as a lease renewal, gets none, and its ``log_fields`` are empty. While the
+    span is open, the work's log lines carry it as ``span_id`` with the enclosing span as
+    ``parent_span_id``, and it is the current OpenTelemetry span, so the calls made inside it name
+    it as their parent. The terminal log line of the lifecycle it covers records it.
+    """
+
+    __slots__ = ("_sampled", "_scope", "_tokens", "parent_span_id", "span_id", "trace_id")
+
+    def __init__(self) -> None:
+        context = get_contextvars()
+        trace_id = context.get("trace_id")
+        parent_span_id = context.get("span_id")
+        traced = isinstance(trace_id, str) and isinstance(parent_span_id, str)
+        self.trace_id = trace_id if traced else None
+        self.parent_span_id = parent_span_id if traced else None
+        self.span_id = new_span_id() if traced else None
+        self._sampled = context.get("trace_sampled") is not False
+        self._scope: contextlib.ExitStack | None = None
+        self._tokens: Mapping[str, Any] | None = None
+
+    @property
+    def log_fields(self) -> dict[str, str]:
+        """The span's ``span_id`` and ``parent_span_id``, for a line written outside the span."""
+
+        if self.span_id is None or self.parent_span_id is None:
+            return {}
+        return {"span_id": self.span_id, "parent_span_id": self.parent_span_id}
+
+    def open(self) -> TraceSpan:
+        """Make the span the one the work is in, until ``close()``."""
+
+        fields = self.log_fields
+        if not fields or self._scope is not None or self.trace_id is None:
+            return self
+        scope = contextlib.ExitStack()
+        scope.enter_context(span_scope(self.trace_id, fields["span_id"], sampled=self._sampled))
+        self._scope = scope
+        self._tokens = bind_contextvars(**fields)
+        return self
+
+    def close(self) -> None:
+        """Return the work to the enclosing span. Closing twice, or unopened, does nothing."""
+
+        scope, tokens = self._scope, self._tokens
+        self._scope = self._tokens = None
+        if tokens is not None:
+            reset_contextvars(**tokens)
+        if scope is not None:
+            scope.close()
+
+    def __enter__(self) -> TraceSpan:
+        return self.open()
+
+    def __exit__(self, *_exc_info: object) -> None:
+        self.close()
+
+
 def _bind_context(
     _logger: WrappedLogger,
     _method_name: str,
@@ -185,22 +259,6 @@ def _add_caller_context(
         members = recorded_baggage()
         if members:
             event_dict["baggage"] = members
-    return event_dict
-
-
-def _add_google_cloud_trace_fields(
-    _logger: WrappedLogger,
-    _method_name: str,
-    event_dict: EventDict,
-) -> EventDict:
-    trace_id = event_dict.pop("otelTraceID", None)
-    span_id = event_dict.pop("otelSpanID", None)
-    sampled = event_dict.pop("otelTraceSampled", False)
-    project_id = os.environ.get("GOOGLE_CLOUD_PROJECT")
-    if project_id and trace_id and trace_id != "0" and span_id and span_id != "0":
-        event_dict["logging.googleapis.com/trace"] = f"projects/{project_id}/traces/{trace_id}"
-        event_dict["logging.googleapis.com/spanId"] = span_id
-        event_dict["logging.googleapis.com/trace_sampled"] = sampled
     return event_dict
 
 
@@ -365,7 +423,6 @@ def _common_processors() -> list[Processor]:
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         _bind_context,
         _add_caller_context,
-        _add_google_cloud_trace_fields,
         structlog.dev.set_exc_info,
         _safe_exception,
         structlog.processors.StackInfoRenderer(),
@@ -529,7 +586,8 @@ def _trace_context(scope: Scope) -> tuple[str, str | None, bool]:
     match = TRACEPARENT_PATTERN.fullmatch(raw)
     if match and match.group(1) != "0" * 32 and match.group(2) != "0" * 16:
         return match.group(1), match.group(2), bool(int(match.group(3), 16) & 1)
-    return uuid.uuid4().hex, None, False
+    # A trace the runtime starts is sampled: it records every span of it (ADR 0031).
+    return uuid.uuid4().hex, None, True
 
 
 def _route_path(scope: Scope) -> str:
@@ -636,7 +694,7 @@ class RequestContextMiddleware:
         clear_contextvars()
         request_id = _request_id(scope)
         trace_id, parent_span_id, trace_sampled = _trace_context(scope)
-        span_id = uuid.uuid4().hex[:16]
+        span_id = new_span_id()
         state = scope.setdefault("state", {})
         state["request_id"] = request_id
         state["trace_id"] = trace_id
@@ -841,6 +899,12 @@ class RequestContextMiddleware:
 
             await send(message)
 
+        # The request's span is the current span, so the calls made for it name it as their parent
+        # and the request's ``traceparent`` is its parent (ADR 0031).
+        request_span = contextlib.ExitStack()
+        headers = scope.get("headers", ())
+        request_span.enter_context(caller_context_scope(trace_parent_context(headers)))
+        request_span.enter_context(span_scope(trace_id, span_id, sampled=trace_sampled))
         try:
             await self.app(scope, receive_with_context, send_with_context)
             log_terminal("http.request.completed", terminal_fields())
@@ -861,14 +925,17 @@ class RequestContextMiddleware:
             raise
         finally:
             self.active_requests -= 1
+            request_span.close()
             clear_contextvars()
 
 
 __all__ = [
     "RequestContextMiddleware",
+    "TraceSpan",
     "bind_request_identity_log_fields",
     "bind_request_log_fields",
     "configure_logging",
     "conversation_log_fields",
+    "new_span_id",
     "safe_log",
 ]
