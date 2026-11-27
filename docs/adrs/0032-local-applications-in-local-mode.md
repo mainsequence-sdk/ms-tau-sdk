@@ -1,6 +1,7 @@
 # ADR 0032: Local Applications in Local Mode
 
-Status: Proposed — design only; not implemented. The owner decisions below are open.
+Status: Proposed — design only; not implemented. The owner's decisions were taken on 2026-11-27
+(see [Owner decisions](#owner-decisions)).
 
 Date: 2026-11-27
 
@@ -137,9 +138,9 @@ only.
   application. Whatever listens on the configured port receives a token that acts as the developer
   on the platform until it expires. Any process the developer runs can already obtain the same
   token from the CLI. What this decision adds is a process of another account on the same machine
-  that takes the port while the API is down. The Security and access guide says so. A token bound
-  to the application would remove this exposure, but it needs the platform and mainsequence-sdk
-  (owner decision 1).
+  that takes the port while the API is down. On a machine with one account that is nobody. The
+  owner accepts this exposure for local development (Owner decisions, 1), and the developer is told
+  about it (section 8).
 
 ### 3. The four tools are the hosted ones
 
@@ -229,29 +230,55 @@ in health covers the application tools.
 In local mode `/health` reports `local_mcp_applications`: the names, in order, and never the
 origins. It is `null` in managed mode.
 
+### 8. The developer is told where the token goes
+
+- **At startup.** When local applications are configured, the runtime logs one warning,
+  `local.mcp_applications.token_sent`, on every sink. Its message names each application and its
+  origin, and says that the developer's Main Sequence access token is sent there and that any
+  program listening on that port receives it. For example:
+
+  ```text
+  Local mode sends your Main Sequence access token to the local applications in
+  TAU_LOCAL_MCP_APPLICATIONS: alpaca at http://127.0.0.1:8000. Any program listening on that
+  port receives it and can act as you on Main Sequence until it expires. Run only your own API
+  there.
+  ```
+
+  The message shows the origins because the developer needs them to check the ports, and a valid
+  origin holds no secret: the setting refuses user information. It never shows the token. Nothing
+  is logged when no local application is configured.
+- **In the packaged skill.** The `tau_local_development` skill tells a coding agent that sets
+  `TAU_LOCAL_MCP_APPLICATIONS` for the user to say the same to the user when it sets it: which
+  port receives their token; that it is their own Main Sequence access token, valid on the
+  platform until it expires, not a token limited to the application; that only their own API
+  should listen there, bound to `127.0.0.1`; and that this should not be used on a machine that
+  other accounts share. The skill's sentence "The user JWT is sent only to Main Sequence" becomes:
+  only to Main Sequence and to the local applications named in `TAU_LOCAL_MCP_APPLICATIONS`.
+- **In the Security and access guide,** under local mode, with the same facts.
+
 ## Owner decisions
 
-1. **The credential.** This ADR sends the developer's own platform access token to the loopback
-   application (section 2), because it is the only token local admission verifies today. The
-   alternative is a short-lived token bound to one local application, which the application could
-   not replay against the platform. It needs the platform to mint such a token for the developer
-   and mainsequence-sdk's local admission to accept it, so it would be filed as issues in
-   tdag-django and mainsequence-sdk, and #102 would wait for both. Accept the exposure for local
-   development, or wait?
-2. **The setting.** One JSON object, `TAU_LOCAL_MCP_APPLICATIONS`, from name to origin (section 1).
-   The alternatives are a JSON list shaped like `mcp_applications` (`[{"name": ..., "url": ...}]`),
-   or one variable per application, such as `TAU_LOCAL_MCP_APPLICATION_ALPACA_URL`.
-3. **The workflow declaration.** Local mode does not read the Agent's workflow file (ADR 0026 left
-   local selection open), so the setting stands alone and can name an application the deployed
-   Agent does not declare. The alternative is to require each local name to be one the Agent
-   declares, which needs local mode to read the declaration first.
+Taken by the owner on 2026-11-27.
+
+1. **The credential: accepted for local development.** The call sends the developer's own access
+   token (section 2), the only token local admission verifies today. On a machine with one account
+   the exposure adds almost nothing, because any program the developer runs can already obtain
+   the same token from the CLI. The developer is told where the token goes, at startup and by the
+   packaged skill (section 8). A token bound to one local application is not pursued now (see
+   Rejected alternatives).
+2. **The setting: one JSON object,** `TAU_LOCAL_MCP_APPLICATIONS`, from name to origin (section 1).
+3. **The workflow declaration: not checked.** Local mode does not read the Agent's workflow file,
+   and how it runs one declared Agent is still open (ADR 0026, "Not decided here"). So the setting
+   stands alone and can name an application the deployed Agent does not declare. The developer
+   controls both files, and a name that differs from the hosted one shows at once as different
+   tool names. The check is added when local mode learns to run one declared Agent.
 
 ## Requirements of the platform and other repositories
 
-None for the decisions as proposed: the platform, tdag-django and mainsequence-sdk are unchanged,
-and a local application needs nothing beyond mainsequence-sdk's request identity. If the owner
-chooses the bound token in decision 1, that need is filed as issues in tdag-django and
-mainsequence-sdk; nothing in those repositories is changed from here.
+None: the platform, tdag-django and mainsequence-sdk are unchanged, and a local application needs
+nothing beyond mainsequence-sdk's request identity. A token bound to one local application would
+need tdag-django and mainsequence-sdk; it is not filed now, and would be filed as issues in those
+repositories, not changed from here, if shared development machines come to need it.
 
 ## Rejected alternatives
 
@@ -260,6 +287,14 @@ mainsequence-sdk; nothing in those repositories is changed from here.
   tests local ones. Local admission refuses a release token anyway.
 - **No credential, as for the local hydrate address of ADR 0027.** Local admission requires a
   Bearer, and the application must know its caller to authorize each tool.
+- **A token bound to the local application, minted by the platform.** It would remove the exposure
+  of section 2, because the application could not replay it against the platform. But tdag-django
+  would have to mint it and mainsequence-sdk's local admission accept it, and #102 would wait for
+  both. On a machine with one account it protects against almost nothing (Owner decisions, 1).
+- **Requiring each local name to be declared in the Agent's workflow file.** It needs local mode to
+  read that declaration first, which ADR 0026 left open (Owner decisions, 3).
+- **A JSON list shaped like `mcp_applications`, or one variable per application.** The object is
+  the shortest form that maps a name to an origin (Owner decisions, 2).
 - **A static token in configuration.** A secret in a file, to store, rotate and leak. Main Sequence
   issues none.
 - **A token from the browser or the model.** #102 forbids a bearer token in browser code or model
@@ -288,7 +323,8 @@ mainsequence-sdk; nothing in those repositories is changed from here.
   `install_request_identity(app, local_caller_cache_seconds=60)`. Without it, a discovery request
   that waits longer than MCP's ten seconds falls back to `initialize`, and the skills are not
   listed. The guide for consuming repositories recommends the setting.
-- The developer's token is exposed to whatever listens on the configured port (section 2).
+- The developer's token is exposed to whatever listens on the configured port (section 2). Every
+  start with local applications configured logs a warning about it (section 8).
 - A local stack that runs the Agent and the API in separate containers cannot use this. Both run on
   the developer's machine, or share its network.
 
@@ -307,13 +343,15 @@ The implementation lands in one change, after this ADR is accepted.
 3. **The session.** In local mode the manager adds the four tools of each local application, in
    order; hosted mode is unchanged.
 4. **Health** reports `local_mcp_applications`.
-5. **Documentation, in the same change:** the [runtime contract](../reference/runtime-contract.md)
+5. **The startup warning** `local.mcp_applications.token_sent` of section 8.
+6. **Documentation, in the same change:** the [runtime contract](../reference/runtime-contract.md)
    (declared applications and the local-mode route boundary), the
    [settings reference](../reference/settings.md), the
    [Security and access guide](../reference/security-model.md) (local mode: the token and its
    exposure), guidance for consuming repositories (naming the API, the same `MAINSEQUENCE_ENDPOINT`,
-   `local_caller_cache_seconds`, both exclusions), the packaged project customization skill, the
-   changelog, and the amended sentences of ADR 0021 and ADR 0022.
+   `local_caller_cache_seconds`, both exclusions), the packaged `tau_local_development` skill
+   (section 8) and project customization skill, the changelog, and the amended sentences of ADR
+   0021 and ADR 0022.
 
 ### Test plan
 
@@ -332,6 +370,8 @@ a stub `users/me`, and anything else answers 401.
    - Unset, empty and `{}` give today's catalog.
    - Startup, readiness and session load send nothing to the origin, and readiness reports ready
      while nothing listens on it.
+   - With local applications configured, startup logs `local.mcp_applications.token_sent` once,
+     naming each application and its origin and never the token. Without them it logs nothing.
 2. **A real loopback MCP call.**
    - `alpaca__list_tools` lists the server's tools, and `alpaca__call_tool` calls a read-only tool
      and returns its result.
