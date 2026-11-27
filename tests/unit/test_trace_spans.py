@@ -184,6 +184,98 @@ async def test_a_verified_requests_context_keeps_the_request_span(
     assert headers["baggage"] == "mainsequence.portal.user=u-81"
 
 
+LAUNCHER_SPAN_ID = "a1b2c3d4e5f60718"
+
+
+def _launched(app: Any, **state: object) -> Any:
+    """``app`` behind a server that, like the platform's launcher, records the request's span."""
+
+    async def launcher(scope: dict[str, Any], receive: Any, send: Any) -> None:
+        if scope["type"] == "http":
+            scope.setdefault("state", {}).update(state)
+        await app(scope, receive, send)
+
+    return launcher
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected_trace"),
+    [
+        pytest.param({"traceparent": TRACEPARENT}, TRACE_ID, id="with_the_callers_trace"),
+        pytest.param({}, "5" * 32, id="in_a_trace_the_launcher_started"),
+    ],
+)
+async def test_the_request_span_is_a_child_of_the_launchers_span(
+    test_settings, asgi_client, capsys, headers, expected_trace
+):
+    app = create_app(test_settings)
+    sent: list[dict[str, str]] = []
+
+    @app.get("/calls")
+    async def calls() -> dict[str, str]:
+        sent.append(outbound_headers())
+        return {}
+
+    launched = _launched(app, trace_id=expected_trace, span_id=LAUNCHER_SPAN_ID)
+    async with asgi_client(launched) as http:
+        await http.get("/calls", headers=headers)
+
+    [completed] = [
+        event
+        for event in _log_events(capsys.readouterr().out)
+        if event["event"] == "http.request.completed"
+    ]
+    # The runtime keeps its own span and line, under the launcher's span.
+    assert completed["trace_id"] == expected_trace
+    assert completed["parent_span_id"] == LAUNCHER_SPAN_ID
+    assert completed["span_id"] not in (LAUNCHER_SPAN_ID, CALLER_SPAN_ID)
+    assert _parent(sent[0]) == (expected_trace, completed["span_id"], "01")
+
+
+@pytest.mark.parametrize(
+    "state",
+    [
+        pytest.param({"trace_id": "5" * 32, "span_id": LAUNCHER_SPAN_ID}, id="another_trace"),
+        pytest.param({"trace_id": TRACE_ID.upper(), "span_id": LAUNCHER_SPAN_ID}, id="uppercase"),
+        pytest.param({"trace_id": TRACE_ID, "span_id": "0" * 16}, id="zero_span"),
+        pytest.param({"trace_id": "0" * 32, "span_id": LAUNCHER_SPAN_ID}, id="zero_trace"),
+        pytest.param({"trace_id": TRACE_ID, "span_id": LAUNCHER_SPAN_ID[:15]}, id="short"),
+        pytest.param({"trace_id": TRACE_ID, "span_id": 7}, id="not_text"),
+        pytest.param({"trace_id": TRACE_ID}, id="no_span"),
+    ],
+)
+async def test_a_launcher_span_that_is_not_one_of_the_trace_is_ignored(
+    test_settings, asgi_client, capsys, state
+):
+    app = create_app(test_settings)
+    async with asgi_client(_launched(app, **state)) as http:
+        await http.get("/version", headers={"traceparent": TRACEPARENT})
+
+    [completed] = [
+        event
+        for event in _log_events(capsys.readouterr().out)
+        if event["event"] == "http.request.completed"
+    ]
+    assert (completed["trace_id"], completed["parent_span_id"]) == (TRACE_ID, CALLER_SPAN_ID)
+
+
+async def test_request_headers_never_name_the_parent(test_settings, asgi_client, capsys):
+    app = create_app(test_settings)
+    async with asgi_client(app) as http:
+        await http.get(
+            "/version",
+            headers={"x-trace-id": "5" * 32, "x-span-id": LAUNCHER_SPAN_ID, "span_id": "1" * 16},
+        )
+
+    [completed] = [
+        event
+        for event in _log_events(capsys.readouterr().out)
+        if event["event"] == "http.request.completed"
+    ]
+    assert "parent_span_id" not in completed
+    assert completed["trace_id"] != "5" * 32
+
+
 def test_without_a_current_span_the_requests_trace_parent_is_kept():
     # A WebSocket has no request span: its traceparent is the parent its calls name.
     context = request_context([(b"traceparent", TRACEPARENT.encode())])
@@ -535,6 +627,11 @@ async def test_each_platform_call_attempt_is_a_span_of_the_work(tmp_path):
     calls = [line for line in lines if line["event"] == "dependency.call.completed"]
     assert len(calls) == 3
     assert all(line["parent_span_id"] == REQUEST_SPAN_ID for line in calls)
+    # Each line names what the span called.
+    assert {(line["dependency_type"], line["dependency_name"]) for line in calls} == {
+        ("api", "mainsequence_backend")
+    }
+    assert all(line["dependency_operation"].startswith("GET /api/v1/") for line in calls)
     assert len({line["span_id"] for line in calls}) == 3
     for request, line in zip(sent, calls, strict=True):
         assert _parent(request.headers) == (TRACE_ID, line["span_id"], "01")

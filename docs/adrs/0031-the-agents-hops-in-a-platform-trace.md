@@ -4,7 +4,8 @@
 Date: 2026-11-26
 
 Status: Accepted on 2026-11-26, by the owner's instruction to implement it. Implemented in the SDK
-on 2026-11-26 for 3.0.4, with the changes that [Implementation](#implementation) records.
+on 2026-11-26 for 3.0.4, with the changes that [Implementation](#implementation) records, and
+amended on 2026-11-27 for 3.0.5.
 
 Related: ADR 0013 (failure observability), ADR 0014 (attempt-to-turn
 correlation), ADR 0027 (hydrate endpoints carry no context), ADR 0028 (session
@@ -148,6 +149,41 @@ Each change is listed with its reason.
 5. **A trace the runtime starts says so.** Its terminal line now says `trace_sampled: true`, to
    match the sampled flag `01` it is sent on with. A caller's flag and `tracestate` are kept.
 
-The span table, with each span's terminal line, is in the runtime contract's
-[Distributed tracing](../reference/runtime-contract.md#distributed-tracing) section.
+### Amendment of 2026-11-27, for 3.0.5
+
+The owner approved both changes ("Fix all").
+
+6. **The request span is a child of the launcher's.** A hosted Agent is served by the platform's
+   launcher, the outermost ASGI layer. It writes its own `http.request.*` line for each request,
+   and puts the span it recorded in `scope["state"]` as `trace_id` and `span_id` before it calls
+   the application. In 3.0.4 both that span and the runtime's took the inbound `traceparent` as
+   their parent, so a hosted request was two sibling spans: the launcher's was empty, and the
+   runtime's held the run. Now, when `scope["state"]` holds a W3C trace id (32 lowercase hex
+   digits, not all zeros) and span id (16 lowercase hex digits, not all zeros) on entry, and that
+   trace is the request's (the inbound `traceparent`'s, or there is no valid one), the runtime's
+   request span takes that trace and records that span as its `parent_span_id`. It keeps its own
+   `span_id` and line, and the request's sampled flag and `tracestate`. Otherwise nothing changes,
+   as under any other ASGI server. The ids come only from `scope["state"]`, which the server sets
+   in-process, never from a request header other than `traceparent`. A WebSocket still gets no
+   span, so it is unaffected.
+7. **`dependency.call.*` lines name their dependency.** They gain the platform's dependency-call
+   fields, `dependency_type` and `dependency_name`, beside `dependency_operation`,
+   `target_system`, `status_code`, `duration_ms` and `outcome`, which are unchanged. Platform calls
+   are `api` / `mainsequence_backend`, and application calls through `platform_client()` are
+   `release` / the release's uid, which the runtime always knows there. No line is added and
+   nothing is removed. Reading the code turned up two more writers of `dependency.call.*` lines,
+   and both are covered too:
+   - **Provider credential hydration.** A hydrate release (ADR 0027) is `release` / its uid, and
+     a local hydrate address is `api` / `local_provider_credential_hydrate_address`. Their lines
+     also had no span of their own, so they carried the enclosing span's id as if they were its
+     terminal line. Each attempt now gets its own span id. The span is never current, so the call
+     still carries no context. Hydration by the platform itself always was a platform call, with
+     context: the 3.0.4 documentation, which said hydration carries none, is corrected to say that
+     a custom hydrate endpoint carries none, as ADR 0027 decided.
+   - **A model provider's HTTP failure that Tau reports.** Its `dependency.call.failed` line
+     already had `dependency_name` `tau-ai`, the library that reports the failure, and keeps it.
+     It now gets its own span id under the turn, for the same reason.
+
+The span table, with each span's terminal line and each dependency's fields, is in the runtime
+contract's [Distributed tracing](../reference/runtime-contract.md#distributed-tracing) section.
 

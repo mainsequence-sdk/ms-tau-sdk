@@ -548,7 +548,8 @@ and each model, tool and platform call as its log lines, and the calls it makes 
 as their parent instead of the caller's. Spans are those log lines, so the same redaction applies:
 they carry ids, durations and outcomes, the `mainsequence.` baggage keys, and never a prompt, a
 tool's arguments or result, a credential or a raw header. Model calls are sent no `traceparent` and
-no `baggage`, and neither are the model relay, provider credential hydration or lease renewals.
+no `baggage`, and neither are the model relay, a custom provider credential hydrate endpoint or
+lease renewals.
 See [distributed tracing](./runtime-contract.md#distributed-tracing).
 
 ## Checklist for project authors

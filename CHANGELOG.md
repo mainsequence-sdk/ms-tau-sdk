@@ -1,5 +1,32 @@
 # Changelog
 
+## 3.0.5 — 2026-11-27
+
+- **A hosted request is one hop in its trace, not two.** The platform's launcher, which serves a
+  hosted Agent, writes its own `http.request.*` line for each request. In 3.0.4 the runtime's
+  request span took the same parent as the launcher's, so the trace showed an empty launcher span
+  beside the runtime's. Now the runtime's request span is the launcher's child, in its trace, when
+  the launcher records its span for the application. The runtime keeps its own span and line.
+  Under any other ASGI server, in local mode included, nothing changes. Request headers other than
+  `traceparent` never name a parent.
+- **Each `dependency.call.*` line names what the span called.** The lines gain `dependency_type`
+  and `dependency_name`:
+  - platform calls: `api` / `mainsequence_backend`;
+  - application calls through `platform_client()`, and a hydrate release: `release` / the
+    release's uid;
+  - a local hydrate address: `api` / `local_provider_credential_hydrate_address`.
+
+  The other fields are unchanged. Hydrate endpoint calls and Tau's provider-failure line now also
+  get their own span id, so they no longer carry the id of the span they are logged in. No line is
+  added and none removed ([ADR 0031](docs/adrs/0031-the-agents-hops-in-a-platform-trace.md),
+  amendment of 2026-11-27).
+- **Corrected:** the 3.0.4 notes and docs said provider credential hydration carries no
+  `traceparent` or `baggage`. That is true of a custom hydrate endpoint (ADR 0027). Hydration by
+  the platform itself is a platform call and carries both, as it did before 3.0.4.
+
+  Tested with a stand-in for the launcher in front of the runtime; not tried behind the
+  platform's launcher or against the platform's trace view.
+
 ## 3.0.4 — 2026-11-26
 
 - **The Agent's hops are spans of the caller's trace.** A trace is the set of runtime log lines

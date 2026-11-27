@@ -3,6 +3,7 @@ from importlib.metadata import version
 
 import httpx
 import pytest
+from structlog.contextvars import bound_contextvars
 from tau_agent import UserMessage
 from tau_ai import OpenAICompatibleProvider
 from tau_ai.env import OpenAICompatibleConfig
@@ -45,17 +46,19 @@ async def test_openai_compatible_patch_preserves_terminal_http_error_diagnostic(
             max_retry_delay_seconds=0,
         )
     )
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        provider._client = client
-        events = [
-            event
-            async for event in provider.stream_response(
-                model="controlled-model",
-                system="system",
-                messages=[UserMessage(content="hello")],
-                tools=[],
-            )
-        ]
+    # Inside the span of a turn, which the failure line must never pose as (ADR 0031).
+    with bound_contextvars(trace_id="4bf92f3577b34da6a3ce929d0e0e4736", span_id="b7ad6b7169203331"):
+        async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+            provider._client = client
+            events = [
+                event
+                async for event in provider.stream_response(
+                    model="controlled-model",
+                    system="system",
+                    messages=[UserMessage(content="hello")],
+                    tools=[],
+                )
+            ]
 
     assert attempts == 3
     assert events[-1].type == "error"
@@ -95,6 +98,8 @@ async def test_openai_compatible_patch_preserves_terminal_http_error_diagnostic(
     assert dependency_failure["retry_exhausted"] is True
     assert dependency_failure["failure_uid"] == diagnostic["failure_uid"]
     assert dependency_failure["exception_frames"]
+    assert dependency_failure["parent_span_id"] == "b7ad6b7169203331"
+    assert dependency_failure["span_id"] not in ("b7ad6b7169203331", None)
     serialized = json.dumps(dependency_failure)
     assert "provider-secret" not in serialized
     assert "authorization" not in serialized.lower()

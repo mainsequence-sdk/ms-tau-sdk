@@ -581,11 +581,37 @@ def _request_id(scope: Scope) -> str:
     return _bounded_identifier(_request_field(scope, b"x-request-id")) or str(uuid.uuid4())
 
 
+def _w3c_id(value: object, length: int) -> str | None:
+    """``value`` when it is a W3C trace or span id of ``length`` hex digits, else ``None``."""
+
+    if not isinstance(value, str) or len(value) != length or value == "0" * length:
+        return None
+    return value if re.fullmatch(r"[0-9a-f]+", value) else None
+
+
 def _trace_context(scope: Scope) -> tuple[str, str | None, bool]:
+    """The request span's trace id, parent span id and sampled flag.
+
+    The parent is the request's ``traceparent``, unless the ASGI server that runs the application
+    already recorded a span for the request in the same trace, in ``scope["state"]``: the platform's
+    launcher does, and its span is then the parent. That state is set in-process; a request header
+    other than ``traceparent`` never names a parent.
+    """
+
     raw = str(_request_field(scope, b"traceparent") or "").strip().lower()
     match = TRACEPARENT_PATTERN.fullmatch(raw)
+    inbound: tuple[str, str, bool] | None = None
     if match and match.group(1) != "0" * 32 and match.group(2) != "0" * 16:
-        return match.group(1), match.group(2), bool(int(match.group(3), 16) & 1)
+        inbound = match.group(1), match.group(2), bool(int(match.group(3), 16) & 1)
+    state = scope.get("state")
+    if isinstance(state, Mapping):
+        server_trace_id = _w3c_id(state.get("trace_id"), 32)
+        server_span_id = _w3c_id(state.get("span_id"), 16)
+        same_trace = inbound is None or inbound[0] == server_trace_id
+        if server_trace_id and server_span_id and same_trace:
+            return server_trace_id, server_span_id, inbound[2] if inbound else True
+    if inbound is not None:
+        return inbound
     # A trace the runtime starts is sampled: it records every span of it (ADR 0031).
     return uuid.uuid4().hex, None, True
 

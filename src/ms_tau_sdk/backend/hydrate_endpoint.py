@@ -36,6 +36,7 @@ from ms_tau_sdk.errors import (
     BackendTimeoutError,
     ConfigurationError,
 )
+from ms_tau_sdk.logging import TraceSpan
 from ms_tau_sdk.model_relay import RELAY_PASS_HEADER, RELAY_PASS_PLACE_HEADER
 from ms_tau_sdk.settings import TauSDKSettings
 
@@ -119,6 +120,12 @@ class CustomHydrateEndpoint:
         self.settings = settings
         self._http = http
 
+    @property
+    def dependency_fields(self) -> dict[str, str]:
+        """What the call's ``dependency.call.*`` lines name as its dependency (ADR 0031)."""
+
+        return {"dependency_type": "api", "dependency_name": self.target_system}
+
     async def hydrate(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         """Post ``payload`` and return the answer's JSON object, or raise without a value."""
 
@@ -153,6 +160,9 @@ class CustomHydrateEndpoint:
                 extensions={"timeout": client.timeout.as_dict()},
             )
             started_at = time.monotonic()
+            # Each attempt is its own span. Hydration is sent no caller context, so the span is
+            # recorded only by its line and names nothing to the endpoint.
+            span = TraceSpan()
             failure: httpx.HTTPError | None = None
             response: httpx.Response | None = None
             try:
@@ -168,6 +178,8 @@ class CustomHydrateEndpoint:
                 logger.warning(
                     "dependency.call.failed",
                     message="Provider credential hydration call failed",
+                    **span.log_fields,
+                    **self.dependency_fields,
                     dependency_operation=f"POST {HYDRATE_PATH}",
                     target_system=self.target_system,
                     dependency_attempt=attempt,
@@ -192,6 +204,8 @@ class CustomHydrateEndpoint:
             logger.info(
                 "dependency.call.completed",
                 message="Provider credential hydration call completed",
+                **span.log_fields,
+                **self.dependency_fields,
                 dependency_operation=f"POST {HYDRATE_PATH}",
                 target_system=self.target_system,
                 dependency_attempt=attempt,
@@ -283,6 +297,10 @@ class ReleaseHydrateEndpoint(CustomHydrateEndpoint):
 
     def __repr__(self) -> str:
         return f"ReleaseHydrateEndpoint(release_uid={self.release_uid!r})"
+
+    @property
+    def dependency_fields(self) -> dict[str, str]:
+        return {"dependency_type": "release", "dependency_name": self.release_uid}
 
     async def hydrate(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         try:
