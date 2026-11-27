@@ -112,10 +112,18 @@ class TauTurnObserver:
     def observe(self, event: TauRuntimeEvent) -> None:
         event_type = event.type.lower()
         data = event.data
+        # Tau announces the prompt, steering messages and tool results as it announces a reply;
+        # only a reply is a model call.
+        message = data.get("message")
+        reply = not isinstance(message, Mapping) or message.get("role") in {None, "assistant"}
 
-        if event_type in {"message_start", "model_start", "model_request_start"}:
+        if event_type in {"model_start", "model_request_start"} or (
+            event_type == "message_start" and reply
+        ):
             self._start_model()
-        elif event_type in {"message_end", "model_end", "model_response_end"}:
+        elif event_type in {"model_end", "model_response_end"} or (
+            event_type == "message_end" and reply
+        ):
             failure = terminal_assistant_failure(data) if event_type == "message_end" else None
             if failure is None:
                 self._finish_model(data)

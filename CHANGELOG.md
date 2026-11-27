@@ -33,6 +33,17 @@
   at once. See [troubleshooting](docs/reference/troubleshooting.md#a-durable-turn-conflicts-or-loses-its-lease).
 
   Tested with stand-ins for the platform's renewal answers.
+- **Only a model's reply is logged as a model call.** Tau announces the prompt, steering messages
+  and tool results with the same events as a reply, and the runtime counted each one as a model
+  call. So every turn had an `agent.model.started` and `.completed` pair of a fraction of a
+  millisecond for its prompt, one more for each tool result, and `model_calls` counted them all
+  ([#150](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/150)).
+
+  **Not changed:** a model stream that ends before its terminal event, such as `response.completed`,
+  is still recorded as a normal `stop`, with the text that arrived and zero usage. Tau's providers
+  report it that way ([huggingface/tau#818](https://github.com/huggingface/tau/issues/818)).
+
+  Tested with stand-ins for Tau's events.
 
 ## 3.0.5 — 2026-11-27
 
