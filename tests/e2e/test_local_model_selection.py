@@ -2,6 +2,7 @@
 
 import json
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -182,8 +183,81 @@ async def test_model_switch_keeps_chat_session_and_changes_future_provider(
     assert changed.status_code == 200, changed.text
     assert changed.json()["sessionUid"] == settings.local_session_uid("board-chat")
     assert "After switch" in second.text
+    assert [call[0] for call in fake_providers["gpt-5.5"].calls] == ["gpt-5.5"]
     assert selected.json()["model"]["model"] == "gpt-5.5"
     assert restored.json()["model"]["model"] == "gpt-5.5"
+
+
+@pytest.mark.asyncio
+async def test_a_turn_after_a_provider_change_asks_the_new_provider_for_its_model(
+    asgi_client, monkeypatch, tmp_path
+):
+    # A resumed Tau session ran the model its history last recorded, so a session moved to
+    # another provider asked it for the old model (issue #149).
+    settings = _local_settings(tmp_path)
+    fake_providers = {
+        "gpt-5.4": FakeProvider([_turn("gpt-5.4", "Before switch")]),
+        "muse-spark-1.3": FakeProvider([_turn("muse-spark-1.3", "After switch")]),
+    }
+    app, runtime = _local_app(settings, fake_providers, monkeypatch)
+
+    async with asgi_client(app, lifespan=True) as http:
+        first = await http.post("/api/chat", json={"sessionUid": "board-chat", "message": "One"})
+        changed = await http.put(
+            "/api/chat/session-model",
+            json={"sessionUid": "board-chat", "provider": "meta", "model": "muse-spark-1.3"},
+        )
+        second = await http.post("/api/chat", json={"sessionUid": "board-chat", "message": "Two"})
+
+    assert "Before switch" in first.text
+    assert changed.status_code == 200, changed.text
+    assert "After switch" in second.text
+    assert [call[0] for call in fake_providers["muse-spark-1.3"].calls] == ["muse-spark-1.3"]
+    history = await runtime.backend.get_entries(settings.local_session_uid("board-chat"))
+    assert [
+        (record.entry_json["provider"], record.entry_json["model"])
+        for record in history.entries
+        if record.entry_json["type"] == "model_change"
+    ] == [("openai", "gpt-5.4"), ("meta", "muse-spark-1.3")]
+
+
+@pytest.mark.asyncio
+async def test_a_session_reports_a_changed_thinking_level(asgi_client, monkeypatch, tmp_path):
+    # A resumed Tau session took the level its history last recorded (issue #149).
+    settings = _local_settings(tmp_path)
+    fake_providers = {"gpt-5.4": FakeProvider([_turn("gpt-5.4", "One"), _turn("gpt-5.4", "Two")])}
+    app, runtime = _local_app(settings, fake_providers, monkeypatch)
+    runtime_for = runtime.providers.for_session_credential.side_effect
+
+    def at_the_selected_level(session, **kwargs):
+        return replace(runtime_for(session, **kwargs), thinking_level=session.active_thinking)
+
+    runtime.providers.for_session_credential.side_effect = at_the_selected_level
+
+    async def select(http, level):
+        response = await http.put(
+            "/api/chat/session-model",
+            json={
+                "sessionUid": "board-chat",
+                "provider": "openai",
+                "model": "gpt-5.4",
+                "thinkingLevel": level,
+            },
+        )
+        assert response.status_code == 200, response.text
+
+    async with asgi_client(app, lifespan=True) as http:
+        await select(http, "low")
+        first = await http.post("/api/chat", json={"sessionUid": "board-chat", "message": "One"})
+        await select(http, "high")
+        second = await http.post("/api/chat", json={"sessionUid": "board-chat", "message": "Two"})
+        reported = await http.get("/api/chat/session-model", params={"sessionUid": "board-chat"})
+        running = runtime.running_thinking_level(settings.local_session_uid("board-chat"))
+
+    assert "One" in first.text
+    assert "Two" in second.text
+    assert running == "high"
+    assert reported.json()["model"]["thinkingLevel"] == "high"
 
 
 @pytest.mark.asyncio

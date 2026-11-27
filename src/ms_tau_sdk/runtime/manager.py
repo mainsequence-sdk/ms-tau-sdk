@@ -1012,14 +1012,10 @@ class SessionRuntimeManager:
             runtime = self._runtimes.get(session_uid)
             if runtime is not None and self._reusable(runtime):
                 return runtime
-            if (
-                self.settings.local_mode
-                and runtime is not None
-                and runtime.cancellation_requested
-                and not runtime.evicting
-            ):
-                # A stopped local runtime is replaced, as a lease renewal replaces a
-                # cancelled managed one; the next turn runs on a fresh load.
+            if runtime is not None and not runtime.evicting:
+                # A runtime that lost its lease, or a stopped local one, is closed before its
+                # replacement loads, as a lease renewal replaces a cancelled managed one; the
+                # next turn runs on a fresh load.
                 await self._evict_with_context(session_uid)
             return await self._load(session_uid)
 
@@ -1249,6 +1245,9 @@ class SessionRuntimeManager:
                     provider_name=provider_runtime.name,
                     model=provider_runtime.model,
                     thinking_level=provider_runtime.thinking_level,
+                    # A resumed Tau session runs the level its history last recorded unless an
+                    # override names one; the session's selection decides it.
+                    thinking_level_override=provider_runtime.thinking_level,
                     storage=storage,
                     cwd=cwd,
                     tools=tools,
@@ -1287,6 +1286,9 @@ class SessionRuntimeManager:
             )
             try:
                 check_catalog(coding_session)
+                # Tau resumes a session on the model its history last recorded. A selection
+                # changed since then is recorded in that history before the first turn.
+                await coding_session.apply_startup_model_override(provider_runtime.model)
             except BaseException:
                 with contextlib.suppress(Exception):
                     await coding_session.aclose()

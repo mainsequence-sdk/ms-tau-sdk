@@ -178,6 +178,8 @@ def _coding_session(
             SimpleNamespace(name=name, source="project") for name in extension_names
         ),
     )
+    # Every load names the session's selected model to Tau (issue #149).
+    session.apply_startup_model_override = AsyncMock()
     session.aclose = AsyncMock()
     return session
 
@@ -355,6 +357,43 @@ async def test_stale_pre_provider_lease_reloads_once_before_execution(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_a_runtime_that_lost_its_lease_is_closed_before_its_replacement_loads(tmp_path):
+    # A model change deletes the session's lease; the renewal that finds it gone marks the
+    # runtime, and the next load used to replace it without closing its Tau session (#149).
+    manager, backend, _providers = _manager_dependencies(
+        tmp_path,
+        [_bootstrap("session-1"), _bootstrap("session-1")],
+    )
+    lost, replacement = _coding_session(), _coding_session()
+    coding_session_queue = [lost, replacement]
+
+    with (
+        patch(
+            "ms_tau_sdk.runtime.manager.MainSequenceMCPClient.connect",
+            AsyncMock(return_value=_mcp_client()),
+        ),
+        patch("ms_tau_sdk.runtime.manager.create_mainsequence_mcp_tools", return_value=[]),
+        patch(
+            "ms_tau_sdk.runtime.manager.CodingSession.load",
+            AsyncMock(
+                side_effect=lambda config: _load_coding_session(coding_session_queue.pop(0), config)
+            ),
+        ),
+    ):
+        first = await manager.get("session-1")
+        first.lease_lost = True
+        second = await manager.get("session-1")
+        lost.aclose.assert_awaited_once_with()
+        replacement.aclose.assert_not_awaited()
+
+    assert second is not first
+    assert second.coding_session is replacement
+    assert first.lease_renew_task.done()
+    assert backend.bootstrap_tau_runtime.await_count == 2
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
 async def test_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
     manager, backend, providers = _manager_dependencies(
         tmp_path,
@@ -410,6 +449,9 @@ async def test_cold_load_uses_one_bootstrap_and_reuses_process_mcp(tmp_path):
         assert load_call.args[0].project_extensions_enabled is True
         assert load_call.args[0].trust_override == "approve"
         assert load_call.args[0].resource_paths.agents_root is None
+        assert load_call.args[0].thinking_level_override is None
+    for coding_session in coding_sessions:
+        coding_session.apply_startup_model_override.assert_awaited_once_with("test-model")
     # Each session's tools build their private envelope from the turn when a call is made.
     assert create_mcp_tools.call_args_list == [
         ((mcp_client,), {"session_uid": session_uid}) for session_uid in ("session-1", "session-2")
