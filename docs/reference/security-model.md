@@ -454,6 +454,18 @@ In local mode the token that `platform_client().call_release()` obtains for an a
 belongs to your login: it stops working within at most 60 seconds after you log out or that
 login session is revoked, even before it expires.
 
+The local applications in `TAU_LOCAL_MCP_APPLICATIONS` receive your own Main Sequence access token
+on every call, because the platform cannot issue a token for a process on your machine
+([ADR 0032](../adrs/0032-local-applications-in-local-mode.md)). It is your full platform token,
+valid until it expires, not a token limited to that application: whatever program listens on the
+configured port can act as you on Main Sequence with it. The token goes only to the loopback origin
+you configured, never off the machine, and any program you run can already get the same token from
+the CLI. The exposure that remains is a program of another account on the same machine that takes
+the port while your API is down. Run only your own API on that port, bound to `127.0.0.1`, and do
+not use local applications on a machine that other accounts share. Startup logs
+`local.mcp_applications.token_sent`, naming each application and its origin. See
+[local applications](./settings.md#local-applications).
+
 ## Calling other applications
 
 `platform_client().call_release()` lets a project tool call another platform application. The

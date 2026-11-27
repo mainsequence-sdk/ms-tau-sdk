@@ -1,5 +1,34 @@
 # Changelog
 
+## 3.0.7 — 2026-11-27
+
+- **A local Agent can use the project's own API, the way a hosted Agent uses the deployed one.**
+  Local mode resolves no declared application, so a local Agent had no way to reach a local API's
+  MCP tools and published skills. With `TAU_EXCLUDE_BASE_TOOLS` and `TAU_EXCLUDE_MAINSEQUENCE_MCP`
+  set, it had no tools for the project's work at all. Now `TAU_LOCAL_MCP_APPLICATIONS` names
+  applications of the developer's own at loopback origins, as a JSON object such as
+  `{"alpaca": "http://127.0.0.1:8000"}`
+  ([#102](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/102),
+  [ADR 0032](docs/adrs/0032-local-applications-in-local-mode.md)):
+  - each gets the four tools a declared application gets, under the same names, with the same
+    protocol negotiation, skill digest checks, time limits and failure words, and neither
+    exclusion removes them;
+  - names follow the hosted rules, origins must be loopback, and the setting outside local mode
+    fails startup;
+  - a call carries the developer's own Main Sequence access token from local mode's sign-in,
+    renewed once on `401`, and no `X-MainSequence-*` header, delegation or lease;
+  - nothing asks the platform for a local application, no deployed release is called in its
+    place, and an application that is not running reports that it could not be reached;
+  - startup logs `local.mcp_applications.token_sent`, naming each application and its origin,
+    because any program listening there receives the token, and `/health` lists the names in
+    `local_mcp_applications`.
+
+  The `tau_local_development` skill tells a coding agent that sets the variable to tell the user
+  where their token goes. See [local applications](docs/reference/settings.md#local-applications).
+
+  Tested against a real MCP 2.x server on `127.0.0.1` that admits only a Bearer token, as
+  mainsequence-sdk's local request identity does. Not tried against a consuming project's API.
+
 ## 3.0.6 — 2026-11-27
 
 - **A session whose model changed runs the new model.** Tau resumes a session on the model its

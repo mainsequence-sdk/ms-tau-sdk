@@ -1,5 +1,12 @@
 # ADR 0021: MCP Connections on the Person's Identity
 
+Amended 2026-11-27 by
+[ADR 0032: Local applications in local mode](./0032-local-applications-in-local-mode.md), for
+[issue #102](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/102): local mode still resolves
+no declared application from the platform, but the developer may name applications of their own at
+loopback origins, and a call to one carries the developer's own access token. Sections 4 and 6 are
+edited.
+
 Amended 2026-10-21 for [issue #114](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/114): a
 Task attempt serves the person the platform names for running the Task, in its answer to the
 runtime's own creation or continuation of the Task or in the dispatch. The platform's answer to a
@@ -145,7 +152,9 @@ is the Agent's own otherwise; without a person, the Agent's workload needs its o
 application. The application decides what each call may do. A refused delegated call is reported,
 never retried as the Agent. No session, token or catalog is shared between turns or people. The SDK
 reads no catalog when the session loads, because no turn is running then; the model lists an
-application's tools when it needs them. Local mode has no declared applications.
+application's tools when it needs them. Local mode resolves no declared application from the
+platform; the developer may name applications of their own at loopback origins instead, which get
+the same tools (ADR 0032, amended 2026-11-27).
 
 ### 5. Credentials
 
@@ -156,7 +165,9 @@ never enter model context, tool arguments or results, session history, the UI st
 ### 6. Local mode
 
 Local mode already acts as the signed-in person. It uses the same connections with that person's
-own credentials, and no call carries a delegation.
+own credentials, and no call carries a delegation. A call to a local application, which is not a
+release, carries that person's own Main Sequence access token, because the platform cannot issue a
+token for a developer's local process (ADR 0032, amended 2026-11-27).
 
 ### 7. Project code
 

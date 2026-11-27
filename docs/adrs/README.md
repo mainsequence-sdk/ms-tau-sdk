@@ -44,4 +44,4 @@ These records are the normative decisions for Main Sequence TAU SDK:
 - [ADR 0031: The Agent's hops in a platform trace](./0031-the-agents-hops-in-a-platform-trace.md)
   (Accepted; implemented in the SDK for 3.0.4, amended for 3.0.5)
 - [ADR 0032: Local applications in local mode](./0032-local-applications-in-local-mode.md)
-  (Proposed; owner decisions taken, not implemented)
+  (Accepted; implemented in the SDK for 3.0.7)

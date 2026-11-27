@@ -1,13 +1,13 @@
 # ADR 0032: Local Applications in Local Mode
 
-Status: Proposed — design only; not implemented. The owner's decisions were taken on 2026-11-27
-(see [Owner decisions](#owner-decisions)).
+Status: Accepted — implemented in the SDK for 3.0.7. The owner's decisions were taken on
+2026-11-27 (see [Owner decisions](#owner-decisions)).
 
 Date: 2026-11-27
 
 Issue: [#102](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/102)
 
-Amends, once accepted:
+Amends:
 
 - [ADR 0021: MCP connections on the person's identity](./0021-mcp-connections-on-the-persons-identity.md),
   section 4, whose last sentence, "Local mode has no declared applications", becomes: local mode
@@ -330,7 +330,7 @@ repositories, not changed from here, if shared development machines come to need
 
 ## Implementation and acceptance
 
-The implementation lands in one change, after this ADR is accepted.
+Implemented for 3.0.7, in one change.
 
 1. **Settings.** `TAU_LOCAL_MCP_APPLICATIONS` is parsed with duplicate keys refused; names are
    checked as hosted names are; origins with ADR 0027's loopback check, under this setting's name;
@@ -419,3 +419,33 @@ a stub `users/me`, and anything else answers 401.
 
 Manual acceptance follows #102: the consuming site's local Agent, restricted by both exclusions,
 discovers and reads the local API's published skills and calls an authorized read-only tool.
+
+### What the tests verify
+
+Built for 3.0.7. The tests are `tests/unit/test_local_mcp_applications.py` (startup),
+`tests/contract/test_local_application_mcp.py` (a real MCP 2.x server served by uvicorn on
+`127.0.0.1`, behind a Bearer admission) and the local-mode catalog tests in
+`tests/unit/test_runtime_manager.py`. They fail on the source before this change, and each fails
+when its behavior is taken out: the registration, the renewal on 401, the loopback check, and
+skipping the start question for a local application.
+
+- **Point 1, startup:** verified in full. That nothing is sent at startup or session load is shown
+  by no MCP session being opened, with readiness reported.
+- **Point 2, a real call:** verified, except the token's absence from health and session history
+  (it is absent from every result, its details and the logs), and except the chat turn on the mock
+  provider.
+- **Point 3, never a release:** verified while the application is down, refuses with 401 or 403,
+  answers 502 or times out: the platform stub is never asked. That no other host is contacted is
+  not checked.
+- **Point 4, an unavailable target:** verified, with a stand-in sign-in that raises in place of a
+  CLI that exits 1 or does not answer.
+- **Point 5, cancellation:** verified. The call cancelled while the tool runs ends and leaves the
+  application usable; that the server sees its connection end is not checked.
+- **Point 6, expired authentication:** verified with a stand-in sign-in and with local mode's own
+  token pair (`JWTAuth`). The CLI's renewal before expiry and its one command run for concurrent
+  forced renewals are covered by `tests/unit/test_cli_token_auth.py`, not repeated here.
+- **Point 7, the effective catalog:** verified with both exclusions on and both off, including a
+  startup answer that names a release, which adds nothing. The skill-limited `read` and the
+  complete-catalog check with a project extension are covered by existing tests. The catalog
+  digest across sessions is not checked.
+- **Not done:** the manual acceptance against the consuming site's API.

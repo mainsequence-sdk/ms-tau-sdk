@@ -409,7 +409,21 @@ For each call the runtime obtains the application's RPC URL and a token through
 It opens an MCP session to `<rpc_url>/mcp` with that token, renews the token once on `401`, and
 closes the session when the call ends. Without a person, the Agent's workload needs its own grants
 on the application. A name must match `^[a-z][a-z0-9_]{0,39}$` and must not be `mainsequence`; an
-invalid or repeated name fails the session load. Local mode has no declared applications.
+invalid or repeated name fails the session load.
+
+Local mode resolves no declared application from the platform. Instead the developer may name
+applications of their own in `TAU_LOCAL_MCP_APPLICATIONS`, a JSON object from name to loopback
+origin, such as `{"alpaca": "http://127.0.0.1:8000"}` (ADR 0032). Each gets the same four tools,
+with the same name rules, checked at startup. A local application's session opens `<origin>/mcp`
+with the developer's own access token from local mode's sign-in, sent as
+`Authorization: Bearer <token>`, renewed once on `401`. No other credential goes: no
+`X-MainSequence-*` header, no `X-User-UID`, no delegation and no lease. Nothing asks the platform
+for a local application, and no deployed release is called in its place: when it is not running,
+the call reports that it could not be reached. A local tool that times out reports `timeout`; only
+a release can be starting. Every result and `runtime.mcp_application.failed` event of a local
+application carries `target: "local"`, and a sign-in that gives no token reports
+`failure: access_unavailable` with `phase: access`. See
+[local applications](./settings.md#local-applications).
 
 The session first asks `server/discover` on MCP protocol revision `2026-07-28`, where an
 application declares the MCP Skills extension (`io.modelcontextprotocol/skills`). An application
@@ -648,6 +662,7 @@ platform probes use the launcher's endpoint.
 | A2A Task send/stream/list/get/cancel/subscribe/continue | Supported through local SQLite. |
 | Local Agent Card | Supported; advertises Message, Task, and streaming without platform registration. |
 | Outbound A2A through MCP | Available when MCP is enabled; Message and polled Task flows use authenticated-user semantics. |
+| Application MCP | Only the local applications in `TAU_LOCAL_MCP_APPLICATIONS`, at loopback origins, with the developer's own token. No declared application is resolved from the platform. |
 | Internal backend dispatch/caller delivery | `local_mode_capability_unsupported`. |
 | Platform discovery, push notifications, `resume_caller` | Unsupported without explicit platform registration/callback support. |
 
@@ -744,6 +759,9 @@ readiness, MCP catalog counts, snapshot counts, project-extension counts and err
 tool-catalog digest, Task recovery policy, and local pending/working/recovery counters. It never
 reports credential values or prompt content. The resource load log reports an Agent's selection of
 `.tau` resources by path and name, never the prompt's content.
+
+In local mode `local_mcp_applications` lists the names of the local applications, in order, never
+their origins; it is `null` in managed mode.
 
 In local mode `mainsequence_auth_source` names where the process takes its Main Sequence
 credentials from: `cli` for the Main Sequence CLI session, `environment` for a token pair handed
