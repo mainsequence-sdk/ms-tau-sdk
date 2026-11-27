@@ -618,6 +618,26 @@ def test_tau_turn_observer_logs_model_tool_and_handoff_without_payloads(capsys):
     assert "private result" not in json.dumps(events)
 
 
+def test_only_a_reply_is_observed_as_a_model_call(capsys):
+    # Tau announces the prompt and each tool result with the events of a reply, so every turn
+    # logged an instant model call for its prompt (ms-tau-sdk#150).
+    configure_logging("INFO", machine_sink=True, human_sink=False)
+    observer = TauTurnObserver(provider="openai", model="controlled-model")
+    prompt = {"role": "user", "content": "private prompt"}
+    reply = {"role": "assistant", "stopReason": "toolUse", "usage": {"input": 7, "output": 3}}
+    result = {"role": "toolResult", "toolCallId": "tool-1", "content": "private result"}
+
+    for message in (prompt, reply, result):
+        observer.observe(TauRuntimeEvent(type="message_start", data={"message": message}))
+        observer.observe(TauRuntimeEvent(type="message_end", data={"message": message}))
+
+    names = [event["event"] for event in _json_events(capsys.readouterr().out)]
+    assert names.count("agent.model.started") == 1
+    assert names.count("agent.model.completed") == 1
+    assert observer.terminal_fields()["model_calls"] == 1
+    assert observer.terminal_fields()["input_tokens"] == 7
+
+
 def test_tau_model_rate_limit_retry_preserves_safe_correlated_attempts(capsys):
     configure_logging("INFO", machine_sink=True, human_sink=False)
     observer = TauTurnObserver(provider="openai", model="controlled-model")

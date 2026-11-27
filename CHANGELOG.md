@@ -1,5 +1,50 @@
 # Changelog
 
+## 3.0.6 — 2026-11-27
+
+- **A session whose model changed runs the new model.** Tau resumes a session on the model its
+  history last recorded, and nothing recorded a change made since. So after a model change, a
+  session with history asked its new provider for the old model:
+  - across providers the turn failed, for example with `meta request failed with status 404 for
+    model gpt-5.6-luna`;
+  - within a provider it kept running the old model while the session reported the new one.
+
+  This held for a hosted session changed through the platform and for a local one changed with
+  `PUT /api/chat/session-model`. Now every load names the session's selected model to Tau, which
+  records the change in the session's history before the first turn. The loaded session's
+  thinking level is likewise the selected one, not the history's, so
+  `GET /api/chat/session-model` no longer reports the old level; model calls were already built at
+  the selected level ([#149](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/149)).
+- **A runtime that lost its lease is closed before it is replaced.** A model change deletes the
+  session's lease. When the lease renewal found it gone, the next turn loaded a new runtime
+  without closing the old one's Tau session and model provider. Now the old runtime is evicted
+  first, as it already was when a turn's start found the lease gone.
+
+  Tested with local turns on real providers through the development platform, `openai-codex`
+  then `meta`, and with stand-in providers that record the model they are asked for. Not tried in
+  a hosted Agent, which needs this release.
+- **A platform that cannot answer for a moment no longer costs a session its lease.** A lease
+  renewal that failed with a 5xx, a timeout or no connection marked the lease lost, and cancelled
+  any running turn, although the platform still held the lease for this runtime. The next load
+  was then refused with 409 until that lease expired: on 2026-11-27 a platform restart turned
+  three failed renewals into a minute of refused turns. Now the runtime logs
+  `runtime.lease.renewal_failed`, keeps the lease and renews it again at the next interval, until
+  it would have expired. A refused renewal, such as the 409 after a model change, still loses it
+  at once. See [troubleshooting](docs/reference/troubleshooting.md#a-durable-turn-conflicts-or-loses-its-lease).
+
+  Tested with stand-ins for the platform's renewal answers.
+- **Only a model's reply is logged as a model call.** Tau announces the prompt, steering messages
+  and tool results with the same events as a reply, and the runtime counted each one as a model
+  call. So every turn had an `agent.model.started` and `.completed` pair of a fraction of a
+  millisecond for its prompt, one more for each tool result, and `model_calls` counted them all
+  ([#150](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/150)).
+
+  **Not changed:** a model stream that ends before its terminal event, such as `response.completed`,
+  is still recorded as a normal `stop`, with the text that arrived and zero usage. Tau's providers
+  report it that way ([huggingface/tau#818](https://github.com/huggingface/tau/issues/818)).
+
+  Tested with stand-ins for Tau's events.
+
 ## 3.0.5 — 2026-11-27
 
 - **A hosted request is one hop in its trace, not two.** The platform's launcher, which serves a
