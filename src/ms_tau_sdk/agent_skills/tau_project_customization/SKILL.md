@@ -239,6 +239,10 @@ async def revenue_by_region(tool_call_id, arguments, signal=None, on_update=None
 - `platform_client()` returns a client. `await client.request("GET", "/api/v1/...")` calls a
   platform API path, and `await client.call_release(release_uid, method, path, ...)` calls another
   platform application. Both return an `httpx.Response`.
+- `call_release()` waits while the application starts, up to
+  `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS`, then raises `ApplicationReadinessTimeoutError`
+  (from `ms_tau_sdk.errors`). Catch it and say the application is not ready yet; do not wait or
+  retry in the tool yourself.
 - By default (`delegation="auto"`) a call carries the person's delegation while the turn serves a
   person, and is the Agent's own otherwise; the operation or application decides what it may do.
   `delegation="none"` never carries it. `delegation="required"` raises a `PermissionError` before

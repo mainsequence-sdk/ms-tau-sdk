@@ -293,6 +293,7 @@ class SessionRuntimeManager:
         self._process_binding = register_runtime_platform(
             platform=backend,
             application_http=self._requester_http,
+            settings=settings,
         )
         self._startup_ready = False
         self._local_state_ready = False
@@ -1739,6 +1740,7 @@ class SessionRuntimeManager:
             ),
             platform=self.backend,
             application_http=self._requester_http,
+            settings=self.settings,
         )
         yield TauRuntimeEvent(type="lifecycle", data={"phase": "generating"})
 

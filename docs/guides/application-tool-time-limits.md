@@ -98,6 +98,8 @@ twice the start time the platform expects for the application, at least 30 secon
 seconds when the platform states none. The remaining turn deadline still
 applies, and cancellation stops a pending delay or access request. The wait releases the access
 cache lock between polls. Access denial, ended delegation and terminal states are not retried.
+Project code that calls an application with `platform_client().call_release()` waits the same
+way; see the [public API](../reference/public-api.md#platform_client).
 
 Tau keeps an application's token for the turn, and uses it without asking the platform only
 while the application is known warm: it answered, or the platform reported it ready, within its

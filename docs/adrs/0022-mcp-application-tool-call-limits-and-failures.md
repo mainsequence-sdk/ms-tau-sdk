@@ -274,9 +274,33 @@ renewal, the after-timeout question and the provider credential hydrate release
   model reads "not ready" where it read "starting".
 
 **Not changed:** a failed platform ask, a transport error, is not asked again, which
-mainsequence-sdk 9.0.46 now does. `platform_client().call_release` does not wait for a release
-that is not ready, whatever its state: it raises `ApplicationWakingError`, a `BackendError`, at
-once.
+mainsequence-sdk 9.0.46 now does.
+
+### Amendment: a release call waits too
+
+`platform_client().call_release` asked the platform for access once and raised
+`ApplicationWakingError` when the answer asked to be asked again. mainsequence-sdk's
+`ResourceRelease.request`, the routine of its ADR 0041 for one release calling another, waits. So
+a project tool's call to an application that had scaled to zero failed while it started, while
+an application tool call to the same application waited.
+
+`call_release` now obtains access through `wait_until_ready`, with the same readiness limit, limit
+rule and reading of `retry_after_ms`:
+
+- The delegation is decided once, when the call is made, and every ask of the wait carries it. A
+  delegated wait whose turn has ended raises `RequesterBindingError`, a `PermissionError`, at its
+  next ask, and never goes on as the Agent's own.
+- The turn's deadline cancels the project tool, and with it the wait and any ask in flight;
+  cancelling the call does the same. `call_release` has no tool cancellation token to poll, so
+  project code that stops on its token cancels the call.
+- An expired wait raises `ApplicationReadinessTimeoutError`, a `BackendError`, with
+  `timeout_seconds` and the state of the last answer, and keeps no cause. An answer without
+  access and without a hint still raises `BackendError` at once.
+- After a `401` the new token, still obtained once, waits the same way.
+- The log events are `runtime.release_call.waiting` and `runtime.release_call.ready`.
+
+The wait ends before the application is called, so the application call's own timeouts measure
+the application alone. Outside a turn, the same limit and cancellation bound the wait.
 
 ## Rejected alternatives
 

@@ -19,10 +19,28 @@
   For a state other than `waking`, the model reads that the application was not ready rather
   than starting.
 
-  **Not changed:** `platform_client().call_release` still does not wait for an application that
-  is not ready, `waking` included, and a platform ask that fails is not made again.
+  **Not changed:** a platform ask that fails is not made again.
 
   Tested with stand-ins for the platform's answers.
+- **`platform_client().call_release` waits for an application that is starting.** It asked the
+  platform for access once and raised `ApplicationWakingError` when the answer asked to be asked
+  again. So a project tool's call to an application that had scaled to zero failed while the
+  application started, and so did a call right after a redeploy, while an application tool call
+  waited. Now `call_release` waits the same way: it asks again after `retry_after_ms`, whatever
+  the state, or after two seconds for `waking` without one, within
+  `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` and the turn deadline. Cancelling the call ends the
+  wait.
+  - An expired wait raises `ApplicationReadinessTimeoutError`, a `BackendError`, with
+    `timeout_seconds` and the `runtime_access_state` last answered. An answer with neither access
+    nor a hint still raises `BackendError` at once.
+  - A delegated call asks with the delegation it started with. When its turn ends, the wait ends
+    with the same `PermissionError` as a refused delegation, and never goes on as the Agent's own.
+  - The new token after a `401` is obtained the same way, still once.
+  - The wait logs `runtime.release_call.waiting` and `runtime.release_call.ready`.
+
+  This is what mainsequence-sdk's `ResourceRelease.request` does (its ADR 0041). Tested with
+  stand-ins for the platform's answers, and through a hosted turn whose project tool calls an
+  application that answers `waking` twice before it is ready.
 
 ## 3.0.6 — 2026-11-27
 
