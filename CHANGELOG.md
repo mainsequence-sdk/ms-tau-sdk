@@ -1,5 +1,33 @@
 # Changelog
 
+## 3.0.4 — 2026-11-26
+
+- **The Agent's hops are spans of the caller's trace.** A trace is the set of runtime log lines
+  that share one W3C trace id, and each lifecycle's terminal line is its span
+  ([ADR 0031](docs/adrs/0031-the-agents-hops-in-a-platform-trace.md)). The runtime used to forward
+  the caller's `traceparent` unchanged and give a run, its turn and its model and tool calls the
+  request's `span_id`, so a trace showed the Agent as one hop. Now:
+  - **The request's span is the current span.** The calls made for a request name the runtime's
+    own request span as their parent, and the request's `traceparent` is only that span's recorded
+    `parent_span_id`. A request without a `traceparent` starts a trace that is sent on with the
+    sampled flag `01`, and its `http.request.*` line says `trace_sampled: true`.
+  - **Each lifecycle is its own span.** The run, the turn, each model call attempt, each tool call,
+    each handoff and each platform or application call attempt gets its own `span_id`, with the
+    enclosing span as its `parent_span_id`. A tool's Main Sequence MCP calls, A2A sends included,
+    name the tool call's span, and each platform call names its own. A Task attempt and other
+    detached work stay in the span that started them, since they write no terminal line of their
+    own: a dispatched Task's run is a child of the dispatch request.
+  - `agent.model.completed` and `.failed` also carry `duration_ms`, equal to `model_duration_ms`.
+  - **Nothing else changes.** No log line is added, every uid and everything persisted is
+    unchanged, and there is still no exporter, `TracerProvider` or setting. Model providers, the
+    model relay, provider credential hydration and lease renewals are still sent no `traceparent`
+    or `baggage`.
+  - **The `logging.googleapis.com/trace` fields are gone.** They were written only when
+    `GOOGLE_CLOUD_PROJECT` was set and a line held an `otelTraceID`, which nothing set.
+
+  See [Distributed tracing](docs/reference/runtime-contract.md#distributed-tracing). Tested with the
+  runtime's own requests, turns and calls; not tried against the platform's trace view.
+
 ## 3.0.3 — 2026-11-20
 
 - **Where the platform's model relay is.** The runtime contract, Security and access and

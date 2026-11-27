@@ -27,6 +27,8 @@ import httpx
 import pytest
 import respx
 from opentelemetry import baggage, trace
+from structlog.contextvars import bound_contextvars, merge_contextvars
+from structlog.testing import capture_logs
 from tau_agent.messages import AssistantMessage, ToolCall
 from tau_agent.provider_events import AssistantDoneEvent
 from tau_ai.fake import FakeProvider
@@ -965,22 +967,30 @@ async def test_a_dispatched_task_runs_in_the_context_the_signal_carries(
     app.dependency_overrides[runtime_manager] = lambda: manager
     app.dependency_overrides[settings] = lambda: config
 
-    async with asgi_client(app) as http:
-        response = await http.post(
-            "/internal/a2a/task-dispatch",
-            json={"task_uid": "backend-task-1", "dispatch_uid": "dispatch-1"},
-            headers={
-                ASSERTION_HEADER: served_platform_keys.platform_assertion(),
-                **signal_headers,
-            },
-        )
+    with capture_logs() as lines:
+        async with asgi_client(app) as http:
+            response = await http.post(
+                "/internal/a2a/task-dispatch",
+                json={"task_uid": "backend-task-1", "dispatch_uid": "dispatch-1"},
+                headers={
+                    ASSERTION_HEADER: served_platform_keys.platform_assertion(),
+                    **signal_headers,
+                },
+            )
     await manager.run_background()
 
     assert response.status_code == 200, response.text
     (caller_context,) = manager.caller_contexts
     assert baggage.get_all(context=caller_context) == expected
-    trace_parent = trace.get_current_span(caller_context).get_span_context()
-    assert trace_parent.is_valid is bool(signal_headers)
+    # The attempt's calls name the dispatch request's span, whose parent is the signal's, if any
+    # (ADR 0031).
+    [dispatch] = [line for line in lines if line["event"] == "http.request.completed"]
+    attempt_span = trace.get_current_span(caller_context).get_span_context()
+    assert format(attempt_span.trace_id, "032x") == dispatch["trace_id"]
+    assert format(attempt_span.span_id, "016x") == dispatch["span_id"]
+    assert dispatch.get("parent_span_id") == (TRACEPARENT.split("-")[2] if signal_headers else None)
+    if signal_headers:
+        assert dispatch["trace_id"] == TRACEPARENT.split("-")[1]
 
 
 # --- platform_client(): calls for the work ------------------------------------------------------
@@ -1192,6 +1202,27 @@ async def test_calls_for_the_work_carry_its_caller_context(tmp_path):
     # The application receives the context too; a header the tool sets wins.
     assert table_call.headers["traceparent"] == TRACEPARENT
     assert table_call.headers.get_list("baggage") == ["mainsequence.portal.user=own"]
+
+
+async def test_inside_a_trace_each_call_for_the_work_is_its_own_span(tmp_path):
+    _version, trace_id, work_span, _flags = TRACEPARENT.split("-")
+    async with _bound_turn(tmp_path) as (platform, application, _binding, _auth):
+        client = platform_client()
+        with (
+            bound_contextvars(trace_id=trace_id, span_id=work_span),
+            capture_logs(processors=[merge_contextvars]) as lines,
+        ):
+            await client.request("GET", "/api/v1/data-nodes/")
+            await client.call_release(RELEASE_UID, "GET", "/tables")
+
+    calls = [line for line in lines if line["event"] == "dependency.call.completed"]
+    sent = [*platform.requests, *application.requests]
+    assert len(calls) == len(sent) == 3
+    for request, line in zip(sent, calls, strict=True):
+        # The call's span is a child of the work's, and is the parent the call names (ADR 0031).
+        assert line["parent_span_id"] == work_span
+        assert request.headers["traceparent"] == f"00-{trace_id}-{line['span_id']}-01"
+    assert len({line["span_id"] for line in calls}) == 3
 
 
 async def test_outside_a_turn_calls_go_through_the_runtime_without_a_delegation(

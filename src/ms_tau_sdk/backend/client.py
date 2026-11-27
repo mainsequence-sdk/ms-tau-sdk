@@ -24,6 +24,7 @@ from ms_tau_sdk.errors import (
     LocalModeUnsupportedError,
     SessionNotFoundError,
 )
+from ms_tau_sdk.logging import TraceSpan
 from ms_tau_sdk.protocols.a2a_roles import platform_message_to_binding
 from ms_tau_sdk.protocols.caller_context import outbound_headers
 from ms_tau_sdk.settings import TauSDKSettings
@@ -374,6 +375,10 @@ class MainSequenceClient:
             attempt_started_at = time.monotonic()
             attempt_number = transport_attempt + 1
             operation = _dependency_operation(method, path)
+            # Each attempt is a span, the parent it names to the platform (ADR 0031).
+            span = TraceSpan()
+            with span:
+                caller_context = outbound_headers(headers or ())
             try:
                 response = await self._client.request(
                     method,
@@ -381,7 +386,7 @@ class MainSequenceClient:
                     # The caller context of the work goes on with the call; a header the call
                     # sets wins.
                     headers={
-                        **outbound_headers(headers or ()),
+                        **caller_context,
                         **(headers or {}),
                         **await self.auth.headers(force=force_auth),
                     },
@@ -398,6 +403,7 @@ class MainSequenceClient:
                 logger.info(
                     "dependency.call.completed",
                     message="Backend dependency call completed",
+                    **span.log_fields,
                     dependency_operation=operation,
                     target_system="mainsequence_backend",
                     dependency_attempt=attempt_number,
@@ -454,6 +460,7 @@ class MainSequenceClient:
                 logger.warning(
                     "dependency.call.failed",
                     message="Backend dependency call failed",
+                    **span.log_fields,
                     dependency_operation=operation,
                     target_system="mainsequence_backend",
                     dependency_attempt=attempt_number,
@@ -822,6 +829,9 @@ class MainSequenceClient:
         while True:
             started_at = time.monotonic()
             failure = ""
+            span = TraceSpan()
+            with span:
+                caller_context = outbound_headers(headers or ())
             try:
                 response = await self._client.request(
                     method,
@@ -832,7 +842,7 @@ class MainSequenceClient:
                     data=data,
                     files=files,
                     headers={
-                        **outbound_headers(headers or ()),
+                        **caller_context,
                         **dict(headers or {}),
                         **delegation,
                         **await self.auth.headers(force=force_auth),
@@ -845,6 +855,7 @@ class MainSequenceClient:
                 logger.warning(
                     "dependency.call.failed",
                     message="Platform call failed",
+                    **span.log_fields,
                     dependency_operation=operation,
                     target_system="mainsequence_backend",
                     requester_bound=proof is not None,
@@ -857,6 +868,7 @@ class MainSequenceClient:
             logger.info(
                 "dependency.call.completed",
                 message="Platform call completed",
+                **span.log_fields,
                 dependency_operation=operation,
                 target_system="mainsequence_backend",
                 requester_bound=proof is not None,

@@ -1,4 +1,10 @@
-"""Content-free lifecycle instrumentation for translated Tau events."""
+"""Content-free lifecycle instrumentation for translated Tau events.
+
+Each model call attempt, tool call and handoff is its own span, a child of the span it starts in,
+which is the turn's (ADR 0031). Its terminal line records it. A tool call's span is also the
+current span while the tool runs, so the platform, MCP and A2A calls the tool makes name it as
+their parent. A model call's span names nothing: model calls carry no caller context.
+"""
 
 from __future__ import annotations
 
@@ -10,7 +16,7 @@ from typing import Any
 
 import structlog
 
-from ms_tau_sdk.logging import safe_log
+from ms_tau_sdk.logging import TraceSpan, safe_log
 
 from .events import TauRuntimeEvent
 from .failures import (
@@ -89,16 +95,18 @@ class TauTurnObserver:
         self.handoffs = 0
         self.usage: dict[str, int] = {}
         self.terminal_failure: TerminalAssistantFailure | None = None
-        self._model: tuple[str, float, int] | None = None
+        self._model: tuple[str, float, int, TraceSpan] | None = None
         self._next_model_attempt = 1
         self._tools: dict[
             str,
-            tuple[float, str, str, int, str | None, str, bool, str],
+            tuple[float, str, str, int, str | None, str, bool, str, TraceSpan],
         ] = {}
         self._tool_attempts: dict[str, int] = {}
+        # The one tool call whose span is current. Tau runs a turn's tool calls one at a time.
+        self._current_tool: str | None = None
         self._handoffs: dict[
             str,
-            tuple[float, str, str, str | None, str | None, str],
+            tuple[float, str, str, str | None, str | None, str, TraceSpan],
         ] = {}
 
     def observe(self, event: TauRuntimeEvent) -> None:
@@ -173,13 +181,15 @@ class TauTurnObserver:
             return
         call_uid = str(uuid.uuid4())
         attempt = self._next_model_attempt
-        self._model = (call_uid, time.monotonic(), attempt)
+        span = TraceSpan()
+        self._model = (call_uid, time.monotonic(), attempt, span)
         self.model_calls += 1
         safe_log(
             self.logger,
             "info",
             "agent.model.started",
             message="Model call started",
+            **span.log_fields,
             model_call_uid=call_uid,
             model_provider=self.provider,
             model_name=self.model,
@@ -190,24 +200,29 @@ class TauTurnObserver:
     def _finish_model(self, data: Mapping[str, Any]) -> None:
         if self._model is None:
             self._start_model()
-        call_uid, started, attempt = self._model or (
+        call_uid, started, attempt, span = self._model or (
             str(uuid.uuid4()),
             time.monotonic(),
             self._next_model_attempt,
+            TraceSpan(),
         )
         usage = _usage(data)
         self.usage.update(usage)
+        model_duration_ms = round((time.monotonic() - started) * 1000, 3)
         safe_log(
             self.logger,
             "info",
             "agent.model.completed",
             message="Model call completed",
+            **span.log_fields,
             model_call_uid=call_uid,
             model_provider=self.provider,
             model_name=self.model,
             model_operation="response",
             model_attempt=attempt,
-            model_duration_ms=round((time.monotonic() - started) * 1000, 3),
+            model_duration_ms=model_duration_ms,
+            # A span's duration, under the name every terminal line gives it (ADR 0031).
+            duration_ms=model_duration_ms,
             model_first_token_ms=self.first_token_ms,
             finish_reason=_bounded(_first(data, "stopReason", "stop_reason", "finish_reason")),
             provider_request_id=_bounded(_first(data, "provider_request_id", "response_id")),
@@ -221,10 +236,11 @@ class TauTurnObserver:
     def _fail_model(self, data: Mapping[str, Any], *, event_type: str) -> None:
         if self._model is None:
             self._start_model()
-        call_uid, started, attempt = self._model or (
+        call_uid, started, attempt, span = self._model or (
             str(uuid.uuid4()),
             time.monotonic(),
             self._next_model_attempt,
+            TraceSpan(),
         )
         error_type = (
             _bounded(_first(data, "provider_error_type", "error_type", "errorType")) or "ModelError"
@@ -263,12 +279,14 @@ class TauTurnObserver:
             "warning" if retryable else "error",
             "agent.model.failed",
             message="Model call failed",
+            **span.log_fields,
             model_call_uid=call_uid,
             model_provider=self.provider,
             model_name=self.model,
             model_operation="response",
             model_attempt=attempt,
             model_duration_ms=model_duration_ms,
+            duration_ms=model_duration_ms,
             model_error_type=error_type,
             status_code=status_code,
             provider_request_id=_bounded(_first(data, "provider_request_id", "response_id")),
@@ -306,6 +324,7 @@ class TauTurnObserver:
             if approval_required
             else "not_required"
         )
+        span = TraceSpan()
         self._tools[call_uid] = (
             time.monotonic(),
             name,
@@ -315,13 +334,18 @@ class TauTurnObserver:
             side_effect_class,
             approval_required,
             approval_outcome,
+            span,
         )
+        if self._current_tool is None:
+            self._current_tool = call_uid
+            span.open()
         self.tool_calls += 1
         safe_log(
             self.logger,
             "info",
             "agent.tool.started",
             message="Tool call started",
+            **span.log_fields,
             tool_call_uid=call_uid,
             tool_name=name,
             tool_category=category,
@@ -343,6 +367,7 @@ class TauTurnObserver:
             side_effect_class,
             approval_required,
             approval_outcome,
+            span,
         ) = self._tools.pop(
             call_uid,
             (
@@ -354,6 +379,7 @@ class TauTurnObserver:
                 "unknown",
                 False,
                 "not_required",
+                TraceSpan(),
             ),
         )
         error_type = _bounded(_first(data, "errorType", "error_type"))
@@ -368,6 +394,7 @@ class TauTurnObserver:
             "error" if error_type else "info",
             "agent.tool.failed" if error_type else "agent.tool.completed",
             message="Tool call completed" if not error_type else "Tool call failed",
+            **span.log_fields,
             tool_call_uid=call_uid,
             tool_name=name,
             tool_category=category,
@@ -383,6 +410,9 @@ class TauTurnObserver:
             outcome=outcome,
             duration_ms=round((time.monotonic() - started) * 1000, 3),
         )
+        if self._current_tool == call_uid:
+            self._current_tool = None
+            span.close()
 
     def _start_handoff(self, data: Mapping[str, Any]) -> None:
         handoff_uid = _bounded(data.get("handoff_uid")) or str(uuid.uuid4())
@@ -396,6 +426,7 @@ class TauTurnObserver:
             if requested_reason in {"delegation", "specialist", "supervisor", "retry"}
             else "tau_subagent_event"
         )
+        span = TraceSpan()
         self._handoffs[handoff_uid] = (
             time.monotonic(),
             source,
@@ -403,6 +434,7 @@ class TauTurnObserver:
             parent_session,
             child_session,
             handoff_reason,
+            span,
         )
         self.handoffs += 1
         safe_log(
@@ -410,6 +442,7 @@ class TauTurnObserver:
             "info",
             "agent.handoff.started",
             message="Agent handoff started",
+            **span.log_fields,
             handoff_uid=handoff_uid,
             source_agent_uid=source,
             target_agent_uid=target,
@@ -433,6 +466,7 @@ class TauTurnObserver:
                         _parent_session,
                         _child_session,
                         _reason,
+                        _span,
                     ) in reversed(self._handoffs.items())
                     if candidate_source == source and candidate_target == target
                 ),
@@ -441,14 +475,15 @@ class TauTurnObserver:
         if handoff_uid is None or handoff_uid not in self._handoffs:
             self._start_handoff(data)
             handoff_uid = next(reversed(self._handoffs))
-        started, source, target, parent_session, child_session, handoff_reason = self._handoffs.pop(
-            handoff_uid
+        started, source, target, parent_session, child_session, handoff_reason, span = (
+            self._handoffs.pop(handoff_uid)
         )
         safe_log(
             self.logger,
             "warning" if failed else "info",
             "agent.handoff.completed" if not failed else "agent.handoff.failed",
             message="Agent handoff completed" if not failed else "Agent handoff failed",
+            **span.log_fields,
             handoff_uid=handoff_uid,
             source_agent_uid=source,
             target_agent_uid=target,
@@ -459,6 +494,15 @@ class TauTurnObserver:
             outcome="failed" if failed else "success",
             duration_ms=round((time.monotonic() - started) * 1000, 3),
         )
+
+    def close(self) -> None:
+        """End the span of a tool call that never finished, when the turn ends."""
+
+        if self._current_tool is not None:
+            entry = self._tools.get(self._current_tool)
+            self._current_tool = None
+            if entry is not None:
+                entry[-1].close()
 
     def terminal_fields(self) -> dict[str, object]:
         fields: dict[str, object] = {

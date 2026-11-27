@@ -362,8 +362,14 @@ person = baggage.get_baggage("mainsequence.advisor.person")  # None when the wor
 - It is public. The runtime passes it on with every platform and application call, so never put a
   secret in it, and know that an application that trusts this Agent's context trusts everyone who
   may give the Agent work.
+- The Agent's hops are spans of the caller's trace. The runtime records the request, run, turn,
+  and each model, tool and platform call as its own log lines, and a call a tool makes names the
+  tool call's span as its parent. A tool adds nothing for that, and a `traceparent` it sets on a
+  `platform_client()` call replaces the runtime's, so leave it unset. Model calls carry no
+  `traceparent` or `baggage`.
 
-The SDK Security and access guide's **Caller context** section has the full rules.
+The SDK Security and access guide's **Caller context** section has the full rules, and the runtime
+contract's **Distributed tracing** section lists the spans.
 
 An application that owns sessions for its own people can name each session's person on the
 platform, and the runtime then tells the application which session a tool call serves. If you are

@@ -10,6 +10,10 @@ The context of the request or Task the runtime serves is OpenTelemetry's current
 code reads it with ``opentelemetry.baggage``, and the runtime's calls to the platform and to
 applications carry it on. It is a claim, worth as much as the trust in the caller that delivered
 it, and it is never Main Sequence identity.
+
+The current span is the runtime's own: the span of the request, run, turn, tool call or call the
+work is in (ADR 0031). It is a non-recording span, because the runtime records its spans as the
+terminal log lines it writes, and the calls made inside it name it as their parent.
 """
 
 from __future__ import annotations
@@ -23,6 +27,7 @@ from opentelemetry import baggage, trace
 from opentelemetry import context as otel_context
 from opentelemetry.baggage.propagation import W3CBaggagePropagator
 from opentelemetry.context import Context
+from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
 from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapPropagator
 
 _baggage_propagator = W3CBaggagePropagator()
@@ -79,16 +84,62 @@ def request_context(headers: Iterable[tuple[bytes, bytes]]) -> Context:
     """The caller context one inbound request or Task dispatch carries, from its headers.
 
     Its baggage is exactly the request's ``baggage`` header: never the process's or another
-    request's, and none without the header. Its trace parent is the request's ``traceparent``,
-    unless instrumentation already records a span for the request.
+    request's, and none without the header. Its span is the current span, which is the request's
+    own: the request's ``traceparent`` is then only that span's recorded parent. With no current
+    span, as for a WebSocket, the ``traceparent`` is the trace parent.
     """
 
     carrier = _carrier(headers)
     context = baggage.clear(context=otel_context.get_current())
     context = _with_baggage_header(carrier.get("baggage"), context)
-    if not trace.get_current_span(context).is_recording():
+    if not trace.get_current_span(context).get_span_context().is_valid:
         context = _trace_propagator.extract(carrier, context=context)
     return context
+
+
+def trace_parent_context(headers: Iterable[tuple[bytes, bytes]]) -> Context:
+    """The current context, with the request's ``traceparent`` and ``tracestate`` as its span.
+
+    Instrumentation that already records a span for the request keeps it.
+    """
+
+    context = otel_context.get_current()
+    if trace.get_current_span(context).is_recording():
+        return context
+    return _trace_propagator.extract(_carrier(headers), context=context)
+
+
+@contextmanager
+def span_scope(trace_id: str, span_id: str, *, sampled: bool = True) -> Iterator[None]:
+    """Make span ``span_id`` of trace ``trace_id`` the current span until the block ends.
+
+    The span keeps the sampled flag and ``tracestate`` of the current span when that one is in the
+    same trace, and otherwise is sampled as ``sampled`` says. A span that instrumentation records
+    stays current, and ids that are not W3C trace and span ids change nothing.
+    """
+
+    current = trace.get_current_span()
+    try:
+        trace_value, span_value = int(trace_id, 16), int(span_id, 16)
+    except (TypeError, ValueError):
+        trace_value = span_value = 0
+    if current.is_recording() or not 0 < trace_value < 2**128 or not 0 < span_value < 2**64:
+        yield
+        return
+    enclosing = current.get_span_context()
+    if enclosing.is_valid and enclosing.trace_id == trace_value:
+        flags, state = enclosing.trace_flags, enclosing.trace_state
+    else:
+        flags = TraceFlags(TraceFlags.SAMPLED if sampled else TraceFlags.DEFAULT)
+        state = None
+    span = NonRecordingSpan(
+        SpanContext(trace_value, span_value, is_remote=False, trace_flags=flags, trace_state=state)
+    )
+    token = otel_context.attach(trace.set_span_in_context(span))
+    try:
+        yield
+    finally:
+        otel_context.detach(token)
 
 
 def outbound_headers(present: Iterable[str] = ()) -> dict[str, str]:

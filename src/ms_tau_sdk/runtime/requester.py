@@ -39,6 +39,7 @@ from ms_tau_sdk.errors import (
     BackendTimeoutError,
     TauSDKError,
 )
+from ms_tau_sdk.logging import TraceSpan
 from ms_tau_sdk.protocols.caller_context import outbound_headers
 from ms_tau_sdk.settings import TauSDKSettings
 
@@ -346,6 +347,10 @@ class TurnRequesterBinding:
         session_headers = (
             {AGENT_SESSION_HEADER: self.session_uid} if self.session_uid is not None else {}
         )
+        # The call is a span, the parent it names to the application (ADR 0031).
+        span = TraceSpan()
+        with span:
+            caller_context = outbound_headers(own_headers)
         request = httpx.Request(
             method,
             url,
@@ -355,7 +360,7 @@ class TurnRequesterBinding:
             data=options.get("data"),
             files=options.get("files"),
             headers={
-                **outbound_headers(own_headers),
+                **caller_context,
                 **own_headers,
                 **session_headers,
                 "Authorization": f"Bearer {token}",
@@ -380,6 +385,7 @@ class TurnRequesterBinding:
             logger.warning(
                 "dependency.call.failed",
                 message="Application call failed",
+                **span.log_fields,
                 target_system="resource_release",
                 resource_release_uid=release_uid,
                 requester_bound=delegate,
@@ -392,6 +398,7 @@ class TurnRequesterBinding:
         logger.info(
             "dependency.call.completed",
             message="Application call completed",
+            **span.log_fields,
             target_system="resource_release",
             resource_release_uid=release_uid,
             requester_bound=delegate,

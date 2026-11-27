@@ -17,8 +17,10 @@ import httpx
 import pytest
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from opentelemetry import baggage
+from opentelemetry import baggage, trace
 from opentelemetry import context as otel_context
+from opentelemetry.context import Context
+from opentelemetry.trace import NonRecordingSpan, SpanContext
 from pydantic import SecretStr, ValidationError
 from structlog.testing import capture_logs
 from tau_agent import UserMessage
@@ -63,6 +65,11 @@ PROVIDER_SECRET = "sk-provider-secret-never-logged"
 BOOTSTRAP_SECRET = "sk-bootstrap-secret-never-used"
 SESSION_PASS = "session-pass-never-logged"
 RELAY_BASE_URL = f"{RPC_URL}/model-relay"
+
+
+def _in_a_span() -> Context:
+    span = SpanContext(0x4BF92F3577B34DA6A3CE929D0E0E4736, 0x00F067AA0BA902B7, is_remote=False)
+    return trace.set_span_in_context(NonRecordingSpan(span), Context())
 
 
 def _provider_control(provider_name: str = "openai", model: str = "gpt-5.4") -> ProviderControl:
@@ -478,7 +485,10 @@ async def test_a_hosted_release_receives_tdag_djangos_body_and_only_its_token(
         runtime_identity_token_file, provider_credential_hydrate_release_uid=RELEASE_UID
     )
     # Caller context of the work never travels to the release.
-    attached = otel_context.attach(baggage.set_baggage("mainsequence.portal.user", "person-1"))
+    # Inside a span too, as a turn's work is (ADR 0031).
+    attached = otel_context.attach(
+        baggage.set_baggage("mainsequence.portal.user", "person-1", _in_a_span())
+    )
     try:
         async with _client(network, settings) as client:
             evidence = await _hosted_hydrate(client)
@@ -968,7 +978,10 @@ async def test_a_local_address_receives_the_local_body_with_the_session_and_no_c
     network.hydrate = [_answer(custom_id="work")]
     auth = Mock()
     auth.headers = AsyncMock(side_effect=AssertionError("no Main Sequence credential is used"))
-    attached = otel_context.attach(baggage.set_baggage("mainsequence.portal.user", "person-1"))
+    # Inside a span too, as a turn's work is (ADR 0031).
+    attached = otel_context.attach(
+        baggage.set_baggage("mainsequence.portal.user", "person-1", _in_a_span())
+    )
     try:
         async with _client(network, settings, auth=auth) as client:
             evidence = await client.hydrate_local_provider_credential(
