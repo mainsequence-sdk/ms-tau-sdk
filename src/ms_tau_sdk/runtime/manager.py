@@ -33,7 +33,11 @@ from tau_coding import CodingSession, CodingSessionConfig
 from tau_coding.tools import create_coding_tools
 
 from ms_tau_sdk.backend.assertions import CallerAssertion
-from ms_tau_sdk.backend.client import LeaseProof, MainSequenceClient
+from ms_tau_sdk.backend.client import (
+    RETRYABLE_BACKEND_STATUS_CODES,
+    LeaseProof,
+    MainSequenceClient,
+)
 from ms_tau_sdk.backend.mcp import MainSequenceMCPClient
 from ms_tau_sdk.backend.models import (
     MODEL_RELAY_VERSION,
@@ -49,6 +53,7 @@ from ms_tau_sdk.backend.models import (
 )
 from ms_tau_sdk.errors import (
     BackendConflictError,
+    BackendError,
     ConfigurationError,
     ExtensionSourceError,
     LeaseLostError,
@@ -2341,17 +2346,42 @@ class SessionRuntimeManager:
         self,
         runtime: ActiveSessionRuntime,
     ) -> None:
+        renewed_at = time.monotonic()
         try:
             while not runtime.evicting and not self._closed:
                 await asyncio.sleep(self.settings.runtime_lease_renew_interval_seconds)
-                lease = await self.backend.renew_runtime_lease(
-                    runtime.session_uid,
-                    RuntimeLeaseRenewRequest(
-                        lease_token=runtime.storage.lease_token,
-                        holder_id=self.holder_id,
-                        ttl_seconds=self.settings.runtime_lease_ttl_seconds,
-                    ),
-                )
+                attempted_at = time.monotonic()
+                try:
+                    lease = await self.backend.renew_runtime_lease(
+                        runtime.session_uid,
+                        RuntimeLeaseRenewRequest(
+                            lease_token=runtime.storage.lease_token,
+                            holder_id=self.holder_id,
+                            ttl_seconds=self.settings.runtime_lease_ttl_seconds,
+                        ),
+                    )
+                except BackendError as error:
+                    # A platform that cannot answer for a moment still holds the lease for this
+                    # runtime until it expires; only a refusal or that expiry loses it.
+                    unavailable = not isinstance(error, BackendConflictError) and (
+                        error.backend_status is None
+                        or error.backend_status in RETRYABLE_BACKEND_STATUS_CODES
+                    )
+                    if not unavailable or (
+                        attempted_at - renewed_at >= self.settings.runtime_lease_ttl_seconds
+                    ):
+                        raise
+                    logger.warning(
+                        "runtime.lease.renewal_failed",
+                        message=(
+                            "Could not renew backend runtime lease; keeping it until it expires"
+                        ),
+                        session_uid=runtime.session_uid,
+                        error_type=type(error).__name__,
+                        status_code=error.backend_status,
+                    )
+                    continue
+                renewed_at = attempted_at
                 runtime.storage.replace_lease_token(lease.lease_token)
                 if lease.cancel_requested:
                     runtime.cancellation_requested = True

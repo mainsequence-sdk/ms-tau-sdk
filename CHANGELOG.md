@@ -23,6 +23,16 @@
   Tested with local turns on real providers through the development platform, `openai-codex`
   then `meta`, and with stand-in providers that record the model they are asked for. Not tried in
   a hosted Agent, which needs this release.
+- **A platform that cannot answer for a moment no longer costs a session its lease.** A lease
+  renewal that failed with a 5xx, a timeout or no connection marked the lease lost, and cancelled
+  any running turn, although the platform still held the lease for this runtime. The next load
+  was then refused with 409 until that lease expired: on 2026-11-27 a platform restart turned
+  three failed renewals into a minute of refused turns. Now the runtime logs
+  `runtime.lease.renewal_failed`, keeps the lease and renews it again at the next interval, until
+  it would have expired. A refused renewal, such as the 409 after a model change, still loses it
+  at once. See [troubleshooting](docs/reference/troubleshooting.md#a-durable-turn-conflicts-or-loses-its-lease).
+
+  Tested with stand-ins for the platform's renewal answers.
 
 ## 3.0.5 — 2026-11-27
 

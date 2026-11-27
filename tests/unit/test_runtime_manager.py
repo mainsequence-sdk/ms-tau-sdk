@@ -1,4 +1,5 @@
 import asyncio
+from contextlib import nullcontext
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
@@ -390,6 +391,102 @@ async def test_a_runtime_that_lost_its_lease_is_closed_before_its_replacement_lo
     assert second.coding_session is replacement
     assert first.lease_renew_task.done()
     assert backend.bootstrap_tau_runtime.await_count == 2
+    await manager.aclose()
+
+
+def _renewing(tmp_path, renewals, *, clock=None):
+    """A manager whose lease renewals answer ``renewals`` in turn, without waiting between them."""
+    manager, backend, _providers = _manager_dependencies(tmp_path, [])
+    manager.settings = manager.settings.model_copy(
+        update={"runtime_lease_renew_interval_seconds": 0, "runtime_lease_ttl_seconds": 90}
+    )
+    runtime = SimpleNamespace(
+        session_uid="session-1",
+        evicting=False,
+        lease_lost=False,
+        cancellation_requested=False,
+        cancel=Mock(),
+        storage=SimpleNamespace(
+            lease_token="lease-1", replace_lease_token=Mock(), invalidate_lease=Mock()
+        ),
+    )
+
+    def renew(*_args):
+        answer = renewals.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        runtime.evicting = not renewals
+        return SimpleNamespace(
+            lease_token=answer,
+            cancel_requested=False,
+            checkpoint_version=1,
+            lease_expires_at=None,
+        )
+
+    backend.renew_runtime_lease.side_effect = renew
+    clock_patch = (
+        patch("ms_tau_sdk.runtime.manager.time", SimpleNamespace(monotonic=Mock(side_effect=clock)))
+        if clock is not None
+        else nullcontext()
+    )
+    return manager, backend, runtime, clock_patch
+
+
+@pytest.mark.asyncio
+async def test_a_lease_renewal_the_platform_cannot_answer_keeps_the_lease(tmp_path):
+    # Three 502s while the platform restarted lost the lease it still held, and every turn was
+    # refused until that lease expired.
+    manager, backend, runtime, clock = _renewing(
+        tmp_path,
+        [BackendError("restarting", status_code=502), BackendError("unreachable"), "lease-2"],
+    )
+
+    with clock, capture_logs() as logs:
+        await asyncio.wait_for(manager._renew_lease_with_context(runtime), timeout=5)
+
+    assert backend.renew_runtime_lease.await_count == 3
+    assert runtime.lease_lost is False
+    runtime.cancel.assert_not_called()
+    runtime.storage.replace_lease_token.assert_called_once_with("lease-2")
+    warnings = [log for log in logs if log["log_level"] == "warning"]
+    assert [(log["event"], log["status_code"]) for log in warnings] == [
+        ("runtime.lease.renewal_failed", 502),
+        ("runtime.lease.renewal_failed", None),
+    ]
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_refused_lease_renewal_loses_the_lease_at_once(tmp_path):
+    manager, backend, runtime, clock = _renewing(
+        tmp_path, [BackendConflictError("lease missing", status_code=409), "lease-2"]
+    )
+
+    with clock:
+        await asyncio.wait_for(manager._renew_lease_with_context(runtime), timeout=5)
+
+    assert backend.renew_runtime_lease.await_count == 1
+    assert runtime.lease_lost is True
+    runtime.storage.invalidate_lease.assert_called_once_with()
+    runtime.cancel.assert_called_once_with()
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_a_lease_the_platform_cannot_renew_is_lost_once_it_has_expired(tmp_path):
+    # The last successful renewal is at 0; the lease lasts 90 seconds.
+    manager, backend, runtime, clock = _renewing(
+        tmp_path,
+        [BackendError("restarting", status_code=503), BackendError("restarting", status_code=503)],
+        clock=[0.0, 45.0, 90.0],
+    )
+
+    with clock:
+        await asyncio.wait_for(manager._renew_lease_with_context(runtime), timeout=5)
+
+    assert backend.renew_runtime_lease.await_count == 2
+    assert runtime.lease_lost is True
+    runtime.cancel.assert_called_once_with()
     await manager.aclose()
 
 

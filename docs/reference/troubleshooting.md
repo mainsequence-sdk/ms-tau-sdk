@@ -444,3 +444,9 @@ readiness.
 The SDK fails closed on sequence, lease, or provider-evidence conflicts. Use the session and turn
 identifiers from structured logs; do not retry with stale local state or modify backend records from
 the project process.
+
+A renewal the platform cannot answer (a 5xx, a timeout or no connection) does not lose the lease.
+The runtime logs `runtime.lease.renewal_failed`, keeps the lease and renews it again at the next
+interval, until the lease would have expired. A refused renewal loses the lease at once. That
+includes the 409 that follows a model change, which deletes the lease so the session reloads on its
+new model. The runtime that lost the lease is closed before its replacement loads.
