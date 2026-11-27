@@ -155,15 +155,16 @@ async def wait_until_ready[T](
 ) -> T:
     """Call ``obtain`` until it stops raising ``ApplicationWakingError``.
 
-    The readiness limit starts with the first call and is fixed by the first waking answer.
-    ``still_wanted`` runs before every call and raises to end the wait. Log events are
+    The readiness limit starts with the first call and is fixed by the first answer that asks to
+    wait. ``still_wanted`` runs before every call and raises to end the wait. Log events are
     ``<event>.waiting`` and ``<event>.ready``. An expired wait raises
-    ``ApplicationReadinessTimeoutError``, which keeps no cause.
+    ``ApplicationReadinessTimeoutError`` with the last state answered, and keeps no cause.
     """
 
     started = asyncio.get_running_loop().time()
     deadline = asyncio.timeout(None)
     limit: float | None = None
+    state: str | None = None
     try:
         async with deadline:
             while True:
@@ -172,13 +173,14 @@ async def wait_until_ready[T](
                 try:
                     access = await obtain()
                 except ApplicationWakingError as error:
+                    state = error.runtime_access_state
                     if limit is None:
                         limit = ready_timeout_seconds(settings, error.expected_cold_start_seconds)
                         deadline.reschedule(started + limit)
                     logger.info(
                         f"{event}.waiting",
                         resource_release_uid=release_uid,
-                        runtime_access_state="waking",
+                        runtime_access_state=state,
                         retry_after_seconds=error.retry_after_seconds,
                         ready_timeout_seconds=limit,
                     )
@@ -196,7 +198,7 @@ async def wait_until_ready[T](
     except TimeoutError:
         if not deadline.expired():
             raise
-    raise ApplicationReadinessTimeoutError(timeout_seconds=limit or 0.0)
+    raise ApplicationReadinessTimeoutError(timeout_seconds=limit or 0.0, runtime_access_state=state)
 
 
 def deadline_headers(deadline: float | None) -> dict[str, str]:

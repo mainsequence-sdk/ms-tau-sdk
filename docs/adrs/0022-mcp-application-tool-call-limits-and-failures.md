@@ -247,6 +247,37 @@ declared limit only sets how long the runtime waits; it never extends the platfo
 call made inside a turn still ends with the turn. Failure handling is unchanged, and an expired
 call is never replayed.
 
+### Amendment: the retry hint decides the wait (#152)
+
+The readiness wait asked again only while `runtime_access.state` was `waking`. For a few seconds
+after a deployment that creates a new revision, while it records which revision it would start,
+the platform answers `unavailable` with the notice code `runtime_evidence_pending` and
+`retry_after_ms` (Main-Sequence-Server-Side/tdag-django#1309). Tau failed that answer at once
+with `access_unavailable`, although asking again after the hint would have succeeded.
+
+The platform's rule for a client, which mainsequence-sdk's ADR 0041 adopted in its amendment of
+2026-11-27: an answer that cannot take requests and carries `retry_after_ms` is asked again after
+that delay, whatever its state; an answer without it is final. Neither the state nor the notice
+code decides.
+
+Tau follows it in `release_access_from_answer`, so the application access of a turn, its token
+renewal, the after-timeout question and the provider credential hydrate release
+([ADR 0027](./0027-custom-provider-credential-hydrate-endpoints.md)) all change:
+
+- An answer without access that carries a valid `retry_after_ms` is waited through, at least
+  100 ms apart, under the same readiness limit, turn deadline and cancellation.
+- A `waking` answer without valid guidance is still asked again after two seconds. Any other
+  answer without it fails at once, as before.
+- `ApplicationWakingError` carries the state the platform answered. The `<event>.waiting` log and
+  the `not_ready`, `readiness_timeout` and `cold_start_timeout` details name it, the timeout the
+  state of the last answer, instead of a fixed `waking`. For a state other than `waking` the
+  model reads "not ready" where it read "starting".
+
+**Not changed:** a failed platform ask, a transport error, is not asked again, which
+mainsequence-sdk 9.0.46 now does. `platform_client().call_release` does not wait for a release
+that is not ready, whatever its state: it raises `ApplicationWakingError`, a `BackendError`, at
+once.
+
 ## Rejected alternatives
 
 - **Time limits in the Agent's settings or workflow file.** The tool's author knows how long a tool

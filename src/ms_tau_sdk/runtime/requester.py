@@ -698,25 +698,26 @@ async def _turn_application_access(
     )
 
 
-async def _turn_application_starting(release_uid: str) -> bool:
-    """SDK-private: whether the platform now reports the application as starting.
+async def _turn_application_waiting(release_uid: str) -> ApplicationWakingError | None:
+    """SDK-private: the platform's answer when it now asks to be asked again, else ``None``.
 
     Asked once after a call timed out, to tell a request held by a start from a slow application.
-    Asking also wakes the application. Any failure to learn it reads as "not starting".
+    Asking also wakes the application. Any failure to learn it reads as ``None``.
     """
 
     binding = _TURN_BINDING.get()
     if binding is None or not binding.active:
-        return False
+        return None
     uid = _canonical_uid(release_uid)
     release_warmth.forget(uid)
     try:
         await binding._release_access_for(uid, refresh=True, delegate=binding.serving)
-    except ApplicationWakingError:
-        return True
+    except ApplicationWakingError as error:
+        # Without its frames, which hold the lease proof.
+        return error.with_traceback(None)
     except Exception:
-        return False
-    return False
+        return None
+    return None
 
 
 def _canonical_uid(value: str) -> str:

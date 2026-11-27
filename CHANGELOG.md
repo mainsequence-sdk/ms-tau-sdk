@@ -1,5 +1,29 @@
 # Changelog
 
+## 3.0.7 — 2026-11-27
+
+- **An application call right after a redeploy waits instead of failing.** For a few seconds
+  after a deployment that creates a new revision, the platform answers an access request with
+  `unavailable` and `retry_after_ms`, while it records which revision it would start. Tau waited
+  only while the answer was `waking`, so a declared application's tool call, or the provider
+  credential hydrate release, failed at once with `failure: access_unavailable`, although asking
+  again two seconds later would have succeeded. Now any answer without access that carries
+  `retry_after_ms` is asked again after that delay, whatever its state, within
+  `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS`, the turn deadline and cancellation. `waking`
+  without a hint is still asked again after two seconds; any other answer without one still fails
+  at once. This is the platform's rule, which mainsequence-sdk 9.0.46 also follows
+  ([#152](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/152)).
+
+  The `runtime.application_access.waiting` log and the `readiness_timeout`, `not_ready` and
+  `cold_start_timeout` details name the state the platform answered instead of a fixed `waking`.
+  For a state other than `waking`, the model reads that the application was not ready rather
+  than starting.
+
+  **Not changed:** `platform_client().call_release` still does not wait for an application that
+  is not ready, `waking` included, and a platform ask that fails is not made again.
+
+  Tested with stand-ins for the platform's answers.
+
 ## 3.0.6 — 2026-11-27
 
 - **A session whose model changed runs the new model.** Tau resumes a session on the model its

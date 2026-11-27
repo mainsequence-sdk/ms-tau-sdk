@@ -165,10 +165,12 @@ the application's tool, not in the Agent. A tool that declares nothing gets
 `harness_agent.spec.env_vars`, the process environment, or
 `TauSDKSettings(mcp_tool_timeout_seconds=...)`. No call outlives its turn.
 
-Before MCP opens, an application's access may be `waking`. Tau waits according to the platform's
-retry guidance for up to `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` (default `120`) or the remaining
-turn time. This startup budget is separate from the tool's execution limit; an expired readiness
-wait reports `readiness_timeout`. Cancellation, ended delegation and terminal refusals stop the wait.
+Before MCP opens, the platform may give no access yet and ask to be asked again: an answer with
+`retry_after_ms`, whatever its state, or `waking`. Tau waits as it asks, for up to
+`TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` (unset: twice the start time the platform expects, at
+least 30 seconds, or `300`) or the remaining turn time. This startup budget is separate from the
+tool's execution limit; an expired readiness wait reports `readiness_timeout`. Cancellation, ended
+delegation and an answer without a retry hint stop the wait.
 
 ## Skills that applications publish
 

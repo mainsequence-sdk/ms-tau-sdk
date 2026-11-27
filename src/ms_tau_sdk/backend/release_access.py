@@ -22,36 +22,44 @@ class ReleaseAccess:
     token: AccessToken
 
 
+def _retry_after_seconds(retry_ms: object) -> float | None:
+    """The wait a valid ``retry_after_ms`` asks for, at least 100 ms; ``None`` without one."""
+
+    if not isinstance(retry_ms, int | float) or isinstance(retry_ms, bool):
+        return None
+    try:
+        seconds = float(retry_ms) / 1000
+    except OverflowError:
+        return None
+    return max(seconds, 0.1) if math.isfinite(seconds) and seconds >= 0 else None
+
+
 def release_access_from_answer(answer: ReleaseRuntimeAccess) -> ReleaseAccess:
     """Read token access from the platform's answer to ``resolve-runtime-access``.
 
-    A release that is still starting raises ``ApplicationWakingError`` with the wait the platform
-    asks for. An answer without usable token access raises ``BackendError`` that never holds the
-    token.
+    An answer without access that carries ``retry_after_ms`` raises ``ApplicationWakingError``
+    with that wait, whatever its state; so does ``waking`` without one, after two seconds. Any
+    other answer without usable token access raises ``BackendError`` that never holds the token.
     """
 
     grant = answer.access
     if grant is None:
-        state = answer.runtime_access.get("state")
-        if state == "waking":
-            retry_ms = answer.runtime_access.get("retry_after_ms")
+        raw_state = answer.runtime_access.get("state")
+        state = raw_state if isinstance(raw_state, str) else None
+        delay = _retry_after_seconds(answer.runtime_access.get("retry_after_ms"))
+        if delay is None and state == "waking":
             delay = 2.0
-            if isinstance(retry_ms, int | float) and not isinstance(retry_ms, bool):
-                try:
-                    seconds = float(retry_ms) / 1000
-                except OverflowError:
-                    seconds = float("inf")
-                if math.isfinite(seconds) and seconds >= 0:
-                    delay = max(seconds, 0.1)
+        if delay is not None:
             release_warmth.forget(answer.resource_release_uid)
             raise ApplicationWakingError(
                 retry_after_seconds=delay,
                 expected_cold_start_seconds=expected_cold_start_seconds(answer.scaling),
+                runtime_access_state=state,
             )
         raise BackendError(
             f"Release {answer.resource_release_uid} is not ready to be called"
-            + (f" (runtime access: {state})" if isinstance(state, str) else ""),
-            detail={"runtime_access_state": state if isinstance(state, str) else None},
+            + (f" (runtime access: {state})" if state is not None else ""),
+            detail={"runtime_access_state": state},
         )
     token = grant.token.get_secret_value() if grant.token is not None else ""
     if grant.mode != "token" or not token or not grant.rpc_url:

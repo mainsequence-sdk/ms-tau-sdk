@@ -123,7 +123,34 @@ async def test_a_release_that_stays_waking_ends_at_the_readiness_limit_without_a
 
     assert 0.18 <= time.monotonic() - started < 1
     assert raised.value.timeout_seconds == 0.2
+    assert raised.value.runtime_access_state == "waking"
     assert raised.value.__cause__ is None
+
+
+@pytest.mark.asyncio
+async def test_the_wait_logs_and_ends_with_the_state_the_platform_answered():
+    states = iter(["waking", "unavailable"])
+
+    async def obtain():
+        raise ApplicationWakingError(
+            retry_after_seconds=0.05, runtime_access_state=next(states, "unavailable")
+        )
+
+    with capture_logs() as logs, pytest.raises(ApplicationReadinessTimeoutError) as raised:
+        await wait_until_ready(
+            obtain,
+            settings=_settings(mcp_application_ready_timeout_seconds=0.2),
+            release_uid=UID,
+            event="runtime.test",
+        )
+
+    waiting = [log for log in logs if log["event"] == "runtime.test.waiting"]
+    assert [log["runtime_access_state"] for log in waiting[:3]] == [
+        "waking",
+        "unavailable",
+        "unavailable",
+    ]
+    assert raised.value.runtime_access_state == "unavailable"
 
 
 @pytest.mark.asyncio

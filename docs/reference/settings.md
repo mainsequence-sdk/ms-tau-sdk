@@ -202,7 +202,8 @@ its value.
   the developer's), and posts to `{rpc_url}/api/v1/model-provider-credentials/hydrate/` with that
   token alone. The runtime's workload, or the developer, needs `resource-releases.invoke` on the
   release. It keeps the token in memory until it nears expiry, gets a new one once on `401`, and
-  waits for a waking release up to `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS`.
+  waits up to `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` while the platform asks to be asked
+  again: an answer with `retry_after_ms`, whatever its state, or `waking`.
 - **A local address.** The runtime posts to `{origin}/api/v1/model-provider-credentials/hydrate/`
   with no `Authorization` header and no Main Sequence credential, caller assertion, lease token,
   caller context or `X-MainSequence-*` header. Nothing leaves the machine.
@@ -275,7 +276,7 @@ independent of `TAU_LOCAL_STATE_ROOT`, which only holds the local-mode database 
 | `MAINSEQUENCE_TAU_BACKEND_MAX_RESPONSE_BYTES` | `10485760` |
 | `MAINSEQUENCE_TAU_MCP_READ_CONCURRENCY` | `8` |
 | `TAU_MCP_TOOL_TIMEOUT_SECONDS` | `60`; how long a declared application's tool may run when the tool declares no limit of its own; see [Application tool time limits](../guides/application-tool-time-limits.md) |
-| `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` | Unset: twice the start time the platform expects, at least 30 seconds, or `300` when it states none. Set: that value. A finite positive limit for obtaining application access while its runtime is `waking`, separately from tool execution; cancellation and the remaining turn deadline still apply |
+| `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` | Unset: twice the start time the platform expects, at least 30 seconds, or `300` when it states none. Set: that value. A finite positive limit for obtaining application access while the platform asks to be asked again (an answer with `retry_after_ms`, whatever its state, or `waking`), separately from tool execution; cancellation and the remaining turn deadline still apply |
 | `MAINSEQUENCE_TAU_SESSION_ENTRY_BATCH_MAX_ENTRIES` | `100` |
 | `MAINSEQUENCE_TAU_SESSION_ENTRY_BATCH_MAX_BYTES` | `8388608` |
 | `MAINSEQUENCE_TAU_SESSION_LEASE_TTL_SECONDS` | `90` |

@@ -63,7 +63,7 @@ from ms_tau_sdk.runtime.requester import (
     AGENT_SESSION_HEADER,
     RequesterBindingError,
     _turn_application_access,
-    _turn_application_starting,
+    _turn_application_waiting,
     _TurnApplicationAccess,
 )
 from ms_tau_sdk.settings import TauSDKSettings
@@ -169,18 +169,28 @@ def _failure(
         return (
             f"The {name} application did not become ready within "
             f"{error.timeout_seconds:g} seconds. "
-            "It is still starting; try again shortly.",
+            + (
+                "It is still starting; try again shortly."
+                if error.runtime_access_state == "waking"
+                else "Try again shortly."
+            ),
             {
                 "failure": "readiness_timeout",
                 "phase": "readiness",
-                "runtime_access_state": "waking",
+                "runtime_access_state": error.runtime_access_state,
                 "timeout_seconds": error.timeout_seconds,
             },
         )
     if isinstance(error, ApplicationWakingError):
+        starting = error.runtime_access_state == "waking"
         return (
-            f"The {name} application is still starting; try again shortly.",
-            {"failure": "not_ready", "phase": "readiness", "runtime_access_state": "waking"},
+            f"The {name} application is {'still starting' if starting else 'not ready yet'}; "
+            "try again shortly.",
+            {
+                "failure": "not_ready",
+                "phase": "readiness",
+                "runtime_access_state": error.runtime_access_state,
+            },
         )
     if isinstance(error, BackendError):
         if isinstance(error, BackendTimeoutError) or error.backend_status in {408, 504}:
@@ -347,7 +357,7 @@ def _application_tools(
         *,
         mcp_tool: str | None = None,
         call_timeout_seconds: float | None = None,
-        held_by_start: bool = False,
+        held_by_start: ApplicationWakingError | None = None,
     ) -> AgentToolResult:
         # A failure after the call was sent, which has a time limit by then, is the tool's;
         # a failure while the session opens is the application's.
@@ -359,15 +369,17 @@ def _application_tools(
                 call_timeout_seconds if call_timeout_seconds is not None else open_timeout_seconds
             ),
         )
-        if held_by_start:
+        if held_by_start is not None:
+            state = held_by_start.runtime_access_state
+            was = "was starting" if state == "waking" else "was not ready"
             text = (
-                f"The {name} application was starting and the tool {mcp_tool} did not answer "
+                f"The {name} application {was} and the tool {mcp_tool} did not answer "
                 f"within {call_timeout_seconds:g} seconds. The call may or may not have run."
             )
             failure = {
                 "failure": "cold_start_timeout",
                 "phase": "request",
-                "runtime_access_state": "waking",
+                "runtime_access_state": state,
                 "timeout_seconds": call_timeout_seconds,
             }
         if mcp_tool is not None:
@@ -588,10 +600,10 @@ def _application_tools(
                 await client.aclose()
         except Exception as error:
             held_by_start = (
-                call_timeout_seconds is not None
-                and _timed_out(error)
                 # Asked once, after the fact: a request held by a start is not the tool's fault.
-                and await _turn_application_starting(application.resource_release_uid)
+                await _turn_application_waiting(application.resource_release_uid)
+                if call_timeout_seconds is not None and _timed_out(error)
+                else None
             )
             return failed(
                 "call_tool",
