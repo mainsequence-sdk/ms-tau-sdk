@@ -29,7 +29,7 @@ from tau_ai._provider_events import (
     ProviderRetryEvent,
 )
 
-from ms_tau_sdk.logging import safe_log
+from ms_tau_sdk.logging import TraceSpan, safe_log
 
 AFFECTED_TAU_AI_VERSION = "0.4.2"
 UPSTREAM_REPORT_URL = "https://github.com/huggingface/tau/discussions/745"
@@ -140,6 +140,8 @@ def install_openai_compatible_provider_error_patch() -> None:
                 "error",
                 "dependency.call.failed",
                 message="Tau provider HTTP request failed",
+                # Its own span, so it is never read as the terminal line of the turn it is in.
+                **TraceSpan().log_fields,
                 dependency_name="tau-ai",
                 dependency_version=installed_version,
                 provider_error_type=error_type,

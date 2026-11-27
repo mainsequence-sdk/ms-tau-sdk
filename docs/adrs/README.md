@@ -42,4 +42,4 @@ These records are the normative decisions for Main Sequence TAU SDK:
 - [ADR 0030: Hosted model calls go through a relay](./0030-hosted-model-calls-go-through-a-relay.md)
   (Accepted; implemented in the SDK for 3.0.0, platform relay not yet deployed)
 - [ADR 0031: The Agent's hops in a platform trace](./0031-the-agents-hops-in-a-platform-trace.md)
-  (Accepted; implemented in the SDK for 3.0.4)
+  (Accepted; implemented in the SDK for 3.0.4, amended for 3.0.5)

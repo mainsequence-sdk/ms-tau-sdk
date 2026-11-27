@@ -1223,6 +1223,12 @@ async def test_inside_a_trace_each_call_for_the_work_is_its_own_span(tmp_path):
         assert line["parent_span_id"] == work_span
         assert request.headers["traceparent"] == f"00-{trace_id}-{line['span_id']}-01"
     assert len({line["span_id"] for line in calls}) == 3
+    # Each line names what the span called: the platform, or the release by its uid.
+    assert [(line["dependency_type"], line["dependency_name"]) for line in calls] == [
+        ("api", "mainsequence_backend"),
+        ("api", "mainsequence_backend"),
+        ("release", RELEASE_UID),
+    ]
 
 
 async def test_outside_a_turn_calls_go_through_the_runtime_without_a_delegation(

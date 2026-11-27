@@ -22,6 +22,7 @@ from opentelemetry import context as otel_context
 from opentelemetry.context import Context
 from opentelemetry.trace import NonRecordingSpan, SpanContext
 from pydantic import SecretStr, ValidationError
+from structlog.contextvars import bound_contextvars
 from structlog.testing import capture_logs
 from tau_agent import UserMessage
 from tau_ai import OpenAICodexProvider, OpenAICompatibleProvider
@@ -653,7 +654,10 @@ async def test_a_409_surfaces_its_code_and_truncated_detail(runtime_identity_tok
     settings = _hosted_settings(
         runtime_identity_token_file, provider_credential_hydrate_release_uid=RELEASE_UID
     )
-    with capture_logs() as logs:
+    with (
+        bound_contextvars(trace_id="4bf92f3577b34da6a3ce929d0e0e4736", span_id="b7ad6b7169203331"),
+        capture_logs() as logs,
+    ):
         async with _client(network, settings) as client:
             with pytest.raises(BackendConflictError) as raised:
                 await _hosted_hydrate(client)
@@ -667,6 +671,10 @@ async def test_a_409_surfaces_its_code_and_truncated_detail(runtime_identity_tok
     [rejected] = [line for line in logs if line.get("status_code") == 409]
     assert rejected["backend_error_code"] == "model_provider_credential_unavailable"
     assert rejected["target_system"] == "provider_credential_hydrate_release"
+    # The call is its own span of the work, and names the release it called (ADR 0031).
+    assert (rejected["dependency_type"], rejected["dependency_name"]) == ("release", RELEASE_UID)
+    assert rejected["parent_span_id"] == "b7ad6b7169203331"
+    assert rejected["span_id"] != "b7ad6b7169203331"
 
 
 def _bad_credential_answer() -> dict[str, Any]:

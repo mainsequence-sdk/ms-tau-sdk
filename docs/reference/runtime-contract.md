@@ -227,21 +227,42 @@ from the runtime logs by its trace id.
 
 | Span | Terminal line | Parent |
 | --- | --- | --- |
-| Request | `http.request.completed`, `.failed` or `.cancelled` | The request's `traceparent`; none when it has none |
+| Request | `http.request.completed`, `.failed` or `.cancelled` | The launcher's span for the request when the platform runs the Agent; otherwise the request's `traceparent`, or none |
 | Run (`agent_run_uid`) | `agent.run.completed`, `.failed` or `.cancelled` | The request's span |
 | Turn (`turn_uid`) | `agent.turn.completed`, `.failed` or `.cancelled` | The run |
 | Model call, one span per attempt (`model_call_uid`) | `agent.model.completed` or `.failed` | The turn |
 | Tool call (`tool_call_uid`) | `agent.tool.completed` or `.failed` | The turn |
 | Handoff (`handoff_uid`) | `agent.handoff.completed` or `.failed` | The turn |
-| Platform or application call, one span per attempt | `dependency.call.completed` or `.failed` | The span it is made in |
+| Platform, application or hydrate endpoint call, one span per attempt | `dependency.call.completed` or `.failed` | The span it is made in |
 
-- **A request without a `traceparent`** starts a trace. Its `trace_id` is sent on with the sampled
+- **Under the platform's launcher.** A hosted Agent is served by the platform's launcher, which
+  writes its own `http.request.*` line for each request and tells the application, in-process,
+  the span it recorded. The runtime's request span is then that span's child, in its trace, and
+  keeps its own `span_id` and line. A launcher span in another trace than the request's
+  `traceparent`, or ids that are not W3C ids, are ignored. Request headers other than
+  `traceparent` never name a parent. Under any other ASGI server nothing changes.
+- **A request without a `traceparent`** starts a trace, unless the launcher already started one. Its `trace_id` is sent on with the sampled
   flag `01`, and its line says `trace_sampled: true`. A caller's sampled flag, and its
   `tracestate`, are sent on as they arrived.
 - **Calls name the span they are made in.** A platform or application call names its own span. A
   call a tool makes through the Main Sequence MCP tools, A2A sends included, names the tool call's
-  span. Model providers, the model relay, provider credential hydration and lease renewals are
-  sent no `traceparent` and no `baggage`, so a model call's span is recorded only by its own line.
+  span. Model providers, the model relay, a custom provider credential hydrate endpoint
+  ([ADR 0027](../adrs/0027-custom-provider-credential-hydrate-endpoints.md)) and lease renewals
+  are sent no `traceparent` and no `baggage`, so their spans are recorded only by their own lines.
+  Hydration by the platform itself is a platform call like any other.
+- **What a call called.** Each `dependency.call.*` line names its dependency with
+  `dependency_type` and `dependency_name`, beside `dependency_operation` (the method and the path,
+  with ids replaced by `{id}`), `target_system`, `status_code`, `duration_ms` and `outcome`:
+
+  | Call | `dependency_type` | `dependency_name` |
+  | --- | --- | --- |
+  | The platform, provider credential hydration by the platform included | `api` | `mainsequence_backend` |
+  | An application, through `platform_client()` | `release` | The release's uid |
+  | A hydrate release ([ADR 0027](../adrs/0027-custom-provider-credential-hydrate-endpoints.md)) | `release` | The release's uid |
+  | A local hydrate address, in local mode | `api` | `local_provider_credential_hydrate_address` |
+
+  A model provider's HTTP failure that Tau reports is also a `dependency.call.failed` line, its
+  own span under the turn, with `dependency_name` `tau-ai`, the library that reports it.
 - **A Task attempt and other detached work** write no terminal line of their own, so they are no
   span of their own: the spans inside them are children of the span that started them. A
   dispatched Task's attempt runs in the span of the dispatch request, whose parent is the
