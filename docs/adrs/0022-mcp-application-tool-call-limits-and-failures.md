@@ -6,6 +6,12 @@ Date: 2026-10-09
 
 Issue: [#84](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/84)
 
+Amended 2026-11-27 by
+[ADR 0032: Local applications in local mode](./0032-local-applications-in-local-mode.md): the
+table in section 3 gains the row for a local application whose sign-in gives no token. A local
+application has no release, so the readiness wait and the start question of the amendments below do
+not apply to it.
+
 Amended 2026-10-11 for [#90](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/90): finite
 per-call response deadlines apply to every SDK MCP connection.
 
@@ -107,6 +113,7 @@ The tool result tells the model what happened, without internals:
 | The platform refused the application's address and token (403, 404) | The `<name>` application is not available for this call. (unchanged) |
 | Obtaining or renewing the application's access timed out | Main Sequence timed out while providing access to the `<name>` application. |
 | The platform could not provide them for another reason | Main Sequence could not provide access to the `<name>` application. |
+| Local mode's sign-in could not provide a token for a local application (ADR 0032) | Your Main Sequence sign-in could not provide access to the local `<name>` application. |
 | Any other failure | The `<name>` application could not complete this call. |
 
 The result's details carry the kind of failure (`failure`) and, when there is one, the status
@@ -246,6 +253,61 @@ never reached the model. The call now waits as long as the platform's own limit 
 declared limit only sets how long the runtime waits; it never extends the platform's limit, and a
 call made inside a turn still ends with the turn. Failure handling is unchanged, and an expired
 call is never replayed.
+
+### Amendment: the retry hint decides the wait (#152)
+
+The readiness wait asked again only while `runtime_access.state` was `waking`. For a few seconds
+after a deployment that creates a new revision, while it records which revision it would start,
+the platform answers `unavailable` with the notice code `runtime_evidence_pending` and
+`retry_after_ms` (Main-Sequence-Server-Side/tdag-django#1309). Tau failed that answer at once
+with `access_unavailable`, although asking again after the hint would have succeeded.
+
+The platform's rule for a client, which mainsequence-sdk's ADR 0041 adopted in its amendment of
+2026-11-27: an answer that cannot take requests and carries `retry_after_ms` is asked again after
+that delay, whatever its state; an answer without it is final. Neither the state nor the notice
+code decides.
+
+Tau follows it in `release_access_from_answer`, so the application access of a turn, its token
+renewal, the after-timeout question and the provider credential hydrate release
+([ADR 0027](./0027-custom-provider-credential-hydrate-endpoints.md)) all change:
+
+- An answer without access that carries a valid `retry_after_ms` is waited through, at least
+  100 ms apart, under the same readiness limit, turn deadline and cancellation.
+- A `waking` answer without valid guidance is still asked again after two seconds. Any other
+  answer without it fails at once, as before.
+- `ApplicationWakingError` carries the state the platform answered. The `<event>.waiting` log and
+  the `not_ready`, `readiness_timeout` and `cold_start_timeout` details name it, the timeout the
+  state of the last answer, instead of a fixed `waking`. For a state other than `waking` the
+  model reads "not ready" where it read "starting".
+
+**Not changed:** a failed platform ask, a transport error, is not asked again, which
+mainsequence-sdk 9.0.46 now does.
+
+### Amendment: a release call waits too
+
+`platform_client().call_release` asked the platform for access once and raised
+`ApplicationWakingError` when the answer asked to be asked again. mainsequence-sdk's
+`ResourceRelease.request`, the routine of its ADR 0041 for one release calling another, waits. So
+a project tool's call to an application that had scaled to zero failed while it started, while
+an application tool call to the same application waited.
+
+`call_release` now obtains access through `wait_until_ready`, with the same readiness limit, limit
+rule and reading of `retry_after_ms`:
+
+- The delegation is decided once, when the call is made, and every ask of the wait carries it. A
+  delegated wait whose turn has ended raises `RequesterBindingError`, a `PermissionError`, at its
+  next ask, and never goes on as the Agent's own.
+- The turn's deadline cancels the project tool, and with it the wait and any ask in flight;
+  cancelling the call does the same. `call_release` has no tool cancellation token to poll, so
+  project code that stops on its token cancels the call.
+- An expired wait raises `ApplicationReadinessTimeoutError`, a `BackendError`, with
+  `timeout_seconds` and the state of the last answer, and keeps no cause. An answer without
+  access and without a hint still raises `BackendError` at once.
+- After a `401` the new token, still obtained once, waits the same way.
+- The log events are `runtime.release_call.waiting` and `runtime.release_call.ready`.
+
+The wait ends before the application is called, so the application call's own timeouts measure
+the application alone. Outside a turn, the same limit and cancellation bound the wait.
 
 ## Rejected alternatives
 

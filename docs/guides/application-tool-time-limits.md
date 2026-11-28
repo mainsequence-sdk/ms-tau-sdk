@@ -81,11 +81,15 @@ Like the other process settings, it applies to every session in the process.
 
 ## Wait for an application that is starting
 
-Before opening MCP, Tau asks the platform for application access. A successful answer with
-`runtime_access.state: waking` and `access: null` means the application is still starting.
-Tau waits for `retry_after_ms` before asking again, under the same turn and delegation. Missing
-or invalid retry guidance means two seconds; guidance below 100 ms is bounded to 100 ms to avoid
-busy polling. A delay beyond the readiness deadline ends at the deadline instead of polling early.
+Before opening MCP, Tau asks the platform for application access. An answer with `access: null`
+and `runtime_access.retry_after_ms` asks Tau to ask again after that many milliseconds, whatever
+its `runtime_access.state`. The application may be `waking`, or the platform may answer
+`unavailable` for a few seconds after a deployment while it records which revision it starts.
+Tau waits and asks again under the same turn and delegation. Guidance below 100 ms is bounded to
+100 ms to avoid busy polling. A `waking` answer with missing or invalid guidance is asked again
+after two seconds. Any other answer without valid guidance is final, and the call fails with
+`failure: access_unavailable`. A delay beyond the readiness deadline ends at the deadline instead
+of polling early.
 
 `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` bounds this readiness wait (a finite positive
 number). Set it in the Agent's workflow environment or with
@@ -94,6 +98,8 @@ twice the start time the platform expects for the application, at least 30 secon
 seconds when the platform states none. The remaining turn deadline still
 applies, and cancellation stops a pending delay or access request. The wait releases the access
 cache lock between polls. Access denial, ended delegation and terminal states are not retried.
+Project code that calls an application with `platform_client().call_release()` waits the same
+way; see the [public API](../reference/public-api.md#platform_client).
 
 Tau keeps an application's token for the turn, and uses it without asking the platform only
 while the application is known warm: it answered, or the platform reported it ready, within its
@@ -104,8 +110,9 @@ Once ready, Tau opens MCP, reads the tool's declared time limit and sends the ca
 carries `Mainsequence-Request-Timeout-Ms`, the milliseconds left of that limit. Increasing a
 tool's execution limit does not extend startup readiness. Token renewal uses the same bounded
 wait; a failed renewal does not restart the tool call. A readiness wait that expires returns
-`failure: readiness_timeout`, `phase: readiness`, `runtime_access_state: waking` and the wait's
-`timeout_seconds`. Logs distinguish `runtime.application_access.waiting` and
+`failure: readiness_timeout`, `phase: readiness`, the wait's `timeout_seconds` and
+`runtime_access_state`, the state of the platform's last answer. Logs distinguish
+`runtime.application_access.waiting`, which names the state answered, and
 `runtime.application_access.ready` without including access tokens or URLs.
 
 ## What else bounds a call
@@ -133,9 +140,9 @@ bodies:
 | What happened | What the model reads |
 | --- | --- |
 | The tool did not answer within its limit | The `<name>` tool `<tool>` did not answer within `<N>` seconds. |
-| The tool did not answer within its limit and the platform then reports the application starting (`failure: cold_start_timeout`) | The `<name>` application was starting and the tool `<tool>` did not answer within `<N>` seconds. The call may or may not have run. |
+| The tool did not answer within its limit and the platform then asks to be asked again (`failure: cold_start_timeout`) | The `<name>` application was starting and the tool `<tool>` did not answer within `<N>` seconds. The call may or may not have run. For a state other than `waking`, "was not ready" replaces "was starting". |
 | Opening the session did not finish within its limit | The `<name>` application did not answer within `<N>` seconds. |
-| Application access remains `waking` past its readiness limit | The `<name>` application did not become ready within `<N>` seconds. It is still starting; try again shortly. |
+| The platform keeps asking to be asked again past the readiness limit | The `<name>` application did not become ready within `<N>` seconds. It is still starting; try again shortly. For a last state other than `waking`, only "Try again shortly." follows. |
 | The application or gateway reports a timeout (408, 504) | The `<name>` application or its gateway reported a timeout (`<status>`). |
 | Another server or gateway error status (5xx) | The `<name>` application answered with a server error (`<status>`). |
 | The application refused the call (401 after one token renewal, 403) | The `<name>` application refused this call (`<status>`). |

@@ -46,26 +46,38 @@ class BackendTimeoutError(BackendError):
 
 
 class ApplicationWakingError(BackendError):
-    """The platform accepted access resolution but the application is still starting."""
+    """The platform gave no access yet and asked to be asked again: the application is starting,
+    or the platform is still checking it. ``runtime_access_state`` is the state it answered."""
 
     def __init__(
         self,
         *,
         retry_after_seconds: float,
         expected_cold_start_seconds: float | None = None,
+        runtime_access_state: str | None = "waking",
     ) -> None:
-        super().__init__("Application is waking", detail={"runtime_access_state": "waking"})
+        super().__init__(
+            "Application is not ready yet",
+            detail={"runtime_access_state": runtime_access_state},
+        )
         self.retry_after_seconds = retry_after_seconds
         # The start time the platform expects, when it states one.
         self.expected_cold_start_seconds = expected_cold_start_seconds
+        self.runtime_access_state = runtime_access_state
 
 
 class ApplicationReadinessTimeoutError(BackendError):
-    """An application's bounded readiness wait ended before access became ready."""
+    """An application's bounded readiness wait ended before access became ready.
 
-    def __init__(self, *, timeout_seconds: float) -> None:
+    ``runtime_access_state`` is the state of the platform's last answer.
+    """
+
+    def __init__(
+        self, *, timeout_seconds: float, runtime_access_state: str | None = "waking"
+    ) -> None:
         super().__init__("Application did not become ready")
         self.timeout_seconds = timeout_seconds
+        self.runtime_access_state = runtime_access_state
 
 
 class LeaseLostError(TauSDKError):

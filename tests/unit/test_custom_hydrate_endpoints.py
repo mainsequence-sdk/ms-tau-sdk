@@ -780,6 +780,29 @@ async def test_a_waking_release_is_waited_for(runtime_identity_token_file):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(("retry_after_ms", "asks"), [(1, 2), (None, 1)])
+async def test_an_unavailable_release_is_waited_for_only_when_the_platform_asks(
+    runtime_identity_token_file, retry_after_ms, asks
+):
+    network = _Network()
+    unavailable = _waking(retry_after_ms)
+    unavailable["runtime_access"]["state"] = "unavailable"
+    network.access = [unavailable, _access()]
+    settings = _hosted_settings(
+        runtime_identity_token_file, provider_credential_hydrate_release_uid=RELEASE_UID
+    )
+    async with _client(network, settings) as client:
+        if retry_after_ms is None:
+            with pytest.raises(BackendError, match="runtime access: unavailable"):
+                await _hosted_hydrate(client)
+        else:
+            evidence = await _hosted_hydrate(client)
+            assert evidence.credential.secret() == SESSION_PASS
+
+    assert len(network.sent(host="backend.test", path=ACCESS_PATH)) == asks
+
+
+@pytest.mark.asyncio
 async def test_a_release_that_stays_waking_fails_after_the_ready_timeout(
     runtime_identity_token_file,
 ):

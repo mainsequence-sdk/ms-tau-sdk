@@ -165,10 +165,17 @@ the application's tool, not in the Agent. A tool that declares nothing gets
 `harness_agent.spec.env_vars`, the process environment, or
 `TauSDKSettings(mcp_tool_timeout_seconds=...)`. No call outlives its turn.
 
-Before MCP opens, an application's access may be `waking`. Tau waits according to the platform's
-retry guidance for up to `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` (default `120`) or the remaining
-turn time. This startup budget is separate from the tool's execution limit; an expired readiness
-wait reports `readiness_timeout`. Cancellation, ended delegation and terminal refusals stop the wait.
+Before MCP opens, the platform may give no access yet and ask to be asked again: an answer with
+`retry_after_ms`, whatever its state, or `waking`. Tau waits as it asks, for up to
+`TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` (unset: twice the start time the platform expects, at
+least 30 seconds, or `300`) or the remaining turn time. This startup budget is separate from the
+tool's execution limit; an expired readiness wait reports `readiness_timeout`. Cancellation, ended
+delegation and an answer without a retry hint stop the wait.
+
+Local mode resolves no declared application. `TAU_LOCAL_MCP_APPLICATIONS` names the developer's
+own applications at loopback origins instead; see the `tau_local_development` skill. Their four tools are SDK tools like a declared application's, and neither exclusion removes
+them, so with both exclusions a local session offers exactly the skill-scoped `read`, the four
+tools of each local application, project extension tools and the A2A Task controls.
 
 ## Skills that applications publish
 
@@ -237,6 +244,10 @@ async def revenue_by_region(tool_call_id, arguments, signal=None, on_update=None
 - `platform_client()` returns a client. `await client.request("GET", "/api/v1/...")` calls a
   platform API path, and `await client.call_release(release_uid, method, path, ...)` calls another
   platform application. Both return an `httpx.Response`.
+- `call_release()` waits while the application starts, up to
+  `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS`, then raises `ApplicationReadinessTimeoutError`
+  (from `ms_tau_sdk.errors`). Catch it and say the application is not ready yet; do not wait or
+  retry in the tool yourself.
 - By default (`delegation="auto"`) a call carries the person's delegation while the turn serves a
   person, and is the Agent's own otherwise; the operation or application decides what it may do.
   `delegation="none"` never carries it. `delegation="required"` raises a `PermissionError` before

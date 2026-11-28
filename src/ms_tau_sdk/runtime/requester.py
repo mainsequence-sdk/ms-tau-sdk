@@ -165,6 +165,7 @@ class TurnRequesterBinding:
         "_lock",
         "_platform",
         "_release_access",
+        "_settings",
         "requester",
         "session_uid",
     )
@@ -177,6 +178,7 @@ class TurnRequesterBinding:
         lease_proof: Callable[[], LeaseProof] | None,
         platform: _RequesterPlatform,
         application_http: Callable[[], httpx.AsyncClient],
+        settings: TauSDKSettings | None = None,
     ) -> None:
         if requester is not None and lease_proof is None:
             raise ValueError("A binding that serves a person needs its lease proof")
@@ -185,6 +187,8 @@ class TurnRequesterBinding:
         self._lease_proof = lease_proof
         self._platform = platform
         self._application_http = application_http
+        # The readiness limit a release call waits under, as an application tool call does.
+        self._settings = settings
         self._release_access: dict[tuple[str, bool], _ReleaseAccess] = {}
         self._lock = asyncio.Lock()
         self._active = True
@@ -256,7 +260,9 @@ class TurnRequesterBinding:
             self._require_requester()
         refresh = False
         while True:
-            access = await self._release_access_for(release_uid, refresh=refresh, delegate=delegate)
+            access = await self._ready_release_access(
+                release_uid, refresh=refresh, delegate=delegate
+            )
             url = httpx.URL(str(access.rpc_url).rstrip("/") + path)
             if (url.scheme, url.host, url.port) != (
                 access.rpc_url.scheme,
@@ -279,6 +285,32 @@ class TurnRequesterBinding:
                 refresh = True
                 continue
             return response
+
+    async def _ready_release_access(
+        self,
+        release_uid: str,
+        *,
+        refresh: bool,
+        delegate: bool,
+    ) -> _ReleaseAccess:
+        """Access for a release call, asked again while the platform asks to be asked again.
+
+        The wait is the one an application tool call makes, under the same readiness limit;
+        cancelling the call, as the turn's deadline does, ends it. ``delegate`` was decided once
+        for the call: a delegated wait ends with the turn and never goes on as the Agent's own.
+        """
+
+        def still_wanted() -> None:
+            if delegate and not self.serving:
+                raise RequesterBindingError("The turn ended while obtaining application access.")
+
+        return await wait_until_ready(
+            lambda: self._release_access_for(release_uid, refresh=refresh, delegate=delegate),
+            settings=self._settings,
+            release_uid=release_uid,
+            event="runtime.release_call",
+            still_wanted=still_wanted,
+        )
 
     async def _release_access_for(
         self,
@@ -499,7 +531,10 @@ class PlatformClient:
         """Call another platform application.
 
         ``path`` is relative to the application's RPC URL. The access the platform grants is kept
-        for the turn while it is valid.
+        for the turn while it is valid. While the platform asks to be asked again, as for an
+        application that is starting, the call waits under
+        ``TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS``; an expired wait raises
+        ``ApplicationReadinessTimeoutError``.
         """
 
         release_uid = _canonical_uid(release_uid)
@@ -588,6 +623,7 @@ def register_runtime_platform(
     *,
     platform: _RequesterPlatform,
     application_http: Callable[[], httpx.AsyncClient],
+    settings: TauSDKSettings | None = None,
 ) -> TurnRequesterBinding:
     """Make ``platform`` carry the calls ``platform_client()`` makes outside a turn."""
 
@@ -598,6 +634,7 @@ def register_runtime_platform(
         lease_proof=None,
         platform=platform,
         application_http=application_http,
+        settings=settings,
     )
     _PROCESS_BINDING = binding
     return binding
@@ -698,25 +735,26 @@ async def _turn_application_access(
     )
 
 
-async def _turn_application_starting(release_uid: str) -> bool:
-    """SDK-private: whether the platform now reports the application as starting.
+async def _turn_application_waiting(release_uid: str) -> ApplicationWakingError | None:
+    """SDK-private: the platform's answer when it now asks to be asked again, else ``None``.
 
     Asked once after a call timed out, to tell a request held by a start from a slow application.
-    Asking also wakes the application. Any failure to learn it reads as "not starting".
+    Asking also wakes the application. Any failure to learn it reads as ``None``.
     """
 
     binding = _TURN_BINDING.get()
     if binding is None or not binding.active:
-        return False
+        return None
     uid = _canonical_uid(release_uid)
     release_warmth.forget(uid)
     try:
         await binding._release_access_for(uid, refresh=True, delegate=binding.serving)
-    except ApplicationWakingError:
-        return True
+    except ApplicationWakingError as error:
+        # Without its frames, which hold the lease proof.
+        return error.with_traceback(None)
     except Exception:
-        return False
-    return False
+        return None
+    return None
 
 
 def _canonical_uid(value: str) -> str:

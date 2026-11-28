@@ -2,18 +2,22 @@
 
 from __future__ import annotations
 
+import json
 import os
+import re
 import shutil
 import sys
 import uuid
+from collections.abc import Mapping
+from dataclasses import dataclass
 from functools import lru_cache
 from hashlib import sha256
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, Field, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, DotEnvSettingsSource, SettingsConfigDict
+from pydantic_settings import BaseSettings, DotEnvSettingsSource, NoDecode, SettingsConfigDict
 
 from .errors import ConfigurationError
 
@@ -41,7 +45,13 @@ LEGACY_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV = (
     "MAINSEQUENCE_TAU_PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID"
 )
 LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL_ENV = "TAU_LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL"
+# Local mode only: the developer's own applications, by name, at loopback origins (ADR 0032).
+LOCAL_MCP_APPLICATIONS_ENV = "TAU_LOCAL_MCP_APPLICATIONS"
 LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
+# The name of an application whose MCP an Agent uses, hosted or local (ADR 0021, ADR 0032). It
+# is the prefix of the application's tools; `mainsequence` is the platform's own MCP.
+MCP_APPLICATION_NAME = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
+RESERVED_MCP_APPLICATION_NAMES = frozenset({"mainsequence"})
 HOSTED_SIGNAL_ENVS = (
     RESOURCE_RELEASE_UID_ENV,
     FASTAPI_PUBLIC_BASE_URL_ENV,
@@ -54,8 +64,37 @@ RequestIdentityMode = Literal["assertion", "local"]
 ProviderCredentialSource = Literal["mainsequence", "release", "local_address"]
 
 
-def _loopback_origin(value: str) -> str:
-    """Return the origin a local hydrate address names, or raise naming the setting.
+@dataclass(frozen=True, slots=True)
+class LocalMCPApplication:
+    """An application of the developer's own, named in ``TAU_LOCAL_MCP_APPLICATIONS``.
+
+    It is reached only at its loopback origin and carries no release, so it is never resolved
+    by the platform (ADR 0032).
+    """
+
+    name: str
+    origin: str
+
+
+class _RepeatedName(ValueError):
+    def __init__(self, name: str) -> None:
+        super().__init__(name)
+        self.name = name
+
+
+def _refuse_repeated_names(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    """Build a JSON object, refusing a key it names twice instead of keeping the last one."""
+
+    entries: dict[str, object] = {}
+    for key, value in pairs:
+        if key in entries:
+            raise _RepeatedName(key)
+        entries[key] = value
+    return entries
+
+
+def _loopback_origin(value: str, setting: str = LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL_ENV) -> str:
+    """Return the origin a local address names, or raise naming ``setting``.
 
     The value is an ``http`` or ``https`` origin on a loopback host (``127.0.0.1``, ``::1`` or
     ``localhost``) with an optional port, and no path other than ``/``, query, fragment or user
@@ -63,7 +102,7 @@ def _loopback_origin(value: str) -> str:
     """
 
     def invalid(reason: str) -> ValueError:
-        return ValueError(f"{LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL_ENV} {reason}")
+        return ValueError(f"{setting} {reason}")
 
     if any(character.isspace() for character in value) or "?" in value or "#" in value:
         raise invalid("must be an origin without whitespace, query or fragment")
@@ -223,6 +262,13 @@ class TauSDKSettings(BaseSettings):
     local_provider_credential_hydrate_url: str | None = Field(
         default=None,
         validation_alias=LOCAL_PROVIDER_CREDENTIAL_HYDRATE_URL_ENV,
+    )
+    # Local mode only: the developer's own applications whose MCP the Agent uses, each by name at
+    # a loopback origin, in the order the setting names them (ADR 0032). The setting is a JSON
+    # object, read here rather than decoded first, so that a name it repeats is refused.
+    local_mcp_applications: Annotated[tuple[LocalMCPApplication, ...], NoDecode] = Field(
+        default=(),
+        validation_alias=LOCAL_MCP_APPLICATIONS_ENV,
     )
     local_mode: bool = Field(default=False, validation_alias="TAU_LOCAL_MODE")
     exclude_base_tools: bool = Field(default=False, validation_alias="TAU_EXCLUDE_BASE_TOOLS")
@@ -551,6 +597,63 @@ class TauSDKSettings(BaseSettings):
         text = str(value).strip()
         return _loopback_origin(text) if text else None
 
+    @field_validator("local_mcp_applications", mode="before")
+    @classmethod
+    def parse_local_mcp_applications(cls, value: object) -> object:
+        if value is None:
+            return ()
+        if isinstance(value, str):
+            text = value.strip()
+            if not text:
+                return ()
+            try:
+                value = json.loads(text, object_pairs_hook=_refuse_repeated_names)
+            except _RepeatedName as error:
+                raise ValueError(
+                    f"{LOCAL_MCP_APPLICATIONS_ENV} names the application {error.name!r} twice"
+                ) from None
+            except (ValueError, RecursionError):
+                raise ValueError(
+                    f"{LOCAL_MCP_APPLICATIONS_ENV} must be a JSON object from application name "
+                    'to loopback origin, such as {"orders": "http://127.0.0.1:8000"}'
+                ) from None
+        if isinstance(value, list | tuple) and all(
+            isinstance(item, LocalMCPApplication) for item in value
+        ):
+            value = {item.name: item.origin for item in value}
+        if not isinstance(value, Mapping):
+            raise ValueError(
+                f"{LOCAL_MCP_APPLICATIONS_ENV} must be a JSON object from application name to "
+                "loopback origin"
+            )
+        applications: list[LocalMCPApplication] = []
+        for name, origin in value.items():
+            if (
+                not isinstance(name, str)
+                or not MCP_APPLICATION_NAME.fullmatch(name)
+                or name in RESERVED_MCP_APPLICATION_NAMES
+            ):
+                raise ValueError(
+                    f"{LOCAL_MCP_APPLICATIONS_ENV} names an invalid application {name!r}: a "
+                    "name is a lowercase letter, then up to 39 lowercase letters, digits or "
+                    "underscores, and not mainsequence"
+                )
+            if not isinstance(origin, str) or not origin.strip():
+                raise ValueError(
+                    f"{LOCAL_MCP_APPLICATIONS_ENV} must give the application {name!r} its "
+                    "loopback origin as a string"
+                )
+            applications.append(
+                LocalMCPApplication(
+                    name=name,
+                    origin=_loopback_origin(
+                        origin.strip(),
+                        setting=f"{LOCAL_MCP_APPLICATIONS_ENV} application {name!r}",
+                    ),
+                )
+            )
+        return tuple(applications)
+
     @field_validator("local_state_root", "state_root")
     @classmethod
     def normalize_state_roots(cls, value: Path) -> Path:
@@ -577,6 +680,8 @@ class TauSDKSettings(BaseSettings):
                     f"{PROVIDER_CREDENTIAL_HYDRATE_RELEASE_UID_ENV} both name a provider "
                     "credential hydrate endpoint. Set one of them"
                 )
+        if self.local_mcp_applications and not self.local_mode:
+            raise ValueError(f"{LOCAL_MCP_APPLICATIONS_ENV} is valid only with TAU_LOCAL_MODE=true")
         if self.local_mode:
             if self.auth_mode != "jwt":
                 raise ValueError("TAU_LOCAL_MODE requires MAINSEQUENCE_AUTH_MODE=jwt")

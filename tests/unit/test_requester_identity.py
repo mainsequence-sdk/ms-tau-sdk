@@ -59,7 +59,13 @@ from ms_tau_sdk.backend.models import (
     RuntimeState,
     TauTurnCommit,
 )
-from ms_tau_sdk.errors import BackendConflictError, BackendError, TauSDKError
+from ms_tau_sdk.errors import (
+    ApplicationReadinessTimeoutError,
+    ApplicationWakingError,
+    BackendConflictError,
+    BackendError,
+    TauSDKError,
+)
 from ms_tau_sdk.protocols.a2a_roles import A2AMessageDirection
 from ms_tau_sdk.protocols.caller_context import caller_context_scope, request_context
 from ms_tau_sdk.providers.factory import ProviderRuntime
@@ -1030,6 +1036,8 @@ class _FakePlatform:
 
     def __init__(self) -> None:
         self.requests: list[httpx.Request] = []
+        # Set once the platform has been asked anything.
+        self.asked = asyncio.Event()
         self.release_tokens = [_release_token(marker="first"), _release_token(marker="second")]
         self.answers: dict[str, list[httpx.Response]] = {}
 
@@ -1038,6 +1046,7 @@ class _FakePlatform:
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         self.requests.append(request)
+        self.asked.set()
         # The configured base URL is https://platform.test/base.
         path = request.url.path.removeprefix("/base")
         queued = self.answers.get(path)
@@ -1094,6 +1103,7 @@ async def _bound_turn(
     tmp_path: Path,
     *,
     requester: Requester | None = THE_REQUESTER,
+    **settings: Any,
 ) -> AsyncIterator[tuple[_FakePlatform, _FakeApplication, TurnRequesterBinding, _RuntimeAuth]]:
     config = TauSDKSettings(
         _env_file=None,
@@ -1101,6 +1111,7 @@ async def _bound_turn(
         runtime_credential_id="credential-id",
         workspace=tmp_path,
         startup_dependencies_enabled=False,
+        **settings,
     )
     platform = _FakePlatform()
     application = _FakeApplication()
@@ -1121,6 +1132,7 @@ async def _bound_turn(
         ),
         platform=client,
         application_http=lambda: application_http,
+        settings=config,
     )
     token = bind_turn_requester(binding)
     try:
@@ -1548,6 +1560,136 @@ async def test_a_release_without_token_access_is_reported_without_its_token(tmp_
     assert application.requests == []
 
 
+RESOLVE_PATH = f"/api/v1/resource-releases/{RELEASE_UID}/resolve-runtime-access/"
+
+
+def _not_ready(state: str, retry_after_ms: object) -> httpx.Response:
+    """An answer without access; with ``retry_after_ms`` it asks to be asked again."""
+
+    answer = {**_release_access("never-shown-release-token"), "access": None}
+    answer["runtime_access"] = {
+        "state": state,
+        "can_request": False,
+        # What the platform answers while it records which revision a new deployment starts.
+        "notice": {"code": "runtime_evidence_pending"} if state == "unavailable" else None,
+        "operation": None,
+        "retry_after_ms": retry_after_ms,
+    }
+    return httpx.Response(200, json=answer)
+
+
+@pytest.mark.parametrize("state", ["waking", "unavailable"])
+async def test_a_release_call_waits_while_the_platform_asks_to_be_asked_again(tmp_path, state):
+    token = _release_token(marker="ready")
+    async with _bound_turn(tmp_path) as (platform, application, _binding, _auth):
+        platform.answer(
+            RESOLVE_PATH,
+            _not_ready(state, 100),
+            _not_ready(state, 100),
+            httpx.Response(200, json=_release_access(token)),
+        )
+        with capture_logs() as logs:
+            answer = await platform_client().call_release(RELEASE_UID, "GET", "/tables")
+
+    assert answer.status_code == 200
+    # Every ask carries the delegation the call started with; the call is sent once, when ready.
+    assert len(platform.requests) == 3
+    for resolve in platform.requests:
+        assert _secret_headers(resolve) == {
+            "authorization": f"Bearer {RUNTIME_ACCESS_TOKEN}",
+            **BINDING_HEADERS,
+        }
+    [call] = application.requests
+    assert call.headers["authorization"] == f"Bearer {token}"
+    waiting = [log for log in logs if log["event"] == "runtime.release_call.waiting"]
+    assert [(log["runtime_access_state"], log["retry_after_seconds"]) for log in waiting] == [
+        (state, 0.1),
+        (state, 0.1),
+    ]
+    [ready] = [log for log in logs if log["event"] == "runtime.release_call.ready"]
+    assert ready["resource_release_uid"] == RELEASE_UID
+    assert "never-shown-release-token" not in repr(logs)
+
+
+async def test_a_release_answer_without_a_retry_hint_fails_the_call_at_once(tmp_path):
+    async with _bound_turn(tmp_path) as (platform, application, _binding, _auth):
+        platform.answer(
+            RESOLVE_PATH,
+            _not_ready("unavailable", None),
+            httpx.Response(200, json=_release_access(_release_token())),
+        )
+        with pytest.raises(BackendError) as raised:
+            await platform_client().call_release(RELEASE_UID, "GET", "/tables")
+
+    assert not isinstance(raised.value, ApplicationWakingError)
+    assert len(platform.requests) == 1
+    assert application.requests == []
+
+
+async def test_a_release_that_does_not_become_ready_in_time_fails_the_call(tmp_path):
+    async with _bound_turn(tmp_path, mcp_application_ready_timeout_seconds=0.3) as (
+        platform,
+        application,
+        _binding,
+        _auth,
+    ):
+        platform.answer(RESOLVE_PATH, _not_ready("waking", 100))
+        started = time.monotonic()
+        with pytest.raises(ApplicationReadinessTimeoutError) as raised:
+            await platform_client().call_release(RELEASE_UID, "GET", "/tables")
+        waited = time.monotonic() - started
+
+    assert raised.value.timeout_seconds == 0.3
+    assert raised.value.runtime_access_state == "waking"
+    assert raised.value.__cause__ is None
+    assert 0.3 <= waited < 1
+    assert len(platform.requests) >= 2
+    assert application.requests == []
+
+
+@pytest.mark.parametrize("end", ["turn_ended", "cancelled"])
+async def test_a_release_calls_wait_ends_with_its_turn_or_when_cancelled(tmp_path, end):
+    async with _bound_turn(tmp_path) as (platform, application, binding, _auth):
+        platform.answer(RESOLVE_PATH, _not_ready("waking", 100))
+        call = asyncio.create_task(platform_client().call_release(RELEASE_UID, "GET", "/tables"))
+        async with asyncio.timeout(5):
+            await platform.asked.wait()
+        if end == "turn_ended":
+            binding.close()
+        else:
+            call.cancel()
+        with pytest.raises(
+            RequesterBindingError if end == "turn_ended" else asyncio.CancelledError
+        ):
+            await call
+        await asyncio.sleep(0.2)
+
+    # The one delegated ask is never followed by another, delegated or as the Agent.
+    [resolve] = platform.requests
+    assert BINDING_HEADERS.items() <= _secret_headers(resolve).items()
+    assert application.requests == []
+
+
+async def test_a_token_renewed_after_a_401_waits_for_the_release_too(tmp_path):
+    first, renewed = _release_token(marker="first"), _release_token(marker="renewed")
+    async with _bound_turn(tmp_path) as (platform, application, _binding, _auth):
+        platform.answer(
+            RESOLVE_PATH,
+            httpx.Response(200, json=_release_access(first)),
+            _not_ready("waking", 100),
+            httpx.Response(200, json=_release_access(renewed)),
+        )
+        application.answers = [httpx.Response(401, json={"detail": "Token revoked."})]
+        answer = await platform_client().call_release(RELEASE_UID, "GET", "/tables")
+
+    assert answer.status_code == 200
+    assert len(platform.requests) == 3
+    assert [request.headers["authorization"] for request in application.requests] == [
+        f"Bearer {first}",
+        f"Bearer {renewed}",
+    ]
+
+
 async def test_the_turns_delegation_and_release_access_end_with_it(tmp_path):
     async with _bound_turn(tmp_path) as (platform, application, binding, _auth):
         required = platform_client(delegation="required")
@@ -1625,8 +1767,10 @@ def setup(tau) -> None:
 class _HostedPlatform:
     """The platform of a hosted runtime: its session, turns, entries, and requester reads."""
 
-    def __init__(self, *, release_token: str) -> None:
+    def __init__(self, *, release_token: str, starting: int = 0) -> None:
         self.release_token = release_token
+        # How many access requests the release answers as starting before it is ready.
+        self.starting = starting
         self.activity: list[httpx.Request] = []
         self.housekeeping: list[httpx.Request] = []
         self.requester_bound: list[httpx.Request] = []
@@ -1678,6 +1822,9 @@ class _HostedPlatform:
             )
         if path == f"/api/v1/resource-releases/{RELEASE_UID}/resolve-runtime-access/":
             self.requester_bound.append(request)
+            if self.starting:
+                self.starting -= 1
+                return _not_ready("waking", 100)
             access = _release_access(self.release_token)
             access["access"]["rpc_url"] = "https://analyst-data.test/rpc"
             return httpx.Response(200, json=access)
@@ -1828,12 +1975,15 @@ def _model_turns() -> FakeProvider:
     )
 
 
+# A release that is starting is waited for inside the turn, as it is for an application tool.
+@pytest.mark.parametrize("starting", [0, 2], ids=["ready", "starting"])
 async def test_a_hosted_turn_acts_for_its_requester_and_exposes_no_secret(
     platform_keys,
     runtime_identity_token_file,
     tmp_path,
     asgi_client,
     capsys,
+    starting,
 ):
     extension = tmp_path / ".tau/extensions/requester_probe/extension.py"
     extension.parent.mkdir(parents=True)
@@ -1846,7 +1996,7 @@ async def test_a_hosted_turn_acts_for_its_requester_and_exposes_no_secret(
         log_level="DEBUG",
     )
     release_token = _release_token(marker="end-to-end")
-    platform = _HostedPlatform(release_token=release_token)
+    platform = _HostedPlatform(release_token=release_token, starting=starting)
     application_requests: list[httpx.Request] = []
 
     def application(request: httpx.Request) -> httpx.Response:
@@ -1908,7 +2058,7 @@ async def test_a_hosted_turn_acts_for_its_requester_and_exposes_no_secret(
     # The tool read for the requester, from the platform and from another application.
     assert [request.url.path for request in platform.requester_bound] == [
         "/api/v1/requester-probe/",
-        f"/api/v1/resource-releases/{RELEASE_UID}/resolve-runtime-access/",
+        *[f"/api/v1/resource-releases/{RELEASE_UID}/resolve-runtime-access/"] * (starting + 1),
     ]
     for request in platform.requester_bound:
         assert _secret_headers(request) == {

@@ -955,6 +955,101 @@ def _waking(retry_after_ms=100):
     )
 
 
+def _unavailable(retry_after_ms=None):
+    # What the platform answers while it still records which revision a new deployment starts.
+    return ReleaseRuntimeAccess(
+        resource_release_uid=RELEASE_UID,
+        access=None,
+        runtime_access={
+            "state": "unavailable",
+            "can_request": False,
+            "notice": {
+                "code": "runtime_evidence_pending",
+                "severity": "info",
+                "title": "Deployed runtime unavailable",
+                "message": "Checking the deployed runtime.",
+            },
+            "operation": None,
+            "retry_after_ms": retry_after_ms,
+        },
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_unavailable_answer_that_asks_to_retry_is_asked_again_after_its_delay(
+    person, mcp_server
+):
+    received = mcp_server(tools=[ORDERS_LIST], on_call=_slow(0))
+    answers = iter([_unavailable(100), person.resolve_release_runtime_access.return_value])
+    attempts = []
+
+    async def access(*_args, **_kwargs):
+        attempts.append(time.monotonic())
+        return next(answers)
+
+    person.resolve_release_runtime_access.side_effect = access
+    with capture_logs() as logs:
+        result = await _finishes(
+            _connected_tools()["orders__call_tool"].execute("call-1", {"tool": "orders.list"})
+        )
+
+    assert result.details["is_error"] is False
+    assert attempts[1] - attempts[0] >= 0.09
+    assert received.count("tools/call") == 1
+    waiting = [log for log in logs if log["event"] == "runtime.application_access.waiting"]
+    assert [(log["runtime_access_state"], log["retry_after_seconds"]) for log in waiting] == [
+        ("unavailable", 0.1)
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hint", [None, -1, "2000", True, float("nan")])
+async def test_an_unavailable_answer_without_a_retry_hint_fails_at_once(person, mcp_server, hint):
+    received = mcp_server(tools=[ORDERS_LIST], on_call=_slow(0))
+    ready = person.resolve_release_runtime_access.return_value
+    person.resolve_release_runtime_access.side_effect = [_unavailable(hint), ready]
+
+    result = await _finishes(
+        _connected_tools()["orders__call_tool"].execute("call-1", {"tool": "orders.list"})
+    )
+
+    assert result.details == {
+        "application": "orders",
+        "mcp_tool": "orders.list",
+        "is_error": True,
+        "failure": "access_unavailable",
+    }
+    assert result.text == "Main Sequence could not provide access to the orders application."
+    assert person.resolve_release_runtime_access.await_count == 1
+    assert received == []
+
+
+@pytest.mark.asyncio
+async def test_a_readiness_timeout_names_the_state_the_platform_last_answered(person, mcp_server):
+    received = mcp_server(tools=[ORDERS_LIST], on_call=_slow(0))
+    person.resolve_release_runtime_access.side_effect = [_waking(50), _unavailable(2000)]
+
+    result = await _finishes(
+        _connected_tools(mcp_application_ready_timeout_seconds=0.2)["orders__call_tool"].execute(
+            "call-1", {"tool": "orders.list"}
+        )
+    )
+
+    assert result.details == {
+        "application": "orders",
+        "mcp_tool": "orders.list",
+        "is_error": True,
+        "failure": "readiness_timeout",
+        "phase": "readiness",
+        "runtime_access_state": "unavailable",
+        "timeout_seconds": 0.2,
+    }
+    assert result.text == (
+        "The orders application did not become ready within 0.2 seconds. Try again shortly."
+    )
+    assert received == []
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("serving", [True, False])
 @pytest.mark.parametrize("operation", ["orders__call_tool", "orders__list_tools"])
@@ -1192,6 +1287,18 @@ def test_waking_retry_guidance_is_validated_without_exposing_the_access_payload(
         _token_access(_waking(hint))
     assert raised.value.retry_after_seconds == seconds
     assert raised.value.detail == {"runtime_access_state": "waking"}
+
+
+@pytest.mark.parametrize(("hint", "seconds"), [(2000, 2), (100, 0.1), (1, 0.1), (0, 0.1)])
+def test_any_answer_with_retry_guidance_is_waited_for_and_names_its_state(hint, seconds):
+    from ms_tau_sdk.errors import ApplicationWakingError
+    from ms_tau_sdk.runtime.requester import _token_access
+
+    with pytest.raises(ApplicationWakingError) as raised:
+        _token_access(_unavailable(hint))
+    assert raised.value.retry_after_seconds == seconds
+    assert raised.value.runtime_access_state == "unavailable"
+    assert raised.value.detail == {"runtime_access_state": "unavailable"}
 
 
 # The skills and resources an application publishes (ADR 0023).
@@ -1860,10 +1967,16 @@ async def test_the_expected_start_time_sets_the_readiness_limit_when_none_is_con
 
 
 @pytest.mark.asyncio
-async def test_a_tool_timeout_while_the_application_starts_is_a_cold_start(person, mcp_server):
+@pytest.mark.parametrize(
+    ("answer", "state", "was"),
+    [(_waking(), "waking", "was starting"), (_unavailable(100), "unavailable", "was not ready")],
+)
+async def test_a_tool_timeout_while_the_application_starts_is_a_cold_start(
+    person, mcp_server, answer, state, was
+):
     received = mcp_server(tools=[ORDERS_LIST], on_call=_slow(5))
     ready = person.resolve_release_runtime_access.return_value
-    person.resolve_release_runtime_access.side_effect = [ready, _waking()]
+    person.resolve_release_runtime_access.side_effect = [ready, answer]
 
     with capture_logs() as logs:
         result = await _finishes(
@@ -1878,11 +1991,11 @@ async def test_a_tool_timeout_while_the_application_starts_is_a_cold_start(perso
         "is_error": True,
         "failure": "cold_start_timeout",
         "phase": "request",
-        "runtime_access_state": "waking",
+        "runtime_access_state": state,
         "timeout_seconds": 0.3,
     }
     assert result.text == (
-        "The orders application was starting and the tool orders.list did not answer within "
+        f"The orders application {was} and the tool orders.list did not answer within "
         "0.3 seconds. The call may or may not have run."
     )
     # The call is never sent again.

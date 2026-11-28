@@ -147,6 +147,16 @@ async def revenue_by_region(tool_call_id, arguments, signal=None, on_update=None
   [calling other applications](./security-model.md#calling-other-applications). The client keeps
   the token for the turn while it is valid, replaces it shortly before it expires, and replaces it
   once when the application answers 401.
+- While the platform asks to be asked again, `call_release` waits, as an application tool call
+  does: an answer without access that carries `retry_after_ms` is asked again after it, whatever
+  its state, and `waking` without one after two seconds, within
+  `TAU_MCP_APPLICATION_READY_TIMEOUT_SECONDS` (see [settings](./settings.md)). The turn's deadline
+  and cancelling the call end the wait, and a delegated wait whose turn ends raises the
+  `PermissionError` below. An expired wait raises
+  `ms_tau_sdk.errors.ApplicationReadinessTimeoutError`, a `BackendError`, with `timeout_seconds`
+  and `runtime_access_state`, the state the platform last answered. Any other answer without
+  access raises `BackendError` at once. The application is called only after the wait, so its
+  time limits do not include it.
 - Both return an `httpx.Response` with the answer's status, headers and body. Its `request`
   carries no header, so neither the credential, the lease proof nor the application token travels
   with it. Redirects are not followed.

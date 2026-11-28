@@ -17,17 +17,25 @@ opening the session is tried once more when it fails before the tool call is sen
 A file of a skill the application lists (MCP Skills extension) reaches the model only when its
 bytes match the size and SHA-256 digest the listing gives. Published skills are the application's
 content: the SDK never adds them to the project's skills and grants nothing they ask for.
+
+In local mode the developer may name applications of their own, at loopback origins, in
+``TAU_LOCAL_MCP_APPLICATIONS`` (ADR 0032). They get the same four tools. A call carries the
+developer's own access token from local mode's sign-in instead of a token the platform issues, and
+a local application is never resolved by the platform or replaced by a deployed release.
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import hashlib
+import ipaddress
 import json
-import re
+import socket
 import time
 from collections.abc import AsyncGenerator, Mapping, Sequence
+from dataclasses import replace
 from typing import Protocol
 
 import httpx
@@ -39,10 +47,12 @@ from tau_agent.tools import (
     AgentTool,
     AgentToolResult,
     ToolCancellationToken,
+    ToolExecutor,
     ToolUpdateCallback,
 )
 from tau_agent.types import JSONValue
 
+from ms_tau_sdk.backend.auth import BackendAuth
 from ms_tau_sdk.backend.mcp import (
     SKILLS_EXTENSION,
     MCPConnectionClient,
@@ -63,23 +73,36 @@ from ms_tau_sdk.runtime.requester import (
     AGENT_SESSION_HEADER,
     RequesterBindingError,
     _turn_application_access,
-    _turn_application_starting,
+    _turn_application_waiting,
     _TurnApplicationAccess,
 )
-from ms_tau_sdk.settings import TauSDKSettings
+from ms_tau_sdk.settings import (
+    LOCAL_MCP_APPLICATIONS_ENV,
+    MCP_APPLICATION_NAME,
+    RESERVED_MCP_APPLICATION_NAMES,
+    LocalMCPApplication,
+    TauSDKSettings,
+)
 from ms_tau_sdk.tools.mcp_connection import TIMEOUT_META_KEY as TIMEOUT_META_KEY
 from ms_tau_sdk.tools.mcp_connection import declared_timeout, mcp_tool_result
 
 logger = structlog.get_logger(__name__)
 
-_APPLICATION_NAME = re.compile(r"^[a-z][a-z0-9_]{0,39}$")
-_RESERVED_NAMES = frozenset({"mainsequence"})
+# How often a wait for local mode's sign-in checks whether its tool call was cancelled.
+_CANCELLATION_POLL_SECONDS = 0.1
 
 
 class ApplicationConnector(Protocol):
     async def __call__(
-        self, application: MCPApplication, *, signal: ToolCancellationToken | None = None
+        self,
+        application: MCPApplication | LocalMCPApplication,
+        *,
+        signal: ToolCancellationToken | None = None,
     ) -> MCPConnectionClient: ...
+
+
+class _LocalSignInError(Exception):
+    """Local mode's sign-in gave no token for a local application; it holds no other detail."""
 
 
 class _ApplicationTokenAuth(httpx2.Auth):
@@ -112,12 +135,53 @@ class _ApplicationTokenAuth(httpx2.Auth):
             release_warmth.served(self._release_uid)
 
 
+class _LocalApplicationAuth(httpx2.Auth):
+    """Send the developer's own access token to a local application; renew it once on 401.
+
+    The token is the one local mode's sign-in holds (ADR 0032). No other credential and no
+    ``X-MainSequence-*`` header goes to the application: a local turn has no platform session
+    and carries no delegation.
+    """
+
+    def __init__(self, auth: BackendAuth) -> None:
+        self._auth = auth
+        # The monotonic instant by which the tool call in flight must be answered, once known.
+        self.deadline: float | None = None
+
+    async def async_auth_flow(
+        self,
+        request: httpx2.Request,
+    ) -> AsyncGenerator[httpx2.Request, httpx2.Response]:
+        request.headers.update(await self._auth.headers())
+        request.headers.update(deadline_headers(self.deadline))
+        response = yield request
+        if response.status_code == 401:
+            request.headers.update(await self._auth.headers(force=True))
+            response = yield request
+            raise_for_renewed_401(response)
+
+
+def _http_timeout(settings: TauSDKSettings) -> httpx2.Timeout:
+    # The connection applies the tool's response deadline to its call; these HTTP limits also
+    # bound initialization and catalog requests.
+    return httpx2.Timeout(
+        connect=settings.backend_connect_timeout_seconds,
+        read=settings.backend_read_timeout_seconds,
+        write=settings.backend_write_timeout_seconds,
+        pool=settings.backend_pool_timeout_seconds,
+    )
+
+
 def application_connector(settings: TauSDKSettings) -> ApplicationConnector:
     """Open an MCP session to one application for the current turn."""
 
     async def connect(
-        application: MCPApplication, *, signal: ToolCancellationToken | None = None
+        application: MCPApplication | LocalMCPApplication,
+        *,
+        signal: ToolCancellationToken | None = None,
     ) -> MCPConnectionClient:
+        if not isinstance(application, MCPApplication):
+            raise TypeError("A release's connector opens only declared applications")
         access = await _turn_application_access(
             application.resource_release_uid,
             settings=settings,
@@ -128,14 +192,7 @@ def application_connector(settings: TauSDKSettings) -> ApplicationConnector:
             display_name=application.name,
             url=f"{str(access.rpc_url).rstrip('/')}/mcp",
             auth=_ApplicationTokenAuth(access, application.resource_release_uid),
-            # The connection applies the tool's response deadline to its call; these HTTP limits
-            # also bound initialization and catalog requests.
-            timeout=httpx2.Timeout(
-                connect=settings.backend_connect_timeout_seconds,
-                read=settings.backend_read_timeout_seconds,
-                write=settings.backend_write_timeout_seconds,
-                pool=settings.backend_pool_timeout_seconds,
-            ),
+            timeout=_http_timeout(settings),
             read_timeout_seconds=settings.backend_read_timeout_seconds,
             read_concurrency=settings.mcp_read_concurrency,
             # An application declares the Skills extension only on the newer protocol revision.
@@ -143,6 +200,84 @@ def application_connector(settings: TauSDKSettings) -> ApplicationConnector:
         ).open()
 
     return connect
+
+
+async def _sign_in_token(auth: BackendAuth, signal: ToolCancellationToken | None) -> None:
+    """Have local mode's sign-in hold a current token, unless the tool call is cancelled first.
+
+    The CLI may take seconds to answer, and the cancellation token can only be polled.
+    """
+
+    task: asyncio.Task[dict[str, str]] = asyncio.create_task(auth.headers())
+    try:
+        while not task.done():
+            if signal is not None and signal.is_cancelled():
+                raise asyncio.CancelledError
+            await asyncio.wait({task}, timeout=_CANCELLATION_POLL_SECONDS)
+        if task.exception() is not None:
+            # The sign-in logs its own outcome; its error may name the CLI's output.
+            raise _LocalSignInError
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+
+
+def local_application_connector(
+    settings: TauSDKSettings,
+    auth: BackendAuth,
+) -> ApplicationConnector:
+    """Open an MCP session to one local application, as the developer (ADR 0032).
+
+    ``auth`` is local mode's sign-in. The session goes only to the application's loopback origin;
+    nothing asks the platform for it, and no deployed release is ever called in its place.
+    """
+
+    async def connect(
+        application: MCPApplication | LocalMCPApplication,
+        *,
+        signal: ToolCancellationToken | None = None,
+    ) -> MCPConnectionClient:
+        if not isinstance(application, LocalMCPApplication):
+            raise TypeError("A local connector opens only local applications")
+        await _sign_in_token(auth, signal)
+        return await MCPConnectionClient(
+            name=application.name,
+            display_name=application.name,
+            url=f"{application.origin}/mcp",
+            auth=_LocalApplicationAuth(auth),
+            timeout=_http_timeout(settings),
+            read_timeout_seconds=settings.backend_read_timeout_seconds,
+            read_concurrency=settings.mcp_read_concurrency,
+            mode="auto",
+        ).open()
+
+    return connect
+
+
+async def check_local_applications(applications: Sequence[LocalMCPApplication]) -> None:
+    """Fail startup when ``localhost`` in a local application's origin leaves the machine.
+
+    The developer's token goes to that origin, so every address the name resolves to must be a
+    loopback address.
+    """
+
+    loop = asyncio.get_running_loop()
+    for application in applications:
+        if httpx.URL(application.origin).host != "localhost":
+            continue
+        try:
+            answers = await loop.getaddrinfo("localhost", None, type=socket.SOCK_STREAM)
+        except OSError:
+            answers = []
+        if not answers or not all(
+            ipaddress.ip_address(str(answer[4][0])).is_loopback for answer in answers
+        ):
+            raise ConfigurationError(
+                f"{LOCAL_MCP_APPLICATIONS_ENV} names the application {application.name!r} at "
+                "localhost, which does not resolve only to loopback addresses on this machine. "
+                "Name 127.0.0.1 or ::1 instead"
+            )
 
 
 def _timed_out(error: BaseException) -> bool:
@@ -165,22 +300,37 @@ def _failure(
 
     if isinstance(error, RequesterBindingError):
         return "Your access for this request ended.", {"failure": "access_ended"}
+    if isinstance(error, _LocalSignInError):
+        return (
+            f"Your Main Sequence sign-in could not provide access to the local {name} application.",
+            {"failure": "access_unavailable", "phase": "access"},
+        )
     if isinstance(error, ApplicationReadinessTimeoutError):
         return (
             f"The {name} application did not become ready within "
             f"{error.timeout_seconds:g} seconds. "
-            "It is still starting; try again shortly.",
+            + (
+                "It is still starting; try again shortly."
+                if error.runtime_access_state == "waking"
+                else "Try again shortly."
+            ),
             {
                 "failure": "readiness_timeout",
                 "phase": "readiness",
-                "runtime_access_state": "waking",
+                "runtime_access_state": error.runtime_access_state,
                 "timeout_seconds": error.timeout_seconds,
             },
         )
     if isinstance(error, ApplicationWakingError):
+        starting = error.runtime_access_state == "waking"
         return (
-            f"The {name} application is still starting; try again shortly.",
-            {"failure": "not_ready", "phase": "readiness", "runtime_access_state": "waking"},
+            f"The {name} application is {'still starting' if starting else 'not ready yet'}; "
+            "try again shortly.",
+            {
+                "failure": "not_ready",
+                "phase": "readiness",
+                "runtime_access_state": error.runtime_access_state,
+            },
         )
     if isinstance(error, BackendError):
         if isinstance(error, BackendTimeoutError) or error.backend_status in {408, 504}:
@@ -318,14 +468,35 @@ def _content_text(content: types.TextResourceContents | types.BlobResourceConten
     return f"(Binary content of type {content.mime_type or 'unknown'}; not shown.)"
 
 
+def _marked_local(execute: ToolExecutor) -> ToolExecutor:
+    """Mark every result of a local application's tool as the local application's."""
+
+    async def run(
+        tool_call_id: str,
+        arguments: Mapping[str, JSONValue],
+        signal: ToolCancellationToken | None = None,
+        on_update: ToolUpdateCallback | None = None,
+    ) -> AgentToolResult:
+        result = await execute(tool_call_id, arguments, signal, on_update)
+        details = dict(result.details) if isinstance(result.details, dict) else {}
+        details["target"] = "local"
+        return AgentToolResult(content=result.content, details=details)
+
+    return run
+
+
 def _application_tools(
-    application: MCPApplication,
+    application: MCPApplication | LocalMCPApplication,
     *,
     connect: ApplicationConnector,
     tool_timeout_seconds: float,
     open_timeout_seconds: float,
 ) -> list[AgentTool]:
     name = application.name
+    # A local application's events say so; it has no release, so nothing a release has applies.
+    target: dict[str, str] = (
+        {"target": "local"} if isinstance(application, LocalMCPApplication) else {}
+    )
 
     async def open_session(signal: ToolCancellationToken | None) -> MCPConnectionClient:
         # Nothing has reached a tool while the session opens, so one more attempt is safe.
@@ -347,7 +518,7 @@ def _application_tools(
         *,
         mcp_tool: str | None = None,
         call_timeout_seconds: float | None = None,
-        held_by_start: bool = False,
+        held_by_start: ApplicationWakingError | None = None,
     ) -> AgentToolResult:
         # A failure after the call was sent, which has a time limit by then, is the tool's;
         # a failure while the session opens is the application's.
@@ -359,15 +530,17 @@ def _application_tools(
                 call_timeout_seconds if call_timeout_seconds is not None else open_timeout_seconds
             ),
         )
-        if held_by_start:
+        if held_by_start is not None:
+            state = held_by_start.runtime_access_state
+            was = "was starting" if state == "waking" else "was not ready"
             text = (
-                f"The {name} application was starting and the tool {mcp_tool} did not answer "
+                f"The {name} application {was} and the tool {mcp_tool} did not answer "
                 f"within {call_timeout_seconds:g} seconds. The call may or may not have run."
             )
             failure = {
                 "failure": "cold_start_timeout",
                 "phase": "request",
-                "runtime_access_state": "waking",
+                "runtime_access_state": state,
                 "timeout_seconds": call_timeout_seconds,
             }
         if mcp_tool is not None:
@@ -378,6 +551,7 @@ def _application_tools(
             operation=operation,
             error_type=type(error).__name__,
             **failure,
+            **target,
         )
         return _error(name, text, **failure)
 
@@ -525,6 +699,7 @@ def _application_tools(
                     application=name,
                     operation="read_resource",
                     failure="unverified",
+                    **target,
                 )
                 return _error(
                     name,
@@ -579,7 +754,7 @@ def _application_tools(
                 )
                 call_timeout_seconds = declared if declared is not None else tool_timeout_seconds
                 auth = getattr(client, "_http_auth", None)
-                if isinstance(auth, _ApplicationTokenAuth):
+                if isinstance(auth, _ApplicationTokenAuth | _LocalApplicationAuth):
                     auth.deadline = time.monotonic() + call_timeout_seconds
                 result = await client.call_tool(
                     tool_name, dict(tool_arguments), timeout_seconds=call_timeout_seconds
@@ -588,10 +763,13 @@ def _application_tools(
                 await client.aclose()
         except Exception as error:
             held_by_start = (
-                call_timeout_seconds is not None
-                and _timed_out(error)
                 # Asked once, after the fact: a request held by a start is not the tool's fault.
-                and await _turn_application_starting(application.resource_release_uid)
+                await _turn_application_waiting(application.resource_release_uid)
+                if call_timeout_seconds is not None
+                and _timed_out(error)
+                # Only a release starts; a local application that times out is the tool's.
+                and isinstance(application, MCPApplication)
+                else None
             )
             return failed(
                 "call_tool",
@@ -605,7 +783,7 @@ def _application_tools(
         details["application"] = name
         return AgentToolResult(content=projected.content, details=details)
 
-    return [
+    tools = [
         AgentTool(
             name=f"{name}__list_tools",
             label=f"List {name} tools",
@@ -672,16 +850,19 @@ def _application_tools(
             execution_mode="parallel",
         ),
     ]
+    if target:
+        tools = [replace(tool, execute_fn=_marked_local(tool.execute_fn)) for tool in tools]
+    return tools
 
 
 def create_mcp_application_tools(
-    applications: Sequence[MCPApplication],
+    applications: Sequence[MCPApplication] | Sequence[LocalMCPApplication],
     *,
     connect: ApplicationConnector,
     tool_timeout_seconds: float,
     open_timeout_seconds: float,
 ) -> list[AgentTool]:
-    """Four tools for each declared application, in declaration order.
+    """Four tools for each declared or local application, in the order they are named.
 
     ``tool_timeout_seconds`` bounds a call to a tool that declares no limit of its own;
     ``open_timeout_seconds`` is the wait for each request that opens the session.
@@ -691,7 +872,7 @@ def create_mcp_application_tools(
     seen: set[str] = set()
     for application in applications:
         name = application.name
-        if not _APPLICATION_NAME.fullmatch(name) or name in _RESERVED_NAMES:
+        if not MCP_APPLICATION_NAME.fullmatch(name) or name in RESERVED_MCP_APPLICATION_NAMES:
             raise ConfigurationError(f"Invalid MCP application name: {name!r}")
         if name in seen:
             raise ConfigurationError(f"Duplicate MCP application name: {name!r}")

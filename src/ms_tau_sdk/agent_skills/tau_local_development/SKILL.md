@@ -46,7 +46,8 @@ permissions.
 
 Never place JWTs or provider credentials in source control, `.tau`, copied skills, command output,
 or debugging artifacts. Do not run `mainsequence auth token` to read its output: it prints the
-access token. The user JWT is sent only to Main Sequence. Main Sequence validates the
+access token. The user JWT is sent only to Main Sequence and to the local applications named in
+`TAU_LOCAL_MCP_APPLICATIONS` (below). Main Sequence validates the
 explicit `TAU_LOCAL_PROVIDER` and `TAU_LOCAL_MODEL`, returns provider-control evidence, and hydrates
 the provider credential used for inference. Provider secrets are neither environment settings nor
 local state.
@@ -65,6 +66,46 @@ the platform's backend setting `MODEL_RELAY_BASE_URL`, or is the platform API's 
 that is empty; no Agent or application setting changes it, so never add `MODEL_RELAY_BASE_URL`
 to a `.env` or workflow.
 
+## Use the project's own API as a local application
+
+A hosted Agent reaches the applications its workflow file declares, through four tools per
+application. Local mode resolves none of them from the platform, and never calls a deployed release
+in their place. To let the local Agent use the project's API running on the same machine, with its
+MCP tools and published skills, name it in `TAU_LOCAL_MCP_APPLICATIONS`:
+
+```bash
+export TAU_LOCAL_MCP_APPLICATIONS='{"alpaca": "http://127.0.0.1:8000"}'
+```
+
+- Use the name the platform gives the deployed application, so the Agent's prompt and skills name
+  the same tools (`alpaca__list_tools`, `alpaca__call_tool`, `alpaca__list_resources`,
+  `alpaca__read_resource`) locally and hosted.
+- The value is a loopback origin only: `http` or `https` on `127.0.0.1`, `::1` or `localhost`, a
+  port, and no path. The tools open `{origin}/mcp`. Anything else fails startup.
+- The API must serve its MCP with mainsequence-sdk's request identity, against the same
+  `MAINSEQUENCE_ENDPOINT` as the Agent, or it refuses the token (`401`). Have it call
+  `install_request_identity(app, local_caller_cache_seconds=60)`, or every MCP request waits for a
+  platform check.
+- `TAU_EXCLUDE_BASE_TOOLS=true` and `TAU_EXCLUDE_MAINSEQUENCE_MCP=true` keep these tools: a
+  restricted Agent then has the skill-scoped `read`, the application's four tools, project
+  extension tools and the Task controls.
+- Nothing is sent at startup. A call while the API is down reports that the application could not
+  be reached; start the API and ask again.
+
+Each call carries the user's own Main Sequence access token: the platform cannot issue a token for
+a process on their machine. **When you set `TAU_LOCAL_MCP_APPLICATIONS` for the user, tell them, in
+the same message:**
+
+- which port receives their token, for example `127.0.0.1:8000`;
+- that it is their own Main Sequence access token, valid on the platform until it expires, not a
+  token limited to the application, so any program listening on that port can act as them;
+- that only their own API should listen there, bound to `127.0.0.1`; and
+- that this should not be used on a machine that other accounts share.
+
+Startup repeats this as the warning `local.mcp_applications.token_sent`, with each application and
+its origin. The token never appears in tool results, logs or health; `/health` lists only the
+names, in `local_mcp_applications`.
+
 ## Exact local/remote boundary
 
 | Concern | Local-mode behavior |
@@ -75,6 +116,7 @@ to a `.env` or workflow.
 | Main Sequence authentication and token refresh | Remote. The token comes from the Main Sequence CLI session, or from an exported JWT pair |
 | Provider authorization, hydration, and inference | Remote and real; hydration comes from a custom endpoint when one is set |
 | Main Sequence MCP catalog and tool calls | Remote and real; platform mutations remain possible |
+| Application MCP | Only the local applications in `TAU_LOCAL_MCP_APPLICATIONS`, on loopback, with the user's own token; never a deployed release |
 | Project instructions, skills, hooks, and extensions | Normal repository `.tau` composition |
 
 The database defaults to `~/.tau/mainsequence/<workspace-hash>/runtime.sqlite3`; override its
