@@ -1349,6 +1349,119 @@ async def test_declared_applications_register_their_mcp_tools_in_a_hosted_sessio
         "task_request_input",
         "task_request_authorization",
     ]
+    assert manager.snapshot()["local_mcp_applications"] is None
+    await manager.aclose()
+
+
+ALPACA_TOOLS = [
+    "alpaca__list_tools",
+    "alpaca__call_tool",
+    "alpaca__list_resources",
+    "alpaca__read_resource",
+]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("excluded", "expected"),
+    [
+        (True, ["read", *ALPACA_TOOLS, "task_request_input", "task_request_authorization"]),
+        (
+            False,
+            [
+                "read",
+                "write",
+                "edit",
+                "bash",
+                "mainsequence_test",
+                *ALPACA_TOOLS,
+                "task_request_input",
+                "task_request_authorization",
+            ],
+        ),
+    ],
+    ids=["both_exclusions", "no_exclusion"],
+)
+async def test_local_mode_offers_the_tools_of_its_local_applications_only(
+    tmp_path, excluded, expected
+):
+    from ms_tau_sdk.backend.models import MCPApplication
+    from ms_tau_sdk.settings import LocalMCPApplication
+
+    # Even a startup answer that names a release adds nothing in local mode (ADR 0032).
+    bootstrap = _bootstrap("session-1").model_copy(
+        update={
+            "mcp_applications": [
+                MCPApplication(
+                    name="orders", resource_release_uid="6f2c7c52-2b41-4c4e-9c43-36d2e0a8f1aa"
+                )
+            ]
+        }
+    )
+    manager, backend, _providers = _manager_dependencies(tmp_path, [bootstrap])
+    backend.auth.prefetch = AsyncMock()
+    manager.settings = manager.settings.model_copy(
+        update={
+            "local_mode": True,
+            "exclude_base_tools": excluded,
+            "exclude_mainsequence_mcp": excluded,
+            "startup_dependencies_enabled": True,
+            "local_mcp_applications": (
+                LocalMCPApplication(name="alpaca", origin="http://127.0.0.1:8000"),
+            ),
+        }
+    )
+    mcp_tool = AgentTool(
+        name="mainsequence_test",
+        label="MCP Test",
+        description="Main Sequence tool",
+        parameters={"type": "object", "properties": {}},
+        execute_fn=AsyncMock(),
+    )
+    coding_session = _coding_session()
+
+    with (
+        capture_logs() as logs,
+        # Nothing is sent to a local application at startup or when a session loads.
+        patch("ms_tau_sdk.tools.mcp_applications.MCPConnectionClient") as application_client,
+        patch(
+            "ms_tau_sdk.runtime.manager.MainSequenceMCPClient.connect",
+            AsyncMock(return_value=_mcp_client()),
+        ) as connect,
+        patch("ms_tau_sdk.runtime.manager.create_mainsequence_mcp_tools", return_value=[mcp_tool]),
+        patch(
+            "ms_tau_sdk.runtime.manager.CodingSession.load",
+            AsyncMock(side_effect=lambda config: _load_coding_session(coding_session, config)),
+        ) as load_coding_session,
+    ):
+        await manager.start()
+        await manager.get("session-1")
+
+    assert [tool.name for tool in load_coding_session.await_args.args[0].tools] == expected
+    assert connect.await_count == (0 if excluded else 1)
+    application_client.assert_not_called()
+    backend.resolve_release_runtime_access.assert_not_awaited()
+    assert manager.snapshot()["startup_ready"] is True
+    assert manager.snapshot()["local_mcp_applications"] == ["alpaca"]
+    warnings = [log for log in logs if log["event"] == "local.mcp_applications.token_sent"]
+    assert len(warnings) == 1
+    assert warnings[0]["log_level"] == "warning"
+    assert "your Main Sequence access token" in warnings[0]["message"]
+    assert "alpaca at http://127.0.0.1:8000" in warnings[0]["message"]
+    assert warnings[0]["applications"] == ["alpaca"]
+    await manager.aclose()
+
+
+@pytest.mark.asyncio
+async def test_local_mode_without_local_applications_warns_of_nothing(tmp_path):
+    manager, _backend, _providers = _manager_dependencies(tmp_path, [])
+    manager.settings = manager.settings.model_copy(update={"local_mode": True})
+
+    with capture_logs() as logs:
+        await manager.start()
+
+    assert manager.snapshot()["local_mcp_applications"] == []
+    assert "local.mcp_applications.token_sent" not in [log["event"] for log in logs]
     await manager.aclose()
 
 

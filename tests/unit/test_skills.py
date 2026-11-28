@@ -64,6 +64,25 @@ def test_security_skill_teaches_delegated_tools_and_secrets() -> None:
         assert term in normalized
 
 
+def test_local_development_skill_tells_the_agent_to_say_where_the_token_goes() -> None:
+    skill = resolve_packaged_skill("tau_local_development").read_text(encoding="utf-8")
+    normalized = " ".join(skill.split())
+
+    required_terms = (
+        "`TAU_LOCAL_MCP_APPLICATIONS`",
+        "When you set `TAU_LOCAL_MCP_APPLICATIONS` for the user, tell them, in the same message:",
+        "which port receives their token",
+        "not a token limited to the application",
+        "only their own API should listen there, bound to `127.0.0.1`",
+        "should not be used on a machine that other accounts share",
+        "`local.mcp_applications.token_sent`",
+        "never calls a deployed release",
+    )
+    for term in required_terms:
+        assert term in normalized
+    assert "The user JWT is sent only to Main Sequence." not in normalized
+
+
 def test_local_development_skill_defines_the_complete_a2a_boundary() -> None:
     skill = resolve_packaged_skill("tau_local_development").read_text(encoding="utf-8")
     normalized = " ".join(skill.split())

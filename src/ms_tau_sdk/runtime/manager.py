@@ -112,7 +112,9 @@ from ms_tau_sdk.tools.mainsequence_mcp import (
 )
 from ms_tau_sdk.tools.mcp_applications import (
     application_connector,
+    check_local_applications,
     create_mcp_application_tools,
+    local_application_connector,
 )
 from ms_tau_sdk.tools.skill_read import create_skill_read_tool
 from ms_tau_sdk.tools.task_control import create_task_control_tools
@@ -308,6 +310,23 @@ class SessionRuntimeManager:
         self._closed = False
 
     async def start(self) -> None:
+        local_applications = self.settings.local_mcp_applications
+        if self.settings.local_mode and local_applications:
+            await check_local_applications(local_applications)
+            # The developer's token goes to these origins, so the developer is told (ADR 0032).
+            listed = ", ".join(
+                f"{application.name} at {application.origin}" for application in local_applications
+            )
+            logger.warning(
+                "local.mcp_applications.token_sent",
+                message=(
+                    "Local mode sends your Main Sequence access token to the local applications "
+                    f"in TAU_LOCAL_MCP_APPLICATIONS: {listed}. Any program listening on those "
+                    "ports receives it and can act as you on Main Sequence until it expires. "
+                    "Run only your own API there."
+                ),
+                applications=[application.name for application in local_applications],
+            )
         state_ready = getattr(self.backend, "state_ready", None)
         if state_ready is not None:
             self._local_state_ready = bool(await state_ready())
@@ -379,6 +398,12 @@ class SessionRuntimeManager:
             "mcp_connected": self._mcp_client is not None,
             "mcp_tool_count": len(self._mcp_client.tools) if self._mcp_client else 0,
             "mcp_resource_count": len(self._mcp_client.resources) if self._mcp_client else 0,
+            # The names of the developer's own applications, never their origins (ADR 0032).
+            "local_mcp_applications": (
+                [application.name for application in self.settings.local_mcp_applications]
+                if self.settings.local_mode
+                else None
+            ),
             "snapshot_restore_count": self._snapshot_restore_count,
             "snapshot_fallback_count": self._snapshot_fallback_count,
             "snapshot_upload_count": self._snapshot_upload_count,
@@ -1215,7 +1240,18 @@ class SessionRuntimeManager:
                         session_uid=None if self.settings.local_mode else session_uid,
                     )
                 )
-            if not self.settings.local_mode:
+            if self.settings.local_mode:
+                # The developer's own applications, reached only at their loopback origins with
+                # the developer's own token; local mode resolves no release (ADR 0032).
+                tools.extend(
+                    create_mcp_application_tools(
+                        self.settings.local_mcp_applications,
+                        connect=local_application_connector(self.settings, self.backend.auth),
+                        tool_timeout_seconds=self.settings.mcp_tool_timeout_seconds,
+                        open_timeout_seconds=self.settings.backend_read_timeout_seconds,
+                    )
+                )
+            else:
                 tools.extend(
                     create_mcp_application_tools(
                         bootstrap.mcp_applications,

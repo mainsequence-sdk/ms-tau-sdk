@@ -6,6 +6,12 @@ Date: 2026-10-09
 
 Issue: [#84](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/84)
 
+Amended 2026-11-27 by
+[ADR 0032: Local applications in local mode](./0032-local-applications-in-local-mode.md): the
+table in section 3 gains the row for a local application whose sign-in gives no token. A local
+application has no release, so the readiness wait and the start question of the amendments below do
+not apply to it.
+
 Amended 2026-10-11 for [#90](https://github.com/mainsequence-sdk/ms-tau-sdk/issues/90): finite
 per-call response deadlines apply to every SDK MCP connection.
 
@@ -107,6 +113,7 @@ The tool result tells the model what happened, without internals:
 | The platform refused the application's address and token (403, 404) | The `<name>` application is not available for this call. (unchanged) |
 | Obtaining or renewing the application's access timed out | Main Sequence timed out while providing access to the `<name>` application. |
 | The platform could not provide them for another reason | Main Sequence could not provide access to the `<name>` application. |
+| Local mode's sign-in could not provide a token for a local application (ADR 0032) | Your Main Sequence sign-in could not provide access to the local `<name>` application. |
 | Any other failure | The `<name>` application could not complete this call. |
 
 The result's details carry the kind of failure (`failure`) and, when there is one, the status

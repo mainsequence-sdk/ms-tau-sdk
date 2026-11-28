@@ -172,6 +172,11 @@ least 30 seconds, or `300`) or the remaining turn time. This startup budget is s
 tool's execution limit; an expired readiness wait reports `readiness_timeout`. Cancellation, ended
 delegation and an answer without a retry hint stop the wait.
 
+Local mode resolves no declared application. `TAU_LOCAL_MCP_APPLICATIONS` names the developer's
+own applications at loopback origins instead; see the `tau_local_development` skill. Their four tools are SDK tools like a declared application's, and neither exclusion removes
+them, so with both exclusions a local session offers exactly the skill-scoped `read`, the four
+tools of each local application, project extension tools and the A2A Task controls.
+
 ## Skills that applications publish
 
 A declared application can publish Agent Skills through the MCP Skills extension, as the

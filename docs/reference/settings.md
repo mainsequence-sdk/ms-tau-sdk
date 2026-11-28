@@ -119,13 +119,15 @@ Without it, as in local mode, a direct Message has no platform limit and ends on
 | `TAU_LOCAL_CUSTOM_ID` | Optional configured credential name for the selected built-in provider; default unset. It must identify one accessible record in the selected Environment. Custom endpoints use their provider identifier instead. |
 | `TAU_LOCAL_ORGANIZATION_ENVIRONMENT_UID` | Optional Environment UID for local provider selection; default unset. Set it when the platform cannot select an accessible active or sole Environment. |
 | `TAU_LOCAL_STATE_ROOT` | Local state root; defaults to `~/.tau/mainsequence`. |
+| `TAU_LOCAL_MCP_APPLICATIONS` | Optional. The developer's own applications whose MCP the Agent uses, by name, at loopback origins. See [local applications](#local-applications). |
 | `TAU_LOCAL_A2A_TASK_RECONCILE_INTERVAL_SECONDS` | Local Task recovery scan interval; default `5`. |
 | `TAU_LOCAL_A2A_TASK_STALE_AFTER_SECONDS` | Age after which an unowned working attempt is stale; default `120`. |
 | `TAU_LOCAL_A2A_TASK_PENDING_TIMEOUT_SECONDS` | Maximum age for a Task that cannot be started; default `300`. |
 | `TAU_LOCAL_A2A_TASK_MAX_RECOVERY_ATTEMPTS` | Deferred local start attempts before terminal failure; default `3`. |
 
-The user's JWT authenticates Main Sequence provider hydration and MCP. It is never sent to the
-selected model provider. Provider credentials are hydrated remotely and kept out of the
+The user's JWT authenticates Main Sequence provider hydration and MCP, and the calls to the
+[local applications](#local-applications) the process names. It is never sent to the selected model
+provider. Provider credentials are hydrated remotely and kept out of the
 environment and local database. The SDK does not depend on, import, or dynamically load the
 `mainsequence` Python package, and it does not read the Main Sequence CLI's credential store.
 
@@ -230,6 +232,49 @@ address, the body announces no relay and the endpoint answers the real credentia
 
 No setting turns the relay off: a hosted runtime always calls models through it, and local mode
 never does.
+
+## Local applications
+
+In local mode an Agent can use the MCP tools and published skills of the developer's own
+applications, such as the project's FastAPI API running on the same machine, the way a hosted
+Agent uses a deployed application's
+([ADR 0032](../adrs/0032-local-applications-in-local-mode.md)).
+
+| Environment variable | Meaning |
+| --- | --- |
+| `TAU_LOCAL_MCP_APPLICATIONS` | Local mode only. A JSON object from application name to the loopback origin of its API, for example `{"alpaca": "http://127.0.0.1:8000"}`. Unset, empty or `{}` means none. |
+
+- **Names** follow the rules for a hosted application: a lowercase letter, then up to 39 lowercase
+  letters, digits or underscores, and not `mainsequence`. Use the name the platform gives the
+  deployed application, so the Agent's prompt and skills name the same tools locally and hosted. A
+  name given twice is refused.
+- **Origins** are `http` or `https` on `127.0.0.1`, `::1` or `localhost`, with an optional port and
+  no path, query, fragment or user name. `localhost` must resolve only to loopback addresses. The
+  MCP endpoint is `{origin}/mcp`.
+- **Errors** fail startup, as does the setting without `TAU_LOCAL_MODE=true`. An error names the
+  setting and the application and never repeats the origin.
+
+Each application gets `<name>__list_tools`, `<name>__call_tool`, `<name>__list_resources` and
+`<name>__read_resource`, with the same rules as for a declared application: discovery on the newer
+MCP revision, skill files checked against their listed size and SHA-256 digest, the tool's own time
+limit or `TAU_MCP_TOOL_TIMEOUT_SECONDS`, and one more attempt only while the session opens. Neither
+`TAU_EXCLUDE_BASE_TOOLS` nor `TAU_EXCLUDE_MAINSEQUENCE_MCP` removes them.
+
+A call carries your own Main Sequence access token, from local mode's sign-in, and nothing else:
+no `X-MainSequence-*` header, no delegation and no lease. A `401` gets a new token once; a second
+`401` is reported as refused. The application checks the token as mainsequence-sdk's request
+identity does locally, against `GET {MAINSEQUENCE_ENDPOINT}/api/v1/users/me/`, so it must point at
+the same platform as the Agent. Its local admission asks the platform on every request unless it
+sets `install_request_identity(app, local_caller_cache_seconds=60)`, which keeps each call fast.
+
+Nothing is sent to an application at startup, and readiness does not depend on one. A call to an
+application that is not running reports that it could not be reached; no deployed release is ever
+called in its place. `/health` lists the names in `local_mcp_applications`, never the origins.
+
+Startup logs the warning `local.mcp_applications.token_sent`, naming each application and its
+origin: any program listening on those ports receives your token and can act as you on Main
+Sequence until it expires. Run only your own API there, bound to `127.0.0.1`, and do not use this
+on a machine that other accounts share.
 
 ## Process and workspace
 
